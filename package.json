@@ -1,0 +1,40 @@
+{
+  "name": "experience-rag",
+  "version": "0.0.1",
+  "description": "Local-first multimodal desktop session memory (Experience RAG)",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build:ax": "swiftc -O native/ax-dump.swift -o native/ax-dump"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.72.1",
+    "@lancedb/lancedb": "^0.24.0",
+    "apache-arrow": "18.1.0",
+    "better-sqlite3": "^12.4.1",
+    "sharp": "^0.35.3",
+    "ulid": "^3.0.1",
+    "undici": "^7.16.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^24.9.2",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  },
+  "optionalDependencies": {
+    "@lancedb/lancedb-darwin-arm64": "^0.24.1",
+    "active-win": "^8.2.1",
+    "uiohook-napi": "^1.5.5"
+  },
+  "overrides": {
+    "tar": "^7.5.21"
+  }
+}

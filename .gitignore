@@ -1,0 +1,22 @@
+node_modules/
+dist/
+*.log
+
+# local scratch data stores
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+.lancedb/
+.data/
+.tmp/
+
+# env / secrets (live provider keys)
+.env
+.env.local
+
+# compiled Swift AX sidecar (build with: npm run build:ax)
+native/ax-dump
+native/ax-dump.dSYM/
+
+.DS_Store
+.idea/
