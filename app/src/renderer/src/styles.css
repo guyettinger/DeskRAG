@@ -100,13 +100,28 @@ a:focus-visible {
   -webkit-app-region: drag;
 }
 .rail__brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 0 18px;
+}
+.rail__brand-word {
   font-family: var(--font-mono);
   font-weight: 700;
-  font-size: 11px;
-  letter-spacing: 0.1em;
+  font-size: 10px;
+  letter-spacing: 0.08em;
   color: var(--muted);
-  text-align: center;
-  padding: 8px 0 18px;
+}
+/* The generated SVG carries its own 256x256 width/height; override so the
+   inlined mark fills whatever box GhostMark's `size` prop sets. */
+.brand-mark {
+  display: inline-flex;
+}
+.brand-mark > svg {
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 .rail__nav {
   display: flex;
@@ -871,4 +886,15 @@ select {
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* Brand ghost — animated only where it means something: the app is working
+   (indexing) or there is nothing yet to show (empty states). */
+.empty__ghost {
+  margin: 0 auto 14px;
+}
+.indexing__ghost {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 10px;
 }

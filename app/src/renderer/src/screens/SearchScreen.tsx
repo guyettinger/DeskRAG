@@ -3,6 +3,7 @@ import type { Capabilities, FrameHitDTO } from "@shared/types";
 import { api, timecode, wallClock } from "../api.js";
 import { IconSearch, IconImage } from "../icons.js";
 import { DetailView } from "./DetailView.js";
+import { GhostLottie } from "../brand/GhostLottie.js";
 
 export function SearchScreen(): React.JSX.Element {
   const [text, setText] = useState("");
@@ -107,6 +108,7 @@ export function SearchScreen(): React.JSX.Element {
           </div>
           {results.length === 0 ? (
             <div className="empty">
+              <GhostLottie size={104} className="empty__ghost" playing />
               <h3>No matches</h3>
               <p>Try different words, or record more sessions first.</p>
             </div>
@@ -122,6 +124,7 @@ export function SearchScreen(): React.JSX.Element {
 
       {!loading && !results && (
         <div className="empty">
+          <GhostLottie size={104} className="empty__ghost" playing />
           <h3>Nothing searched yet</h3>
           <p>Record a session on the Record tab, then search for what you did.</p>
         </div>

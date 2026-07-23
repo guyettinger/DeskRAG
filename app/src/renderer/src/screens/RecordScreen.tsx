@@ -9,6 +9,7 @@ import type {
   SignalConfig,
 } from "@shared/types";
 import { api, timecode } from "../api.js";
+import { GhostLottie } from "../brand/GhostLottie.js";
 
 interface Props {
   status: RecordingStatus;
@@ -129,6 +130,9 @@ export function RecordScreen({ status, env }: Props): React.JSX.Element {
 
       {busy && (
         <div className="indexing">
+          <div className="indexing__ghost">
+            <GhostLottie size={84} playing />
+          </div>
           <div className="indexing__row">
             <span className="indexing__stage">{progress?.stage ?? "Preparing…"}</span>
             <span className="mono" style={{ color: "var(--muted)" }}>

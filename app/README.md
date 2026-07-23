@@ -1,4 +1,8 @@
-# DeskRAGApp
+<p align="center">
+  <img src="../assets/deskrag-mark.svg" alt="DeskRAGApp" width="112" height="112">
+</p>
+
+<h1 align="center">DeskRAGApp</h1>
 
 A simple Electron desktop app over the [DeskRAG](../README.md) library: configure
 providers, grant macOS permissions, toggle capture signals, record an experience,
@@ -82,6 +86,11 @@ For a production build (`app/out/`): `npm run app:build` from the repo root.
 > The app imports the library from `dist/`, not `src/` — rebuild the library
 > (`npm run build`) after changing library code. `npm run app:dev` / `app:build` do
 > that for you.
+
+> `npm run app:dist` (packaging via `electron-builder`) does not yet work: npm
+> workspaces hoist `electron` to the repo root's `node_modules`, and
+> `electron-builder` can't resolve it from there. Packaging is not implemented
+> in this version.
 
 ## macOS permissions
 
