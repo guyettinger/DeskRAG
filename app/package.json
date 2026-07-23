@@ -21,5 +21,8 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "vite": "^6.1.0"
+  },
+  "dependencies": {
+    "lottie-web": "^5.13.0"
   }
 }
