@@ -1,4 +1,8 @@
-# DeskRAG
+<p align="center">
+  <img src="assets/deskrag-ghost.svg" alt="DeskRAG" width="150" height="150">
+</p>
+
+<h1 align="center">DeskRAG</h1>
 
 **Local-first, multimodal desktop session memory.** DeskRAG captures what happens on your desktop — screen video, desktop + mic audio, mouse/keyboard input, active window, and the OS accessibility tree — into a searchable "experience memory," then lets you recall past moments by:
 
@@ -46,6 +50,7 @@ Everything runs locally. TypeScript throughout, strict types, pluggable AI provi
 | `app/` | **DeskRAGApp**, the Electron desktop UI over the library (npm workspace `deskrag-app`) |
 | `native/` | the macOS accessibility sidecar (`ax-dump.swift`, built with `npm run build:ax`) |
 | `test/` | the executable documentation — vitest suite, ~6s, deterministic |
+| `assets/` | the brand mark — generated from `scripts/brand/geometry.ts` via `npm run gen:brand` |
 
 ## Desktop app — DeskRAGApp
 
