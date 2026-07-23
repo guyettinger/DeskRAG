@@ -47,7 +47,7 @@
       </path>
       <ellipse cx="88" cy="112" rx="13" ry="17" fill="#12161C"/>
       <ellipse cx="152" cy="112" rx="13" ry="17" fill="#12161C"/>
-      <path d="M 110 130 Q 120 141 130 130" fill="none" stroke="#12161C" stroke-width="6" stroke-linecap="round"/>
+      <path d="M 110 130 C 116.67 137.33 123.33 137.33 130 130" fill="none" stroke="#12161C" stroke-width="6" stroke-linecap="round"/>
     </g>
   </g>
 </svg>

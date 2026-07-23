@@ -18,7 +18,7 @@
       <path d="M 24 196 C 24 196 24 130 24 130 C 24 62 66 20 120 20 C 174 20 216 62 216 130 C 216 130 216 196 216 196 C 216 219.84 172 219.84 152 183.37 C 132 222.91 108 222.91 88 184.09 C 68 218 24 218 24 196 Z" fill="url(#dr-body)"/>
       <ellipse cx="88" cy="112" rx="13" ry="17" fill="#12161C"/>
       <ellipse cx="152" cy="112" rx="13" ry="17" fill="#12161C"/>
-      <path d="M 110 130 Q 120 141 130 130" fill="none" stroke="#12161C" stroke-width="6" stroke-linecap="round"/>
+      <path d="M 110 130 C 116.67 137.33 123.33 137.33 130 130" fill="none" stroke="#12161C" stroke-width="6" stroke-linecap="round"/>
     </g>
   </g>
   <text x="212" y="134" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif" font-size="88" font-weight="650" letter-spacing="-1.5">

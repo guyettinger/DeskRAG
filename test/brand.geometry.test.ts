@@ -8,6 +8,7 @@ import {
   ghostBodyPath,
   hemShape,
   KEYFRAMES,
+  mouthBezier,
   shadowAt,
 } from "../scripts/brand/geometry.js";
 
@@ -76,5 +77,27 @@ describe("ghost geometry", () => {
 
   it("round-trips a bezier through bezierToPath without NaN", () => {
     expect(bezierToPath(ghostBodyBezier(0.5))).not.toMatch(/NaN/);
+  });
+});
+
+describe("mouth geometry", () => {
+  it("emits an open 2-vertex bezier with matching tangent arrays", () => {
+    const s = mouthBezier();
+    expect(s.v).toHaveLength(2);
+    expect(s.i).toHaveLength(2);
+    expect(s.o).toHaveLength(2);
+  });
+
+  it("renders as an open path: starts with M, contains a C, does not close", () => {
+    const d = bezierToPath(mouthBezier(), false);
+    expect(d.startsWith("M ")).toBe(true);
+    expect(d).toContain("C ");
+    expect(d.trimEnd().endsWith("Z")).toBe(false);
+    expect(d).not.toMatch(/NaN|Infinity/);
+  });
+
+  it("defaults bezierToPath to closed, leaving the body path unaffected", () => {
+    expect(bezierToPath(ghostBodyBezier(0))).toEqual(ghostBodyPath(0));
+    expect(bezierToPath(ghostBodyBezier(0)).trimEnd().endsWith("Z")).toBe(true);
   });
 });

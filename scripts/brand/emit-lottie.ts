@@ -19,6 +19,8 @@ import {
   GHOST_FIT,
   ghostBodyBezier,
   KEYFRAMES,
+  mouthBezier,
+  mouthWidth,
   palette,
   shadowAt,
   shadowEllipse,
@@ -43,11 +45,16 @@ interface ShapeValue {
   i: number[][];
   o: number[][];
   v: number[][];
-  c: true;
+  c: boolean;
 }
 
-function toShapeValue(b: BezierShape): ShapeValue {
-  return { i: b.i.map((p) => [...p]), o: b.o.map((p) => [...p]), v: b.v.map((p) => [...p]), c: true };
+function toShapeValue(b: BezierShape, closed = true): ShapeValue {
+  return {
+    i: b.i.map((p) => [...p]),
+    o: b.o.map((p) => [...p]),
+    v: b.v.map((p) => [...p]),
+    c: closed,
+  };
 }
 
 function shapeKeyframes(): unknown[] {
@@ -134,21 +141,13 @@ function ghostLayer(): unknown {
     nm: `eye-${k}`,
   }));
 
-  // The mouth is a stroked arc; Lottie has no quadratic primitive, so the
-  // quadratic M 110 130 Q 120 141 130 130 is raised to its exact cubic
-  // equivalent: control points sit 2/3 of the way from each endpoint to (120,141).
+  // The mouth is a stroked arc; Lottie has no quadratic primitive, so
+  // mouthBezier() raises geometry.ts's quadratic mouth to its exact cubic
+  // equivalent. It stays open (c: false) — a stroke, not a filled outline.
   const mouth = {
     ty: "sh",
     ind: 1,
-    ks: {
-      a: 0,
-      k: {
-        i: [[0, 0], [-6.67, 7.33]],
-        o: [[6.67, 7.33], [0, 0]],
-        v: [[110, 130], [130, 130]],
-        c: false,
-      },
-    },
+    ks: { a: 0, k: toShapeValue(mouthBezier(), false) },
     nm: "mouth",
   };
 
@@ -174,7 +173,7 @@ function ghostLayer(): unknown {
           nm: "mouth-stroke",
           c: { a: 0, k: [...rgb(palette.face), 1] },
           o: { a: 0, k: 100 },
-          w: { a: 0, k: 6 },
+          w: { a: 0, k: mouthWidth },
           lc: 2,
           lj: 2,
         },

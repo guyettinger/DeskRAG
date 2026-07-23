@@ -10,12 +10,13 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  bezierToPath,
   CANVAS,
   deskBar,
   eyes,
   GHOST_FIT,
   ghostBodyPath,
-  mouthPath,
+  mouthBezier,
   mouthWidth,
   palette,
   shadowEllipse,
@@ -74,7 +75,7 @@ export function ghostGroup(pathD: string, idPrefix: string): string {
     `    <g transform="${fit}">`,
     `      <path d="${pathD}" fill="url(#${idPrefix}-body)"/>`,
     eyeEls,
-    `      <path d="${mouthPath}" fill="none" stroke="${palette.face}"` +
+    `      <path d="${bezierToPath(mouthBezier(), false)}" fill="none" stroke="${palette.face}"` +
       ` stroke-width="${mouthWidth}" stroke-linecap="round"/>`,
     "    </g>",
   ].join("\n");

@@ -62,7 +62,10 @@ export const eyes = [
   { cx: 88, cy: 112, rx: 13, ry: 17 },
   { cx: 152, cy: 112, rx: 13, ry: 17 },
 ] as const;
-export const mouthPath = "M 110 130 Q 120 141 130 130";
+/** Mouth, in ghost-local coordinates, as a quadratic bezier: start, control, end. */
+const MOUTH_START: Pt = [110, 130];
+const MOUTH_CONTROL: Pt = [120, 141];
+const MOUTH_END: Pt = [130, 130];
 export const mouthWidth = 6;
 
 /** Vertical bob amplitude, in ghost-local units. */
@@ -159,12 +162,18 @@ export function ghostBodyBezier(phase: number): BezierShape {
   return { v, i, o };
 }
 
-/** Converts a closed bezier to an SVG path. Straight runs become zero-tangent curves. */
-export function bezierToPath(s: BezierShape): string {
+/**
+ * Converts a bezier to an SVG path. Straight runs become zero-tangent curves.
+ * Closed (the default) wraps the last segment back to the first vertex and
+ * appends `Z`; open stops after the last vertex, for strokes like the mouth
+ * that aren't a filled outline.
+ */
+export function bezierToPath(s: BezierShape, closed = true): string {
   const n = s.v.length;
   const start = s.v[0]!;
   const parts: string[] = [`M ${r(start[0])} ${r(start[1])}`];
-  for (let k = 1; k <= n; k++) {
+  const segments = closed ? n : n - 1;
+  for (let k = 1; k <= segments; k++) {
     const a = s.v[(k - 1) % n]!;
     const b = s.v[k % n]!;
     const ao = s.o[(k - 1) % n]!;
@@ -175,13 +184,46 @@ export function bezierToPath(s: BezierShape): string {
         ` ${r(b[0])} ${r(b[1])}`,
     );
   }
-  parts.push("Z");
+  if (closed) parts.push("Z");
   return parts.join(" ");
 }
 
 /** The ghost outline at a phase, as an SVG path string. */
 export function ghostBodyPath(phase: number): string {
   return bezierToPath(ghostBodyBezier(phase));
+}
+
+/**
+ * Raises a quadratic bezier segment (start P0, control Q, end P2) to its
+ * exact cubic equivalent: C1 = P0 + (2/3)(Q - P0), C2 = P2 + (2/3)(Q - P2).
+ * The rendered curve is identical — only the notation changes.
+ */
+function quadraticToCubic(p0: Pt, q: Pt, p2: Pt): { c1: Pt; c2: Pt } {
+  return {
+    c1: [p0[0] + (2 / 3) * (q[0] - p0[0]), p0[1] + (2 / 3) * (q[1] - p0[1])],
+    c2: [p2[0] + (2 / 3) * (q[0] - p2[0]), p2[1] + (2 / 3) * (q[1] - p2[1])],
+  };
+}
+
+/**
+ * The mouth as an open 2-vertex bezier, in the same convention as
+ * ghostBodyBezier: tangents relative to their vertex. Raised from its natural
+ * quadratic form (MOUTH_START, MOUTH_CONTROL, MOUTH_END) so both emitters
+ * derive the same curve instead of restating it.
+ */
+export function mouthBezier(): BezierShape {
+  const { c1, c2 } = quadraticToCubic(MOUTH_START, MOUTH_CONTROL, MOUTH_END);
+  return {
+    v: [MOUTH_START, MOUTH_END],
+    i: [
+      [0, 0],
+      [r(c2[0] - MOUTH_END[0]), r(c2[1] - MOUTH_END[1])],
+    ],
+    o: [
+      [r(c1[0] - MOUTH_START[0]), r(c1[1] - MOUTH_START[1])],
+      [0, 0],
+    ],
+  };
 }
 
 /** Vertical offset at normalised time t. Negative means risen. */
