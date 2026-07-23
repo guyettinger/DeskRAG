@@ -11,6 +11,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   bezierToPath,
+  bodyGradient,
   CANVAS,
   deskBar,
   eyes,
@@ -20,6 +21,7 @@ import {
   mouthWidth,
   palette,
   shadowEllipse,
+  shadowGradient,
 } from "./geometry.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -29,17 +31,19 @@ export const assetsDir = join(here, "../../assets");
 
 /** Gradients. Prefixed ids so an inlined mark cannot collide with page ids. */
 export function ghostDefs(idPrefix: string): string {
+  const bodyStops = bodyGradient.stops.map(
+    (s) => `      <stop offset="${s.offset}" stop-color="${s.color}"/>`,
+  );
+  const shadowStops = shadowGradient.stops.map(
+    (s) => `      <stop offset="${s.offset}" stop-color="${palette.shadow}" stop-opacity="${s.alpha}"/>`,
+  );
   return [
     "  <defs>",
     `    <linearGradient id="${idPrefix}-body" x1="0" y1="0" x2="0" y2="1">`,
-    `      <stop offset="0" stop-color="${palette.ghostTop}"/>`,
-    `      <stop offset="0.45" stop-color="${palette.ghostMid}"/>`,
-    `      <stop offset="1" stop-color="${palette.ghostBot}"/>`,
+    ...bodyStops,
     "    </linearGradient>",
     `    <radialGradient id="${idPrefix}-shadow">`,
-    `      <stop offset="0" stop-color="${palette.shadow}" stop-opacity="${palette.shadowOpacity}"/>`,
-    `      <stop offset="0.55" stop-color="${palette.shadow}" stop-opacity="0.2"/>`,
-    `      <stop offset="1" stop-color="${palette.shadow}" stop-opacity="0"/>`,
+    ...shadowStops,
     "    </radialGradient>",
     "  </defs>",
   ].join("\n");

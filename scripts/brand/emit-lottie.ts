@@ -6,13 +6,15 @@
  * ride their layer transforms.
  */
 
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { assetsDir } from "./emit-static.js";
 import {
   bob,
+  bodyGradient,
   CANVAS,
   deskBar,
+  EASE,
   eyes,
   FPS,
   FRAMES,
@@ -24,6 +26,7 @@ import {
   palette,
   shadowAt,
   shadowEllipse,
+  shadowGradient,
   type BezierShape,
 } from "./geometry.js";
 
@@ -36,10 +39,6 @@ function rgb(hex: string): [number, number, number] {
     Math.round(((n & 255) / 255) * 1000) / 1000,
   ];
 }
-
-/** Symmetric ease-in-out, matching the SVG's keySplines. */
-const EASE_IN = { x: 0.42, y: 0 };
-const EASE_OUT = { x: 0.58, y: 1 };
 
 interface ShapeValue {
   i: number[][];
@@ -61,7 +60,7 @@ function shapeKeyframes(): unknown[] {
   return KEYFRAMES.map((t, idx) => {
     const frame = { t: Math.round(t * FRAMES), s: [toShapeValue(ghostBodyBezier(t))] };
     // The final keyframe is a hold — it carries no easing handles.
-    return idx === KEYFRAMES.length - 1 ? frame : { i: EASE_OUT, o: EASE_IN, ...frame };
+    return idx === KEYFRAMES.length - 1 ? frame : { i: EASE.out, o: EASE.in, ...frame };
   });
 }
 
@@ -70,7 +69,7 @@ function valueKeyframes(values: number[][]): unknown[] {
     const frame = { t: Math.round(t * FRAMES), s: values[idx]! };
     return idx === KEYFRAMES.length - 1
       ? frame
-      : { i: { x: [EASE_OUT.x], y: [EASE_OUT.y] }, o: { x: [EASE_IN.x], y: [EASE_IN.y] }, ...frame };
+      : { i: { x: [EASE.out.x], y: [EASE.out.y] }, o: { x: [EASE.in.x], y: [EASE.in.y] }, ...frame };
   });
 }
 
@@ -93,13 +92,25 @@ function layerTransform(): unknown {
   };
 }
 
-/** A GROUP transform — the last item of a `ty: "gr"` group's `it` array. */
-function groupTransform(p: [number, number], scalePct = 100, nm = "transform"): unknown {
+/**
+ * A GROUP transform — the last item of a `ty: "gr"` group's `it` array.
+ * `scalePct` is either a uniform percentage or a non-uniform `[sx, sy]` pair
+ * (e.g. squashing a circle into an ellipse); `anchor` defaults to the origin
+ * but can be moved so the scale is applied about a point other than the
+ * group's local origin (e.g. an ellipse's centre).
+ */
+function groupTransform(
+  p: [number, number],
+  scalePct: number | [number, number] = 100,
+  nm = "transform",
+  anchor: [number, number] = [0, 0],
+): unknown {
+  const s: [number, number] = Array.isArray(scalePct) ? scalePct : [scalePct, scalePct];
   return {
     ty: "tr",
     p: { a: 0, k: p },
-    a: { a: 0, k: [0, 0] },
-    s: { a: 0, k: [scalePct, scalePct] },
+    a: { a: 0, k: anchor },
+    s: { a: 0, k: s },
     r: { a: 0, k: 0 },
     o: { a: 0, k: 100 },
     sk: { a: 0, k: 0 },
@@ -196,17 +207,13 @@ function ghostLayer(): unknown {
           o: { a: 0, k: 100 },
           r: 1,
           t: 1,
-          s: { a: 0, k: [120, 20] },
-          e: { a: 0, k: [120, 218] },
+          s: { a: 0, k: [bodyGradient.x, bodyGradient.y0] },
+          e: { a: 0, k: [bodyGradient.x, bodyGradient.y1] },
           g: {
             p: 3,
             k: {
               a: 0,
-              k: [
-                0, ...rgb(palette.ghostTop),
-                0.45, ...rgb(palette.ghostMid),
-                1, ...rgb(palette.ghostBot),
-              ],
+              k: bodyGradient.stops.flatMap((stop) => [stop.offset, ...rgb(stop.color)]),
             },
           },
         },
@@ -235,10 +242,17 @@ function shadowLayer(): unknown {
       ty: "gr",
       nm: "shadow-group",
       it: [
+        // A CIRCLE of radius rx, not the true rx/ry ellipse: the radial
+        // gradient below is only round in a shape whose bounding box is
+        // square, so the ellipse is built by squashing this circle with the
+        // non-uniform group transform instead of stretching a genuinely
+        // elliptical shape (which would stretch the gradient ramp too, and
+        // fade the shadow's top/bottom edges same as its sides — see
+        // geometry.ts's shadowGradient doc).
         {
           ty: "el",
           p: { a: 0, k: [shadowEllipse.cx, shadowEllipse.cy] },
-          s: { a: 0, k: [shadowEllipse.rx * 2, shadowEllipse.ry * 2] },
+          s: { a: 0, k: [shadowEllipse.rx * 2, shadowEllipse.rx * 2] },
           nm: "shadow-ellipse",
         },
         {
@@ -257,17 +271,21 @@ function shadowLayer(): unknown {
             k: {
               a: 0,
               k: [
-                0, ...rgb(palette.shadow),
-                0.55, ...rgb(palette.shadow),
-                1, ...rgb(palette.shadow),
-                0, palette.shadowOpacity,
-                0.55, 0.2,
-                1, 0,
+                ...shadowGradient.stops.flatMap((stop) => [stop.offset, ...rgb(palette.shadow)]),
+                ...shadowGradient.stops.flatMap((stop) => [stop.offset, stop.alpha]),
               ],
             },
           },
         },
-        groupTransform([0, 0], 100, "shadow-transform"),
+        // Squashes the circle into the true rx/ry ellipse, about the
+        // ellipse's own centre (anchor == position == [cx, cy]) rather than
+        // the layer origin.
+        groupTransform(
+          [shadowEllipse.cx, shadowEllipse.cy],
+          [100, (shadowEllipse.ry / shadowEllipse.rx) * 100],
+          "shadow-transform",
+          [shadowEllipse.cx, shadowEllipse.cy],
+        ),
       ],
     },
   ]);
@@ -310,6 +328,7 @@ export function renderLottie(): string {
 }
 
 export function main(): void {
+  mkdirSync(assetsDir, { recursive: true });
   writeFileSync(join(assetsDir, "deskrag-ghost.lottie.json"), renderLottie());
   console.log("brand: wrote deskrag-ghost.lottie.json");
 }

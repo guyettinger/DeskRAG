@@ -18,6 +18,7 @@ npx vitest run test/store.crash.test.ts     # a single test file
 npx vitest run -t "scoped ANN"              # tests matching a name
 npm run test:watch     # vitest watch
 npm run build:ax       # compile the macOS AX sidecar (swiftc) -> native/ax-dump (gitignored)
+npm run gen:brand      # regenerate assets/ + app/build/ icons from scripts/brand/geometry.ts
 ```
 
 App (`app/`) — separate build, separate gate:
@@ -32,6 +33,7 @@ npm --workspace deskrag-app run typecheck      # the app's gate (renderer + node
 
 - **Tests are the source of truth for behavior.** Prefer running the relevant test file over reasoning about correctness; the suite is fast (~6s) and deterministic.
 - **Live/native tests skip cleanly** without their dependency: provider smokes need `OLLAMA_SMOKE=1` / `VOYAGE_API_KEY` / `GEMINI_API_KEY` / `ANTHROPIC_API_KEY`; the ffmpeg and Swift-sidecar tests skip when `ffmpeg`/`swiftc` are absent. CI-safe by default.
+- **`assets/` and `app/build/` are generated, never hand-edited.** They're derived from `scripts/brand/geometry.ts` by `npm run gen:brand`; a drift guard in `test/brand.assets.test.ts` byte-compares committed output against a fresh render and fails on hand edits.
 
 ## Architecture — the load-bearing seams
 
@@ -86,6 +88,7 @@ electron-vite + React + TS. Three source roots with a hard rule between them: **
 - **Electron's Node ABI ≠ system Node's.** `npm --workspace deskrag-app run rebuild:native` rebuilds `better-sqlite3` for Electron, which **breaks the library's `npm test` until you `npm rebuild better-sqlite3` back**. If native tests suddenly fail with a NODE_MODULE_VERSION error, that's why. `sharp` and `@lancedb/lancedb` are N-API/prebuilt and unaffected. (App-local native copies are future work.)
 - **`searchSegments` throws on an unregistered namespace**, so a `Retriever` must only be given `TextViewSearcher`s whose namespace appears in `store.listVectorSpaces()` — caption/transcript spaces don't exist until something has been indexed with those providers. `BehaviorViewSearcher` is always safe (it returns null without a behavior vector). See `DeskRagService.buildRetriever`.
 - **The app imports `dist/`, not `src/`** — after changing library code, `npm run build` before launching (`npm run app:dev` does both). Library types changing means the app's typecheck can break without any file in `app/` changing.
+- **`scripts/brand/emit-icons.ts` is macOS-only** — it shells out to `iconutil` to build the `.icns`. The rasterised PNG/ICNS/ICO binaries it and `emit-icons` produce are deliberately NOT drift-guarded byte-for-byte (unlike the SVG/Lottie emitters): libvips/librsvg output varies by version, so the test suite only checks the committed tray PNG isn't stale (alpha at a couple of geometry-derived pixels), not that it's byte-identical to a fresh render.
 
 ## Build order when extending
 Follow the dependency direction: `embed/` + `store/` first (prove the seam with the crash-recovery and scoped-ANN tests), then `timeline/` → `capture/` → `segment/` → `represent/` → `retrieve/`. New embeddable views register a `vector_space`, write text/raw first then the vector, and slot into reconciliation and a Tier-1 `ViewSearcher`. The app comes last: a new capability surfaces as a `deskrag` barrel export → an indexing stage or searcher in `DeskRagService` → a `Capabilities` flag + DTO field in `shared/types.ts` → UI.

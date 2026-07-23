@@ -72,6 +72,60 @@ export const mouthWidth = 6;
 export const BOB_AMPLITUDE = 8;
 
 /**
+ * Body gradient ramp, top to bottom. The SVG applies these as fractional stop
+ * offsets on a default objectBoundingBox gradient; the Lottie needs absolute
+ * start/end points instead, so the vertical extent the ramp spans in
+ * ghost-local coordinates is exported alongside the stops — derived from
+ * APEX_Y / HEM_Y / LOBE_DEPTH here, rather than hand-derived once and pasted
+ * into the emitter as a magic number that goes stale if the ghost's height
+ * changes.
+ */
+export const bodyGradient = {
+  stops: [
+    { offset: 0, color: palette.ghostTop },
+    { offset: 0.45, color: palette.ghostMid },
+    { offset: 1, color: palette.ghostBot },
+  ],
+  /** Horizontal position of the ramp, ghost-local x (the apex x). */
+  x: 120,
+  /** Vertical span of the ramp, ghost-local y: apex to the lowest hem depth. */
+  y0: APEX_Y,
+  y1: HEM_Y + LOBE_DEPTH,
+} as const;
+
+/** Contact-shadow gradient ramp, centre to edge: alpha only, one colour. */
+export const shadowGradient = {
+  stops: [
+    { offset: 0, alpha: palette.shadowOpacity },
+    { offset: 0.55, alpha: 0.2 },
+    { offset: 1, alpha: 0 },
+  ],
+} as const;
+
+/**
+ * Symmetric ease-in-out cubic-bezier control points — the one curve shared by
+ * the animated SVG's SMIL keySplines, its generated CSS, and the Lottie's
+ * keyframe handles. `in` is the outgoing handle's control point, `out` is the
+ * incoming handle's; a plain CSS `ease-in-out` keyword happens to be this
+ * exact curve, which is why the CSS below builds it explicitly instead of
+ * relying on the keyword continuing to match.
+ */
+export const EASE = {
+  in: { x: 0.42, y: 0 },
+  out: { x: 0.58, y: 1 },
+} as const;
+
+/** SMIL `keySplines` value for one segment between two keyframes. */
+export function easeSpline(): string {
+  return `${EASE.in.x} ${EASE.in.y} ${EASE.out.x} ${EASE.out.y}`;
+}
+
+/** CSS `cubic-bezier(...)`, the same curve as `easeSpline()` and the Lottie's easing. */
+export function easeCss(): string {
+  return `cubic-bezier(${EASE.in.x}, ${EASE.in.y}, ${EASE.out.x}, ${EASE.out.y})`;
+}
+
+/**
  * Two decimals — enough precision to be smooth, few enough to be stable output.
  * Normalises -0 to 0: Object.is(-0, 0) is false, so an unnormalised -0 makes
  * loop-seam assertions fail and puts a stray "-0" in generated path strings.

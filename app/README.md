@@ -87,6 +87,11 @@ For a production build (`app/out/`): `npm run app:build` from the repo root.
 > (`npm run build`) after changing library code. `npm run app:dev` / `app:build` do
 > that for you.
 
+> `npm run app:dist` (packaging via `electron-builder`) does not yet work: npm
+> workspaces hoist `electron` to the repo root's `node_modules`, and
+> `electron-builder` can't resolve it from there. Packaging is not implemented
+> in this version.
+
 ## macOS permissions
 
 The app reads live permission status and deep-links to the right System Settings

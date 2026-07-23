@@ -26,11 +26,11 @@
       75%  { transform: scale(1); opacity: 1; }
       100% { transform: scale(0.93); opacity: 0.821; }
     }
-    .dr-bob { animation: dr-bob 3s ease-in-out infinite; }
+    .dr-bob { animation: dr-bob 3s cubic-bezier(0.42, 0, 0.58, 1) infinite; }
     .dr-shadow {
       transform-box: fill-box;
       transform-origin: 50% 50%;
-      animation: dr-shadow 3s ease-in-out infinite;
+      animation: dr-shadow 3s cubic-bezier(0.42, 0, 0.58, 1) infinite;
     }
     @media (prefers-reduced-motion: reduce) {
       .dr-bob, .dr-shadow { animation: none; }

@@ -8,11 +8,11 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import sharp from "sharp";
-import { assetsDir } from "./emit-static.js";
+import { assetsDir, renderMark } from "./emit-static.js";
 import { bezierToPath, CANVAS, eyes, GHOST_FIT, ghostBodyPath, mouthBezier, mouthWidth } from "./geometry.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -108,7 +108,7 @@ export async function main(): Promise<void> {
   mkdirSync(buildDir, { recursive: true });
   mkdirSync(join(buildDir, "tray"), { recursive: true });
 
-  const markSvg = readFileSync(join(assetsDir, "deskrag-mark.svg"), "utf8");
+  const markSvg = renderMark();
 
   writeFileSync(join(buildDir, "icon.png"), await rasterise(markSvg, 1024));
 

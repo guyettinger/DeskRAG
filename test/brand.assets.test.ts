@@ -230,4 +230,40 @@ describe("icon emitter", () => {
     const domeY = (60 * GHOST_FIT.scale + GHOST_FIT.ty) * canvasScale;
     expect(alphaAt(domeX, domeY)).toBeGreaterThan(200);
   });
+
+  it("committed tray PNG is not stale (transparent eye, opaque body)", async () => {
+    // The freshly-rendered checks above never touch the COMMITTED icon —
+    // if `npm run gen:brand` ever dies partway (it throws on non-macOS
+    // before writing icons, after the SVG/Lottie were already rewritten),
+    // the committed PNG would go stale with an otherwise-green suite. This
+    // loads the committed file itself and checks alpha at geometry-derived
+    // points, scaled to the PNG's actual dimensions rather than a hardcoded
+    // coordinate. Deliberately weaker than a byte-compare: rasterisation
+    // output varies across libvips/librsvg versions (see emit-icons.ts).
+    const trayPath = join(assetsDir, "..", "app/build/tray/trayTemplate@2x.png");
+    const { data, info } = await sharp(trayPath)
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    // Pixel (x, y) covers the continuous region [x, x+1) x [y, y+1), so the
+    // containing pixel for a fractional coordinate is floor, not round — at
+    // this PNG's native 32x32 resolution the eye is only ~3px wide, so
+    // rounding to the nearer pixel can land just outside the cutout.
+    const alphaAt = (x: number, y: number): number => {
+      const px = Math.floor(x);
+      const py = Math.floor(y);
+      const idx = (py * info.width + px) * info.channels + 3;
+      return data[idx]!;
+    };
+    const canvasScale = info.width / CANVAS;
+
+    const eye = eyes[0]!;
+    const eyeX = (eye.cx * GHOST_FIT.scale + GHOST_FIT.tx) * canvasScale;
+    const eyeY = (eye.cy * GHOST_FIT.scale + GHOST_FIT.ty) * canvasScale;
+    expect(alphaAt(eyeX, eyeY)).toBe(0);
+
+    const domeX = (120 * GHOST_FIT.scale + GHOST_FIT.tx) * canvasScale;
+    const domeY = (60 * GHOST_FIT.scale + GHOST_FIT.ty) * canvasScale;
+    expect(alphaAt(domeX, domeY)).toBeGreaterThan(200);
+  });
 });

@@ -16,26 +16,28 @@ import {
 } from "./emit-static.js";
 import {
   CANVAS,
+  easeCss,
+  easeSpline,
   FPS,
   FRAMES,
   bob,
   ghostBodyPath,
   KEYFRAMES,
+  palette,
   shadowAt,
 } from "./geometry.js";
 
 const DUR = FRAMES / FPS;
-/** Symmetric ease-in-out, matching the Lottie's keyframe easing. */
-const SPLINE = "0.42 0 0.58 1";
 
 function css(): string {
   const s0 = shadowAt(0);
   const s25 = shadowAt(0.25);
   const s50 = shadowAt(0.5);
   const s75 = shadowAt(0.75);
-  // Element opacity is expressed relative to the gradient's own alpha, so the
-  // rendered alpha matches shadowAt() exactly in both formats.
-  const rel = (o: number): number => Math.round((o / s75.opacity) * 1000) / 1000;
+  // Element opacity is expressed relative to the shadow's own max alpha —
+  // the same explicit source the Lottie normalises against — so the rendered
+  // alpha matches shadowAt() exactly in both formats.
+  const rel = (o: number): number => Math.round((o / palette.shadowOpacity) * 1000) / 1000;
   // Generate bob keyframes by sampling bob(t) at each keyframe phase.
   const bobKeyframes = KEYFRAMES.map((t) => {
     const percent = Math.floor(t * 100);
@@ -57,11 +59,11 @@ function css(): string {
     `      75%  { transform: scale(${s75.scale}); opacity: ${rel(s75.opacity)}; }`,
     `      100% { transform: scale(${s0.scale}); opacity: ${rel(s0.opacity)}; }`,
     "    }",
-    `    .dr-bob { animation: dr-bob ${DUR}s ease-in-out infinite; }`,
+    `    .dr-bob { animation: dr-bob ${DUR}s ${easeCss()} infinite; }`,
     "    .dr-shadow {",
     "      transform-box: fill-box;",
     "      transform-origin: 50% 50%;",
-    `      animation: dr-shadow ${DUR}s ease-in-out infinite;`,
+    `      animation: dr-shadow ${DUR}s ${easeCss()} infinite;`,
     "    }",
     "    @media (prefers-reduced-motion: reduce) {",
     "      .dr-bob, .dr-shadow { animation: none; }",
@@ -74,7 +76,7 @@ function hemAnimate(): string {
   const values = KEYFRAMES.map((t) => ghostBodyPath(t)).join(";");
   const keyTimes = KEYFRAMES.join(";");
   const keySplines = KEYFRAMES.slice(1)
-    .map(() => SPLINE)
+    .map(() => easeSpline())
     .join(";");
   return [
     `        <animate attributeName="d" dur="${DUR}s" repeatCount="indefinite"`,
