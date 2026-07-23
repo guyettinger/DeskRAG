@@ -5,7 +5,7 @@
  * `d` animation is Chromium/WebKit-only while SMIL is portable.
  */
 
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   assetsDir,
@@ -15,10 +15,10 @@ import {
   shadowEl,
 } from "./emit-static.js";
 import {
-  BOB_AMPLITUDE,
   CANVAS,
   FPS,
   FRAMES,
+  bob,
   ghostBodyPath,
   KEYFRAMES,
   shadowAt,
@@ -36,14 +36,19 @@ function css(): string {
   // Element opacity is expressed relative to the gradient's own alpha, so the
   // rendered alpha matches shadowAt() exactly in both formats.
   const rel = (o: number): number => Math.round((o / s75.opacity) * 1000) / 1000;
+  // Generate bob keyframes by sampling bob(t) at each keyframe phase.
+  const bobKeyframes = KEYFRAMES.map((t) => {
+    const percent = Math.floor(t * 100);
+    const translateY = bob(t);
+    // Use units only for non-zero values, and pad percentage to align braces.
+    const unit = translateY === 0 ? "" : "px";
+    const spaces = " ".repeat(4 - percent.toString().length);
+    return `      ${percent}%${spaces}{ transform: translateY(${translateY}${unit}); }`;
+  }).join("\n");
   return [
     "  <style>",
     "    @keyframes dr-bob {",
-    "      0%   { transform: translateY(0); }",
-    `      25%  { transform: translateY(-${BOB_AMPLITUDE}px); }`,
-    "      50%  { transform: translateY(0); }",
-    `      75%  { transform: translateY(${BOB_AMPLITUDE}px); }`,
-    "      100% { transform: translateY(0); }",
+    bobKeyframes,
     "    }",
     "    @keyframes dr-shadow {",
     `      0%   { transform: scale(${s0.scale}); opacity: ${rel(s0.opacity)}; }`,
@@ -79,8 +84,9 @@ function hemAnimate(): string {
 }
 
 export function renderAnimatedSvg(): string {
-  // ghostGroup's <path> gets the SMIL child injected via bodyExtra by closing
-  // the tag ourselves: pass an attribute-free extra, then splice the animate in.
+  // ghostGroup emits a self-closing <path>, but we need to inject the hem's SMIL
+  // <animate> child. Splice it in by converting the self-closing tag to a full
+  // opening tag and closing it after the animation element.
   const group = ghostGroup(ghostBodyPath(0), "dr").replace(
     /(<path d="[^"]*" fill="url\(#dr-body\)")\/>/,
     `$1>\n${hemAnimate()}\n      </path>`,
@@ -101,6 +107,7 @@ export function renderAnimatedSvg(): string {
 }
 
 export function main(): void {
+  mkdirSync(assetsDir, { recursive: true });
   writeFileSync(join(assetsDir, "deskrag-ghost.svg"), renderAnimatedSvg());
   console.log("brand: wrote deskrag-ghost.svg");
 }
