@@ -4,6 +4,21 @@
   "description": "Local-first multimodal desktop session memory (DeskRAG)",
   "type": "module",
   "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./*": {
+      "types": "./dist/*.d.ts",
+      "default": "./dist/*.js"
+    }
+  },
+  "workspaces": [
+    "app"
+  ],
   "engines": {
     "node": ">=20"
   },
@@ -11,7 +26,10 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "build:ax": "swiftc -O native/ax-dump.swift -o native/ax-dump"
+    "build": "tsc -p tsconfig.build.json",
+    "build:ax": "swiftc -O native/ax-dump.swift -o native/ax-dump",
+    "app:dev": "npm run build && npm --workspace deskrag-app run dev",
+    "app:build": "npm run build && npm --workspace deskrag-app run build"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.72.1",
@@ -35,6 +53,7 @@
     "uiohook-napi": "^1.5.5"
   },
   "overrides": {
-    "tar": "^7.5.21"
+    "tar": "^7.5.21",
+    "vite": "6.4.3"
   }
 }
