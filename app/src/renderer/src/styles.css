@@ -887,3 +887,14 @@ select {
     transition: none !important;
   }
 }
+
+/* Brand ghost — animated only where it means something: the app is working
+   (indexing) or there is nothing yet to show (empty states). */
+.empty__ghost {
+  margin: 0 auto 14px;
+}
+.indexing__ghost {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 10px;
+}
