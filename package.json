@@ -1,7 +1,7 @@
 {
-  "name": "experience-rag",
+  "name": "deskrag",
   "version": "0.0.1",
-  "description": "Local-first multimodal desktop session memory (Experience RAG)",
+  "description": "Local-first multimodal desktop session memory (DeskRAG)",
   "type": "module",
   "license": "MIT",
   "engines": {

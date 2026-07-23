@@ -1,6 +1,6 @@
-# Experience RAG
+# DeskRAG
 
-**Local-first, multimodal desktop session memory.** Experience RAG captures what happens on your desktop — screen video, desktop + mic audio, mouse/keyboard input, active window, and the OS accessibility tree — into a searchable "experience memory," then lets you recall past moments by:
+**Local-first, multimodal desktop session memory.** DeskRAG captures what happens on your desktop — screen video, desktop + mic audio, mouse/keyboard input, active window, and the OS accessibility tree — into a searchable "experience memory," then lets you recall past moments by:
 
 - **semantic query** — *"that time I was debugging auth"*
 - **visual example** — *"find this screen / this dialog"*
@@ -69,7 +69,7 @@ import {
   Segmenter, Representer, FrameRepresenter,
   Retriever, TextViewSearcher, BehaviorViewSearcher,
   FakeEmbeddingProvider, BehaviorFeatureExtractor,
-} from "experience-rag";
+} from "deskrag";
 
 const store = await DualStore.open("meta.sqlite", "lancedb");
 const blobs = new BlobStore("blobs");

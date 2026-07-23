@@ -1,4 +1,4 @@
-// ax-dump — the macOS Accessibility sidecar for Experience RAG.
+// ax-dump — the macOS Accessibility sidecar for DeskRAG.
 //
 // Walks the focused window's AXUIElement tree of the target app (frontmost by
 // default, or `--pid <n>`) and prints a FLAT JSON array of UI elements to stdout:
