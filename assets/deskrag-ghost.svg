@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="DeskRAG">
+  <defs>
+    <linearGradient id="dr-body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.45" stop-color="#F3EEFF"/>
+      <stop offset="1" stop-color="#A18AF5"/>
+    </linearGradient>
+    <radialGradient id="dr-shadow">
+      <stop offset="0" stop-color="#6D5BD0" stop-opacity="0.28"/>
+      <stop offset="0.55" stop-color="#6D5BD0" stop-opacity="0.2"/>
+      <stop offset="1" stop-color="#6D5BD0" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <style>
+    @keyframes dr-bob {
+      0%   { transform: translateY(0); }
+      25%  { transform: translateY(-8px); }
+      50%  { transform: translateY(0); }
+      75%  { transform: translateY(8px); }
+      100% { transform: translateY(0); }
+    }
+    @keyframes dr-shadow {
+      0%   { transform: scale(0.93); opacity: 0.821; }
+      25%  { transform: scale(0.86); opacity: 0.643; }
+      50%  { transform: scale(0.93); opacity: 0.821; }
+      75%  { transform: scale(1); opacity: 1; }
+      100% { transform: scale(0.93); opacity: 0.821; }
+    }
+    .dr-bob { animation: dr-bob 3s ease-in-out infinite; }
+    .dr-shadow {
+      transform-box: fill-box;
+      transform-origin: 50% 50%;
+      animation: dr-shadow 3s ease-in-out infinite;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .dr-bob, .dr-shadow { animation: none; }
+    }
+  </style>
+  <rect x="20" y="213" width="216" height="7" rx="3.5" fill="#8A93A3" fill-opacity="0.55"/>
+  <ellipse cx="128" cy="216" rx="56" ry="11" fill="url(#dr-shadow)" class="dr-shadow"/>
+  <g class="dr-bob">
+    <g transform="translate(24.8 4.8) scale(0.86)">
+      <path d="M 24 196 C 24 196 24 130 24 130 C 24 62 66 20 120 20 C 174 20 216 62 216 130 C 216 130 216 196 216 196 C 216 219.84 172 219.84 152 183.37 C 132 222.91 108 222.91 88 184.09 C 68 218 24 218 24 196 Z" fill="url(#dr-body)">
+        <animate attributeName="d" dur="3s" repeatCount="indefinite"
+          calcMode="spline" keyTimes="0;0.25;0.5;0.75;1" keySplines="0.42 0 0.58 1;0.42 0 0.58 1;0.42 0 0.58 1;0.42 0 0.58 1"
+          values="M 24 196 C 24 196 24 130 24 130 C 24 62 66 20 120 20 C 174 20 216 62 216 130 C 216 130 216 196 216 196 C 216 219.84 172 219.84 152 183.37 C 132 222.91 108 222.91 88 184.09 C 68 218 24 218 24 196 Z;M 24 196 C 24 196 24 130 24 130 C 24 62 66 20 120 20 C 174 20 216 62 216 130 C 216 130 216 196 216 196 C 216 213.35 172 213.35 152 187.45 C 132 218.94 108 218.94 88 183.69 C 68 223 24 223 24 196 Z;M 24 196 C 24 196 24 130 24 130 C 24 62 66 20 120 20 C 174 20 216 62 216 130 C 216 130 216 196 216 196 C 216 216.16 172 216.16 152 188.63 C 132 213.09 108 213.09 88 187.91 C 68 218 24 218 24 196 Z;M 24 196 C 24 196 24 130 24 130 C 24 62 66 20 120 20 C 174 20 216 62 216 130 C 216 130 216 196 216 196 C 216 222.65 172 222.65 152 184.55 C 132 217.06 108 217.06 88 188.31 C 68 213 24 213 24 196 Z;M 24 196 C 24 196 24 130 24 130 C 24 62 66 20 120 20 C 174 20 216 62 216 130 C 216 130 216 196 216 196 C 216 219.84 172 219.84 152 183.37 C 132 222.91 108 222.91 88 184.09 C 68 218 24 218 24 196 Z"/>
+      </path>
+      <ellipse cx="88" cy="112" rx="13" ry="17" fill="#12161C"/>
+      <ellipse cx="152" cy="112" rx="13" ry="17" fill="#12161C"/>
+      <path d="M 110 130 Q 120 141 130 130" fill="none" stroke="#12161C" stroke-width="6" stroke-linecap="round"/>
+    </g>
+  </g>
+</svg>

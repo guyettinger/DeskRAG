@@ -4,5 +4,7 @@
  */
 
 import { main as emitStatic } from "./emit-static.js";
+import { main as emitSvg } from "./emit-svg.js";
 
 emitStatic();
+emitSvg();
