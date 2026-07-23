@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 208" width="720" height="208" role="img" aria-label="DeskRAG">
+  <defs>
+    <linearGradient id="dr-body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.45" stop-color="#F3EEFF"/>
+      <stop offset="1" stop-color="#A18AF5"/>
+    </linearGradient>
+    <radialGradient id="dr-shadow">
+      <stop offset="0" stop-color="#6D5BD0" stop-opacity="0.28"/>
+      <stop offset="0.55" stop-color="#6D5BD0" stop-opacity="0.2"/>
+      <stop offset="1" stop-color="#6D5BD0" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <g transform="translate(8 16) scale(0.6875)">
+  <rect x="20" y="213" width="216" height="7" rx="3.5" fill="#8A93A3" fill-opacity="0.55"/>
+  <ellipse cx="128" cy="216" rx="56" ry="11" fill="url(#dr-shadow)"/>
+    <g transform="translate(24.8 4.8) scale(0.86)">
+      <path d="M 24 196 C 24 196 24 130 24 130 C 24 62 66 20 120 20 C 174 20 216 62 216 130 C 216 130 216 196 216 196 C 216 219.84 172 219.84 152 183.37 C 132 222.91 108 222.91 88 184.09 C 68 218 24 218 24 196 Z" fill="url(#dr-body)"/>
+      <ellipse cx="88" cy="112" rx="13" ry="17" fill="#12161C"/>
+      <ellipse cx="152" cy="112" rx="13" ry="17" fill="#12161C"/>
+      <path d="M 110 130 Q 120 141 130 130" fill="none" stroke="#12161C" stroke-width="6" stroke-linecap="round"/>
+    </g>
+  </g>
+  <text x="212" y="134" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif" font-size="88" font-weight="650" letter-spacing="-1.5">
+    <tspan fill="#8892A3">Desk</tspan><tspan fill="#A18AF5">RAG</tspan>
+  </text>
+</svg>

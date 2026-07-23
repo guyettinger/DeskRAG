@@ -28,6 +28,7 @@
     "test:watch": "vitest",
     "build": "tsc -p tsconfig.build.json",
     "build:ax": "swiftc -O native/ax-dump.swift -o native/ax-dump",
+    "gen:brand": "tsx scripts/brand/index.ts",
     "app:dev": "npm run build && npm --workspace deskrag-app run dev",
     "app:build": "npm run build && npm --workspace deskrag-app run build"
   },
