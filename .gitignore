@@ -19,5 +19,8 @@ out/
 native/ax-dump
 native/ax-dump.dSYM/
 
+# brand asset build scratch directory
+app/build/*.iconset/
+
 .DS_Store
 .idea/

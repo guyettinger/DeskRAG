@@ -104,8 +104,13 @@ export async function main(): Promise<void> {
   for (const { name, size } of ICNS_SET) {
     writeFileSync(join(iconset, name), await rasterise(markSvg, size));
   }
-  execFileSync("iconutil", ["-c", "icns", iconset, "-o", join(buildDir, "icon.icns")]);
-  rmSync(iconset, { recursive: true, force: true });
+  try {
+    execFileSync("iconutil", ["-c", "icns", iconset, "-o", join(buildDir, "icon.icns")]);
+  } finally {
+    // Clean up scratch directory whether conversion succeeded or failed. Do not
+    // swallow the error: if iconutil fails, the exception propagates so the build fails loudly.
+    rmSync(iconset, { recursive: true, force: true });
+  }
 
   const icoSizes = [16, 32, 48, 64, 128, 256];
   const icoPngs: { size: number; data: Buffer }[] = [];

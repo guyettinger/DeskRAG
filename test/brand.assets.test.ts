@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { assetsDir, renderLogo, renderMark } from "../scripts/brand/emit-static.js";
 import { renderAnimatedSvg } from "../scripts/brand/emit-svg.js";
-import { FPS, FRAMES, KEYFRAMES } from "../scripts/brand/geometry.js";
+import { FPS, FRAMES, KEYFRAMES, palette } from "../scripts/brand/geometry.js";
 
 const read = (name: string): string => readFileSync(join(assetsDir, name), "utf8");
 
@@ -198,5 +198,7 @@ describe("icon emitter", () => {
     expect(svg).not.toContain("url(#tray-body)");
     expect(svg).not.toContain("#8A93A3"); // desk bar dropped
     expect(svg).not.toContain("#A18AF5"); // no gradient violet
+    expect(svg).toContain("#FFFFFF"); // face knocked out to white
+    expect(svg).not.toContain(palette.face); // original face color replaced
   });
 });
