@@ -13,6 +13,19 @@ then search your sessions as a contact sheet of keyframes and drill into any hit
   (digest/behavior always; frame/caption/region and transcript when configured).
 - **Keys** are stored encrypted in the OS keychain (`safeStorage`), never sent to
   the renderer in plaintext.
+- **Keyframes stream over a `deskrag://frame/<blobId>` protocol** rather than being
+  marshalled through IPC as base64.
+
+## Screens
+
+| Screen | What's there |
+| --- | --- |
+| **Record** | Signal switchboard (screen · input · active window · microphone · accessibility tree) with a status LED each, inline notes for a missing permission (Grant / Open Settings) or a missing tool (`ffmpeg`, `ax-dump`), elapsed timecode, and stage-by-stage indexing progress after Stop. |
+| **Search** | Text query, or an image file as a visual example (needs an image provider). Hits render as a contact sheet of keyframes — timecode, wall-clock, segment digest, score, highlight count — and open into a detail view with the full keyframe, region highlight boxes, the captured AX elements, and the segment's digest / caption / transcript. |
+| **Settings** | Embeddings (Ollama host + model, image provider, caption provider, Tier-4 rerank), API keys, local Whisper binary + model, and capture defaults (frame rate, keyframe max width, audio device, chunk seconds). |
+
+Closing the window hides the app to a menu-bar tray — **recording keeps running**,
+and the tray menu can start/stop it. Only Quit closes the store.
 
 ## Setup (dev)
 
@@ -61,7 +74,14 @@ Or, after `npm run build` + the native rebuild:
 
 ```bash
 npm --workspace deskrag-app run dev
+npm --workspace deskrag-app run typecheck   # the app's gate (renderer + node tsconfigs)
 ```
+
+For a production build (`app/out/`): `npm run app:build` from the repo root.
+
+> The app imports the library from `dist/`, not `src/` — rebuild the library
+> (`npm run build`) after changing library code. `npm run app:dev` / `app:build` do
+> that for you.
 
 ## macOS permissions
 
@@ -72,6 +92,8 @@ app from the Record screen.
 
 ## Data
 
-Everything lives under `~/Library/Application Support/DeskRAG/DeskRAG/`:
-`app.db` (SQLite), `lance/` (vectors), `blobs/` (keyframes + audio),
-`settings.json`, `keys.enc`, `sessions.json`.
+Everything lives under `<userData>/DeskRAG/` — in dev that's
+`~/Library/Application Support/deskrag-app/DeskRAG/`: `app.db` (SQLite),
+`lance/` (vectors), `blobs/` (keyframes + audio), `settings.json`, `keys.enc`,
+`sessions.json`. (`<userData>` follows Electron's app name, so a packaged build
+with a `productName` set will use a different parent directory.)
