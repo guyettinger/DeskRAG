@@ -12,27 +12,41 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import sharp from "sharp";
-import { assetsDir, ghostGroup } from "./emit-static.js";
-import { CANVAS, ghostBodyPath, palette } from "./geometry.js";
+import { assetsDir } from "./emit-static.js";
+import { bezierToPath, CANVAS, eyes, GHOST_FIT, ghostBodyPath, mouthBezier, mouthWidth } from "./geometry.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const buildDir = join(here, "../../app/build");
 
 /**
  * The tray mark: ghost silhouette only, solid black on transparent. macOS
- * template images must be black + alpha; the OS inverts them for a dark menu
- * bar. The desk bar is dropped — it is illegible at 16px.
+ * template images use only the alpha channel — colour is discarded and the
+ * shape re-tinted to match the menu bar, so a "white" face is just as opaque
+ * as a black body and would not read as knocked out. The face must instead be
+ * genuinely transparent: an SVG mask, drawn in the same ghost-local space
+ * GHOST_FIT places on the canvas, with the body in mask-white (keep) and the
+ * eyes/mouth in mask-black (cut away). The desk bar is dropped — it is
+ * illegible at 16px.
  */
 export function renderTrayMark(): string {
-  // Solid black body, knocked-out face, no gradients and no <defs> — a template
-  // image that carried any colour would defeat the menu-bar inversion.
-  const mono = ghostGroup(ghostBodyPath(0), "tray")
-    .replace('fill="url(#tray-body)"', 'fill="#000000"')
-    .replaceAll(palette.face, "#FFFFFF");
+  const fit = `translate(${GHOST_FIT.tx} ${GHOST_FIT.ty}) scale(${GHOST_FIT.scale})`;
+  const eyeEls = eyes
+    .map((e) => `      <ellipse cx="${e.cx}" cy="${e.cy}" rx="${e.rx}" ry="${e.ry}" fill="#000000"/>`)
+    .join("\n");
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${CANVAS} ${CANVAS}"` +
       ` width="${CANVAS}" height="${CANVAS}">`,
-    mono,
+    "  <defs>",
+    `    <mask id="tray-mask" maskUnits="userSpaceOnUse" x="0" y="0" width="${CANVAS}" height="${CANVAS}">`,
+    `      <g transform="${fit}">`,
+    `        <path d="${ghostBodyPath(0)}" fill="#FFFFFF"/>`,
+    eyeEls,
+    `        <path d="${bezierToPath(mouthBezier(), false)}" fill="none" stroke="#000000"` +
+      ` stroke-width="${mouthWidth}" stroke-linecap="round"/>`,
+    "      </g>",
+    "    </mask>",
+    "  </defs>",
+    `  <rect x="0" y="0" width="${CANVAS}" height="${CANVAS}" fill="#000000" mask="url(#tray-mask)"/>`,
     "</svg>",
     "",
   ].join("\n");

@@ -1,9 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import sharp from "sharp";
 import { assetsDir, renderLogo, renderMark } from "../scripts/brand/emit-static.js";
 import { renderAnimatedSvg } from "../scripts/brand/emit-svg.js";
-import { FPS, FRAMES, KEYFRAMES, palette } from "../scripts/brand/geometry.js";
+import { CANVAS, eyes, FPS, FRAMES, GHOST_FIT, KEYFRAMES, palette } from "../scripts/brand/geometry.js";
 
 const read = (name: string): string => readFileSync(join(assetsDir, name), "utf8");
 
@@ -190,15 +191,43 @@ describe("icon emitter", () => {
     expect(ico.subarray(offset, offset + len)).toEqual(first);
   });
 
-  it("renders the tray mark as a black+alpha template with no desk", () => {
-    // macOS template images must be black + alpha only; any gradient or the
-    // desk bar's grey would defeat the menu-bar inversion.
+  it("renders the tray mark as a black+alpha template with no desk", async () => {
+    // macOS template images use only the alpha channel — colour is discarded,
+    // so a "white" face would be just as opaque as the black body and
+    // wouldn't read as knocked out. The face must be genuinely transparent
+    // (alpha 0), which this rasterises and checks for directly.
     const svg = renderTrayMark();
-    expect(svg).toContain('fill="#000000"');
     expect(svg).not.toContain("url(#tray-body)");
     expect(svg).not.toContain("#8A93A3"); // desk bar dropped
     expect(svg).not.toContain("#A18AF5"); // no gradient violet
-    expect(svg).toContain("#FFFFFF"); // face knocked out to white
-    expect(svg).not.toContain(palette.face); // original face color replaced
+    expect(svg).not.toContain(palette.face); // original face color not restated
+
+    const size = 256;
+    const { data, info } = await sharp(Buffer.from(svg))
+      .resize(size, size)
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const alphaAt = (x: number, y: number): number => {
+      const px = Math.round(x);
+      const py = Math.round(y);
+      const idx = (py * info.width + px) * info.channels + 3;
+      return data[idx]!;
+    };
+    const canvasScale = size / CANVAS;
+
+    // An eye centre, mapped from ghost-local space through GHOST_FIT into
+    // canvas space, then scaled to the rasterised size: must be fully
+    // transparent — the face is cut out of the silhouette.
+    const eye = eyes[0]!;
+    const eyeX = (eye.cx * GHOST_FIT.scale + GHOST_FIT.tx) * canvasScale;
+    const eyeY = (eye.cy * GHOST_FIT.scale + GHOST_FIT.ty) * canvasScale;
+    expect(alphaAt(eyeX, eyeY)).toBe(0);
+
+    // A point in the ghost's upper dome: clearly inside the body, outside the
+    // face — must be solidly opaque.
+    const domeX = (120 * GHOST_FIT.scale + GHOST_FIT.tx) * canvasScale;
+    const domeY = (60 * GHOST_FIT.scale + GHOST_FIT.ty) * canvasScale;
+    expect(alphaAt(domeX, domeY)).toBeGreaterThan(200);
   });
 });
