@@ -159,6 +159,33 @@ function ghostLayer(): unknown {
     a: { a: 0, k: [0, 0] },
     s: { a: 0, k: [100, 100] },
   }, [
+    // Shape group order within a layer: Lottie paints EARLIER groups on top
+    // (the opposite of SVG, where later elements are on top). ghost-group is
+    // an opaque gradient-filled body, so it must come LAST or it covers the
+    // face. Do not "tidy" this back into SVG order (mouth, face, body would
+    // become body, face, mouth) — that hides the face again.
+    {
+      ty: "gr",
+      nm: "mouth-group",
+      it: [
+        mouth,
+        {
+          ty: "st",
+          nm: "mouth-stroke",
+          c: { a: 0, k: [...rgb(palette.face), 1] },
+          o: { a: 0, k: 100 },
+          w: { a: 0, k: 6 },
+          lc: 2,
+          lj: 2,
+        },
+        fit(),
+      ],
+    },
+    {
+      ty: "gr",
+      nm: "face-group",
+      it: [...eyeShapes, fill(palette.face), fit()],
+    },
     {
       ty: "gr",
       nm: "ghost-group",
@@ -183,28 +210,6 @@ function ghostLayer(): unknown {
               ],
             },
           },
-        },
-        fit(),
-      ],
-    },
-    {
-      ty: "gr",
-      nm: "face-group",
-      it: [...eyeShapes, fill(palette.face), fit()],
-    },
-    {
-      ty: "gr",
-      nm: "mouth-group",
-      it: [
-        mouth,
-        {
-          ty: "st",
-          nm: "mouth-stroke",
-          c: { a: 0, k: [...rgb(palette.face), 1] },
-          o: { a: 0, k: 100 },
-          w: { a: 0, k: 6 },
-          lc: 2,
-          lj: 2,
         },
         fit(),
       ],

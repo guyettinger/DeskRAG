@@ -100,7 +100,12 @@ describe("ghost Lottie", () => {
     // single most likely way a hand-rolled Lottie breaks.
     const doc = JSON.parse(renderLottie());
     const ghost = doc.layers[0];
-    const body = ghost.shapes[0].it.find((x: { ty: string }) => x.ty === "sh");
+    // Located by group name, not array position — paint order (see the
+    // "paints the body last" test below) puts ghost-group at a specific
+    // index for a reason unrelated to this assertion, and that index must
+    // stay free to move without breaking vertex-count coverage here.
+    const ghostGroup = ghost.shapes.find((g: { nm: string }) => g.nm === "ghost-group");
+    const body = ghostGroup.it.find((x: { ty: string }) => x.ty === "sh");
     const keys = body.ks.k as LottieShapeKeyframe[];
     expect(keys.length).toBeGreaterThan(1);
     const expected = ghostBodyBezier(0).v.length;
@@ -132,5 +137,26 @@ describe("ghost Lottie", () => {
 
   it("contains no NaN — JSON.stringify turns those into null and lottie hangs", () => {
     expect(renderLottie()).not.toMatch(/null/);
+  });
+
+  it("paints the opaque body group last so it doesn't cover the face", () => {
+    // Empirically verified in lottie-web: unlike SVG, Lottie paints EARLIER
+    // shape groups on top of later ones within a layer. The body
+    // (ghost-group) is an opaque gradient fill — if it isn't last in
+    // doc.layers[0].shapes, it paints over the eyes and mouth and the face
+    // silently disappears (no console error, no invalid document). Do not
+    // "fix" this ordering by matching the SVG twin's paint order.
+    const doc = JSON.parse(renderLottie());
+    const ghost = doc.layers[0];
+    const names = ghost.shapes.map((g: { nm: string }) => g.nm);
+    expect(names).toEqual(["mouth-group", "face-group", "ghost-group"]);
+
+    // Belt-and-suspenders: identify the body group structurally too — the
+    // one whose `it` array has both a path ("sh") and a gradient fill
+    // ("gf") — and confirm it is the final (bottom-painted) group.
+    const isBodyGroup = (g: { it: { ty: string }[] }): boolean =>
+      g.it.some((x) => x.ty === "sh") && g.it.some((x) => x.ty === "gf");
+    const bodyIndex = ghost.shapes.findIndex(isBodyGroup);
+    expect(bodyIndex).toBe(ghost.shapes.length - 1);
   });
 });
