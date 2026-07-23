@@ -8,6 +8,11 @@
  *
  * Inlined rather than used as an <img src>, so it needs no relaxation of the
  * renderer's Content-Security-Policy.
+ *
+ * SINGLE INSTANCE ONLY. The generated SVG defines its gradients as `dr-body`
+ * and `dr-shadow`; inlining makes those ids document-global, so a second
+ * GhostMark on the same screen would silently corrupt both marks' gradients.
+ * Prefix the ids per instance before rendering more than one.
  */
 
 import React from "react";
