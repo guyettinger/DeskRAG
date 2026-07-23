@@ -94,6 +94,22 @@ export class CaptureSession {
         }
         return res;
       },
+      // Persist a raw audio chunk as a blob (mic/desktop_audio). Best-effort:
+      // without a blob store there is nowhere to keep the bytes, so drop it.
+      ingestAudio: async (chunk) => {
+        if (!this.opts.blobStore) return;
+        const insert = await this.opts.blobStore.write(
+          this.sessionId!,
+          chunk.media,
+          chunk.bytes,
+          {
+            tMonoStart: chunk.tMonoStart,
+            tMonoEnd: chunk.tMonoEnd,
+            codec: chunk.codec,
+          },
+        );
+        await this.store.putBlobs([insert]);
+      },
       emitEvent: (ev) => {
         const row: EventInsert = {
           id: ulid(),

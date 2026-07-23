@@ -30,6 +30,21 @@ export interface EmittedEvent {
   tMono?: number;
 }
 
+/**
+ * A self-contained chunk of raw audio (e.g. one ~10s window of mic PCM wrapped in
+ * a WAV container), stamped on the monotonic clock. Persisted verbatim as a blob
+ * so the transcript view can be (re-)generated from the raw audio later.
+ */
+export interface AudioChunk {
+  bytes: Uint8Array;
+  tMonoStart: number;
+  tMonoEnd: number;
+  /** Microphone vs. desktop/system audio loopback. */
+  media: "mic" | "desktop_audio";
+  /** Container/codec, e.g. "wav" | "aac". */
+  codec: string;
+}
+
 export interface CaptureContext {
   readonly sessionId: string;
   readonly clock: MonotonicClock;
@@ -37,6 +52,8 @@ export interface CaptureContext {
   emitEvent(ev: EmittedEvent): void;
   /** Run a sampled frame through keyframe gating + persistence (frame producers). */
   ingestFrame(frame: SampledFrame): Promise<IngestResult>;
+  /** Persist a raw audio chunk as a blob (audio producers). No-op without a blob store. */
+  ingestAudio(chunk: AudioChunk): Promise<void>;
 }
 
 export interface Producer {

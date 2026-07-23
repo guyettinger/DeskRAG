@@ -17,7 +17,7 @@ export { RingBuffer } from "./timeline/ring-buffer.js";
 export { mergeSortedByTMono, isMonotonic, type Stamped } from "./timeline/sync.js";
 
 // capture/ — producer contract + session orchestration
-export type { Producer, CaptureContext, EmittedEvent, EventKind } from "./capture/types.js";
+export type { Producer, CaptureContext, EmittedEvent, EventKind, AudioChunk } from "./capture/types.js";
 export { CaptureSession, type CaptureSessionOptions } from "./capture/session.js";
 export { EventBatcher, type BatcherOptions } from "./capture/batcher.js";
 export { SyntheticInputProducer } from "./capture/synthetic.js";
@@ -44,6 +44,12 @@ export {
   FfmpegScreenProducer,
   type FfmpegScreenOptions,
 } from "./capture/producers/ffmpeg-screen.js";
+// audio capture (child_process only, like the screen producer) + WAV helper
+export {
+  FfmpegAudioProducer,
+  type FfmpegAudioOptions,
+} from "./capture/producers/ffmpeg-audio.js";
+export { encodeWav, type WavFormat } from "./capture/producers/wav.js";
 
 // segment/ — boundary detection + multi-granularity windowing
 export { Segmenter, type SegmentResult } from "./segment/segmenter.js";
@@ -117,6 +123,18 @@ export {
 export { FakeCaptionProvider } from "./represent/caption/fake.js";
 export { AnthropicCaptionProvider, type AnthropicCaptionOptions } from "./represent/caption/anthropic.js";
 export { GeminiCaptionProvider, type GeminiCaptionOptions } from "./represent/caption/gemini.js";
+// transcript view (STT) — the FakeTranscription + representer are pure; the
+// whisper.cpp adapter spawns a subprocess and is imported from its own path.
+export {
+  TranscriptRepresenter,
+  type TranscriptRepresenterOptions,
+  type TranscriptRepresentResult,
+} from "./represent/transcript/transcript-representer.js";
+export { FakeTranscription } from "./represent/transcript/fake.js";
+export {
+  WhisperCppTranscription,
+  type WhisperCppOptions,
+} from "./represent/transcript/whisper-cpp.js";
 
 // retrieve/ — coarse-to-fine tiers (Tier 1: multi-view segment ANN + RRF)
 export {

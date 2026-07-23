@@ -27,4 +27,12 @@ describe("FrameChunker", () => {
   it("rejects a non-positive frame size", () => {
     expect(() => new FrameChunker(0)).toThrow();
   });
+
+  it("flush() returns and clears a trailing partial frame (short audio window)", () => {
+    const c = new FrameChunker(4);
+    c.push(Uint8Array.from([1, 2, 3])); // never completes a frame
+    expect(c.flush()).toEqual(Uint8Array.from([1, 2, 3]));
+    expect(c.pending).toBe(0);
+    expect(c.flush()).toBeUndefined(); // nothing left
+  });
 });
