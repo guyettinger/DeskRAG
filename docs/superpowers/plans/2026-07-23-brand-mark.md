@@ -411,7 +411,7 @@ different curves."
 - Produces:
   - `renderMark(): string` — the 256×256 square mark
   - `renderLogo(): string` — the horizontal lockup
-  - `ghostDefs(idPrefix: string): string` — the `<defs>` block (gradients), reused by Tasks 3 and 5
+  - `ghostDefs(idPrefix: string): string` — the `<defs>` block (gradients), reused by Task 3
   - `deskRect(): string` — the desk bar, reused by Task 3
   - `shadowEl(idPrefix: string, extra?: string): string` — the contact shadow, reused by Task 3
   - `ghostGroup(pathD: string, idPrefix: string): string` — the fitted ghost `<g>` (body + face), reused by Tasks 3 and 5
@@ -1377,9 +1377,60 @@ Raster icons for the dock, the tray, and packaged builds.
 - Consumes: `geometry.js` (Task 1); `renderMark`, `ghostGroup`, `ghostDefs` from `emit-static.js` (Task 2).
 - Produces: `renderTrayMark(): string`, `packIco(pngs: { size: number; data: Buffer }[]): Buffer`, `main(): Promise<void>`.
 
-**Note:** this emitter is macOS-only (it shells out to `iconutil`). Its outputs are committed, so contributors on other platforms never need to run it. It is deliberately **not** covered by the drift guard — rasterisation output varies with the installed libvips/librsvg version, so byte-comparing PNGs would fail across machines.
+**Note:** this emitter is macOS-only (it shells out to `iconutil`). Its outputs are committed, so contributors on other platforms never need to run it. The rasterised **files** are deliberately **not** covered by the drift guard — rasterisation output varies with the installed libvips/librsvg version, so byte-comparing PNGs would fail across machines. The two pure functions (`packIco`, `renderTrayMark`) *are* unit-tested; only the rasterisation is left to manual inspection.
 
-- [ ] **Step 1: Write the emitter**
+- [ ] **Step 1: Write the failing tests for the pure functions**
+
+Append to `test/brand.assets.test.ts`:
+
+```ts
+import { packIco, renderTrayMark } from "../scripts/brand/emit-icons.js";
+
+describe("icon emitter", () => {
+  it("packs an ICO with a correct header and directory", () => {
+    const pngs = [
+      { size: 16, data: Buffer.alloc(10, 1) },
+      { size: 256, data: Buffer.alloc(20, 2) },
+    ];
+    const ico = packIco(pngs);
+    expect(ico.readUInt16LE(0)).toBe(0); // reserved
+    expect(ico.readUInt16LE(2)).toBe(1); // type: icon
+    expect(ico.readUInt16LE(4)).toBe(2); // image count
+    // 256 is encoded as 0 in the single width/height bytes.
+    expect(ico.readUInt8(6)).toBe(16);
+    expect(ico.readUInt8(6 + 16)).toBe(0);
+    // First payload starts after the 6-byte header + two 16-byte entries.
+    expect(ico.readUInt32LE(6 + 12)).toBe(38);
+    expect(ico.readUInt32LE(6 + 16 + 12)).toBe(48);
+    expect(ico.length).toBe(38 + 10 + 20);
+  });
+
+  it("preserves the payload bytes at the offsets it advertises", () => {
+    const first = Buffer.alloc(10, 1);
+    const ico = packIco([{ size: 16, data: first }]);
+    const offset = ico.readUInt32LE(6 + 12);
+    const len = ico.readUInt32LE(6 + 8);
+    expect(ico.subarray(offset, offset + len)).toEqual(first);
+  });
+
+  it("renders the tray mark as a black+alpha template with no desk", () => {
+    // macOS template images must be black + alpha only; any gradient or the
+    // desk bar's grey would defeat the menu-bar inversion.
+    const svg = renderTrayMark();
+    expect(svg).toContain('fill="#000000"');
+    expect(svg).not.toContain("url(#tray-body)");
+    expect(svg).not.toContain("#8A93A3"); // desk bar dropped
+    expect(svg).not.toContain("#A18AF5"); // no gradient violet
+  });
+});
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `npx vitest run test/brand.assets.test.ts`
+Expected: FAIL — cannot resolve `../scripts/brand/emit-icons.js`.
+
+- [ ] **Step 3: Write the emitter**
 
 Create `scripts/brand/emit-icons.ts`:
 
@@ -1398,7 +1449,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import sharp from "sharp";
-import { assetsDir, ghostDefs, ghostGroup } from "./emit-static.js";
+import { assetsDir, ghostGroup } from "./emit-static.js";
 import { CANVAS, ghostBodyPath, palette } from "./geometry.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -1410,17 +1461,15 @@ const buildDir = join(here, "../../app/build");
  * bar. The desk bar is dropped — it is illegible at 16px.
  */
 export function renderTrayMark(): string {
-  const body = ghostBodyPath(0);
-  const mono = ghostGroup(body, "tray")
+  // Solid black body, knocked-out face, no gradients and no <defs> — a template
+  // image that carried any colour would defeat the menu-bar inversion.
+  const mono = ghostGroup(ghostBodyPath(0), "tray")
     .replace('fill="url(#tray-body)"', 'fill="#000000"')
-    .replace(new RegExp(palette.face, "g"), "#FFFFFF");
+    .replaceAll(palette.face, "#FFFFFF");
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${CANVAS} ${CANVAS}"` +
       ` width="${CANVAS}" height="${CANVAS}">`,
-    ghostDefs("tray"),
-    "  <g>",
     mono,
-    "  </g>",
     "</svg>",
     "",
   ].join("\n");
@@ -1508,7 +1557,7 @@ export async function main(): Promise<void> {
 }
 ```
 
-- [ ] **Step 2: Wire it into the runner**
+- [ ] **Step 4: Wire it into the runner**
 
 `scripts/brand/index.ts` becomes:
 
@@ -1526,12 +1575,12 @@ await emitIcons();
 
 Top-level `await` is fine — the file is ESM and the package is `"type": "module"`.
 
-- [ ] **Step 3: Generate the icons**
+- [ ] **Step 5: Generate the icons**
 
 Run: `npm run gen:brand`
 Expected: the four "brand: wrote …" lines, ending with the icons line.
 
-- [ ] **Step 4: Verify the icons rendered, not blanked**
+- [ ] **Step 6: Verify the icons rendered, not blanked**
 
 ```bash
 ls -l app/build app/build/tray
@@ -1543,19 +1592,20 @@ Expected: `icon.png` is 1024×1024 and shows the full colour mark; `trayTemplate
 
 A fully transparent or fully black `icon.png` means `sharp` failed to resolve the gradients — confirm no `<filter>` crept into `deskrag-mark.svg` (the Task 2 test guards this).
 
-- [ ] **Step 5: Verify the ICO is well-formed**
+- [ ] **Step 7: Run the tests, and verify the real ICO on disk**
 
 ```bash
+npx vitest run test/brand.assets.test.ts
 node -e "const b=require('fs').readFileSync('app/build/icon.ico');console.log('type',b.readUInt16LE(2),'count',b.readUInt16LE(4),'firstOffset',b.readUInt32LE(18))"
 ```
-Expected: `type 1 count 6 firstOffset 102` (6 header bytes + 6×16 directory bytes).
+Expected: tests PASS, 19 tests. Then `type 1 count 6 firstOffset 102` (6 header bytes + 6×16 directory bytes) — the unit test covers the packer's logic, this confirms the actual emitted file.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 npm run typecheck
 npm test
-git add scripts/brand/emit-icons.ts scripts/brand/index.ts app/build
+git add scripts/brand/emit-icons.ts scripts/brand/index.ts test/brand.assets.test.ts app/build
 git commit -m "feat(brand): rasterise app, tray, and packaging icons
 
 sharp for SVG->PNG, system iconutil for .icns, a hand-rolled packer for .ico.
