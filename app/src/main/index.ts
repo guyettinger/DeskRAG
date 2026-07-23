@@ -27,6 +27,18 @@ if (!process.env["ERAG_AX_BIN"]) {
   if (existsSync(sidecar)) process.env["ERAG_AX_BIN"] = sidecar;
 }
 
+/**
+ * Icons live in app/build/, outside the bundle. In dev the main bundle runs
+ * from app/out/main; packaged, resources sit beside it. Try both.
+ */
+function brandAsset(...segments: string[]): string {
+  const candidates = [
+    join(__dirname, "../../build", ...segments),
+    join(process.resourcesPath ?? "", "build", ...segments),
+  ];
+  return candidates.find((p) => existsSync(p)) ?? candidates[0]!;
+}
+
 function createWindow(): void {
   win = new BrowserWindow({
     width: 1180,
@@ -37,6 +49,7 @@ function createWindow(): void {
     title: "DeskRAG",
     backgroundColor: "#0f1115",
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
+    icon: brandAsset("icon.png"),
     webPreferences: {
       preload: join(__dirname, "../preload/index.mjs"),
       sandbox: false,
@@ -99,7 +112,13 @@ function showWindow(): void {
 }
 
 function createTray(): void {
-  tray = new Tray(nativeImage.createEmpty());
+  // A template image is black + alpha; macOS inverts it for the menu bar, so
+  // one asset covers light and dark. Falls back to an empty image rather than
+  // throwing if the generated icon is missing.
+  const trayIcon = nativeImage.createFromPath(brandAsset("tray", "trayTemplate.png"));
+  if (!trayIcon.isEmpty()) trayIcon.setTemplateImage(true);
+  tray = new Tray(trayIcon.isEmpty() ? nativeImage.createEmpty() : trayIcon);
+  tray.setToolTip("DeskRAG");
   tray.on("click", () => showWindow());
   rebuildTray();
 }
@@ -113,6 +132,12 @@ app.whenReady().then(async () => {
   registerProtocol(service);
   registerIpc(service, settings, () => win);
   service.onState(() => rebuildTray());
+
+  // An unpackaged macOS dev run shows Electron's own dock icon otherwise.
+  if (process.platform === "darwin" && app.dock) {
+    const dockIcon = nativeImage.createFromPath(brandAsset("icon.png"));
+    if (!dockIcon.isEmpty()) app.dock.setIcon(dockIcon);
+  }
 
   createWindow();
   createTray();

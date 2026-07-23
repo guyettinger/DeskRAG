@@ -1,0 +1,17 @@
+appId: com.deskrag.app
+productName: DeskRAG
+directories:
+  output: dist-app
+  buildResources: build
+files:
+  - out/**/*
+  - build/**/*
+  - package.json
+mac:
+  icon: build/icon.icns
+  category: public.app-category.productivity
+win:
+  icon: build/icon.ico
+linux:
+  icon: build/icon.png
+  category: Utility

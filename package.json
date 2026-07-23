@@ -30,7 +30,8 @@
     "build:ax": "swiftc -O native/ax-dump.swift -o native/ax-dump",
     "gen:brand": "tsx scripts/brand/index.ts",
     "app:dev": "npm run build && npm --workspace deskrag-app run dev",
-    "app:build": "npm run build && npm --workspace deskrag-app run build"
+    "app:build": "npm run build && npm --workspace deskrag-app run build",
+    "app:dist": "npm run build && npm --workspace deskrag-app run dist"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.72.1",

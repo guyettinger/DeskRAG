@@ -22,5 +22,8 @@ native/ax-dump.dSYM/
 # brand asset build scratch directory
 app/build/*.iconset/
 
+# electron-builder packaging output
+app/dist-app/
+
 .DS_Store
 .idea/
