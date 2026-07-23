@@ -160,3 +160,43 @@ describe("ghost Lottie", () => {
     expect(bodyIndex).toBe(ghost.shapes.length - 1);
   });
 });
+
+import { packIco, renderTrayMark } from "../scripts/brand/emit-icons.js";
+
+describe("icon emitter", () => {
+  it("packs an ICO with a correct header and directory", () => {
+    const pngs = [
+      { size: 16, data: Buffer.alloc(10, 1) },
+      { size: 256, data: Buffer.alloc(20, 2) },
+    ];
+    const ico = packIco(pngs);
+    expect(ico.readUInt16LE(0)).toBe(0); // reserved
+    expect(ico.readUInt16LE(2)).toBe(1); // type: icon
+    expect(ico.readUInt16LE(4)).toBe(2); // image count
+    // 256 is encoded as 0 in the single width/height bytes.
+    expect(ico.readUInt8(6)).toBe(16);
+    expect(ico.readUInt8(6 + 16)).toBe(0);
+    // First payload starts after the 6-byte header + two 16-byte entries.
+    expect(ico.readUInt32LE(6 + 12)).toBe(38);
+    expect(ico.readUInt32LE(6 + 16 + 12)).toBe(48);
+    expect(ico.length).toBe(38 + 10 + 20);
+  });
+
+  it("preserves the payload bytes at the offsets it advertises", () => {
+    const first = Buffer.alloc(10, 1);
+    const ico = packIco([{ size: 16, data: first }]);
+    const offset = ico.readUInt32LE(6 + 12);
+    const len = ico.readUInt32LE(6 + 8);
+    expect(ico.subarray(offset, offset + len)).toEqual(first);
+  });
+
+  it("renders the tray mark as a black+alpha template with no desk", () => {
+    // macOS template images must be black + alpha only; any gradient or the
+    // desk bar's grey would defeat the menu-bar inversion.
+    const svg = renderTrayMark();
+    expect(svg).toContain('fill="#000000"');
+    expect(svg).not.toContain("url(#tray-body)");
+    expect(svg).not.toContain("#8A93A3"); // desk bar dropped
+    expect(svg).not.toContain("#A18AF5"); // no gradient violet
+  });
+});
