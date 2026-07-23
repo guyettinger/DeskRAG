@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import type { EnvInfo, RecordingStatus } from "@shared/types";
 import { api } from "./api.js";
+import { GhostMark } from "./brand/GhostMark.js";
 import { IconRecord, IconSearch, IconSettings } from "./icons.js";
 import { RecordScreen } from "./screens/RecordScreen.js";
 import { SearchScreen } from "./screens/SearchScreen.js";
@@ -32,7 +33,10 @@ export function App(): React.JSX.Element {
   return (
     <div className="shell">
       <nav className="rail">
-        <div className="rail__brand">DESK·RAG</div>
+        <div className="rail__brand">
+          <GhostMark size={30} />
+          <span className="rail__brand-word">DeskRAG</span>
+        </div>
         <div className="rail__nav">
           {NAV.map(({ id, label, Icon }) => (
             <button

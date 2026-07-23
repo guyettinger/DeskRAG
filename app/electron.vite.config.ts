@@ -45,7 +45,15 @@ export default defineConfig({
       alias: {
         "@": resolve(__dirname, "src/renderer/src"),
         "@shared": resolve(__dirname, "src/shared"),
+        // Canonical brand assets live at the repo root so the library, the app,
+        // and the READMEs all read one copy.
+        "@brand": resolve(__dirname, "../assets"),
       },
+    },
+    server: {
+      // assets/ sits outside the app's vite root; production builds resolve the
+      // import fine, but the dev server refuses to serve it without this.
+      fs: { allow: [resolve(__dirname, ".."), resolve(__dirname)] },
     },
   },
 });
