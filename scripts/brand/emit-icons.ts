@@ -12,7 +12,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import sharp from "sharp";
-import { assetsDir, renderMark } from "./emit-static.js";
+import { renderMark } from "./emit-static.js";
 import { bezierToPath, CANVAS, eyes, GHOST_FIT, ghostBodyPath, mouthBezier, mouthWidth } from "./geometry.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
