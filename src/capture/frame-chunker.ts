@@ -27,4 +27,12 @@ export class FrameChunker {
   get pending(): number {
     return this.buf.length;
   }
+
+  /** Return and clear any buffered remainder (a trailing partial frame). */
+  flush(): Uint8Array | undefined {
+    if (this.buf.length === 0) return undefined;
+    const rest = Uint8Array.from(this.buf);
+    this.buf = Buffer.alloc(0);
+    return rest;
+  }
 }

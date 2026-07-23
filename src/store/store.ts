@@ -189,6 +189,9 @@ export class DualStore implements Store {
       selectFramesBySession,
       selectFramesBySegment,
       selectBlobById: db.prepare("SELECT * FROM blob WHERE id = ?"),
+      selectBlobsBySession: db.prepare(
+        "SELECT * FROM blob WHERE session_id = ? ORDER BY t_mono_start ASC",
+      ),
       selectSegmentById: db.prepare("SELECT * FROM segment WHERE id = ?"),
       selectSegmentIdsByFrame: db.prepare(
         "SELECT segment_id FROM frame_segment WHERE frame_id = ?",
@@ -578,7 +581,16 @@ export class DualStore implements Store {
     const r = this.stmts.selectBlobById.get(blobId) as
       | Record<string, unknown>
       | undefined;
-    if (!r) return undefined;
+    return r ? this.hydrateBlob(r) : undefined;
+  }
+
+  getBlobsBySession(sessionId: string): BlobRow[] {
+    return (
+      this.stmts.selectBlobsBySession.all(sessionId) as Record<string, unknown>[]
+    ).map((r) => this.hydrateBlob(r));
+  }
+
+  private hydrateBlob(r: Record<string, unknown>): BlobRow {
     return {
       id: r.id as string,
       sessionId: r.session_id as string,

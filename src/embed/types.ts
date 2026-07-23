@@ -62,6 +62,21 @@ export interface CaptionProvider {
   caption(frames: Uint8Array[], context?: string): Promise<string>;
 }
 
+export interface TranscriptionResult {
+  /** The recognized speech; empty string when there is no speech / on failure. */
+  text: string;
+}
+
+/**
+ * Speech-to-text over a single self-contained audio clip (e.g. a WAV chunk).
+ * Adapters must be best-effort: resolve to `{ text: "" }` rather than throw when
+ * the engine/model is unavailable, so a missing STT dependency degrades to "no
+ * transcript" instead of failing the represent pass.
+ */
+export interface TranscriptionProvider {
+  transcribe(audio: Uint8Array, opts?: { language?: string }): Promise<TranscriptionResult>;
+}
+
 // --- represent/ concerns, typedefs only for now (built in a later pass) --------
 
 export interface Frame {

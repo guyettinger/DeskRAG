@@ -302,6 +302,7 @@ export interface Store {
   getFrame(frameId: string): FrameRow | undefined;
   getRegion(regionId: string): RegionRow | undefined;
   getBlob(blobId: string): BlobRow | undefined;
+  getBlobsBySession(sessionId: string): BlobRow[];
 
   // deletes (gather ids -> delete Lance -> delete SQLite)
   deleteSession(sessionId: string): Promise<void>;
