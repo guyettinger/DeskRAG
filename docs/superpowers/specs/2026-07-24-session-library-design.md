@@ -199,8 +199,10 @@ One prepared statement: `session` left-joined against grouped counts from
 come from SQL rather than `getFramesBySession(id).length` per session, which
 would load every row of every session to produce a number.
 
-`safeIntegers` is on, so the aggregate columns come back as `BigInt` and must be
-`Number()`-coerced, the same way `hydrateFrame` does.
+`safeIntegers` is enabled **per statement** in this store (only `phashScan` and
+the three frame selects turn it on, because `phash` is 64-bit). A new statement
+defaults to it off, so the aggregate columns come back as plain `number` and no
+`BigInt` coercion is needed — unlike `hydrateFrame`, which does need it.
 
 **`sessions.json` is deleted** — the file, `loadSessionLog`, `recordSession`,
 `sessionLog`, and `sessionLogPath`. `DeskRagService.listSessions()` reads the
@@ -360,9 +362,9 @@ Extending existing files wherever the coverage already lives:
   non-existent path with the right extension; `removeSession` removes everything
   and is idempotent on a missing dir.
 - **New `test/session-list.test.ts`** — `listSessions` returns sessions newest
-  first with correct counts and `byteLength`, coerces `BigInt` aggregates to
-  `number`, reports `videoBlobId` only when a `screen` blob exists, and drops a
-  deleted session from the list.
+  first with correct counts and `byteLength`, returns plain `number` aggregates
+  (not `BigInt`), reports `videoBlobId` only when a `screen` blob exists, and
+  drops a deleted session from the list.
 - **`test/capture-session.test.ts`** — `reserveBlob`/`commitBlob` write a blob
   row with the statted byte length, and `reserveBlob` returns `null` without a
   blob store.
