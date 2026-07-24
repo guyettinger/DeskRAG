@@ -241,6 +241,17 @@ export interface SessionRow {
   meta: unknown;
 }
 
+/** A session plus the aggregate counts the Library UI lists. */
+export interface SessionSummaryRow extends SessionRow {
+  frameCount: number;
+  segmentCount: number;
+  eventCount: number;
+  /** Total bytes across every blob for the session. */
+  byteLength: number;
+  /** The continuous `screen` video blob, when the session recorded one. */
+  videoBlobId: string | null;
+}
+
 export interface BlobRow {
   id: string;
   sessionId: string;
@@ -294,6 +305,8 @@ export interface Store {
   // session lifecycle + relational reads (capture, segment, retrieve)
   endSession(sessionId: string, endedAt: number): Promise<void>;
   getSession(sessionId: string): SessionRow | undefined;
+  /** Every session, newest first, with the counts the Library UI shows. */
+  listSessions(): SessionSummaryRow[];
   getEventsBySession(sessionId: string): EventRow[];
   getSegmentsBySession(sessionId: string): SegmentRow[];
   getSegment(segmentId: string): SegmentRow | undefined;
