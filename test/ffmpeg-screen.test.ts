@@ -91,4 +91,90 @@ describe.skipIf(!hasFfmpeg)("FfmpegScreenProducer (real ffmpeg, lavfi testsrc)",
     // pHash is present (Tier-0 works on these frames).
     expect(store.phashPrefilter(withImage!.phash, 0)).toContain(withImage!.id);
   }, 20_000);
+
+  it("records a continuous MP4 alongside the sampled keyframes", async () => {
+    const errors: string[] = [];
+    const session = new CaptureSession(store, {
+      clock: MonotonicClock.start(),
+      keyframeGate: new KeyframeGate({ hammingThreshold: 1 }),
+      blobStore: blobs,
+    });
+    // Drives the REAL args() graph (all three outputs) off a synthetic lavfi
+    // source — no screen, no permissions. The video path is chosen by
+    // reserveBlob inside start(), so this must not use `ffmpegArgs`.
+    session.addProducer(
+      new FfmpegScreenProducer({
+        grayW: 9,
+        grayH: 8,
+        fps: 5,
+        videoFps: 10,
+        storeImages: true,
+        inputFormat: "lavfi",
+        omitInputFramerate: true,
+        input: "testsrc=size=64x48:rate=10:duration=2",
+        imageMaxWidth: 64,
+        videoMaxWidth: 64,
+        onError: (m) => errors.push(m),
+      }),
+    );
+
+    const sessionId = await session.start();
+    const deadline = Date.now() + 15_000;
+    while (store.getFramesBySession(sessionId).length === 0 && Date.now() < deadline) {
+      await sleep(100);
+    }
+    await session.stop();
+
+    const video = store.getBlobsBySession(sessionId).find((b) => b.media === "screen");
+    expect(video, `ffmpeg errors: ${errors.join(" | ")}`).toBeDefined();
+    expect(video!.codec).toBe("mp4");
+    expect(video!.byteLength).toBeGreaterThan(0);
+    expect(video!.tMonoEnd).toBeGreaterThanOrEqual(video!.tMonoStart);
+
+    // A real MP4: bytes 4..8 are the 'ftyp' box type.
+    const bytes = await blobs.read(video!);
+    expect(Buffer.from(bytes.subarray(4, 8)).toString("ascii")).toBe("ftyp");
+
+    // The keyframe pipeline is untouched by the new branch.
+    const frames = store.getFramesBySession(sessionId);
+    expect(frames.some((f) => f.blobId)).toBe(true);
+  }, 30_000);
+});
+
+/** args() is pure — assert the filter graph without spawning anything. */
+describe("FfmpegScreenProducer.args", () => {
+  it("emits three mapped outputs and decimates only the sampling branches", () => {
+    const p = new FfmpegScreenProducer({ fps: 1, videoFps: 10, grayW: 32, grayH: 32 });
+    // @ts-expect-error — exercising the private arg builder directly.
+    const a: string[] = p.args("/tmp/out.mp4");
+    const joined = a.join(" ");
+
+    expect(joined).toContain("split=3[v][g][c]");
+    expect(joined).toContain("[g]fps=1,"); // sampling branch decimated
+    expect(joined).toContain("[c]fps=1,");
+    expect(joined).not.toContain("[v]fps="); // video branch keeps full rate
+    expect(joined).toContain("-framerate 10"); // input runs at videoFps
+    expect(joined).toContain("+frag_keyframe+empty_moov+default_base_moof");
+    expect(joined).toContain("-pix_fmt yuv420p");
+    expect(a[a.length - 1]).toBe("pipe:3");
+    expect(joined).toContain("/tmp/out.mp4");
+  });
+
+  it("omits the video branch when recordVideo is false", () => {
+    const p = new FfmpegScreenProducer({ recordVideo: false });
+    // @ts-expect-error — exercising the private arg builder directly.
+    const a: string[] = p.args(null);
+
+    expect(a.join(" ")).toContain("split=2[g][c]");
+    expect(a.join(" ")).not.toContain("libx264");
+  });
+
+  it("drops to a gray-only single output when storeImages is false", () => {
+    const p = new FfmpegScreenProducer({ storeImages: false, recordVideo: false });
+    // @ts-expect-error — exercising the private arg builder directly.
+    const a: string[] = p.args(null);
+
+    expect(a.join(" ")).not.toContain("split");
+    expect(a[a.length - 1]).toBe("pipe:1");
+  });
 });
