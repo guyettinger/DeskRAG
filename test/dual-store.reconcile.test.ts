@@ -1,9 +1,10 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ulid } from "ulid";
 import { DualStore } from "../src/store/store.js";
+import { BlobStore } from "../src/store/blob-store.js";
 import { LanceStore, type VecRow, type VectorSide } from "../src/store/lance/tables.js";
 import { FakeEmbeddingProvider } from "../src/embed/fake.js";
 import { namespaceFor } from "../src/embed/types.js";
@@ -132,6 +133,27 @@ describe("dual-store reconciliation", () => {
     const result = await store.reconcile();
     expect(result.orphansPruned).toBe(0);
     expect(result.missing).toHaveLength(0);
+  });
+
+  it("pairs with BlobStore.removeSession to reclaim the files on disk", async () => {
+    const blobs = new BlobStore(join(dir, "blobs"));
+    const sessionId = ulid();
+    await store.putSession({ id: sessionId, startedAt: Date.now(), epochMono: 0 });
+    const insert = await blobs.write(sessionId, "keyframe", new Uint8Array([1, 2, 3]), {
+      tMonoStart: 0,
+      tMonoEnd: 1,
+      codec: "jpeg",
+    });
+    await store.putBlobs([insert]);
+    expect(existsSync(insert.path)).toBe(true);
+
+    // The documented pairing: rows first (a row pointing at a deleted file is a
+    // broken read; a file with no row is just reclaimable disk).
+    await store.deleteSession(sessionId);
+    await blobs.removeSession(sessionId);
+
+    expect(store.getBlob(insert.id)).toBeUndefined();
+    expect(existsSync(insert.path)).toBe(false);
   });
 
   it("only expects frame_image vectors for frames that have a stored image", async () => {
