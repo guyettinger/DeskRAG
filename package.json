@@ -20,9 +20,6 @@
       "default": "./dist/*.js"
     }
   },
-  "workspaces": [
-    "app"
-  ],
   "engines": {
     "node": ">=20"
   },
@@ -33,9 +30,10 @@
     "build": "tsc -p tsconfig.build.json",
     "build:ax": "swiftc -O native/ax-dump.swift -o native/ax-dump",
     "gen:brand": "tsx scripts/brand/index.ts",
-    "app:dev": "npm run build && npm --workspace deskrag-app run dev",
-    "app:build": "npm run build && npm --workspace deskrag-app run build",
-    "app:dist": "npm run build && npm --workspace deskrag-app run dist"
+    "app:install": "npm --prefix app install",
+    "app:dev": "npm run build && npm --prefix app run dev",
+    "app:build": "npm run build && npm --prefix app run build",
+    "app:dist": "npm run build && npm --prefix app run dist"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.72.1",
