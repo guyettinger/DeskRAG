@@ -13,7 +13,6 @@
  */
 
 import { join } from "node:path";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import {
   DualStore,
   BlobStore,
@@ -51,10 +50,13 @@ import type {
   FrameHitDTO,
   HighlightDTO,
   IndexingProgress,
+  KeyframeMarkerDTO,
   RecordingStatus,
   ResultDetailDTO,
   SearchInput,
+  SessionDetailDTO,
   SessionSummaryDTO,
+  SessionVideoDTO,
   SignalKind,
 } from "@shared/types";
 
@@ -92,8 +94,6 @@ export class DeskRagService {
   private indexingListeners = new Set<(p: IndexingProgress) => void>();
   /** Region highlights from the most recent search, for detail() to reuse. */
   private lastHighlights = new Map<string, HighlightDTO[]>();
-  /** App-maintained log of recorded sessions (the library has no list-all read). */
-  private sessionLog: SessionSummaryDTO[] = [];
 
   constructor(dataDir: string, settings: SettingsStore) {
     this.dir = dataDir;
@@ -113,23 +113,6 @@ export class DeskRagService {
       join(this.dir, "lance"),
     );
     this.blobs = new BlobStore(join(this.dir, "blobs"));
-    this.sessionLog = this.loadSessionLog();
-  }
-
-  private get sessionLogPath(): string {
-    return join(this.dir, "sessions.json");
-  }
-  private loadSessionLog(): SessionSummaryDTO[] {
-    if (!existsSync(this.sessionLogPath)) return [];
-    try {
-      return JSON.parse(readFileSync(this.sessionLogPath, "utf8")) as SessionSummaryDTO[];
-    } catch {
-      return [];
-    }
-  }
-  private recordSession(entry: SessionSummaryDTO): void {
-    this.sessionLog = [entry, ...this.sessionLog.filter((s) => s.id !== entry.id)];
-    writeFileSync(this.sessionLogPath, JSON.stringify(this.sessionLog, null, 2), "utf8");
   }
 
   close(): void {
@@ -300,14 +283,6 @@ export class DeskRagService {
     } catch (err) {
       console.error("[deskrag] indexing failed:", err);
     }
-    const sess = this.store.getSession(sessionId);
-    this.recordSession({
-      id: sessionId,
-      startedAt: sess?.startedAt ?? Date.now(),
-      endedAt: sess?.endedAt ?? null,
-      frameCount: this.store.getFramesBySession(sessionId).length,
-      segmentCount: this.store.getSegmentsBySession(sessionId).length,
-    });
     this.state = { state: "idle", activeSignals: [] };
     this.emitState();
     return this.state;
@@ -511,9 +486,77 @@ export class DeskRagService {
   }
 
   listSessions(): SessionSummaryDTO[] {
-    // The library has no "list all sessions" read, so the app keeps its own log,
-    // appended after each recording is indexed.
-    return this.sessionLog;
+    return this.store.listSessions().map((s) => {
+      const firstKeyframe = this.store.getFramesBySession(s.id).find((f) => f.blobId);
+      return {
+        id: s.id,
+        startedAt: s.startedAt,
+        endedAt: s.endedAt,
+        durationMs: s.endedAt ? Math.max(0, s.endedAt - s.startedAt) : 0,
+        frameCount: s.frameCount,
+        segmentCount: s.segmentCount,
+        eventCount: s.eventCount,
+        sizeBytes: s.byteLength,
+        hasVideo: s.videoBlobId !== null,
+        posterUrl: firstKeyframe?.blobId ? `deskrag://frame/${firstKeyframe.blobId}` : null,
+      };
+    });
+  }
+
+  sessionDetail(sessionId: string): SessionDetailDTO | null {
+    const s = this.store.listSessions().find((row) => row.id === sessionId);
+    if (!s) return null;
+
+    const videoBlob = s.videoBlobId ? this.store.getBlob(s.videoBlobId) : undefined;
+    const video: SessionVideoDTO | null = videoBlob
+      ? {
+          blobId: videoBlob.id,
+          url: `deskrag://media/${videoBlob.id}`,
+          tMonoStart: videoBlob.tMonoStart,
+          tMonoEnd: videoBlob.tMonoEnd,
+          sizeBytes: videoBlob.byteLength,
+        }
+      : null;
+
+    // Frames come back ordered by t_mono, so markers are already in timeline order.
+    const keyframes: KeyframeMarkerDTO[] = this.store.getFramesBySession(sessionId).map((f) => {
+      // Most specific (shortest) segment is the best label, as in detail().
+      const seg = f.segmentIds
+        .map((segId) => this.store.getSegment(segId))
+        .filter((x): x is NonNullable<typeof x> => Boolean(x))
+        .sort((a, b) => a.tMonoEnd - a.tMonoStart - (b.tMonoEnd - b.tMonoStart))[0];
+      return {
+        frameId: f.id,
+        tMono: f.tMono,
+        offsetSec: video ? Math.max(0, (f.tMono - video.tMonoStart) / 1000) : f.tMono / 1000,
+        thumbUrl: f.blobId ? `deskrag://frame/${f.blobId}` : null,
+        segmentDigest: seg?.digest ?? null,
+      };
+    });
+
+    return {
+      id: s.id,
+      startedAt: s.startedAt,
+      endedAt: s.endedAt,
+      durationMs: s.endedAt ? Math.max(0, s.endedAt - s.startedAt) : 0,
+      video,
+      keyframes,
+      frameCount: s.frameCount,
+      segmentCount: s.segmentCount,
+      eventCount: s.eventCount,
+      sizeBytes: s.byteLength,
+    };
+  }
+
+  async removeSession(sessionId: string): Promise<void> {
+    if (this.state.state !== "idle" && this.state.sessionId === sessionId) {
+      throw new Error("That recording is still in progress — stop it before deleting.");
+    }
+    // Rows first: a row pointing at a deleted file is a broken read, whereas a
+    // file with no row is just reclaimable disk.
+    await this.store.deleteSession(sessionId);
+    await this.blobs.removeSession(sessionId);
+    this.lastHighlights.clear();
   }
 
   // --- blobs (served over the deskrag:// protocol) --------------------------

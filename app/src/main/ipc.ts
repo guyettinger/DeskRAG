@@ -38,5 +38,7 @@ export function registerIpc(
   ipcMain.handle(IPC.searchDetail, (_e, frameId: string) => service.detail(frameId));
 
   ipcMain.handle(IPC.sessionsList, () => service.listSessions());
+  ipcMain.handle(IPC.sessionsDetail, (_e, sessionId: string) => service.sessionDetail(sessionId));
+  ipcMain.handle(IPC.sessionsRemove, (_e, sessionId: string) => service.removeSession(sessionId));
   ipcMain.handle(IPC.systemEnv, () => envInfo(service));
 }
