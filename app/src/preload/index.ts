@@ -45,6 +45,8 @@ const api: DeskRagApi = {
   },
   sessions: {
     list: () => ipcRenderer.invoke(IPC.sessionsList),
+    detail: (sessionId: string) => ipcRenderer.invoke(IPC.sessionsDetail, sessionId),
+    remove: (sessionId: string) => ipcRenderer.invoke(IPC.sessionsRemove, sessionId),
   },
   system: {
     env: () => ipcRenderer.invoke(IPC.systemEnv),

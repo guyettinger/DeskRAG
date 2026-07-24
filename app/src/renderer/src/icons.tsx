@@ -37,6 +37,14 @@ export const IconClose = (p: P): React.JSX.Element => (
   </svg>
 );
 
+export const IconLibrary = (p: P): React.JSX.Element => (
+  <svg {...base} {...p}>
+    <rect x="3" y="4" width="18" height="14" rx="2" />
+    <path d="M10.2 8.8l4.6 2.7-4.6 2.7z" fill="currentColor" stroke="none" />
+    <path d="M7.5 21h9" />
+  </svg>
+);
+
 export const IconImage = (p: P): React.JSX.Element => (
   <svg {...base} {...p}>
     <rect x="3" y="4" width="18" height="16" rx="2" />

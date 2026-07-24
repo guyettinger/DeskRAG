@@ -6,7 +6,7 @@
  * records where they are.
  */
 
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ulid } from "ulid";
 import type { BlobInsert, BlobRow, Media } from "./types.js";
@@ -17,6 +17,7 @@ const EXT: Record<string, string> = {
   jpg: "jpg",
   webp: "webp",
   h264: "h264",
+  mp4: "mp4",
   aac: "aac",
   wav: "wav",
 };
@@ -54,6 +55,29 @@ export class BlobStore {
       tMonoEnd: meta.tMonoEnd,
       ...(meta.codec !== undefined ? { codec: meta.codec } : {}),
     };
+  }
+
+  /**
+   * Mint a path for a blob another process will write (e.g. ffmpeg encoding the
+   * session video straight to disk). Creates the session directory but writes
+   * nothing — the caller persists the `blob` row once the file is complete.
+   */
+  async reserve(
+    sessionId: string,
+    media: Media,
+    codec: string,
+  ): Promise<{ id: string; path: string }> {
+    void media; // paths are per-session today; kept for symmetry with write()
+    const id = ulid();
+    const ext = EXT[codec] ?? "bin";
+    const dir = join(this.root, sessionId);
+    await mkdir(dir, { recursive: true });
+    return { id, path: join(dir, `${id}.${ext}`) };
+  }
+
+  /** Remove every blob file for a session. Idempotent. */
+  async removeSession(sessionId: string): Promise<void> {
+    await rm(join(this.root, sessionId), { recursive: true, force: true });
   }
 
   /** Read a blob's bytes (honouring byte_offset/byte_length for packed blobs). */

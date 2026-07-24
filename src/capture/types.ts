@@ -7,6 +7,7 @@
  */
 
 import type { MonotonicClock } from "../timeline/clock.js";
+import type { Media } from "../store/types.js";
 import type { SampledFrame, IngestResult } from "./frame-ingest.js";
 
 /** Canonical input/signal event kinds (event.kind is free-form TEXT in SQLite). */
@@ -54,6 +55,18 @@ export interface CaptureContext {
   ingestFrame(frame: SampledFrame): Promise<IngestResult>;
   /** Persist a raw audio chunk as a blob (audio producers). No-op without a blob store. */
   ingestAudio(chunk: AudioChunk): Promise<void>;
+  /**
+   * Reserve a blob path for a file this producer writes itself (e.g. ffmpeg
+   * encoding straight to disk). Returns null when the session has no blob
+   * store — the producer should then skip that output entirely.
+   */
+  reserveBlob(media: Media, codec: string): Promise<{ blobId: string; path: string } | null>;
+  /**
+   * Register a previously reserved file as a blob row, statting it for its byte
+   * length. A missing or empty file is skipped (no row) rather than failing the
+   * capture — a video that never materialised must not sink the session.
+   */
+  commitBlob(blobId: string, meta: { tMonoStart: number; tMonoEnd: number }): Promise<void>;
 }
 
 export interface Producer {

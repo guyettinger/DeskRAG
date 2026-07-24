@@ -2,18 +2,27 @@ import React, { useEffect, useState } from "react";
 import type { EnvInfo, RecordingStatus } from "@shared/types";
 import { api } from "./api.js";
 import { GhostMark } from "./brand/GhostMark.js";
-import { IconRecord, IconSearch, IconSettings } from "./icons.js";
+import { IconLibrary, IconRecord, IconSearch, IconSettings } from "./icons.js";
+import { LibraryScreen } from "./screens/LibraryScreen.js";
 import { RecordScreen } from "./screens/RecordScreen.js";
 import { SearchScreen } from "./screens/SearchScreen.js";
 import { SettingsScreen } from "./screens/SettingsScreen.js";
 
-type Route = "record" | "search" | "settings";
+type Route = "record" | "library" | "search" | "settings";
 
 const NAV: { id: Route; label: string; Icon: typeof IconRecord }[] = [
   { id: "record", label: "Record", Icon: IconRecord },
+  { id: "library", label: "Library", Icon: IconLibrary },
   { id: "search", label: "Search", Icon: IconSearch },
   { id: "settings", label: "Settings", Icon: IconSettings },
 ];
+
+const TITLES: Record<Route, string> = {
+  record: "Recorder",
+  library: "Library",
+  search: "Experience Search",
+  settings: "Settings",
+};
 
 export function App(): React.JSX.Element {
   const [route, setRoute] = useState<Route>("record");
@@ -56,9 +65,7 @@ export function App(): React.JSX.Element {
 
       <div className="main">
         <header className="topbar">
-          <span className="topbar__title">
-            {route === "record" ? "Recorder" : route === "search" ? "Experience Search" : "Settings"}
-          </span>
+          <span className="topbar__title">{TITLES[route]}</span>
           <div className="topbar__status">
             {live && (
               <span className="chip live">
@@ -80,6 +87,7 @@ export function App(): React.JSX.Element {
 
         <main className="content">
           {route === "record" && <RecordScreen status={status} env={env} />}
+          {route === "library" && <LibraryScreen />}
           {route === "search" && <SearchScreen />}
           {route === "settings" && <SettingsScreen onEnv={setEnv} />}
         </main>

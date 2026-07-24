@@ -37,6 +37,20 @@ export interface FfmpegScreenOptions {
   imageMaxWidth?: number;
   /** MJPEG quality (ffmpeg -q:v, 2=best..31=worst). */
   imageQuality?: number;
+  /** Record the full-rate session video to a file (third output branch). */
+  recordVideo?: boolean;
+  /** Input framerate; also the recorded video's framerate. */
+  videoFps?: number;
+  /** x264 constant rate factor (higher = smaller + worse). */
+  videoCrf?: number;
+  /** x264 speed/size preset. */
+  videoPreset?: string;
+  /** Max width of the recorded video (aspect preserved). */
+  videoMaxWidth?: number;
+  /** ffmpeg input format (default "avfoundation"; tests pass "lavfi"). */
+  inputFormat?: string;
+  /** Omit the -framerate flag (lavfi sources carry their own rate). */
+  omitInputFramerate?: boolean;
   ffmpegPath?: string;
   /** Fully override the ffmpeg args (bypasses the defaults below). */
   ffmpegArgs?: string[];
@@ -57,6 +71,10 @@ export class FfmpegScreenProducer implements Producer {
   private readonly width: number;
   private readonly height: number;
   private readonly storeImages: boolean;
+  private readonly recordVideo: boolean;
+  private readonly videoFps: number;
+  /** Blob id + monotonic start for the video file, set on start(). */
+  private video: { blobId: string; path: string; tMonoStart: number } | undefined;
 
   constructor(private readonly opts: FfmpegScreenOptions = {}) {
     this.grayW = opts.grayW ?? 32;
@@ -64,45 +82,93 @@ export class FfmpegScreenProducer implements Producer {
     this.width = opts.width ?? 0;
     this.height = opts.height ?? 0;
     this.storeImages = opts.storeImages ?? true;
+    this.recordVideo = opts.recordVideo ?? true;
+    this.videoFps = opts.videoFps ?? 10;
     this.chunker = new FrameChunker(this.grayW * this.grayH);
   }
 
-  private args(): string[] {
+  private args(videoPath: string | null): string[] {
     if (this.opts.ffmpegArgs) return this.opts.ffmpegArgs;
     const fps = this.opts.fps ?? 1;
     const input = this.opts.input ?? "1";
+    // With video recording the input must run at the video's framerate; the two
+    // sampling branches then decimate back to `fps` with their own filter, so
+    // the pHash/keyframe pipeline sees exactly the stream it always did.
+    const inputRate = videoPath ? this.videoFps : fps;
     const head = [
       "-hide_banner", "-loglevel", "error",
-      "-f", "avfoundation", "-framerate", String(fps), "-i", input,
+      "-f", this.opts.inputFormat ?? "avfoundation",
+      ...(this.opts.omitInputFramerate ? [] : ["-framerate", String(inputRate)]),
+      "-i", input,
     ];
-    if (!this.storeImages) {
+    if (!this.storeImages && !videoPath) {
       return [
         ...head,
         "-vf", `fps=${fps},scale=${this.grayW}:${this.grayH},format=gray`,
         "-f", "rawvideo", "-pix_fmt", "gray", "pipe:1",
       ];
     }
+
     const maxW = this.opts.imageMaxWidth ?? 1280;
     const q = this.opts.imageQuality ?? 5;
-    return [
+    const crf = this.opts.videoCrf ?? 28;
+    const preset = this.opts.videoPreset ?? "veryfast";
+    const videoMaxW = this.opts.videoMaxWidth ?? 1920;
+
+    // Split labels in output order: [v] video, [g] gray/pHash, [c] JPEG.
+    const labels = [...(videoPath ? ["[v]"] : []), "[g]", ...(this.storeImages ? ["[c]"] : [])];
+    const chains: string[] = [];
+    // The video scale lives INSIDE the graph: -vf cannot be combined with
+    // -filter_complex on the same output stream.
+    if (videoPath) chains.push(`[v]scale='min(${videoMaxW},iw)':-2[vv]`);
+    chains.push(`[g]fps=${fps},scale=${this.grayW}:${this.grayH},format=gray[gg]`);
+    if (this.storeImages) chains.push(`[c]fps=${fps},scale=${maxW}:-2[cc]`);
+
+    const out: string[] = [
       ...head,
       "-filter_complex",
-      `[0:v]fps=${fps},split=2[g][c];` +
-        `[g]scale=${this.grayW}:${this.grayH},format=gray[gg];` +
-        `[c]scale=${maxW}:-2[cc]`,
-      "-map", "[gg]", "-f", "rawvideo", "-pix_fmt", "gray", "pipe:1",
-      "-map", "[cc]", "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", String(q), "pipe:3",
+      `[0:v]split=${labels.length}${labels.join("")};` + chains.join(";"),
     ];
+    // Fragmented MP4: playable even if ffmpeg is killed mid-recording, at the
+    // cost of fragment-granular (rather than indexed) seeking.
+    if (videoPath) {
+      out.push(
+        "-map", "[vv]",
+        "-c:v", "libx264", "-preset", preset, "-crf", String(crf),
+        "-pix_fmt", "yuv420p", "-g", String(this.videoFps * 2),
+        "-movflags", "+frag_keyframe+empty_moov+default_base_moof",
+        "-f", "mp4", "-y", videoPath,
+      );
+    }
+    out.push("-map", "[gg]", "-f", "rawvideo", "-pix_fmt", "gray", "pipe:1");
+    if (this.storeImages) {
+      out.push("-map", "[cc]", "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", String(q), "pipe:3");
+    }
+    return out;
   }
 
-  start(ctx: CaptureContext): void {
+  async start(ctx: CaptureContext): Promise<void> {
     this.ctx = ctx;
     const onError = this.opts.onError ?? ((m) => console.error(`[ffmpeg-screen] ${m}`));
+
+    // Reserve the path before spawning; without a blob store there is nowhere
+    // to keep the file, so the video branch is dropped from the arg graph.
+    let videoPath: string | null = null;
+    if (this.recordVideo) {
+      const reserved = await ctx.reserveBlob("screen", "mp4");
+      if (reserved) {
+        videoPath = reserved.path;
+        this.video = { ...reserved, tMonoStart: ctx.clock.now() };
+      }
+    }
+
     // stdio: [stdin ignore, stdout gray, stderr, fd3 mjpeg (when storing images)].
     const stdio = this.storeImages
       ? (["ignore", "pipe", "pipe", "pipe"] as const)
       : (["ignore", "pipe", "pipe"] as const);
-    const proc = spawn(this.opts.ffmpegPath ?? "ffmpeg", this.args(), { stdio: [...stdio] });
+    const proc = spawn(this.opts.ffmpegPath ?? "ffmpeg", this.args(videoPath), {
+      stdio: [...stdio],
+    });
     this.proc = proc;
 
     proc.stdout?.on("data", (chunk: Buffer) => {
@@ -151,10 +217,29 @@ export class FfmpegScreenProducer implements Producer {
   }
 
   async stop(): Promise<void> {
-    if (this.proc) {
-      this.proc.kill("SIGINT");
+    const proc = this.proc;
+    if (proc) {
       this.proc = undefined;
+      proc.kill("SIGINT");
+      // The MP4 is only complete once ffmpeg has exited; wait, but never hang.
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(() => {
+          proc.kill("SIGKILL");
+          resolve();
+        }, 5000);
+        proc.once("exit", () => {
+          clearTimeout(timer);
+          resolve();
+        });
+      });
     }
     await this.ingestChain; // drain frames already read
+    if (this.video && this.ctx) {
+      await this.ctx.commitBlob(this.video.blobId, {
+        tMonoStart: this.video.tMonoStart,
+        tMonoEnd: this.ctx.clock.now(),
+      });
+      this.video = undefined;
+    }
   }
 }

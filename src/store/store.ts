@@ -37,6 +37,7 @@ import type {
   SegmentVectorInsert,
   SessionInsert,
   SessionRow,
+  SessionSummaryRow,
   Store,
   VectorSpaceInsert,
 } from "./types.js";
@@ -154,6 +155,21 @@ export class DualStore implements Store {
       deleteSession: db.prepare("DELETE FROM session WHERE id = ?"),
       endSession: db.prepare("UPDATE session SET ended_at = ? WHERE id = ?"),
       selectSession: db.prepare("SELECT * FROM session WHERE id = ?"),
+      // Each count is its own correlated scalar subquery: a multi-table JOIN
+      // would multiply the per-table counts together.
+      selectAllSessions: db.prepare(
+        `SELECT s.*,
+                (SELECT COUNT(*) FROM frame   f WHERE f.session_id = s.id) AS frame_count,
+                (SELECT COUNT(*) FROM segment g WHERE g.session_id = s.id) AS segment_count,
+                (SELECT COUNT(*) FROM event   e WHERE e.session_id = s.id) AS event_count,
+                (SELECT COALESCE(SUM(b.byte_length), 0) FROM blob b
+                  WHERE b.session_id = s.id)                               AS byte_length,
+                (SELECT b.id FROM blob b
+                  WHERE b.session_id = s.id AND b.media = 'screen'
+                  ORDER BY b.t_mono_start ASC LIMIT 1)                     AS video_blob_id
+           FROM session s
+          ORDER BY s.started_at DESC`,
+      ),
       selectEventsBySession: db.prepare(
         "SELECT * FROM event WHERE session_id = ? ORDER BY t_mono ASC",
       ),
@@ -522,6 +538,22 @@ export class DualStore implements Store {
       deviceId: (r.device_id as string | null) ?? null,
       meta: parseJson(r.meta as string | null),
     };
+  }
+
+  listSessions(): SessionSummaryRow[] {
+    return (this.stmts.selectAllSessions.all() as Record<string, unknown>[]).map((r) => ({
+      id: r.id as string,
+      startedAt: r.started_at as number,
+      epochMono: r.epoch_mono as number,
+      endedAt: (r.ended_at as number | null) ?? null,
+      deviceId: (r.device_id as string | null) ?? null,
+      meta: parseJson(r.meta as string | null),
+      frameCount: r.frame_count as number,
+      segmentCount: r.segment_count as number,
+      eventCount: r.event_count as number,
+      byteLength: r.byte_length as number,
+      videoBlobId: (r.video_blob_id as string | null) ?? null,
+    }));
   }
 
   getEventsBySession(sessionId: string): EventRow[] {

@@ -1,11 +1,13 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DualStore } from "../src/store/store.js";
+import { BlobStore } from "../src/store/blob-store.js";
 import { MonotonicClock } from "../src/timeline/clock.js";
 import { CaptureSession } from "../src/capture/session.js";
 import { SyntheticInputProducer } from "../src/capture/synthetic.js";
+import type { CaptureContext, Producer } from "../src/capture/types.js";
 
 /**
  * Drives a full capture session against a real DualStore with a deterministic
@@ -91,5 +93,108 @@ describe("CaptureSession", () => {
       /after start/,
     );
     await session.stop();
+  });
+});
+
+/**
+ * The file seam: producers that spawn a subprocess writing directly to disk
+ * (ffmpeg encoding the session video) reserve a path up front and register the
+ * finished file as a blob on stop. Bytes never pass through Node.
+ */
+describe("CaptureSession reserveBlob/commitBlob", () => {
+  let dir: string;
+  let store: DualStore;
+  let blobs: BlobStore;
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), "erag-cap-blob-"));
+    store = await DualStore.open(join(dir, "meta.sqlite"), join(dir, "lance"));
+    blobs = new BlobStore(join(dir, "blobs"));
+  });
+  afterEach(() => {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** Grab the live CaptureContext by way of a probe producer. */
+  function probe(): { producer: Producer; ctx: () => CaptureContext } {
+    let captured: CaptureContext | undefined;
+    return {
+      producer: {
+        id: "probe",
+        start: (c: CaptureContext) => {
+          captured = c;
+        },
+        stop: () => {},
+      },
+      ctx: () => captured!,
+    };
+  }
+
+  it("registers a reserved file as a blob row with its on-disk byte length", async () => {
+    const p = probe();
+    const session = new CaptureSession(store, { blobStore: blobs });
+    session.addProducer(p.producer);
+    const sessionId = await session.start();
+
+    const reserved = await p.ctx().reserveBlob("screen", "mp4");
+    expect(reserved).not.toBeNull();
+    writeFileSync(reserved!.path, new Uint8Array([1, 2, 3, 4, 5]));
+    await p.ctx().commitBlob(reserved!.blobId, { tMonoStart: 10, tMonoEnd: 90 });
+
+    await session.stop();
+
+    const row = store.getBlob(reserved!.blobId);
+    expect(row).toBeDefined();
+    expect(row!.sessionId).toBe(sessionId);
+    expect(row!.media).toBe("screen");
+    expect(row!.codec).toBe("mp4");
+    expect(row!.byteLength).toBe(5); // statted from disk, not passed in
+    expect(row!.byteOffset).toBe(0);
+    expect(row!.tMonoStart).toBe(10);
+    expect(row!.tMonoEnd).toBe(90);
+    expect(store.getBlobsBySession(sessionId).map((b) => b.id)).toContain(reserved!.blobId);
+  });
+
+  it("reserveBlob returns null when the session has no blob store", async () => {
+    const p = probe();
+    const session = new CaptureSession(store, {}); // no blobStore
+    session.addProducer(p.producer);
+    await session.start();
+
+    await expect(p.ctx().reserveBlob("screen", "mp4")).resolves.toBeNull();
+
+    await session.stop();
+  });
+
+  it("commitBlob writes no row when the reserved file was never produced", async () => {
+    const p = probe();
+    const session = new CaptureSession(store, { blobStore: blobs });
+    session.addProducer(p.producer);
+    const sessionId = await session.start();
+
+    const reserved = await p.ctx().reserveBlob("screen", "mp4");
+    // ffmpeg failed to start: nothing at reserved.path.
+    await p.ctx().commitBlob(reserved!.blobId, { tMonoStart: 0, tMonoEnd: 0 });
+
+    await session.stop();
+
+    expect(store.getBlob(reserved!.blobId)).toBeUndefined();
+    expect(store.getBlobsBySession(sessionId)).toHaveLength(0);
+  });
+
+  it("commitBlob writes no row for a zero-byte file", async () => {
+    const p = probe();
+    const session = new CaptureSession(store, { blobStore: blobs });
+    session.addProducer(p.producer);
+    await session.start();
+
+    const reserved = await p.ctx().reserveBlob("screen", "mp4");
+    writeFileSync(reserved!.path, new Uint8Array([]));
+    await p.ctx().commitBlob(reserved!.blobId, { tMonoStart: 0, tMonoEnd: 0 });
+
+    await session.stop();
+
+    expect(store.getBlob(reserved!.blobId)).toBeUndefined();
   });
 });
