@@ -24,13 +24,13 @@
     "uiohook-napi": "^1.5.5"
   },
   "devDependencies": {
-    "@electron/rebuild": "^3.7.0",
+    "@electron/rebuild": "^4.2.0",
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",
     "@vitejs/plugin-react": "^4.3.4",
-    "electron": "^34.2.0",
-    "electron-builder": "^25.1.8",
-    "electron-vite": "^3.0.0",
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
     "lottie-web": "^5.13.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
