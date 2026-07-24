@@ -145,8 +145,48 @@ export interface SessionSummaryDTO {
   id: string;
   startedAt: number;
   endedAt: number | null;
+  /** endedAt - startedAt, or 0 while a session is still open. */
+  durationMs: number;
   frameCount: number;
   segmentCount: number;
+  eventCount: number;
+  /** Total bytes across every blob for the session. */
+  sizeBytes: number;
+  hasVideo: boolean;
+  /** deskrag://frame/<blobId> of the first keyframe, for the list thumbnail. */
+  posterUrl: string | null;
+}
+
+export interface SessionVideoDTO {
+  blobId: string;
+  /** deskrag://media/<blobId> — Range-capable, so <video> can seek. */
+  url: string;
+  tMonoStart: number;
+  tMonoEnd: number;
+  sizeBytes: number;
+}
+
+export interface KeyframeMarkerDTO {
+  frameId: string;
+  tMono: number;
+  /** Position within the video: (tMono - video.tMonoStart) / 1000. */
+  offsetSec: number;
+  thumbUrl: string | null;
+  segmentDigest: string | null;
+}
+
+export interface SessionDetailDTO {
+  id: string;
+  startedAt: number;
+  endedAt: number | null;
+  durationMs: number;
+  /** Null for sessions recorded before video capture, or with Screen disabled. */
+  video: SessionVideoDTO | null;
+  keyframes: KeyframeMarkerDTO[];
+  frameCount: number;
+  segmentCount: number;
+  eventCount: number;
+  sizeBytes: number;
 }
 
 export interface EnvInfo {
@@ -206,6 +246,8 @@ export interface DeskRagApi {
   };
   sessions: {
     list(): Promise<SessionSummaryDTO[]>;
+    detail(sessionId: string): Promise<SessionDetailDTO | null>;
+    remove(sessionId: string): Promise<void>;
   };
   system: {
     env(): Promise<EnvInfo>;
@@ -228,5 +270,7 @@ export const IPC = {
   searchQuery: "search:query",
   searchDetail: "search:detail",
   sessionsList: "sessions:list",
+  sessionsDetail: "sessions:detail",
+  sessionsRemove: "sessions:remove",
   systemEnv: "system:env",
 } as const;
