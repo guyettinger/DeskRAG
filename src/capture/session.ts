@@ -8,9 +8,10 @@
  * order), drains the batcher, and records ended_at.
  */
 
+import { stat } from "node:fs/promises";
 import { ulid } from "ulid";
 import { MonotonicClock } from "../timeline/clock.js";
-import type { Store, EventInsert } from "../store/types.js";
+import type { Store, EventInsert, Media } from "../store/types.js";
 import { EventBatcher, type BatcherOptions } from "./batcher.js";
 import { FrameIngestor } from "./frame-ingest.js";
 import { KeyframeGate } from "./keyframe.js";
@@ -40,6 +41,8 @@ export class CaptureSession {
   private ingestor: FrameIngestor | undefined;
   private axCapturer: AxCapturer | undefined;
   private running = false;
+  /** Paths + media for blobs reserved by producers, pending commit. */
+  private readonly reserved = new Map<string, { path: string; media: Media; codec: string }>();
 
   constructor(
     private readonly store: Store,
@@ -109,6 +112,41 @@ export class CaptureSession {
           },
         );
         await this.store.putBlobs([insert]);
+      },
+      // Reserve a path for a file the producer writes itself; without a blob
+      // store there is nowhere to keep it, so the producer skips that output.
+      reserveBlob: async (media, codec) => {
+        if (!this.opts.blobStore) return null;
+        const { id, path } = await this.opts.blobStore.reserve(this.sessionId!, media, codec);
+        this.reserved.set(id, { path, media, codec });
+        return { blobId: id, path };
+      },
+      // Register the finished file. A missing/empty file means the producer
+      // never got going — skip it rather than writing a broken blob row.
+      commitBlob: async (blobId, meta) => {
+        const entry = this.reserved.get(blobId);
+        if (!entry) return;
+        let byteLength = 0;
+        try {
+          byteLength = (await stat(entry.path)).size;
+        } catch {
+          return; // never written
+        }
+        if (byteLength === 0) return;
+        this.reserved.delete(blobId);
+        await this.store.putBlobs([
+          {
+            id: blobId,
+            sessionId: this.sessionId!,
+            media: entry.media,
+            path: entry.path,
+            byteOffset: 0,
+            byteLength,
+            tMonoStart: meta.tMonoStart,
+            tMonoEnd: meta.tMonoEnd,
+            codec: entry.codec,
+          },
+        ]);
       },
       emitEvent: (ev) => {
         const row: EventInsert = {
