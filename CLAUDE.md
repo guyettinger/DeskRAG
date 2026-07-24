@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 DeskRAG — a local-first system that captures desktop activity (screen, audio, mouse/keyboard, accessibility tree) into a searchable multimodal "experience memory," retrievable by text, visual example, or behavioral similarity. TypeScript/Node throughout, strict mode, ESM.
 
-Two packages in one npm workspace: **`src/`** is the library (published as `deskrag`), **`app/`** is **DeskRAGApp**, the Electron desktop client over it (workspace `deskrag-app`). `native/` holds the Swift AX sidecar. Default to working in the library; the app is a consumer of its public barrel.
+Two packages, two independent installs: **`src/`** is the library (published as `deskrag`, root `package.json`), **`app/`** is **DeskRAGApp**, the Electron desktop client over it (`deskrag-app`, with its own `app/node_modules`). `app/` is intentionally NOT an npm workspace member — that's what lets its Electron-ABI `better-sqlite3` coexist with the library's Node-ABI copy (see invariants). `native/` holds the Swift AX sidecar. Default to working in the library; the app is a consumer of its public barrel.
 
 ## Commands
 
@@ -21,14 +21,17 @@ npm run build:ax       # compile the macOS AX sidecar (swiftc) -> native/ax-dump
 npm run gen:brand      # regenerate assets/ + app/build/ icons from scripts/brand/geometry.ts
 ```
 
-App (`app/`) — separate build, separate gate:
+App (`app/`) — separate package, separate install, separate gate. The app is
+NOT an npm workspace member: it owns its own `app/node_modules` so its
+Electron-ABI `better-sqlite3` coexists with the library's Node-ABI copy (see
+invariants).
 
 ```bash
-npm run build                                  # library -> dist/ (the app imports dist, not src)
-npm --workspace deskrag-app run rebuild:native # better-sqlite3 -> Electron ABI (one time; see invariants)
-npm run app:dev                                # build library, then electron-vite dev
-npm run app:build                              # build library, then electron-vite build -> app/out/
-npm --workspace deskrag-app run typecheck      # the app's gate (renderer + node tsconfigs)
+npm run app:install                # cd app && npm install (postinstall builds better-sqlite3 for Electron)
+npm run build                      # library -> dist/ (the app imports dist, not src)
+npm run app:dev                    # build library, then electron-vite dev
+npm run app:build                  # build library, then electron-vite build -> app/out/
+npm --prefix app run typecheck     # the app's gate (renderer + node tsconfigs)
 ```
 
 - **Tests are the source of truth for behavior.** Prefer running the relevant test file over reasoning about correctness; the suite is fast (~6s) and deterministic.
@@ -85,7 +88,7 @@ electron-vite + React + TS. Three source roots with a hard rule between them: **
 - **Pinned deps for a reason:** `apache-arrow` is pinned to `18.1.0` (LanceDB peer-caps it `<=18.1.0`); `sharp` is `^0.35.3` (0.34.x had libvips CVEs). Don't bump these blind.
 - **Coordinate spaces:** AX bboxes and mouse hotspots are both global **screen** coordinates (top-left origin); the stored JPEG keyframe may be downscaled, so `SharpRegionCropper` maps the bbox from frame space → image space via `sharp.metadata()`.
 - **AX is captured live at capture time and stored** (`frame_ax` table), then read back at represent time via `StoredAxProvider` — never queried live during represent (the UI has moved on).
-- **Electron's Node ABI ≠ system Node's.** `npm --workspace deskrag-app run rebuild:native` rebuilds `better-sqlite3` for Electron, which **breaks the library's `npm test` until you `npm rebuild better-sqlite3` back**. If native tests suddenly fail with a NODE_MODULE_VERSION error, that's why. `sharp` and `@lancedb/lancedb` are N-API/prebuilt and unaffected. (App-local native copies are future work.)
+- **Electron's Node ABI ≠ system Node's — solved by two isolated installs, not by switching.** `app/` is deliberately NOT an npm workspace member: it has its own `app/node_modules` with its own `better-sqlite3`, rebuilt for Electron by `app`'s `postinstall` (`electron-rebuild -f -w better-sqlite3`). The library's root copy stays Node-ABI for `npm test`; the two never share a binary, so neither rebuild touches the other. `better-sqlite3` is the only ABI-fragile module (raw Node addon); `sharp`, `@lancedb/lancedb`, `uiohook-napi`, and `active-win` are N-API/prebuilt and are never rebuilt. The runtime resolves the app's copy first because `app/out/main/index.js` externalizes `better-sqlite3` as a bare specifier and `app/` is nested inside the repo, so Node's upward walk hits `app/node_modules` before root. **Consequence:** native version pins now live in both `package.json`s (`better-sqlite3`, `sharp`, `@lancedb/lancedb` + the platform optionals) — keep them in sync.
 - **`searchSegments` throws on an unregistered namespace**, so a `Retriever` must only be given `TextViewSearcher`s whose namespace appears in `store.listVectorSpaces()` — caption/transcript spaces don't exist until something has been indexed with those providers. `BehaviorViewSearcher` is always safe (it returns null without a behavior vector). See `DeskRagService.buildRetriever`.
 - **The app imports `dist/`, not `src/`** — after changing library code, `npm run build` before launching (`npm run app:dev` does both). Library types changing means the app's typecheck can break without any file in `app/` changing.
 - **`scripts/brand/emit-icons.ts` is macOS-only** — it shells out to `iconutil` to build the `.icns`. The rasterised PNG/ICNS/ICO binaries it and `emit-icons` produce are deliberately NOT drift-guarded byte-for-byte (unlike the SVG/Lottie emitters): libvips/librsvg output varies by version, so the test suite only checks the committed tray PNG isn't stale (alpha at a couple of geometry-derived pixels), not that it's byte-identical to a fresh render.

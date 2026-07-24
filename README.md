@@ -47,7 +47,7 @@ Everything runs locally. TypeScript throughout, strict types, pluggable AI provi
 | Path | What it is |
 |---|---|
 | `src/` | the DeskRAG library — capture, store, represent, retrieve (published as `deskrag`) |
-| `app/` | **DeskRAGApp**, the Electron desktop UI over the library (npm workspace `deskrag-app`) |
+| `app/` | **DeskRAGApp**, the Electron desktop UI over the library (`deskrag-app`, its own install — not a workspace member) |
 | `native/` | the macOS accessibility sidecar (`ax-dump.swift`, built with `npm run build:ax`) |
 | `test/` | the executable documentation — vitest suite, ~6s, deterministic |
 | `assets/` | the brand mark — generated from `scripts/brand/geometry.ts` via `npm run gen:brand` |
@@ -59,11 +59,15 @@ permissions, toggle capture signals, record, and search — no code required. Se
 [app/README.md](./app/README.md) for the detailed setup, permissions, and data notes.
 
 ```bash
-npm install                                    # library + app (workspace)
-npm --workspace deskrag-app run rebuild:native # native modules → Electron's ABI (see note)
-npm run app:dev                                # build the library, then launch the app
-npm run app:build                              # production build into app/out/
+npm install         # the library (root) — Node-ABI native modules for the test suite
+npm run app:install # the app (own node_modules) — postinstall builds better-sqlite3 for Electron
+npm run app:dev     # build the library, then launch the app
+npm run app:build   # production build into app/out/
 ```
+
+The app is a separate package with its own `app/node_modules`, so its
+Electron-ABI `better-sqlite3` and the library's Node-ABI copy coexist — no more
+rebuilding one and breaking the other.
 
 **Three screens.**
 
@@ -183,7 +187,7 @@ Anthropic has no embeddings endpoint — pair it (captioning/rerank) with a loca
 
 See [CLAUDE.md](./CLAUDE.md) for the architecture deep-dive and the load-bearing invariants. `npm run typecheck` is the primary gate; the test suite runs in ~6s and is deterministic (live/native tests skip cleanly when their dependency or credential is absent).
 
-The app has its own gate — `npm --workspace deskrag-app run typecheck` (renderer +
+The app has its own gate — `npm --prefix app run typecheck` (renderer +
 node configs) — and imports the library from `dist/`, so run `npm run build` after
 changing `src/` before launching it (`npm run app:dev` does both).
 

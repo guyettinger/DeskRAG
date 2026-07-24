@@ -36,27 +36,22 @@ and the tray menu can start/stop it. Only Quit closes the store.
 From the **repo root**:
 
 ```bash
-npm install            # installs the library + this app (workspace)
-npm run build          # compile the library to dist/ (the app imports it)
+npm install            # installs the library (root) — native modules for the test suite
+npm run app:install    # installs this app into app/node_modules
 ```
 
-### Native modules must match Electron's ABI
+### Native modules and Electron's ABI — handled for you
 
-The library's native deps (`better-sqlite3`, `sharp`, `@lancedb/lancedb`) are
-built for your system Node when you run the library's tests. Electron ships its
-own Node ABI, so before launching the app you must rebuild them for Electron:
+This app is a **separate package with its own `app/node_modules`**, not an npm
+workspace member. That's deliberate: it lets the app's Electron-ABI
+`better-sqlite3` coexist with the library's Node-ABI copy at the repo root, so
+neither install ever breaks the other. `npm run app:install` (i.e.
+`cd app && npm install`) runs a `postinstall` that rebuilds `better-sqlite3` for
+Electron — no manual step, no switching.
 
-```bash
-npm --workspace deskrag-app run rebuild:native
-```
-
-> Trade-off: this rebuilds `better-sqlite3` for Electron, which will break the
-> library's native `npm test` until you rebuild it back for system Node
-> (`npm rebuild better-sqlite3`). Package-time isolation (app-local native
-> copies) is future work — this version targets dev use.
->
-> `sharp` and `@lancedb/lancedb` are N-API/prebuilt (ABI-stable), so only
-> `better-sqlite3` needs the Electron rebuild.
+> `better-sqlite3` is the only ABI-fragile module (a raw Node addon). `sharp`,
+> `@lancedb/lancedb`, `uiohook-napi`, and `active-win` are N-API/prebuilt
+> (ABI-stable) and are never rebuilt.
 
 ### External tools (optional, per signal)
 
@@ -74,11 +69,11 @@ Each is best-effort — a missing one only disables its signal:
 npm run app:dev        # from repo root: builds the library, then launches the app
 ```
 
-Or, after `npm run build` + the native rebuild:
+Or, after `npm run build` (and `npm run app:install` once):
 
 ```bash
-npm --workspace deskrag-app run dev
-npm --workspace deskrag-app run typecheck   # the app's gate (renderer + node tsconfigs)
+npm --prefix app run dev
+npm --prefix app run typecheck   # the app's gate (renderer + node tsconfigs)
 ```
 
 For a production build (`app/out/`): `npm run app:build` from the repo root.
@@ -87,10 +82,10 @@ For a production build (`app/out/`): `npm run app:build` from the repo root.
 > (`npm run build`) after changing library code. `npm run app:dev` / `app:build` do
 > that for you.
 
-> `npm run app:dist` (packaging via `electron-builder`) does not yet work: npm
-> workspaces hoist `electron` to the repo root's `node_modules`, and
-> `electron-builder` can't resolve it from there. Packaging is not implemented
-> in this version.
+> Packaging: `npm run app:dist` builds and packages with `electron-builder`.
+> Because the app has its own `app/node_modules` (with `electron` and the native
+> deps as real dependencies), `electron-builder` resolves and rebuilds them from
+> the app's own tree.
 
 ## macOS permissions
 
