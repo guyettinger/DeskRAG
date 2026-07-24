@@ -60,8 +60,35 @@ describe.skipIf(!hasSwiftc)("ax-dump Swift sidecar", () => {
     }
   });
 
+  /**
+   * The regression guard for the intermittent 30s hang: the walk is bounded by
+   * wall-clock time, not just node count. maxNodes alone doesn't bound runtime —
+   * per-call AX latency belongs to the target app (~0.5ms Finder, ~8ms Mail), so
+   * 4000 nodes ran anywhere from 2s to indefinitely and the suite passed or failed
+   * on whichever app happened to be frontmost.
+   */
+  it("bounds a live walk by wall-clock time regardless of the frontmost app", () => {
+    const t0 = performance.now();
+    const out = execFileSync(bin, [], { encoding: "utf8", timeout: 15_000 });
+    const elapsed = performance.now() - t0;
+    expect(Array.isArray(JSON.parse(out))).toBe(true);
+    // Default budget is 800ms; allow generous headroom for spawn + one in-flight
+    // AX call, while still failing loudly on the unbounded walk (which ran >20s).
+    expect(elapsed).toBeLessThan(5000);
+  });
+
+  it("honors an explicit --budget-ms and still emits a valid array", () => {
+    const t0 = performance.now();
+    const out = execFileSync(bin, ["--budget-ms", "1"], { encoding: "utf8", timeout: 15_000 });
+    const elapsed = performance.now() - t0;
+    expect(Array.isArray(JSON.parse(out))).toBe(true);
+    expect(elapsed).toBeLessThan(2000);
+  });
+
   it("exits 0 and prints a JSON array when run directly", () => {
-    const out = execFileSync(bin, [], { encoding: "utf8" });
+    // timeout: the sidecar now bounds its own walk, but a direct exec has no other
+    // backstop — never let a stall become a 30s suite-wide vitest timeout again.
+    const out = execFileSync(bin, [], { encoding: "utf8", timeout: 5000 });
     expect(Array.isArray(JSON.parse(out))).toBe(true);
   });
 });
