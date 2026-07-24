@@ -9,11 +9,15 @@
 // API's native space) — the same space as uiohook mouse hotspots, so no flip.
 //
 // Best-effort contract (matches SwiftAxSource): exit 0 with `[]` when Accessibility
-// permission is absent or the app exposes nothing; the TS side filters/fuses.
+// permission is absent or the app exposes nothing; the TS side filters/fuses. The
+// walk is bounded by nodes, depth, AND wall-clock time (`--budget-ms`, default
+// 800) — a slow app yields a partial tree, never a hang. Truncation is noted on
+// stderr; stdout stays pure JSON.
 //
 // Build:  swiftc -O native/ax-dump.swift -o native/ax-dump   (npm run build:ax)
 
 import Foundation
+import Dispatch
 import ApplicationServices
 import AppKit
 
@@ -29,9 +33,25 @@ struct AXElem: Codable {
 
 final class AXReader {
     private(set) var elements: [AXElem] = []
+    /// True when a cap (nodes/depth/time) cut the walk short — the result is a
+    /// partial tree, which the best-effort contract allows.
+    private(set) var truncated = false
     private var visited = 0
     private let maxNodes = 4000
     private let maxDepth = 60
+    /// Monotonic wall-clock ceiling for the whole walk. maxNodes alone does NOT
+    /// bound runtime: each node costs ~6 AX round-trips and per-call latency is a
+    /// property of the target app (measured: ~0.5ms for Finder, ~8ms for Mail),
+    /// so 4000 nodes ranges from ~2s to minutes. Unbounded here is what made
+    /// test/ax-swift.test.ts hang until vitest's 30s timeout, passing or failing
+    /// on which app happened to be frontmost.
+    private let deadline: UInt64
+
+    init(budgetMs: Double) {
+        deadline = DispatchTime.now().uptimeNanoseconds + UInt64(budgetMs * 1_000_000)
+    }
+
+    private var outOfTime: Bool { DispatchTime.now().uptimeNanoseconds >= deadline }
 
     private func str(_ el: AXUIElement, _ attr: String) -> String? {
         var value: CFTypeRef?
@@ -71,7 +91,10 @@ final class AXReader {
     }
 
     func walk(_ el: AXUIElement, depth: Int) {
-        if visited >= maxNodes || depth > maxDepth { return }
+        if visited >= maxNodes || depth > maxDepth || outOfTime {
+            truncated = true
+            return
+        }
         visited += 1
         if let rawRole = str(el, kAXRoleAttribute as String),
            let pos = point(el, kAXPositionAttribute as String),
@@ -114,6 +137,14 @@ if !AXIsProcessTrusted() {
     exit(0)
 }
 
+// Cap a single AX round-trip. This is NOT what bounds the walk (see AXReader's
+// deadline) — no observed call came close to this; the slowest measured was 218ms
+// against Mail. It exists because the deadline is only checked *between* calls and
+// so cannot interrupt one already in flight: this caps the overshoot. Must be set
+// on the SYSTEM-WIDE element — per the AX header, setting it on any other object
+// applies to that object alone and does NOT reach the children the walk discovers.
+AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), 0.5)
+
 var targetPid: pid_t?
 if let i = args.firstIndex(of: "--pid"), i + 1 < args.count, let p = Int32(args[i + 1]) {
     targetPid = p
@@ -126,8 +157,18 @@ guard let pid = targetPid else {
     exit(0)
 }
 
+// Sized so the whole process finishes inside SwiftAxSource's 1500ms execFile
+// timeout — a slow app must yield a partial tree, not get SIGKILLed with nothing
+// to show for the work. Worst case is budget + one in-flight call (≤500ms, the
+// messaging timeout) + spawn/emit, so the budget has to sit well below 1500:
+// at 1200 Mail measured 1527ms end-to-end and would have been killed.
+var budgetMs = 800.0
+if let i = args.firstIndex(of: "--budget-ms"), i + 1 < args.count, let b = Double(args[i + 1]), b > 0 {
+    budgetMs = b
+}
+
 let app = AXUIElementCreateApplication(pid)
-let reader = AXReader()
+let reader = AXReader(budgetMs: budgetMs)
 
 var focusedWindow: CFTypeRef?
 if AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &focusedWindow) == .success,
@@ -141,5 +182,10 @@ if AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &fo
     }
 }
 
+// A truncated walk is a silently partial AX tree — worth a breadcrumb, but on
+// stderr only: stdout is the JSON contract SwiftAxSource parses.
+if reader.truncated {
+    FileHandle.standardError.write(Data("[ax-dump] walk truncated (budget \(Int(budgetMs))ms)\n".utf8))
+}
 emit(reader.elements)
 exit(0)
