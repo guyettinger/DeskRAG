@@ -83,6 +83,13 @@ export {
   type FrameRepresenterOptions,
   type FrameRepresentResult,
 } from "./represent/frame-representer.js";
+// Multi-vector counterpart (frame_patches view). Barrel-safe: the provider is
+// injected, so nothing native loads from here.
+export {
+  FramePatchRepresenter,
+  type FramePatchRepresenterOptions,
+  type FramePatchRepresentResult,
+} from "./represent/frame-patch-representer.js";
 // region pipeline (Tier 3 represent/)
 export { axFilter, type AxFilterOptions } from "./represent/regions/ax.js";
 export {
