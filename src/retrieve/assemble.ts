@@ -17,10 +17,11 @@
  * comparable despite RRF scores and ANN distances living on different scales.
  */
 
-import type { ImageEmbeddingProvider } from "../embed/types.js";
+import type { ImageEmbeddingProvider, MultiVectorProvider } from "../embed/types.js";
 import type { FrameRow, Store } from "../store/types.js";
 import { Tier1Retriever } from "./retriever.js";
 import { Tier2Retriever } from "./tier2.js";
+import { Tier2MultiVectorRetriever } from "./tier2-mv.js";
 import { Tier3Retriever } from "./tier3.js";
 import type { Reranker, RerankCandidate } from "./rerank/types.js";
 import type {
@@ -52,6 +53,11 @@ export interface RetrieverOptions {
   reranker?: Reranker;
   /** Frames handed to the reranker (top of the assembled list). */
   rerankTopN?: number;
+  /**
+   * Multivector path only: how many of the returned frames get highlight boxes.
+   * Each one costs a patch-set read, and the UI outlines one frame at a time.
+   */
+  highlightTopN?: number;
 }
 
 const DEFAULT_WEIGHTS: RetrieverWeights = { frame: 1, region: 0.5, segment: 0.5 };
@@ -60,36 +66,59 @@ const FTS_ONLY_SCORE = 0.5;
 
 export class Retriever {
   private readonly tier1: Tier1Retriever;
-  private readonly tier2: Tier2Retriever;
-  private readonly tier3: Tier3Retriever;
+  /** Single-vector visual path (cloud providers). Absent on the local path. */
+  private readonly tier2: Tier2Retriever | undefined;
+  private readonly tier3: Tier3Retriever | undefined;
+  /** Late-interaction visual path (local). Absent on the cloud path. */
+  private readonly tier2mv: Tier2MultiVectorRetriever | undefined;
   private readonly weights: RetrieverWeights;
   private readonly segmentScope: number;
   private readonly regionTopK: number;
   private readonly finalTopN: number;
   private readonly reranker: Reranker | undefined;
   private readonly rerankTopN: number;
+  private readonly highlightTopN: number;
 
   constructor(
     private readonly store: Store,
     config: {
       searchers: ViewSearcher[];
-      imageEmbedder: ImageEmbeddingProvider;
+      /**
+       * Exactly one visual path, or neither. They are alternatives, never both:
+       * a namespace is single- or multi-vector, and mixing them would compare
+       * incomparable spaces.
+       */
+      imageEmbedder?: ImageEmbeddingProvider;
+      patchEmbedder?: MultiVectorProvider;
     },
     opts: RetrieverOptions = {},
   ) {
+    if (config.imageEmbedder && config.patchEmbedder) {
+      throw new Error(
+        "Retriever takes imageEmbedder OR patchEmbedder, not both — they index different spaces.",
+      );
+    }
     this.tier1 = new Tier1Retriever(store, config.searchers, opts.tier1);
-    this.tier2 = new Tier2Retriever(store, config.imageEmbedder, {
-      ...(opts.frameTopN !== undefined ? { topN: opts.frameTopN } : {}),
-    });
-    this.tier3 = new Tier3Retriever(store, config.imageEmbedder, {
-      ...(opts.regionTopN !== undefined ? { topN: opts.regionTopN } : {}),
-    });
+    if (config.imageEmbedder) {
+      this.tier2 = new Tier2Retriever(store, config.imageEmbedder, {
+        ...(opts.frameTopN !== undefined ? { topN: opts.frameTopN } : {}),
+      });
+      this.tier3 = new Tier3Retriever(store, config.imageEmbedder, {
+        ...(opts.regionTopN !== undefined ? { topN: opts.regionTopN } : {}),
+      });
+    }
+    if (config.patchEmbedder) {
+      this.tier2mv = new Tier2MultiVectorRetriever(store, config.patchEmbedder, {
+        ...(opts.frameTopN !== undefined ? { topN: opts.frameTopN } : {}),
+      });
+    }
     this.weights = opts.weights ?? DEFAULT_WEIGHTS;
     this.segmentScope = opts.segmentScope ?? 50;
     this.regionTopK = opts.regionTopK ?? 3;
     this.finalTopN = opts.finalTopN ?? 30;
     this.reranker = opts.reranker;
     this.rerankTopN = opts.rerankTopN ?? 10;
+    this.highlightTopN = opts.highlightTopN ?? 10;
   }
 
   async retrieve(query: Query): Promise<AssembledResult> {
@@ -99,13 +128,17 @@ export class Retriever {
     const segScore = new Map(t1.map((s) => [s.segmentId, s.score]));
     const segScope = t1.slice(0, this.segmentScope).map((s) => s.segmentId);
 
-    // Tier 2 — recall frames.
-    const frameHits = await this.recallFrames(query, segScope);
+    // Tier 2 — recall frames. On the multivector path the query is embedded ONCE
+    // here and reused for highlights: embedding costs a vision forward pass.
+    const queryVectors = this.tier2mv ? await this.tier2mv.embedQuery(query) : null;
+    const frameHits = await this.recallFrames(query, segScope, queryVectors);
 
-    // Tier 3 — region highlights per recalled frame (visual queries only).
+    // Tier 3 — region highlights per recalled frame. Single-vector path only:
+    // on the multivector path the patches ARE the regions, so a region score
+    // derived from the same MaxSim would double-count the frame's own evidence.
     const frameIds = frameHits.map((f) => f.frameId);
     const regionHits =
-      query.image && frameIds.length > 0
+      this.tier3 && query.image && frameIds.length > 0
         ? await this.tier3.retrieveRegions(query, frameIds)
         : [];
     const regionsByFrame = new Map<string, RegionHit[]>();
@@ -120,7 +153,35 @@ export class Retriever {
     if (this.reranker && query.text && frames.length > 1) {
       frames = await this.rerank(query.text, frames);
     }
+
+    // Highlights last on the multivector path: presentation only, and each one
+    // costs a patch-set read, so only the frames actually shown pay for it.
+    if (this.tier2mv && queryVectors) {
+      frames = await this.attachPatchHighlights(frames, queryVectors);
+    }
     return { segments: t1, frames };
+  }
+
+  private async attachPatchHighlights(
+    frames: FrameResult[],
+    queryVectors: Float32Array[],
+  ): Promise<FrameResult[]> {
+    const out = [...frames];
+    for (let i = 0; i < Math.min(this.highlightTopN, out.length); i++) {
+      const f = out[i]!;
+      const frame = f.frame ?? this.store.getFrame(f.frameId);
+      if (!frame) continue;
+      out[i] = {
+        ...f,
+        highlights: await this.tier2mv!.highlightsForFrame(
+          f.frameId,
+          queryVectors,
+          frame.width,
+          frame.height,
+        ),
+      };
+    }
+    return out;
   }
 
   private async rerank(query: string, frames: FrameResult[]): Promise<FrameResult[]> {
@@ -139,8 +200,18 @@ export class Retriever {
     return [...reordered, ...tail];
   }
 
-  private async recallFrames(query: Query, segScope: string[]): Promise<FrameHit[]> {
-    if (query.image) {
+  private async recallFrames(
+    query: Query,
+    segScope: string[],
+    queryVectors: Float32Array[] | null,
+  ): Promise<FrameHit[]> {
+    // Multivector: serves TEXT as well as image, since one model embeds both.
+    if (this.tier2mv && queryVectors) {
+      return segScope.length > 0
+        ? this.tier2mv.retrieveFrames(queryVectors, segScope)
+        : this.tier2mv.retrieveFramesUnscoped(queryVectors);
+    }
+    if (this.tier2 && query.image) {
       return segScope.length > 0
         ? this.tier2.retrieveFrames(query, segScope)
         : this.tier2.retrieveFramesUnscoped(query);

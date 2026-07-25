@@ -152,6 +152,10 @@ export {
 } from "./retrieve/rrf.js";
 export { Tier1Retriever } from "./retrieve/retriever.js";
 export { Tier2Retriever, type Tier2Options } from "./retrieve/tier2.js";
+export {
+  Tier2MultiVectorRetriever,
+  type Tier2MultiVectorOptions,
+} from "./retrieve/tier2-mv.js";
 export { Tier3Retriever, type Tier3Options } from "./retrieve/tier3.js";
 export { Retriever, type RetrieverOptions } from "./retrieve/assemble.js";
 export { TextViewSearcher, BehaviorViewSearcher } from "./retrieve/searchers.js";
