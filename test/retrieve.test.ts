@@ -10,6 +10,7 @@ import { BehaviorFeatureExtractor } from "../src/represent/behavior.js";
 import { FakeEmbeddingProvider } from "../src/embed/fake.js";
 import { reciprocalRankFusion } from "../src/retrieve/rrf.js";
 import { Tier1Retriever } from "../src/retrieve/retriever.js";
+import type { EmbedOptions, EmbeddingProvider } from "../src/embed/types.js";
 import { BehaviorViewSearcher, TextViewSearcher } from "../src/retrieve/searchers.js";
 import type { EventInsert } from "../src/store/types.js";
 
@@ -133,5 +134,37 @@ describe("Tier1Retriever (integration)", () => {
     await seedAndRepresent();
     const res = await makeRetriever().retrieve({});
     expect(res.segments).toEqual([]);
+  });
+});
+
+describe("TextViewSearcher role", () => {
+  it("embeds the query with role=query, not the document default", async () => {
+    const seen: (EmbedOptions | undefined)[] = [];
+    const probe: EmbeddingProvider = {
+      id: "probe",
+      model: "probe",
+      dimensions: 4,
+      async embed(inputs, opts) {
+        seen.push(opts);
+        return inputs.map(() => Float32Array.from([1, 0, 0, 0]));
+      },
+    };
+    await new TextViewSearcher(probe, "digest").queryVector({ text: "hello" });
+    expect(seen[0]).toEqual({ role: "query" });
+  });
+
+  it("does not embed at all for an empty query", async () => {
+    const seen: unknown[] = [];
+    const probe: EmbeddingProvider = {
+      id: "probe",
+      model: "probe",
+      dimensions: 4,
+      async embed(inputs) {
+        seen.push(inputs);
+        return [];
+      },
+    };
+    expect(await new TextViewSearcher(probe, "digest").queryVector({})).toBeNull();
+    expect(seen.length).toBe(0);
   });
 });

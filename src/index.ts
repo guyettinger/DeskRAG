@@ -130,6 +130,14 @@ export {
 export { FakeCaptionProvider } from "./represent/caption/fake.js";
 export { AnthropicCaptionProvider, type AnthropicCaptionOptions } from "./represent/caption/anthropic.js";
 export { GeminiCaptionProvider, type GeminiCaptionOptions } from "./represent/caption/gemini.js";
+// Local VLM captioner. Barrel-safe (plain fetch); `listVisionModels` is what the
+// app's model picker must use — see its doc comment for why a hardcoded list is
+// unsafe now that Ollama's library includes cloud-hosted models.
+export {
+  OllamaCaptionProvider,
+  listVisionModels,
+  type OllamaCaptionOptions,
+} from "./represent/caption/ollama.js";
 // transcript view (STT) — the FakeTranscription + representer are pure; the
 // whisper.cpp adapter spawns a subprocess and is imported from its own path.
 export {
