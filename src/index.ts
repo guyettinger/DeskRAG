@@ -1,6 +1,6 @@
 // embed/ — provider interfaces, namespacing, adapters
 export * from "./embed/types.js";
-export { FakeEmbeddingProvider } from "./embed/fake.js";
+export { FakeEmbeddingProvider, FakeMultiVectorProvider } from "./embed/fake.js";
 export { OllamaTextEmbedding } from "./embed/ollama.js";
 export { VoyageTextEmbedding, VoyageImageEmbedding } from "./embed/voyage.js";
 export { GeminiEmbedding } from "./embed/gemini.js";

@@ -10,8 +10,10 @@
  */
 
 import type {
+  EmbedOptions,
   EmbeddingProvider,
   ImageEmbeddingProvider,
+  MultiVectorProvider,
 } from "./types.js";
 
 /** xmur3 string hasher -> seed for a small PRNG. */
@@ -79,7 +81,12 @@ export class FakeEmbeddingProvider
     this.sharedTextSpace = opts.sharedTextSpace ?? true;
   }
 
-  async embed(inputs: string[]): Promise<Float32Array[]> {
+  /**
+   * `opts` is accepted and ignored: the fake stays a pure function of its input
+   * so tests can place exact-match items at controlled positions regardless of
+   * document/query role.
+   */
+  async embed(inputs: string[], _opts?: EmbedOptions): Promise<Float32Array[]> {
     return inputs.map((s) => deterministicUnitVector(s, this.dimensions));
   }
 
@@ -100,6 +107,36 @@ export class FakeEmbeddingProvider
       );
     }
     return Float32Array.from(values);
+  }
+}
+
+/**
+ * Deterministic multivector fake. Emits `count` vectors per input, each a stable
+ * function of the input bytes and the vector index, so a query built from the
+ * same bytes MaxSim-matches exactly.
+ */
+export class FakeMultiVectorProvider implements MultiVectorProvider {
+  readonly id = "fake";
+  readonly model = "fake-mv";
+  readonly multiVector = true as const;
+
+  constructor(
+    readonly dimensions = 128,
+    private readonly count = 4,
+  ) {}
+
+  private setFor(seed: string): Float32Array[] {
+    return Array.from({ length: this.count }, (_, k) =>
+      deterministicUnitVector(`${seed}#${k}`, this.dimensions),
+    );
+  }
+
+  async embedImages(images: Uint8Array[]): Promise<Float32Array[][]> {
+    return images.map((bytes) => this.setFor(`img:${bytesKey(bytes)}`));
+  }
+
+  async embedQueries(texts: string[]): Promise<Float32Array[][]> {
+    return texts.map((t) => this.setFor(`txt:${t}`));
   }
 }
 
