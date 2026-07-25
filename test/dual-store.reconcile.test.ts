@@ -37,9 +37,17 @@ describe("dual-store reconciliation", () => {
         if (failAdd) throw new Error("injected Lance add failure");
         return real.add(ns, rows);
       },
+      // Gate patch writes on the same switch — a patch write is a vector write.
+      addPatches: async (ns, rows) => {
+        if (failAdd) throw new Error("injected Lance add failure");
+        return real.addPatches(ns, rows);
+      },
       searchSegment: (...a) => real.searchSegment(...a),
       searchFrame: (...a) => real.searchFrame(...a),
       searchRegion: (...a) => real.searchRegion(...a),
+      searchFramePatches: (...a) => real.searchFramePatches(...a),
+      ensurePatchIndex: (...a) => real.ensurePatchIndex(...a),
+      getFramePatches: (...a) => real.getFramePatches(...a),
       deleteByIds: (...a) => real.deleteByIds(...a),
       allIds: (...a) => real.allIds(...a),
       close: () => real.close(),

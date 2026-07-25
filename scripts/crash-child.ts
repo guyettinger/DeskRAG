@@ -36,9 +36,17 @@ async function main() {
     add: async (_ns: string, _rows: VecRow[]) => {
       process.exit(1); // die in the gap
     },
+    // A patch write is a vector write: it must die in the gap too, or a future
+    // multivector fixture would silently stop exercising the crash path.
+    addPatches: async () => {
+      process.exit(1);
+    },
     searchSegment: (...a) => real.searchSegment(...a),
     searchFrame: (...a) => real.searchFrame(...a),
     searchRegion: (...a) => real.searchRegion(...a),
+    searchFramePatches: (...a) => real.searchFramePatches(...a),
+    ensurePatchIndex: (...a) => real.ensurePatchIndex(...a),
+    getFramePatches: (...a) => real.getFramePatches(...a),
     deleteByIds: (...a) => real.deleteByIds(...a),
     allIds: (...a) => real.allIds(...a),
     close: () => real.close(),
