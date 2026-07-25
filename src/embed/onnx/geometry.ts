@@ -10,11 +10,19 @@
  * patches per tile; pixel_shuffle_factor 4 -> divide by 16 -> 64 tokens per tile,
  * an 8x8 grid.
  *
- * NOTE the edge case that a naive implementation gets wrong: the last column and
- * last row of tiles are usually SMALLER than tileSize, and the preprocessor
- * stretches them to tileSize before the vision encoder sees them. A token in
- * such a tile therefore covers less source area than one in a full tile, so the
- * cell size is derived per tile from its real extent, never assumed.
+ * The tiling rule was MEASURED against ColIdefics3Processor, not inferred from
+ * the config, because two plausible readings of it are both wrong:
+ *
+ *   1. The longest edge is scaled TO maxEdge, not capped at it. A 1280x800 frame
+ *      is scaled UP by 1.6x, not left alone.
+ *   2. Both dimensions are then rounded UP to a multiple of tileSize and the
+ *      image is RESIZED to that — not padded, and not stretched per tile. Every
+ *      tile is a full, fully-valid tileSize square (verified: every tile reports
+ *      pixel_attention_mask frac = 1.000).
+ *
+ * Consequence: the resize is anisotropic, so mapping a patch back to source
+ * pixels needs separate x and y factors. 1280x800 -> 2048x1536 -> 4x3 grid + a
+ * global tile = 13 tiles = 832 image tokens.
  */
 
 import type { Box } from "../../represent/regions/geometry.js";
@@ -51,11 +59,12 @@ export interface TiledImage {
 export interface TileGeometry {
   srcWidth: number;
   srcHeight: number;
-  /** Resize factor applied before tiling (<= 1). */
-  scale: number;
-  /** Dimensions after the maxEdge resize, in which tiling happens. */
+  /** Dimensions the image is resized to — always exact multiples of tileSize. */
   scaledWidth: number;
   scaledHeight: number;
+  /** Scaled -> source factors. Anisotropic: the resize does not preserve aspect. */
+  scaleX: number;
+  scaleY: number;
   cols: number;
   rows: number;
   tokensPerTile: number;
@@ -70,18 +79,26 @@ export function computeTileGeometry(
   srcHeight: number,
   cfg: TileConfig = DEFAULT_TILE_CONFIG,
 ): TileGeometry {
-  const scale = Math.min(1, cfg.maxEdge / Math.max(srcWidth, srcHeight));
-  const scaledWidth = Math.round(srcWidth * scale);
-  const scaledHeight = Math.round(srcHeight * scale);
-  const cols = Math.max(1, Math.ceil(scaledWidth / cfg.tileSize));
-  const rows = Math.max(1, Math.ceil(scaledHeight / cfg.tileSize));
+  // Scale the longest edge TO maxEdge — this upscales small frames, it does not
+  // merely cap large ones.
+  const s = cfg.maxEdge / Math.max(srcWidth, srcHeight);
+  // Then round both dimensions up to a whole number of tiles and resize to that.
+  const scaledWidth =
+    Math.ceil(Math.round(srcWidth * s) / cfg.tileSize) * cfg.tileSize;
+  const scaledHeight =
+    Math.ceil(Math.round(srcHeight * s) / cfg.tileSize) * cfg.tileSize;
+
+  const cols = scaledWidth / cfg.tileSize;
+  const rows = scaledHeight / cfg.tileSize;
   const perTile = (cfg.tileSize / cfg.patchSize) ** 2 / cfg.shuffleFactor ** 2;
+
   return {
     srcWidth,
     srcHeight,
-    scale,
     scaledWidth,
     scaledHeight,
+    scaleX: srcWidth / scaledWidth,
+    scaleY: srcHeight / scaledHeight,
     cols,
     rows,
     tokensPerTile: perTile,
@@ -116,27 +133,21 @@ export function patchIndexToBox(index: number, g: TileGeometry): Box | null {
   const tileCol = tileIndex % g.cols;
   const tileRow = Math.floor(tileIndex / g.cols);
 
-  // Real extent of THIS tile in scaled space — edge tiles are smaller and were
-  // stretched to tileSize before encoding, so their tokens cover less area.
-  const originX = tileCol * g.tileSize;
-  const originY = tileRow * g.tileSize;
-  const tileW = Math.min(g.tileSize, g.scaledWidth - originX);
-  const tileH = Math.min(g.tileSize, g.scaledHeight - originY);
-
-  const cellW = tileW / g.tokenGrid;
-  const cellH = tileH / g.tokenGrid;
+  // Every tile is a full tileSize square (the image was resized, not padded), so
+  // the cell size is uniform.
+  const cell = g.tileSize / g.tokenGrid;
   const gx = within % g.tokenGrid;
   const gy = Math.floor(within / g.tokenGrid);
 
-  // Scaled space -> source space.
-  const inv = 1 / g.scale;
-  const x = (originX + gx * cellW) * inv;
-  const y = (originY + gy * cellH) * inv;
+  // Scaled space -> source space, with separate factors: the resize to a whole
+  // number of tiles does not preserve aspect ratio.
+  const x = (tileCol * g.tileSize + gx * cell) * g.scaleX;
+  const y = (tileRow * g.tileSize + gy * cell) * g.scaleY;
 
   return {
     x,
     y,
-    w: Math.max(0, Math.min(cellW * inv, g.srcWidth - x)),
-    h: Math.max(0, Math.min(cellH * inv, g.srcHeight - y)),
+    w: Math.max(0, Math.min(cell * g.scaleX, g.srcWidth - x)),
+    h: Math.max(0, Math.min(cell * g.scaleY, g.srcHeight - y)),
   };
 }
