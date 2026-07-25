@@ -5,8 +5,8 @@
 
 ## Goal
 
-Let a user configure every AI touchpoint in DeskRAG to run on their own machine, so
-that no captured screen content, audio, or query text leaves the device.
+Let a user configure every AI touchpoint in DeskRAG to run on their own machine,
+so that no captured screen content, audio, or query text leaves the device.
 
 ## Current state
 
@@ -21,21 +21,19 @@ Six touchpoints. Three are already local, three are not.
 | Caption (VLM) | `src/represent/caption/{anthropic,gemini}.ts` | No |
 | Rerank (Tier 4) | `src/retrieve/rerank/llm.ts` | No |
 
+**There is no existing recorded data.** No migration, compatibility, or
+re-indexing concern applies anywhere in this document.
+
 ## The constraint that shapes everything
 
 Ollama cannot produce image embeddings, and no model can change that. Its
 `EmbedRequest` struct (`ollama/api/types.go`) carries exactly six fields —
 `Model`, `Input`, `KeepAlive`, `Truncate`, `Dimensions`, `Options`. There is no
 image parameter, so `/api/embed` has no way to accept pixels. All twelve models
-in Ollama's embedding category are text-only. One community model advertises
-itself as multimodal (`DC1LEX/nomic-embed-text-v1.5-multimodal`) but is the text
-tower repackaged.
+in Ollama's embedding category are text-only.
 
-That model's description points at the real answer: *"nomic-embed-vision-v1.5 is
-aligned to the embedding space of nomic-embed-text-v1.5."* The two are the text
-and image towers of one joint space, and Ollama's `nomic-embed-text:latest`
-already resolves to v1.5. Only the image tower is missing, and it publishes ONNX
-weights.
+Local image embedding therefore requires an in-process ONNX runtime. That is the
+only hard constraint; everything else below is a choice.
 
 ## The division of labor
 
@@ -44,7 +42,7 @@ The useful line is not local vs. remote but **discriminative vs. generative**.
 | Touchpoint | Shape | Runtime |
 |---|---|---|
 | Text embed | one forward pass | ONNX |
-| Image embed | one forward pass | ONNX — the only option |
+| Image embed | one forward pass, multi-vector | ONNX — the only option |
 | Rerank | one forward pass, as a cross-encoder | ONNX |
 | Caption | autoregressive multimodal | Ollama |
 | STT | — | whisper.cpp, unchanged |
@@ -66,85 +64,107 @@ path in-process, where no daemon can be down.
 ## Decisions
 
 1. ONNX for text embed, image embed, and rerank; Ollama for captions.
-2. Weights auto-download on first use into the app data dir, verified against a
+2. **The local image path is multi-vector late interaction (ColSmol-256M), not
+   single-vector.** See Model Selection.
+3. Weights auto-download on first use into the app data dir, verified against a
    pinned SHA-256, with a settings path override for air-gapped machines.
-3. No migration path for recordings indexed under a previous provider. Namespace
-   divergence is intended behavior.
-4. Document/query task prefixes are carried by an optional second argument to
-   `embed()`, not by separate provider instances.
-5. `jina-reranker-v1-turbo-en` is the reranker (37.8M params, Apache-2.0) rather
-   than `bge-reranker-base` (278M) — roughly seven times smaller for a desktop
-   app. Its v2 and m0 successors are non-commercial; see Model Selection.
-6. The local profile also enables AX capture, because the local image tower
-   cannot read screen text and AX is the strongest substitute.
-
-All models are Apache-2.0 or MIT. None carry a non-commercial clause.
+4. No migration path. There is no data; namespace divergence is intended.
+5. Document/query task prefixes ride on an optional second argument to `embed()`.
+6. `jina-reranker-v1-turbo-en` is the reranker (37.8M, Apache-2.0). Its v2 and m0
+   successors are non-commercial; see Model Selection.
+7. The local profile also enables AX capture, because AX labels are the exact-text
+   path that no embedding replaces.
 
 ## Model selection
 
-Researched 2026-07-24. Recording the reasoning because several of these choices
-look wrong without it.
+Researched 2026-07-24. Recording the reasoning because several choices look wrong
+without it.
 
-### Vision tower: chosen under constraint, not on merit
+### Vision: multi-vector late interaction
 
-`nomic-embed-vision-v1.5` is **not** the strongest model for screenshot
-retrieval. Single-vector CLIP-style embedders are weak on text-dense images, and
-DeskRAG's frames are text-dense by nature. The state of the art is multi-vector
-late interaction — `colnomic-embed-multimodal-3b` scores 61.2 NDCG@5 on ViDoRe-v2
-against 58.8 for its single-vector sibling, and `jina-embeddings-v4` reaches
-90.17 on ViDoRe multi-vector against 84.11 single-vector.
+Single-vector CLIP-style embedders are weak on text-dense images, and DeskRAG's
+frames are text-dense by nature. The stronger architecture is multi-vector late
+interaction — matching at query-token to image-patch granularity rather than
+whole-image.
 
-Every stronger option is disqualified:
+Two assumptions initially ruled this out. Both are false:
 
-| Candidate | Params | Why rejected |
+- **"The store can't do MaxSim."** It can. `@lancedb/lancedb@0.24.1` — the
+  version already installed — exposes `MultiVector` in its type definitions
+  (`dist/arrow.d.ts:39`) and accepts it in `vectorSearch()` and `search()`
+  (`dist/table.d.ts:295,303`). Multivector columns and MaxSim scoring are native,
+  in JS, at the installed version.
+- **"Late-interaction models are 3B."** The frontier ones are.
+  `vidore/colSmol-256M` is **256M**, MIT-licensed, built on SmolVLM-256M, with an
+  ONNX export at `onnx-community/colSmol-256M-ONNX`, and reported to rival models
+  ten times its size on ViDoRe.
+
+### Patches replace regions
+
+This is the reason to prefer it, beyond retrieval quality.
+
+`represent/regions/` currently reconstructs by hand — via AX, interaction
+hotspots, grid tiling, NMS, and a budget cut — what a late-interaction model
+produces natively. The patches *are* the regions, and the per-query-token MaxSim
+argmax yields the matched patch, which is exactly the `highlights` bbox that
+`assemble.ts` returns today.
+
+So the region *image*-embedding pass disappears on the local path. AX regions
+remain, because exact role and label text in FTS5 is something no embedding
+replaces.
+
+### Cost
+
+Geometry from `vidore/colSmol-256M/config.json`: `image_size: 512`,
+`patch_size: 16` → 1024 patches per tile; `pixel_shuffle_factor: 4` → ÷16 → **64
+tokens per 512×512 tile**. The preprocessor tiles to `longest_edge: 512` under a
+2048 cap.
+
+At the default `imageMaxWidth: 1280` a frame is ~1280×800 → a 3×2 tiling plus a
+global view = 7 tiles → **~448 vectors per frame** at 128 dims.
+
+| | per frame | per 10-min session (600 frames) |
 |---|---|---|
-| `colnomic-embed-multimodal-3b` | 3B | Multi-vector. Late interaction needs per-patch vectors and a MaxSim scorer; `DualStore`, the namespace discipline, and LanceDB scoped ANN are single-vector end to end. Different retrieval engine, not a model swap. |
-| `jina-embeddings-v4` | 3.8B | Multi-vector for its best scores; 3.8B infeasible at region volume. |
-| `nomic-embed-multimodal-3b` | 3B | Single-vector, but **no ONNX export**, and 3B infeasible at region volume. |
-| `jina-clip-v2` | 865M | **CC-BY-NC-4.0** — non-commercial. |
-| `siglip2-base-patch16-224` | 375M | Apache-2.0 upstream but ONNX only via an `onnx-community` mirror with unstated license; 4× the size; loses text-tower alignment, requiring a separate SigLIP2 text encoder. |
+| Multivector, f32 | 229 KB | 137 MB |
+| **Multivector, f16** | **115 KB** | **69 MB** |
+| Single-vector frames + ~12k regions | — | ~39 MB |
 
-**Region volume is the binding constraint.** Roughly 20 regions per frame at
-1 fps means ~12,000 crops for a ten-minute session. At 92M that is minutes of
-CPU; at 3B it is hours. Whatever its benchmark scores, a 3B model cannot embed
-DeskRAG's regions.
+About 1.8× the vector storage, against an H.264 session blob that is already
+larger than either. **Store patches as float16** — LanceDB supports f16, f32, and
+f64 for multivector.
 
-So `nomic-embed-vision-v1.5` is the best *available* model under the real
-constraints — single-vector, ONNX, permissive license, small enough for region
-volume, aligned to a text tower — not the best model for the task.
+Compute moves in the favourable direction but less dramatically than storage
+suggests: ~4,200 vision passes per session (600 frames × 7 tiles) plus 600
+decoder passes, against ~12,600 single-vector passes today for frames plus
+regions. Roughly **2–3× less inference**, not the order of magnitude a naive
+per-frame comparison implies.
 
-### What that means for expectations
+### Text embedder: no longer forced
 
-**The image vector is for visual and layout similarity, not for reading screen
-text.** Text on screen is covered by three other paths: AX labels in FTS5
-(Tier 3), VLM captions, and digests. Those are the OCR story; the image
-embedding is the "looks like this" story.
+With the vision tower no longer part of a nomic shared space, the alignment
+constraint that previously forced `nomic-embed-text-v1.5` is gone. ColSmol embeds
+its own queries for image search, so the text embedder is now free.
 
-Because AX is the strongest of the three, and `signals.ax.enabled` currently
-defaults to `false` (`app/src/main/settings.ts:38`), the local profile turns it
-on — see App Wiring.
+It stays `nomic-embed-text-v1.5` anyway — 137M, Apache-2.0, ONNX, fast, and
+adequate for digest, caption, and transcript text. `Qwen3-Embedding-0.6B`
+(Apache-2.0, ONNX) is the documented upgrade if quality proves limiting; changing
+it is one manifest field.
 
-### Text embedder: forced by alignment
-
-`nomic-embed-text-v1.5` is not chosen on quality either. It is *required* by the
-shared-space design, since it is the tower `nomic-embed-vision-v1.5` is aligned
-to. This forecloses stronger text embedders (Qwen3-Embedding, bge-m3) for the
-digest, caption, and transcript views. A future design could decouple — best-in-
-class text embedder for text views, nomic text only as the query side of image
-search — at the cost of a fourth model and a second text namespace.
+Note that `onnx:nomic-embed-text-v1.5` and `ollama:nomic-embed-text` are distinct
+namespaces even though the weights match, because provider id is part of the
+namespace and two runtimes may differ numerically. That is correct, not a defect.
 
 ### Reranker: a licensing trap
 
 Only `jina-reranker-v1-turbo-en` is Apache-2.0. Both
 `jina-reranker-v2-base-multilingual` and `jina-reranker-m0` are
 **CC-BY-NC-4.0**. "Upgrade to the newer Jina reranker" would silently take on a
-non-commercial license. Do not do it without re-checking.
+non-commercial license.
 
-`jina-reranker-v3` (0.6B) is meaningfully better — 61.94 vs 56.51 nDCG@10 on
-BEIR against `bge-reranker-v2-m3` — but 16× larger. Note that the latency budget
-is looser than it appears: Tier 4 today calls `claude-opus-4-8`, which already
-costs seconds. `Qwen3-Reranker-0.6B` is Apache-2.0 with ONNX available and is
-the documented opt-in quality tier; changing it is one manifest field.
+`jina-reranker-v3` (0.6B) is meaningfully better — 61.94 vs 56.51 nDCG@10 on BEIR
+against `bge-reranker-v2-m3` — but 16× larger. The latency budget is looser than
+it appears, since Tier 4 today calls `claude-opus-4-8` and already costs seconds.
+`Qwen3-Reranker-0.6B` is Apache-2.0 with ONNX and is the documented quality tier.
 
 ### Caption model
 
@@ -152,6 +172,17 @@ the documented opt-in quality tier; changing it is one manifest field.
 4B against 94.4% at 8B — a small gap for double the memory. **`qwen3-vl:4b` is
 the default**, `qwen3-vl:2b` for low-memory machines, `minicpm-v4.6` a
 comparable-OCR alternative.
+
+### Rejected
+
+| Candidate | Why |
+|---|---|
+| `nomic-embed-vision-v1.5` (92M) | Single-vector; weak on text-dense frames. Superseded by ColSmol. |
+| `colnomic-embed-multimodal-3b` | 3B — infeasible per-frame on CPU. |
+| `jina-embeddings-v4` (3.8B) | Same. |
+| `nomic-embed-multimodal-3b` | 3B, and no ONNX export. |
+| `jina-clip-v2` (865M) | **CC-BY-NC-4.0**. |
+| `siglip2-base` (375M) | Single-vector; ONNX only via a mirror with unstated license. |
 
 ## Components
 
@@ -161,81 +192,106 @@ comparable-OCR alternative.
 src/embed/onnx/
   runtime.ts    OnnxRuntime — lazy onnxruntime-node load, InferenceSession
                 cache keyed by weights path, tensor helpers
-  text.ts       OnnxTextEmbedding    nomic-embed-text-v1.5    768-dim
-  vision.ts     OnnxImageEmbedding   nomic-embed-vision-v1.5  768-dim,
-                                     sharedTextSpace: true
+  text.ts       OnnxTextEmbedding      nomic-embed-text-v1.5   768-dim
+  colsmol.ts    ColSmolMultiVector     colSmol-256M            128-dim × ~448
 src/retrieve/rerank/onnx.ts        OnnxCrossEncoderReranker
 src/represent/caption/ollama.ts    OllamaCaptionProvider
 ```
 
-Each adapter sits next to the interface it implements, matching the existing
-layout. The embedders take a subdirectory rather than a flat `src/embed/onnx.ts`
-because ONNX carries real preprocessing weight — tokenization, image resize and
-normalization — that would push one file well past what `voyage.ts` carries.
-
 ### Barrel placement
 
-`OllamaCaptionProvider` is plain `fetch` and exports from `src/index.ts`
-alongside the other captioners.
+`OllamaCaptionProvider` is plain `fetch` and exports from `src/index.ts`.
 
 All four ONNX modules load native code — `onnxruntime-node` in every case, plus
-`sharp` in `vision.ts` for preprocessing. They are **not** re-exported from the
-barrel, and are imported from their own paths, matching `SharpRegionCropper` and
-`uiohook-input`, so `import "deskrag"` still never force-loads a native module.
+`sharp` in `colsmol.ts` for tiling and normalization. They are **not**
+re-exported from the barrel and are imported from their own paths, matching
+`SharpRegionCropper` and `uiohook-input`.
 
-Consequence: `DeskRagService.buildProviders()` (`app/src/main/deskrag-service.ts:145`)
-becomes `async`, because ONNX adapters arrive via
-`await import(/* @vite-ignore */ …)` inside try/catch, as `loadCropper()` already
-does. Both call sites — `index()` and `search()` — are already async.
+Consequence: `DeskRagService.buildProviders()`
+(`app/src/main/deskrag-service.ts:145`) becomes `async`. Both call sites are
+already async.
 
 ### Dependencies
 
 Added to **both** `package.json` files, per the dual-install invariant:
 
-- `onnxruntime-node` — N-API, so no Electron rebuild and no interaction with the
-  `better-sqlite3` rebuild path. It does run a `postinstall` that fetches
-  platform binaries, which is a new network step at install time.
+- `onnxruntime-node` — N-API, no Electron rebuild, no interaction with the
+  `better-sqlite3` rebuild path. Runs a `postinstall` that fetches platform
+  binaries.
 - `@huggingface/tokenizers` — pure JS/TS, zero dependencies, no postinstall.
 
-Explicitly **not** `@huggingface/transformers`, which depends on `sharp ^0.34.5`.
-That range does not overlap the project's `^0.35.3` pin, which exists because
-0.34.x carried libvips CVEs, so npm would nest a vulnerable duplicate copy.
+Explicitly **not** `@huggingface/transformers`, which depends on `sharp ^0.34.5`
+against the project's `^0.35.3` CVE pin, and would nest a vulnerable duplicate.
 
-## Namespaces
+## The multi-vector seam
 
-`namespaceFor()` rejects `:` in a model string (`src/embed/types.ts:139`), so
-Ollama's tag form cannot pass through verbatim:
-
-```
-digest:onnx:nomic-embed-text-v1.5:768
-frame_image:onnx:nomic-embed-vision-v1.5:768
-region_image:onnx:nomic-embed-vision-v1.5:768
-```
-
-Same provider id, same dimensionality, genuinely the same space — so
-`sharedTextSpace: true` on the vision adapter is an honest claim, and Tier-2 and
-Tier-3 text-into-image search work as the retrieval code already assumes.
-
-## Interface change: task prefixes
-
-nomic-embed-v1.5 requires `search_document: ` on stored text and `search_query: `
-on query text. Omitting them raises no error; retrieval quality just degrades
-silently. `EmbeddingProvider.embed(inputs)` has no notion of the distinction, and
-one instance serves both roles today — `TextViewSearcher` receives the same
-provider the representers use.
+### New provider interface
 
 ```ts
-embed(inputs: string[], opts?: { role?: "document" | "query" }): Promise<Float32Array[]>
+export interface MultiVectorProvider extends NamespacedProvider {
+  readonly multiVector: true;
+  /** Per image: N vectors of `dimensions` each. */
+  embedImages(images: Uint8Array[]): Promise<Float32Array[][]>;
+  /** Per query: M vectors of `dimensions` each. */
+  embedQueries(texts: string[]): Promise<Float32Array[][]>;
+}
 ```
 
-Additive and backward-compatible; providers that do not care ignore it. Chosen
-over a constructor option because the constructor variant fails silently when
-mis-wired, and silent quality loss is precisely what the namespace discipline
-exists to prevent elsewhere in this codebase.
+One model serves both sides, so there is no alignment question to get wrong.
+`dimensions` is the per-vector width (128), not the total.
 
-`TextViewSearcher` passes `role: "query"`; representers pass `role: "document"`.
-The prefix is not part of the namespace — both roles write to and read from the
-same space, which is the point.
+### New view and namespace
+
+`frame_patches` joins the `View` union. The view name is what marks a namespace
+as multi-vector — `MULTIVECTOR_VIEWS` is a `Set<View>` consulted by the store,
+so `parseNamespace` keeps its four-part shape unchanged.
+
+```
+frame_patches:onnx:colsmol-256m:128
+```
+
+`region_image` remains in the union, used only by the cloud path.
+
+### Store additions
+
+`store/lance/tables.ts` gains a multivector table shape — a
+`List(FixedSizeList(float16, 128))` column instead of a bare `FixedSizeList` —
+plus:
+
+```ts
+putFramePatches(rows: { id, sessionId, segmentIds, patches: Float32Array[] }[])
+searchFramePatches(query: Float32Array[], scope: FrameScope, k: number)
+```
+
+Write order is unchanged and non-negotiable: SQLite transaction commits first,
+then the Lance add, serialized through the existing `Mutex`.
+
+### Patch-to-bbox mapping
+
+Highlights come from the MaxSim argmax. Token index → tile index → position in
+the tile's 8×8 token grid (1024 patches ÷ pixel-shuffle 16 = 64 tokens = 8×8),
+so each token covers a 64×64 px area of its 512 px tile. Tile origin plus grid
+position gives frame-space coordinates, scaled back to the stored keyframe's
+dimensions.
+
+Granularity is therefore ~64 px boxes — comparable to the region boxes it
+replaces.
+
+### Retrieval
+
+| Tier | Cloud path (unchanged) | Local path |
+|---|---|---|
+| 0 | pHash | pHash |
+| 1 | segment RRF over text views | same |
+| 2 | frame ANN, single-vector | **frame patch MaxSim**, scoped to Tier-1 segments |
+| 3 | region ANN + AX-label FTS | **patch argmax → highlights** + AX-label FTS |
+| 4 | LLM rerank | ONNX cross-encoder rerank |
+
+**This is two Tier-2/Tier-3 code paths, and that is the main complexity cost of
+this design.** The alternative — dropping Voyage and Gemini image embedding
+entirely — would remove a whole branch from `retrieve/`, but it deletes working
+functionality that was not in scope to remove. The paths are selected by which
+namespace is registered, so they never run simultaneously.
 
 ## Weight acquisition
 
@@ -243,22 +299,23 @@ same space, which is the point.
 
 ```ts
 interface ModelSpec {
-  id: string;        // "nomic-embed-text-v1.5"
-  repo: string;      // "nomic-ai/nomic-embed-text-v1.5"
+  id: string;        // "colSmol-256M"
+  repo: string;      // "onnx-community/colSmol-256M-ONNX"
   revision: string;  // a commit SHA — never "main"
   files: { path: string; sha256: string; bytes: number }[];
 }
 ```
 
-`revision` pins a commit SHA. If `main` moves, the weights change while the
-namespace keeps claiming `nomic-embed-text-v1.5:768`, and vectors silently stop
-being comparable to those already in that Lance table. Pinning is what keeps the
-namespace's promise true over time.
+`revision` pins a commit SHA. If `main` moves, weights change while the namespace
+keeps claiming `colsmol-256m:128`, and vectors silently stop being comparable.
 
-The manifest lives in `app/src/main/models.ts`, not the library. Library adapters
-take explicit `modelPath` and `tokenizerPath` arguments, exactly as
-`WhisperCppTranscription` takes `binaryPath` and `modelPath`, so the library
-never fetches anything and the app owns all acquisition policy.
+The manifest lives in `app/src/main/models.ts`. Library adapters take explicit
+`modelPath` and `tokenizerPath` arguments, as `WhisperCppTranscription` takes
+`binaryPath` and `modelPath`, so the library never fetches anything.
+
+ColSmol additionally needs `preprocessor_config.json` for tiling parameters —
+read at load time rather than hardcoded, so a model swap cannot silently change
+geometry while the code assumes 7 tiles.
 
 ### ModelStore
 
@@ -268,8 +325,8 @@ New `app/src/main/model-store.ts`:
 ensure(spec: ModelSpec): Promise<string>   // → local directory
 ```
 
-Files live at `<userData>/DeskRAG/models/<id>/<file>`, alongside the existing
-`blobs/` and `lance/`.
+Files live at `<userData>/DeskRAG/models/<id>/<file>`, alongside `blobs/` and
+`lance/`.
 
 Downloads stream from `https://huggingface.co/<repo>/resolve/<revision>/<path>`
 to `<file>.partial`, verify SHA-256, then rename atomically. A partial file never
@@ -277,62 +334,48 @@ looks complete, so an interrupted download cannot poison a namespace — the sam
 discipline as `reserveBlob`/`commitBlob`.
 
 **On checksum mismatch: delete and throw.** Never fall back to an unverified
-file. Wrong weights produce vectors that are silently wrong while sitting in a
-table claiming otherwise.
+file.
 
-When `providers.localModels.dir` is set, `ModelStore` reads from that directory
-and skips both download and verification. Air-gapped users curate their own files
-and accept responsibility for them.
+When `providers.localModels.dir` is set, `ModelStore` reads from there and skips
+download and verification entirely.
 
-### Sizes and quantization
+### Sizes
 
 | Model | Params | int8 | fp32 |
 |---|---|---|---|
 | nomic-embed-text-v1.5 | 137M | ~137MB | ~547MB |
-| nomic-embed-vision-v1.5 | 93M | ~93MB | ~372MB |
+| colSmol-256M | 256M | ~256MB | ~1.0GB |
 | jina-reranker-v1-turbo-en | 37.8M | ~38MB | ~151MB |
-| **total** | | **~268MB** | ~1.07GB |
+| **total** | | **~431MB** | ~1.7GB |
 
-Default all three to `model_int8.onnx`, with quantization level as a manifest
-field so changing it is a one-line edit.
+Default all three to int8, with quantization level as a manifest field.
 
-int8 is well established for rerankers, where only score *ordering* matters. For
-the two embedders it is less obviously safe: quantization noise perturbs cosine
-similarity directly, and here across a shared space whose two towers must stay
-mutually calibrated. This is unvalidated — see Open Items.
+int8 is well established for rerankers, where only score ordering matters. It is
+less obviously safe for the embedders, and **least obviously safe for ColSmol**:
+MaxSim sums per-token maxima, so quantization error accumulates across ~448
+tokens rather than affecting one cosine. See Open Items.
 
-fp16 is deliberately not the middle option. ORT's CPU provider has thin fp16
-kernel coverage and tends to insert casts to fp32, saving disk without saving
-time.
+fp16 is deliberately not the middle option for weights — ORT's CPU provider has
+thin fp16 kernel coverage and tends to insert casts to fp32. This is unrelated to
+storing *patch vectors* as f16, which is recommended.
 
 ### Session lifecycle
 
 `buildProviders()` runs on every `index()` and every `search()`. An
 `InferenceSession` costs hundreds of milliseconds to construct and holds weights
-resident, so rebuilding one per search would be badly wrong. `OnnxRuntime` caches
-sessions by absolute weights path for the process lifetime; `buildProviders()`
-returns cheap wrappers around cached sessions. Resident cost is roughly on-disk
-size, ~268MB at int8 with all three loaded.
+resident, so `OnnxRuntime` caches sessions by absolute weights path for the
+process lifetime; `buildProviders()` returns cheap wrappers.
 
-The reranker loads lazily on first Tier-4 use, since Tier 4 is optional and many
-queries never reach it.
+The reranker loads lazily on first Tier-4 use.
 
 ### Download timing
 
-Lazily, on first need: `buildProviders()` awaits `ensure()` before constructing
-each adapter. The first local search or index after enabling local providers pays
-the download.
-
-This needs a new IPC event rather than reusing `IndexingProgress`, because a
-download can now begin from `search()`:
+Lazily, on first need. This requires a new IPC event rather than reusing
+`IndexingProgress`, because a download can now begin from `search()`:
 
 ```ts
-// shared/types.ts
 interface ModelDownloadProgress {
-  modelId: string;
-  receivedBytes: number;
-  totalBytes: number;
-  done: boolean;
+  modelId: string; receivedBytes: number; totalBytes: number; done: boolean;
 }
 ```
 
@@ -344,9 +387,9 @@ interface ModelDownloadProgress {
 providers: {
   ollamaHost: string;
   ollamaModel: string;              // embeddings (existing)
-  ollamaCaptionModel: string;       // NEW — the VLM, separate from the embedder
+  ollamaCaptionModel: string;       // NEW — the VLM
   textProvider:    "ollama" | "onnx";                          // NEW
-  imageProvider:   "none" | "onnx" | "voyage" | "gemini";      // + onnx
+  imageProvider:   "none" | "colsmol" | "voyage" | "gemini";   // + colsmol
   captionProvider: "none" | "ollama" | "anthropic" | "gemini"; // + ollama
   rerankProvider:  "none" | "onnx" | "anthropic";              // replaces rerank
   localModels: { dir: string };     // NEW — "" means managed downloads
@@ -355,45 +398,31 @@ providers: {
 }
 ```
 
-`textProvider` is new because the text embedder was never a choice —
-`buildProviders()` hardcodes `new OllamaTextEmbedding(...)` at
-`deskrag-service.ts:148`.
-
-### Settings migration
-
-`rerank: boolean` becoming `rerankProvider` is the one breaking change on disk.
-`SettingsStore.load()` spreads `{...DEFAULTS.providers, ...raw.providers}`, which
-would leave a stale `rerank: true` inert and silently disable a user's
-reranking. Explicit handling required: when `raw.providers.rerank === true` and
-`rerankProvider` is absent, map to `"anthropic"`; when `false`, map to `"none"`.
+`rerank: boolean` → `rerankProvider` needs explicit handling in
+`SettingsStore.load()`, which currently spreads defaults and would leave a stale
+`rerank: true` inert: map `true` → `"anthropic"`, `false` → `"none"`.
 
 ### The cloud-model hazard
 
 Ollama's library now includes cloud-hosted models — `gemini-3-flash-preview` and
-the `kimi-k2.*` family among them. A hardcoded list of vision models would let a
-user select one, routing screenshots off the machine through the very setting
-meant to keep them on it, with no visible indication.
+the `kimi-k2.*` family. A hardcoded vision-model list would let a user select one,
+routing screenshots off the machine through the setting meant to keep them on it.
 
-The caption-model dropdown is therefore populated from `GET /api/tags`, which
-returns only models resident on disk, each with a `capabilities` array. Filter to
-entries whose capabilities include vision. A model that is not pulled locally
-cannot be selected, making accidental cloud routing structurally impossible
-rather than a matter of user care.
+The caption-model dropdown is populated from `GET /api/tags`, which returns only
+models resident on disk, each with a `capabilities` array. Filter to entries whose
+capabilities include vision. A model that is not pulled locally cannot be
+selected, making accidental cloud routing structurally impossible.
 
-When no vision model is present, the field shows the pull command
-(`ollama pull qwen3-vl:4b`) instead of an empty dropdown. Auto-pulling via
-`/api/pull` is out of scope for this pass — it is multiple gigabytes and Ollama's
-CLI does it better.
+With no vision model present, the field shows `ollama pull qwen3-vl:4b` instead of
+an empty dropdown. Auto-pulling via `/api/pull` is out of scope.
 
 ### capabilities()
 
-`Capabilities` keeps its four booleans and its synchronous shape. Semantics stay
-what they already are: *configured intent*, not live reachability. Today
-`imageSearch` reports "Voyage selected and a key present," not "Voyage
-responded."
+Keeps its four booleans and synchronous shape. Semantics remain *configured
+intent*, not live reachability:
 
 ```ts
-imageSearch: p.imageProvider === "onnx"
+imageSearch: p.imageProvider === "colsmol"
           || (p.imageProvider === "voyage" && p.keys.voyage)
           || (p.imageProvider === "gemini" && p.keys.gemini)
 caption:     p.captionProvider === "ollama"
@@ -404,187 +433,158 @@ rerank:      p.rerankProvider === "onnx"
 transcript:  Boolean(p.whisper.modelPath)
 ```
 
-Download state is carried by `ModelDownloadProgress`, not folded into
-capabilities.
-
 ### Local profile
 
-Settings gains a **"Use local models for everything"** action:
-
 ```
-textProvider     → onnx
-imageProvider    → onnx
-captionProvider  → ollama   (disabled, with pull hint, if no local vision model)
-rerankProvider   → onnx
-signals.ax.enabled → true   (see below)
+textProvider       → onnx
+imageProvider      → colsmol
+captionProvider    → ollama   (disabled, with pull hint, if no local vision model)
+rerankProvider     → onnx
+signals.ax.enabled → true
 ```
 
-The AX flag is part of the profile for a substantive reason, not convenience.
-The local image tower cannot read screen text (see Model Selection), and AX
-labels in FTS5 are the strongest remaining path to it. Leaving AX off — its
-current default — would ship the weakest text-in-screenshot story of any
-configuration. The UI must surface this as a capture-behavior change rather than
-flipping it silently, since AX capture requires macOS accessibility permission.
+AX is part of the profile for a substantive reason. Patch-level matching improves
+text-dense retrieval but does not read text exactly; AX labels in FTS5 are the
+exact-match path, and they currently default off
+(`app/src/main/settings.ts:38`). The UI surfaces this as a capture-behavior
+change rather than flipping it silently, since AX capture needs macOS
+accessibility permission.
 
-Alongside it, a **"Fully local"** badge that lights when every selected provider
-is local. The badge is derived state, not a toggle, so it cannot drift from
-reality.
+A **"Fully local"** badge lights when every selected provider is local. It is
+derived state, not a toggle, so it cannot drift from reality.
 
-Transcription already satisfies this through whisper.cpp, and behavior vectors
-never left the machine. With those four settings, all six views plus Tier 4 run
-locally.
+### Empty-search guard
 
-### Empty-search refinement
-
-There is no migration path, by decision. Recordings indexed under a previous
-provider keep their vectors in their original namespace and are not searchable
-under a new one.
-
-The one guard: when `buildRetriever()` finds zero registered text namespaces for
-the current provider, `search()` returns a distinguishable empty result rather
-than a bare `[]`, so the UI can say "these recordings were indexed with a
-different provider" instead of rendering "no results" over a full library. Today
-`buildRetriever()` attaches only `TextViewSearcher`s whose namespace is
-registered, so after a provider switch it would attach none and search would
-silently return nothing.
+When `buildRetriever()` finds zero registered text namespaces for the current
+provider, `search()` returns a distinguishable empty result rather than a bare
+`[]`, so the UI can explain rather than render "no results" over a full library.
 
 ## Error handling
 
 ### Governing rule
 
-The existing native-module pattern — missing module disables one signal — is
-right for producers and wrong for embedders.
-
 **An embedder failure must never fall back to a different embedder.**
-Substituting an embedder substitutes a vector space. If ONNX fails to load and
-the code quietly reverts to Ollama, vectors land in
-`digest:ollama:nomic-embed-text:768` while the user believes they are in
-`digest:onnx:nomic-embed-text-v1.5:768` — incomparable spaces, no error,
-permanently degraded results.
+Substituting an embedder substitutes a vector space. A silent revert from ONNX to
+Ollama would write into `digest:ollama:nomic-embed-text:768` while the user
+believes they are in `digest:onnx:nomic-embed-text-v1.5:768` — incomparable
+spaces, no error, permanently degraded results.
 
-Embedder failures are loud and disabling. Everything downstream of an embedding
-degrades normally.
-
-### Matrix
+Embedder failures are loud and disabling. Everything downstream degrades
+normally.
 
 | Failure | Behavior |
 |---|---|
-| `onnxruntime-node` will not load | Loud. Provider disabled, capability false, error surfaced in Settings. No fallback. |
+| `onnxruntime-node` will not load | Loud. Provider disabled, capability false, error surfaced. No fallback. |
 | Weights download fails | Throw, surface, leave nothing on disk. Retried next attempt. |
 | Checksum mismatch | Delete the file and throw. |
-| Ollama daemon down (`ECONNREFUSED`) | Caption stage skipped with a logged warning; indexing continues. |
+| Ollama daemon down (`ECONNREFUSED`) | Caption stage skipped with a warning; indexing continues. |
 | Vision model deleted after selection | `/api/chat` 404 → caption stage skipped. |
-| Tier-4 reranker throws | Fall back to input order, matching `LLMReranker` at `src/retrieve/rerank/llm.ts:63`. |
+| Tier-4 reranker throws | Fall back to input order, matching `src/retrieve/rerank/llm.ts:63`. |
 | Text exceeds model context | Truncate explicitly before tokenizing. |
+| Frame produces zero patches | Skip the frame, log; do not write an empty multivector row. |
 
-The asymmetry is deliberate. A missing caption means one of six views lacks a
-vector for one segment, which `reconcileAndReembed()`
-(`src/store/types.ts:342`) already exists to fill in later. A missing embedder
-means the entire text retrieval path has no coherent space to search.
+A missing caption means one of six views lacks a vector for one segment, which
+`reconcileAndReembed()` (`src/store/types.ts:342`) exists to fill later. A missing
+embedder means the retrieval path has no coherent space to search.
 
-### Two quiet hazards
+### Quiet hazards
 
 **Truncation.** Ollama's `/api/embed` defaults `truncate: true`, so the current
-adapter has never needed to think about long input. nomic-embed-text-v1.5 has a
-2K context, and digests or transcripts can exceed it. On the ONNX path an
-over-length sequence is a tensor shape error, not a graceful clamp, so truncation
-becomes explicit at the tokenizer.
+adapter never had to think about long input. On the ONNX path an over-length
+sequence is a tensor shape error, so truncation becomes explicit at the tokenizer.
 
-**Image preprocessing is the highest-risk silent failure in this design.**
-nomic-embed-vision-v1.5 expects a specific 224×224 resize and specific
-normalization constants. Get either subtly wrong and nothing throws — the result
-is plausible-looking 768-dim vectors that do not align with the text tower,
-defeating the entire reason for choosing this model pair. Cosine similarities
-stay in a believable range, so it passes every smell test.
+**Tiling geometry.** ColSmol's patch-to-bbox mapping depends on tile count, tile
+size, and pixel-shuffle factor. Get any of them wrong and highlights land on the
+wrong part of the frame while retrieval scores stay plausible. Read the geometry
+from `preprocessor_config.json` and `config.json` rather than hardcoding, and
+assert the token count matches the computed tiling at load.
 
-Mitigated by the golden-vector test below, plus a rule: **if preprocessing is
-corrected after release, the model id in the namespace must change too** —
-`nomic-embed-vision-v1.5` → `nomic-embed-vision-v1.5-r2`. Fixed preprocessing
-produces a different vector space, and the namespace must say so.
+**Reconciliation.** `reconcileAndReembed()` assumes one vector per row. It must
+either learn multivector rows or explicitly skip `MULTIVECTOR_VIEWS`. Silently
+treating a patch set as a missing single vector would corrupt the table.
 
 ## Testing
 
-Following the existing convention: live and native tests skip cleanly, and CI
-stays green with no weights, no daemon, and no network.
-
 ### CI-safe, always run
 
-- **Namespace strings** — `namespaceFor()` output for both new embedders; no
-  `:` leaks through, dimensions match. Pure, no weights. The reranker and
-  captioner have no namespace: neither is a `NamespacedProvider`, and captions
-  are embedded by the text embedder.
-- **Tokenizer truncation** — over-length input clamps correctly. Needs
-  `tokenizer.json` but no ONNX weights or runtime, since the tokenizer is pure JS.
-- **Settings migration** — legacy `{ rerank: true }` becomes
-  `rerankProvider: "anthropic"`; `{ rerank: false }` becomes `"none"`.
+- **Namespace strings** — `namespaceFor()` for both new embedders; no `:` leaks,
+  dimensions correct. The reranker and captioner have no namespace: neither is a
+  `NamespacedProvider`, and captions are embedded by the text embedder.
+- **`MULTIVECTOR_VIEWS`** — `frame_patches` is marked multi-vector; the
+  single-vector views are not.
+- **Multivector store round-trip** against a temp LanceDB: write N patch sets,
+  read back, confirm shape and f16 storage.
+- **`.where()` composition** — a multivector search with an
+  `array_has_any(segment_ids, [...])` pre-filter returns only in-scope frames.
+  This is what makes Tier-2 scoping exact.
+- **Patch-to-bbox mapping** — synthetic geometry in, known pixel boxes out,
+  including the non-square and global-view tiles.
+- **Tokenizer truncation** — pure JS, no weights needed.
+- **Settings migration** — legacy `{ rerank: true }` → `"anthropic"`.
 - **`ModelStore`** against a fixture server: checksum mismatch deletes and throws;
-  a `.partial` file is never promoted on interrupt; `localModels.dir` skips
-  download and verification.
-- **`capabilities()` truth table** across the new provider combinations.
-- **Empty-search refinement** — a retriever with zero registered text namespaces
-  returns the distinguishable result, not a bare `[]`.
+  `.partial` never promoted; `localModels.dir` skips download.
+- **`capabilities()` truth table.**
+- **Empty-search guard.**
+- **Reconciliation** skips or correctly handles multivector namespaces.
 
 ### Gated on weights (`ONNX_SMOKE=1`)
 
-- **Golden vectors** — fixed string and fixed PNG against reference embeddings,
-  within tolerance. This is what catches the preprocessing hazard.
-- **Cross-modal alignment** — the most important assertion in the design:
-
-  ```
-  cos(embed_text("search_query: a login form"), embed_image(login_screenshot))
-    >  cos(embed_text("search_query: a login form"), embed_image(unrelated_screenshot))
-  ```
-
-  If this fails, `sharedTextSpace: true` is a lie and Tier-2/Tier-3
-  text-into-image search is quietly broken. Nothing else in the suite catches it.
-- **Reranker ordering** — a relevant candidate outranks an irrelevant one.
+- **Token count** — a 1280×800 fixture yields the tiling the geometry predicts.
+- **MaxSim ordering** — a query matching a fixture screenshot outranks an
+  unrelated one. The core assertion; if it fails, the local image path is broken.
+- **Highlight plausibility** — a query for known on-screen text argmaxes to a
+  patch overlapping that text's actual location.
+- **Golden vectors** for the text embedder.
+- **Reranker ordering.**
 
 ### Gated on the daemon (`OLLAMA_VLM_SMOKE=1`)
 
 - `OllamaCaptionProvider` returns non-empty text for a fixture screenshot, and
   returns empty rather than throwing when the daemon is down.
 
-### One-off script, not a CI test
+### One-off scripts
 
-The int8-versus-fp32 recall comparison. It needs both weight sets, so it lives
-under `scripts/`, is run once to pick the default, and its result is recorded
-here.
+- int8 vs fp32 recall, run once per model to pick defaults.
+- Per-session storage measured against the 69 MB estimate.
 
 ## Out of scope
 
-- Migration or re-indexing of recordings indexed under a previous provider.
 - Auto-pulling Ollama vision models via `/api/pull`.
-- Replacing whisper.cpp for STT; it is already local and works.
-- Removing the cloud providers. Voyage, Gemini, and Anthropic remain selectable.
+- Replacing whisper.cpp for STT.
+- Removing the cloud providers. Voyage, Gemini, and Anthropic remain selectable,
+  which is what forces the dual Tier-2/3 path.
 - GPU execution providers (CoreML, CUDA). CPU only in this pass.
+- Multi-vector embedding of *regions*. Patches supersede it on the local path.
 
 ## Open items
 
-1. **int8 versus fp32 recall for the two embedders.** Unvalidated. Resolved by
-   the one-off script above; if int8 costs meaningful recall, the fix is one
-   manifest field. This is the only decision in the design made without evidence.
-2. **Pinned revision SHAs and per-file checksums** for the three models must be
-   captured at implementation time and recorded in `app/src/main/models.ts`.
-3. **Whether `nomic-embed-vision-v1.5` is good enough on real DeskRAG frames.**
-   Its rejection of the stronger alternatives rests on architecture, size, and
-   licensing — all hard constraints — but its own quality on UI screenshots is
-   inferred from the general weakness of single-vector CLIP-style models, not
-   measured on this workload. The cross-modal alignment test proves the shared
-   space is real; it does not prove the space is *useful* on text-dense frames.
-   Worth a qualitative pass over a recorded session once Tier 2 is running.
+1. **`.where()` pre-filter composition with multivector search.** Unverified, and
+   the top risk in this design: it is what makes Tier-2 scoping exact. If
+   pre-filtering does not compose, scoping must move to a post-filter with a
+   larger `k`, changing Tier-2 cost. **Verify before committing to the plan.**
+2. **The ColSmol projection dimension.** Assumed 128 from ColVision convention;
+   `config.json` does not state it directly. Confirm from the ONNX output shape.
+3. **int8 quality for ColSmol specifically.** MaxSim sums per-token maxima, so
+   quantization error accumulates across ~448 tokens rather than perturbing one
+   cosine. Higher risk than for the single-vector models.
+4. **The `onnx-community/colSmol-256M-ONNX` export is community-produced**, a
+   single merged `model.onnx`. Validate outputs against the PyTorch reference
+   before pinning.
+5. **Pinned revision SHAs and per-file checksums**, captured at implementation
+   time into `app/src/main/models.ts`.
 
 ## Build order
 
-Following the dependency direction in `CLAUDE.md`:
-
-1. `src/embed/onnx/runtime.ts` + `text.ts`, with the `embed()` opts change and
-   namespace tests.
-2. `src/embed/onnx/vision.ts` with golden-vector and cross-modal tests — the
-   riskiest component, proven earliest.
-3. `src/retrieve/rerank/onnx.ts`.
-4. `src/represent/caption/ollama.ts`.
-5. `app/src/main/models.ts` + `model-store.ts`, with fixture-server tests.
-6. `DeskRagService` wiring: async `buildProviders()`, `capabilities()`,
-   `buildRetriever()` empty-search guard.
-7. `shared/types.ts` DTO and IPC additions, then Settings UI and the local
-   profile action.
+1. Verify Open Item 1 — `.where()` with multivector — before anything else. It
+   can invalidate the Tier-2 design.
+2. `src/embed/onnx/runtime.ts` + `text.ts`, with the `embed()` opts change.
+3. Store multivector table shape, `putFramePatches`, `searchFramePatches`, and
+   the reconciliation guard.
+4. `src/embed/onnx/colsmol.ts` + patch-to-bbox mapping, with geometry tests.
+5. Tier-2/Tier-3 local path in `retrieve/`, and `assemble.ts` highlights.
+6. `src/retrieve/rerank/onnx.ts`.
+7. `src/represent/caption/ollama.ts`.
+8. `app/src/main/models.ts` + `model-store.ts`.
+9. `DeskRagService` wiring: async `buildProviders()`, `capabilities()`,
+   `buildRetriever()` dispatch between single- and multi-vector paths.
+10. `shared/types.ts` DTO and IPC additions, Settings UI, local profile action.
