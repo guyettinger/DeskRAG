@@ -74,9 +74,84 @@ path in-process, where no daemon can be down.
    `embed()`, not by separate provider instances.
 5. `jina-reranker-v1-turbo-en` is the reranker (37.8M params, Apache-2.0) rather
    than `bge-reranker-base` (278M) — roughly seven times smaller for a desktop
-   app.
+   app. Its v2 and m0 successors are non-commercial; see Model Selection.
+6. The local profile also enables AX capture, because the local image tower
+   cannot read screen text and AX is the strongest substitute.
 
 All models are Apache-2.0 or MIT. None carry a non-commercial clause.
+
+## Model selection
+
+Researched 2026-07-24. Recording the reasoning because several of these choices
+look wrong without it.
+
+### Vision tower: chosen under constraint, not on merit
+
+`nomic-embed-vision-v1.5` is **not** the strongest model for screenshot
+retrieval. Single-vector CLIP-style embedders are weak on text-dense images, and
+DeskRAG's frames are text-dense by nature. The state of the art is multi-vector
+late interaction — `colnomic-embed-multimodal-3b` scores 61.2 NDCG@5 on ViDoRe-v2
+against 58.8 for its single-vector sibling, and `jina-embeddings-v4` reaches
+90.17 on ViDoRe multi-vector against 84.11 single-vector.
+
+Every stronger option is disqualified:
+
+| Candidate | Params | Why rejected |
+|---|---|---|
+| `colnomic-embed-multimodal-3b` | 3B | Multi-vector. Late interaction needs per-patch vectors and a MaxSim scorer; `DualStore`, the namespace discipline, and LanceDB scoped ANN are single-vector end to end. Different retrieval engine, not a model swap. |
+| `jina-embeddings-v4` | 3.8B | Multi-vector for its best scores; 3.8B infeasible at region volume. |
+| `nomic-embed-multimodal-3b` | 3B | Single-vector, but **no ONNX export**, and 3B infeasible at region volume. |
+| `jina-clip-v2` | 865M | **CC-BY-NC-4.0** — non-commercial. |
+| `siglip2-base-patch16-224` | 375M | Apache-2.0 upstream but ONNX only via an `onnx-community` mirror with unstated license; 4× the size; loses text-tower alignment, requiring a separate SigLIP2 text encoder. |
+
+**Region volume is the binding constraint.** Roughly 20 regions per frame at
+1 fps means ~12,000 crops for a ten-minute session. At 92M that is minutes of
+CPU; at 3B it is hours. Whatever its benchmark scores, a 3B model cannot embed
+DeskRAG's regions.
+
+So `nomic-embed-vision-v1.5` is the best *available* model under the real
+constraints — single-vector, ONNX, permissive license, small enough for region
+volume, aligned to a text tower — not the best model for the task.
+
+### What that means for expectations
+
+**The image vector is for visual and layout similarity, not for reading screen
+text.** Text on screen is covered by three other paths: AX labels in FTS5
+(Tier 3), VLM captions, and digests. Those are the OCR story; the image
+embedding is the "looks like this" story.
+
+Because AX is the strongest of the three, and `signals.ax.enabled` currently
+defaults to `false` (`app/src/main/settings.ts:38`), the local profile turns it
+on — see App Wiring.
+
+### Text embedder: forced by alignment
+
+`nomic-embed-text-v1.5` is not chosen on quality either. It is *required* by the
+shared-space design, since it is the tower `nomic-embed-vision-v1.5` is aligned
+to. This forecloses stronger text embedders (Qwen3-Embedding, bge-m3) for the
+digest, caption, and transcript views. A future design could decouple — best-in-
+class text embedder for text views, nomic text only as the query side of image
+search — at the cost of a fourth model and a second text namespace.
+
+### Reranker: a licensing trap
+
+Only `jina-reranker-v1-turbo-en` is Apache-2.0. Both
+`jina-reranker-v2-base-multilingual` and `jina-reranker-m0` are
+**CC-BY-NC-4.0**. "Upgrade to the newer Jina reranker" would silently take on a
+non-commercial license. Do not do it without re-checking.
+
+`jina-reranker-v3` (0.6B) is meaningfully better — 61.94 vs 56.51 nDCG@10 on
+BEIR against `bge-reranker-v2-m3` — but 16× larger. Note that the latency budget
+is looser than it appears: Tier 4 today calls `claude-opus-4-8`, which already
+costs seconds. `Qwen3-Reranker-0.6B` is Apache-2.0 with ONNX available and is
+the documented opt-in quality tier; changing it is one manifest field.
+
+### Caption model
+
+`qwen3-vl` ships at 2b/4b/8b/30b/32b/235b. ScreenSpot GUI grounding is 92.9% at
+4B against 94.4% at 8B — a small gap for double the memory. **`qwen3-vl:4b` is
+the default**, `qwen3-vl:2b` for low-memory machines, `minicpm-v4.6` a
+comparable-OCR alternative.
 
 ## Components
 
@@ -306,7 +381,7 @@ cannot be selected, making accidental cloud routing structurally impossible
 rather than a matter of user care.
 
 When no vision model is present, the field shows the pull command
-(`ollama pull qwen3-vl`) instead of an empty dropdown. Auto-pulling via
+(`ollama pull qwen3-vl:4b`) instead of an empty dropdown. Auto-pulling via
 `/api/pull` is out of scope for this pass — it is multiple gigabytes and Ollama's
 CLI does it better.
 
@@ -337,11 +412,19 @@ capabilities.
 Settings gains a **"Use local models for everything"** action:
 
 ```
-textProvider    → onnx
-imageProvider   → onnx
-captionProvider → ollama   (disabled, with pull hint, if no local vision model)
-rerankProvider  → onnx
+textProvider     → onnx
+imageProvider    → onnx
+captionProvider  → ollama   (disabled, with pull hint, if no local vision model)
+rerankProvider   → onnx
+signals.ax.enabled → true   (see below)
 ```
+
+The AX flag is part of the profile for a substantive reason, not convenience.
+The local image tower cannot read screen text (see Model Selection), and AX
+labels in FTS5 are the strongest remaining path to it. Leaving AX off — its
+current default — would ship the weakest text-in-screenshot story of any
+configuration. The UI must surface this as a capture-behavior change rather than
+flipping it silently, since AX capture requires macOS accessibility permission.
 
 Alongside it, a **"Fully local"** badge that lights when every selected provider
 is local. The badge is derived state, not a toggle, so it cannot drift from
@@ -482,6 +565,13 @@ here.
    manifest field. This is the only decision in the design made without evidence.
 2. **Pinned revision SHAs and per-file checksums** for the three models must be
    captured at implementation time and recorded in `app/src/main/models.ts`.
+3. **Whether `nomic-embed-vision-v1.5` is good enough on real DeskRAG frames.**
+   Its rejection of the stronger alternatives rests on architecture, size, and
+   licensing — all hard constraints — but its own quality on UI screenshots is
+   inferred from the general weakness of single-vector CLIP-style models, not
+   measured on this workload. The cross-modal alignment test proves the shared
+   space is real; it does not prove the space is *useful* on text-dense frames.
+   Worth a qualitative pass over a recorded session once Tier 2 is running.
 
 ## Build order
 
