@@ -165,6 +165,7 @@ describe("FfmpegScreenProducer.args", () => {
     // but hides "Overriding selected pixel format to use uyvy422 instead" — half
     // a warning pair that reads as a failed capture when capture actually works.
     const p = new FfmpegScreenProducer({ fps: 1, storeImages: true });
+    // @ts-expect-error — exercising the private arg builder directly.
     const a: string[] = p.args("/tmp/out.mp4");
     expect(a[a.indexOf("-loglevel") + 1]).toBe("warning");
   });
