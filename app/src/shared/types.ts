@@ -19,15 +19,24 @@ export interface SignalConfig {
 
 // --- providers / settings ----------------------------------------------------
 
-export type ImageProvider = "none" | "voyage" | "gemini";
-export type CaptionProvider = "none" | "anthropic" | "gemini";
+/** Where text embeddings come from. Ollama needs a daemon; onnx runs in-process. */
+export type TextProvider = "ollama" | "onnx";
+/** `colsmol` is the local late-interaction path; the rest are single-vector. */
+export type ImageProvider = "none" | "colsmol" | "voyage" | "gemini";
+export type CaptionProvider = "none" | "ollama" | "anthropic" | "gemini";
+export type RerankProvider = "none" | "onnx" | "anthropic";
 
 export interface ProviderSettingsView {
   ollamaHost: string;
   ollamaModel: string;
+  /** The VLM used for captions — distinct from the embedding model. */
+  ollamaCaptionModel: string;
+  textProvider: TextProvider;
   imageProvider: ImageProvider;
   captionProvider: CaptionProvider;
-  rerank: boolean;
+  rerankProvider: RerankProvider;
+  /** "" means managed downloads under the app data dir. */
+  localModels: { dir: string };
   whisper: { binaryPath: string; modelPath: string };
   /** Presence only — raw API keys never cross to the renderer. */
   keys: { voyage: boolean; gemini: boolean; anthropic: boolean };
@@ -40,8 +49,9 @@ export interface SettingsView {
 
 export interface SettingsPatch {
   providers?: Partial<
-    Omit<ProviderSettingsView, "keys" | "whisper"> & {
+    Omit<ProviderSettingsView, "keys" | "whisper" | "localModels"> & {
       whisper: Partial<{ binaryPath: string; modelPath: string }>;
+      localModels: Partial<{ dir: string }>;
     }
   >;
   signals?: DeepPartial<SignalConfig>;

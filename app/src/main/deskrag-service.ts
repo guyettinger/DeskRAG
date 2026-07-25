@@ -163,7 +163,7 @@ export class DeskRagService {
     }
 
     const reranker =
-      p.rerank && this.settings.key("anthropic")
+      p.rerankProvider === "anthropic" && this.settings.key("anthropic")
         ? new LLMReranker({ apiKey: this.settings.key("anthropic")! })
         : null;
 
@@ -185,7 +185,7 @@ export class DeskRagService {
       caption:
         (p.captionProvider === "anthropic" && p.keys.anthropic) ||
         (p.captionProvider === "gemini" && p.keys.gemini),
-      rerank: p.rerank && p.keys.anthropic,
+      rerank: p.rerankProvider === "anthropic" && p.keys.anthropic,
       transcript: Boolean(p.whisper.modelPath),
     };
   }

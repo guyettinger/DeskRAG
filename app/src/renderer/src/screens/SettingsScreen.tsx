@@ -4,6 +4,7 @@ import type {
   Capabilities,
   EnvInfo,
   ImageProvider,
+  ProviderSettingsView,
   SettingsPatch,
   SettingsView,
 } from "@shared/types";
@@ -130,15 +131,21 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
         </div>
         <div className="form-row">
           <div>
-            <label>LLM rerank (Tier 4)</label>
-            <div className="desc">Reorders top text results — needs an Anthropic key</div>
+            <label>Rerank (Tier 4)</label>
+            <div className="desc">Reorders top text results</div>
           </div>
-          <button
-            className={`switch${p.rerank ? " on" : ""}`}
-            onClick={() => void patchProviders({ rerank: !p.rerank })}
-            aria-pressed={p.rerank}
-            aria-label="Toggle rerank"
-          />
+          <select
+            value={p.rerankProvider}
+            onChange={(e) =>
+              void patchProviders({
+                rerankProvider: e.target.value as ProviderSettingsView["rerankProvider"],
+              })
+            }
+          >
+            <option value="none">None</option>
+            <option value="onnx">Local cross-encoder</option>
+            <option value="anthropic">Anthropic (Claude)</option>
+          </select>
         </div>
       </div>
 
