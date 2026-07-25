@@ -3203,3 +3203,596 @@ export {
 git add src/represent/caption/ollama.ts src/index.ts test/caption.ollama.test.ts
 git commit -m "feat(caption): local Ollama VLM captioner with local-only model discovery"
 ```
+
+---
+
+### Task 14: App test harness, model manifest, and ModelStore
+
+**Files:**
+- Create: `app/vitest.config.ts`
+- Create: `app/test/model-store.test.ts`
+- Create: `app/src/main/models.ts`
+- Create: `app/src/main/model-store.ts`
+- Modify: `app/package.json`
+
+**Interfaces:**
+- Consumes: nothing from earlier tasks (app-side infrastructure)
+- Produces:
+  - `ModelSpec { id: string; repo: string; revision: string; files: { path: string; sha256: string; bytes: number }[] }`
+  - `MODELS: Record<"text" | "colsmol" | "reranker", ModelSpec>`
+  - `class ModelStore { constructor(dir: string, opts?: { overrideDir?: string; fetchImpl?; onProgress? }); ensure(spec: ModelSpec): Promise<string> }`
+  - `ModelDownloadProgress { modelId: string; receivedBytes: number; totalBytes: number; done: boolean }`
+
+**The app currently has no test runner.** The spec requires CI-safe `ModelStore` tests, so this task adds vitest to `app/` as well as the code.
+
+- [ ] **Step 1: Add vitest to the app**
+
+Add to `app/package.json` `devDependencies`: `"vitest": "^3.2.4"` (match the root's version — check with `node -p "require('./package.json').devDependencies.vitest"`).
+
+Add to `app/package.json` `scripts`:
+
+```json
+"test": "vitest run"
+```
+
+Create `app/vitest.config.ts`:
+
+```ts
+import { defineConfig } from "vitest/config";
+import { resolve } from "node:path";
+
+export default defineConfig({
+  resolve: {
+    alias: {
+      "@shared": resolve(__dirname, "src/shared"),
+      // Main-process modules import electron; stub it so pure logic is testable.
+      electron: resolve(__dirname, "test/stubs/electron.ts"),
+    },
+  },
+  test: { include: ["test/**/*.test.ts"], environment: "node" },
+});
+```
+
+Create `app/test/stubs/electron.ts`:
+
+```ts
+/** Minimal electron stub so main-process modules can be unit-tested under Node. */
+let encryptionAvailable = true;
+export const safeStorage = {
+  isEncryptionAvailable: () => encryptionAvailable,
+  encryptString: (s: string) => Buffer.from(`enc:${s}`),
+  decryptString: (b: Buffer) => b.toString("utf8").replace(/^enc:/, ""),
+};
+export const app = { getPath: () => "/tmp/deskrag-test" };
+/** Test hook: simulate a machine with no keychain. */
+export function __setEncryptionAvailable(v: boolean): void {
+  encryptionAvailable = v;
+}
+```
+
+Run: `npm --prefix app install`
+
+- [ ] **Step 2: Write the failing test**
+
+Create `app/test/model-store.test.ts`:
+
+```ts
+import { createHash } from "node:crypto";
+import { createServer, type Server } from "node:http";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { ModelStore } from "../src/main/model-store.js";
+import type { ModelSpec } from "../src/main/models.js";
+
+const BODY = Buffer.from("weights-bytes");
+const SHA = createHash("sha256").update(BODY).digest("hex");
+
+let server: Server;
+let base: string;
+let dir: string;
+let served = 0;
+
+beforeEach(async () => {
+  served = 0;
+  dir = mkdtempSync(join(tmpdir(), "ms-"));
+  server = createServer((req, res) => {
+    served++;
+    if (req.url?.includes("missing")) {
+      res.writeHead(404).end("nope");
+      return;
+    }
+    res.writeHead(200, { "content-length": String(BODY.length) }).end(BODY);
+  });
+  await new Promise<void>((r) => server.listen(0, r));
+  const port = (server.address() as { port: number }).port;
+  base = `http://127.0.0.1:${port}`;
+});
+afterEach(async () => {
+  await new Promise<void>((r) => server.close(() => r()));
+  rmSync(dir, { recursive: true, force: true });
+});
+
+const spec = (sha = SHA, path = "onnx/model.onnx"): ModelSpec => ({
+  id: "test-model",
+  repo: "org/repo",
+  revision: "abc123",
+  files: [{ path, sha256: sha, bytes: BODY.length }],
+});
+
+describe("ModelStore.ensure", () => {
+  it("downloads, verifies, and returns the local directory", async () => {
+    const store = new ModelStore(dir, { baseUrl: base });
+    const out = await store.ensure(spec());
+    expect(out).toBe(join(dir, "test-model"));
+    expect(readFileSync(join(out, "model.onnx")).toString()).toBe(BODY.toString());
+  });
+
+  it("does not re-download when the file is already present", async () => {
+    const store = new ModelStore(dir, { baseUrl: base });
+    await store.ensure(spec());
+    const after = served;
+    await store.ensure(spec());
+    expect(served).toBe(after);
+  });
+
+  it("deletes the file and throws on a checksum mismatch", async () => {
+    const store = new ModelStore(dir, { baseUrl: base });
+    await expect(store.ensure(spec("0".repeat(64)))).rejects.toThrow(/checksum/i);
+    expect(existsSync(join(dir, "test-model", "model.onnx"))).toBe(false);
+  });
+
+  it("leaves no .partial file behind after a failed download", async () => {
+    const store = new ModelStore(dir, { baseUrl: base });
+    await expect(store.ensure(spec(SHA, "missing.onnx"))).rejects.toThrow();
+    expect(existsSync(join(dir, "test-model", "missing.onnx.partial"))).toBe(false);
+    expect(existsSync(join(dir, "test-model", "missing.onnx"))).toBe(false);
+  });
+
+  it("uses overrideDir and skips download and verification entirely", async () => {
+    const over = mkdtempSync(join(tmpdir(), "over-"));
+    mkdirSync(join(over, "test-model"), { recursive: true });
+    writeFileSync(join(over, "test-model", "model.onnx"), "hand-curated");
+    const store = new ModelStore(dir, { baseUrl: base, overrideDir: over });
+    const out = await store.ensure(spec("0".repeat(64))); // wrong sha, ignored
+    expect(out).toBe(join(over, "test-model"));
+    expect(served).toBe(0);
+    rmSync(over, { recursive: true, force: true });
+  });
+
+  it("reports progress and a final done event", async () => {
+    const events: { modelId: string; receivedBytes: number; done: boolean }[] = [];
+    const store = new ModelStore(dir, { baseUrl: base, onProgress: (p) => events.push(p) });
+    await store.ensure(spec());
+    expect(events.length).toBeGreaterThan(0);
+    expect(events.at(-1)!.done).toBe(true);
+    expect(events.at(-1)!.modelId).toBe("test-model");
+  });
+
+  it("builds the pinned-revision URL, never a branch", async () => {
+    const urls: string[] = [];
+    const store = new ModelStore(dir, {
+      baseUrl: base,
+      fetchImpl: (async (u: string) => {
+        urls.push(String(u));
+        return new Response(BODY, { status: 200 });
+      }) as typeof fetch,
+    });
+    await store.ensure(spec());
+    expect(urls[0]).toContain("/org/repo/resolve/abc123/onnx/model.onnx");
+    expect(urls[0]).not.toContain("/main/");
+  });
+});
+```
+
+- [ ] **Step 3: Run test to verify it fails**
+
+Run: `npm --prefix app test`
+Expected: FAIL — cannot resolve `../src/main/model-store.js`.
+
+- [ ] **Step 4: Write the manifest**
+
+Create `app/src/main/models.ts`:
+
+```ts
+/**
+ * Pinned model manifest. Acquisition policy lives in the app, never the library —
+ * `deskrag` is published to npm and must not fetch anything.
+ *
+ * `revision` is a commit SHA, never a branch. If `main` moved, the weights would
+ * change while the namespace kept claiming the same model, and vectors would
+ * silently stop being comparable to those already in that Lance table.
+ *
+ * TO FILL AT IMPLEMENTATION TIME — capture with:
+ *   curl -sI https://huggingface.co/<repo>/resolve/main/<file> | grep -i etag
+ *   curl -sL <url> | shasum -a 256
+ * Record the resolved commit SHA from the HF API:
+ *   curl -s https://huggingface.co/api/models/<repo> | python3 -c "import sys,json;print(json.load(sys.stdin)['sha'])"
+ */
+
+export interface ModelSpec {
+  id: string;
+  repo: string;
+  /** Commit SHA — never "main". */
+  revision: string;
+  files: { path: string; sha256: string; bytes: number }[];
+}
+
+export const MODELS = {
+  text: {
+    id: "nomic-embed-text-v1.5",
+    repo: "nomic-ai/nomic-embed-text-v1.5",
+    revision: "<COMMIT_SHA>",
+    files: [
+      { path: "onnx/model_int8.onnx", sha256: "<SHA256>", bytes: 0 },
+      { path: "tokenizer.json", sha256: "<SHA256>", bytes: 0 },
+    ],
+  },
+  colsmol: {
+    id: "colSmol-256M",
+    repo: "onnx-community/colSmol-256M-ONNX",
+    revision: "<COMMIT_SHA>",
+    files: [
+      { path: "onnx/model.onnx", sha256: "<SHA256>", bytes: 0 },
+      { path: "tokenizer.json", sha256: "<SHA256>", bytes: 0 },
+      { path: "preprocessor_config.json", sha256: "<SHA256>", bytes: 0 },
+      { path: "config.json", sha256: "<SHA256>", bytes: 0 },
+    ],
+  },
+  reranker: {
+    id: "jina-reranker-v1-turbo-en",
+    repo: "jinaai/jina-reranker-v1-turbo-en",
+    revision: "<COMMIT_SHA>",
+    files: [
+      { path: "onnx/model_int8.onnx", sha256: "<SHA256>", bytes: 0 },
+      { path: "tokenizer.json", sha256: "<SHA256>", bytes: 0 },
+    ],
+  },
+} satisfies Record<string, ModelSpec>;
+```
+
+The `<COMMIT_SHA>` and `<SHA256>` placeholders are the **only** ones in this plan, and they are unavoidable: they must be captured against the live repos at implementation time. Fill them in this step before proceeding — do not leave them.
+
+- [ ] **Step 5: Write ModelStore**
+
+Create `app/src/main/model-store.ts`:
+
+```ts
+/**
+ * Downloads and verifies model weights into <userData>/DeskRAG/models/<id>/.
+ *
+ * Streams to <file>.partial, verifies SHA-256, then renames atomically — a
+ * partial file never looks complete, so an interrupted download cannot poison a
+ * namespace. Same discipline as reserveBlob/commitBlob in the library.
+ *
+ * On checksum mismatch it DELETES and THROWS. There is no fallback to an
+ * unverified file: wrong weights produce vectors that are silently wrong while
+ * sitting in a table claiming otherwise.
+ */
+
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, rmSync, renameSync, writeFileSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import type { ModelSpec } from "./models.js";
+
+export interface ModelDownloadProgress {
+  modelId: string;
+  receivedBytes: number;
+  totalBytes: number;
+  done: boolean;
+}
+
+export interface ModelStoreOptions {
+  /** Air-gapped escape hatch: read from here, skip download AND verification. */
+  overrideDir?: string;
+  baseUrl?: string;
+  fetchImpl?: typeof globalThis.fetch;
+  onProgress?: (p: ModelDownloadProgress) => void;
+}
+
+export class ModelStore {
+  private readonly overrideDir: string | undefined;
+  private readonly baseUrl: string;
+  private readonly fetchImpl: typeof globalThis.fetch;
+  private readonly onProgress: ((p: ModelDownloadProgress) => void) | undefined;
+  private readonly inflight = new Map<string, Promise<string>>();
+
+  constructor(
+    private readonly dir: string,
+    opts: ModelStoreOptions = {},
+  ) {
+    this.overrideDir = opts.overrideDir && opts.overrideDir.length > 0 ? opts.overrideDir : undefined;
+    this.baseUrl = opts.baseUrl ?? "https://huggingface.co";
+    this.fetchImpl = opts.fetchImpl ?? globalThis.fetch;
+    this.onProgress = opts.onProgress;
+  }
+
+  /** Local directory holding the spec's files, downloading them if needed. */
+  ensure(spec: ModelSpec): Promise<string> {
+    let p = this.inflight.get(spec.id);
+    if (p) return p; // never two concurrent downloads of the same model
+    p = this.ensureOnce(spec).finally(() => this.inflight.delete(spec.id));
+    this.inflight.set(spec.id, p);
+    return p;
+  }
+
+  private async ensureOnce(spec: ModelSpec): Promise<string> {
+    if (this.overrideDir) return join(this.overrideDir, spec.id);
+
+    const target = join(this.dir, spec.id);
+    mkdirSync(target, { recursive: true });
+    const total = spec.files.reduce((n, f) => n + f.bytes, 0);
+    let received = 0;
+
+    for (const file of spec.files) {
+      const name = file.path.split("/").pop()!;
+      const dest = join(target, name);
+      if (existsSync(dest)) {
+        received += file.bytes;
+        this.onProgress?.({ modelId: spec.id, receivedBytes: received, totalBytes: total, done: false });
+        continue;
+      }
+      const partial = `${dest}.partial`;
+      const url = `${this.baseUrl}/${spec.repo}/resolve/${spec.revision}/${file.path}`;
+      try {
+        const res = await this.fetchImpl(url);
+        if (!res.ok) throw new Error(`download failed: ${res.status} ${url}`);
+        const bytes = Buffer.from(await res.arrayBuffer());
+        writeFileSync(partial, bytes);
+
+        const actual = createHash("sha256").update(bytes).digest("hex");
+        if (actual !== file.sha256) {
+          rmSync(partial, { force: true });
+          throw new Error(
+            `checksum mismatch for ${spec.id}/${file.path}: expected ${file.sha256}, got ${actual}`,
+          );
+        }
+        renameSync(partial, dest); // atomic: only now does it look complete
+        received += bytes.length;
+        this.onProgress?.({ modelId: spec.id, receivedBytes: received, totalBytes: total, done: false });
+      } catch (err) {
+        rmSync(partial, { force: true });
+        throw err;
+      }
+    }
+
+    this.onProgress?.({ modelId: spec.id, receivedBytes: total, totalBytes: total, done: true });
+    return target;
+  }
+
+  /** Absolute path to one of a spec's files, by basename. */
+  static file(dir: string, name: string): string {
+    return join(dir, name);
+  }
+}
+```
+
+- [ ] **Step 6: Run the app tests**
+
+Run: `npm --prefix app test`
+Expected: PASS, all seven cases.
+
+- [ ] **Step 7: Typecheck both packages**
+
+Run: `npm run typecheck && npm --prefix app run typecheck`
+Expected: PASS.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add app/package.json app/package-lock.json app/vitest.config.ts app/test/ app/src/main/models.ts app/src/main/model-store.ts
+git commit -m "feat(app): pinned model manifest and verifying ModelStore, with app test harness"
+```
+
+---
+
+### Task 15: Settings shape and rerank migration
+
+**Files:**
+- Modify: `app/src/shared/types.ts`
+- Modify: `app/src/main/settings.ts`
+- Create: `app/test/settings.test.ts`
+
+**Interfaces:**
+- Consumes: app test harness (Task 14)
+- Produces:
+  - `TextProvider = "ollama" | "onnx"`
+  - `ImageProvider = "none" | "colsmol" | "voyage" | "gemini"`
+  - `CaptionProvider = "none" | "ollama" | "anthropic" | "gemini"`
+  - `RerankProvider = "none" | "onnx" | "anthropic"`
+  - `ProviderSettingsView` gains `ollamaCaptionModel`, `textProvider`, `rerankProvider`, `localModels: { dir: string }`; loses `rerank: boolean`
+
+**The one breaking on-disk change.** `SettingsStore.load()` spreads `{...DEFAULTS.providers, ...raw.providers}`, so a stale `rerank: true` would sit inert and silently disable a user's reranking. Migration must be explicit.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `app/test/settings.test.ts`:
+
+```ts
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { SettingsStore } from "../src/main/settings.js";
+
+let dir: string;
+beforeEach(() => {
+  dir = mkdtempSync(join(tmpdir(), "set-"));
+});
+afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+function seed(providers: Record<string, unknown>): void {
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "settings.json"), JSON.stringify({ providers }), "utf8");
+}
+
+describe("SettingsStore defaults", () => {
+  it("defaults to local-capable but not local-forced", () => {
+    const p = new SettingsStore(dir).view().providers;
+    expect(p.textProvider).toBe("ollama");
+    expect(p.imageProvider).toBe("none");
+    expect(p.captionProvider).toBe("none");
+    expect(p.rerankProvider).toBe("none");
+    expect(p.ollamaCaptionModel).toBe("qwen3-vl:4b");
+    expect(p.localModels.dir).toBe("");
+  });
+});
+
+describe("rerank -> rerankProvider migration", () => {
+  it("maps legacy rerank:true to anthropic", () => {
+    seed({ rerank: true });
+    expect(new SettingsStore(dir).view().providers.rerankProvider).toBe("anthropic");
+  });
+
+  it("maps legacy rerank:false to none", () => {
+    seed({ rerank: false });
+    expect(new SettingsStore(dir).view().providers.rerankProvider).toBe("none");
+  });
+
+  it("prefers an explicit rerankProvider over the legacy flag", () => {
+    seed({ rerank: true, rerankProvider: "onnx" });
+    expect(new SettingsStore(dir).view().providers.rerankProvider).toBe("onnx");
+  });
+
+  it("drops the legacy key on the next persist", () => {
+    seed({ rerank: true });
+    const s = new SettingsStore(dir);
+    s.apply({ providers: { textProvider: "onnx" } });
+    const raw = JSON.parse(readFileSync(join(dir, "settings.json"), "utf8")) as {
+      providers: Record<string, unknown>;
+    };
+    expect(raw.providers.rerank).toBeUndefined();
+    expect(raw.providers.rerankProvider).toBe("anthropic");
+  });
+
+  it("does not expose raw keys to the renderer view", () => {
+    const v = new SettingsStore(dir).view();
+    expect(v.providers.keys).toEqual({ voyage: false, gemini: false, anthropic: false });
+  });
+});
+
+describe("apply", () => {
+  it("round-trips the new provider fields", () => {
+    const s = new SettingsStore(dir);
+    const v = s.apply({
+      providers: {
+        textProvider: "onnx",
+        imageProvider: "colsmol",
+        captionProvider: "ollama",
+        rerankProvider: "onnx",
+        localModels: { dir: "/models" },
+      },
+    });
+    expect(v.providers.textProvider).toBe("onnx");
+    expect(v.providers.imageProvider).toBe("colsmol");
+    expect(v.providers.localModels.dir).toBe("/models");
+    // and survives a reload
+    expect(new SettingsStore(dir).view().providers.imageProvider).toBe("colsmol");
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npm --prefix app test -- settings`
+Expected: FAIL — `textProvider` is undefined.
+
+- [ ] **Step 3: Update `app/src/shared/types.ts`**
+
+```ts
+export type TextProvider = "ollama" | "onnx";
+export type ImageProvider = "none" | "colsmol" | "voyage" | "gemini";
+export type CaptionProvider = "none" | "ollama" | "anthropic" | "gemini";
+export type RerankProvider = "none" | "onnx" | "anthropic";
+
+export interface ProviderSettingsView {
+  ollamaHost: string;
+  ollamaModel: string;
+  /** The VLM used for captions — distinct from the embedding model. */
+  ollamaCaptionModel: string;
+  textProvider: TextProvider;
+  imageProvider: ImageProvider;
+  captionProvider: CaptionProvider;
+  rerankProvider: RerankProvider;
+  /** "" means managed downloads under the app data dir. */
+  localModels: { dir: string };
+  whisper: { binaryPath: string; modelPath: string };
+  /** Presence only — raw API keys never cross to the renderer. */
+  keys: { voyage: boolean; gemini: boolean; anthropic: boolean };
+}
+```
+
+Update `SettingsPatch` so its `providers` member omits `keys`, `whisper`, and `localModels` from the flat spread and adds them as optional partials, mirroring how `whisper` is already handled.
+
+- [ ] **Step 4: Update `app/src/main/settings.ts`**
+
+Extend `DEFAULTS.providers`:
+
+```ts
+  providers: {
+    ollamaHost: "http://localhost:11434",
+    ollamaModel: "nomic-embed-text",
+    ollamaCaptionModel: "qwen3-vl:4b",
+    textProvider: "ollama",
+    imageProvider: "none",
+    captionProvider: "none",
+    rerankProvider: "none",
+    localModels: { dir: "" },
+    whisper: { binaryPath: "whisper-cli", modelPath: "" },
+  },
+```
+
+Add explicit migration inside `load()`, before the spread merge:
+
+```ts
+  private load(): PersistedSettings {
+    if (!existsSync(this.settingsPath)) return structuredClone(DEFAULTS);
+    try {
+      const raw = JSON.parse(readFileSync(this.settingsPath, "utf8")) as Partial<PersistedSettings> & {
+        providers?: Partial<PersistedSettings["providers"]> & { rerank?: boolean };
+      };
+
+      // Legacy `rerank: boolean` -> `rerankProvider`. A plain spread would leave
+      // the stale key inert and silently disable a user's reranking.
+      const legacy = raw.providers?.rerank;
+      const rerankProvider =
+        raw.providers?.rerankProvider ??
+        (legacy === true ? "anthropic" : legacy === false ? "none" : DEFAULTS.providers.rerankProvider);
+
+      const { rerank: _dropped, ...providers } = raw.providers ?? {};
+      return {
+        providers: {
+          ...DEFAULTS.providers,
+          ...providers,
+          rerankProvider,
+          whisper: { ...DEFAULTS.providers.whisper, ...raw.providers?.whisper },
+          localModels: { ...DEFAULTS.providers.localModels, ...raw.providers?.localModels },
+        },
+        signals: {
+          screen: { ...DEFAULTS.signals.screen, ...raw.signals?.screen },
+          input: { ...DEFAULTS.signals.input, ...raw.signals?.input },
+          activeWin: { ...DEFAULTS.signals.activeWin, ...raw.signals?.activeWin },
+          audio: { ...DEFAULTS.signals.audio, ...raw.signals?.audio },
+          ax: { ...DEFAULTS.signals.ax, ...raw.signals?.ax },
+        },
+      };
+    } catch {
+      return structuredClone(DEFAULTS);
+    }
+  }
+```
+
+Update `apply()` to destructure `localModels` alongside `whisper` so a partial patch merges rather than replaces.
+
+- [ ] **Step 5: Run tests**
+
+Run: `npm --prefix app test && npm --prefix app run typecheck`
+Expected: PASS. The typecheck will flag every place `providers.rerank` was read — Task 16 fixes those in `deskrag-service.ts`; if it blocks now, leave a `rerankProvider !== "none"` expression in place.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add app/src/shared/types.ts app/src/main/settings.ts app/test/settings.test.ts
+git commit -m "feat(app): provider settings for local models with rerank->rerankProvider migration"
+```
