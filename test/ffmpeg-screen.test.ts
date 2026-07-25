@@ -160,6 +160,15 @@ describe("FfmpegScreenProducer.args", () => {
     expect(joined).toContain("/tmp/out.mp4");
   });
 
+  it("logs at warning level so avfoundation's recovery line is visible", () => {
+    // At `error`, macOS shows "Selected pixel format (yuv420p) is not supported"
+    // but hides "Overriding selected pixel format to use uyvy422 instead" — half
+    // a warning pair that reads as a failed capture when capture actually works.
+    const p = new FfmpegScreenProducer({ fps: 1, storeImages: true });
+    const a: string[] = p.args("/tmp/out.mp4");
+    expect(a[a.indexOf("-loglevel") + 1]).toBe("warning");
+  });
+
   it("omits the video branch when recordVideo is false", () => {
     const p = new FfmpegScreenProducer({ recordVideo: false });
     // @ts-expect-error — exercising the private arg builder directly.
