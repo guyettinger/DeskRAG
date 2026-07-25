@@ -2720,3 +2720,486 @@ Expected: PASS. The fake embedder ignores `opts`, so the exact-match placements 
 git add src/retrieve/searchers.ts test/retrieve.test.ts
 git commit -m "feat(retrieve): TextViewSearcher embeds with role=query"
 ```
+
+---
+
+### Task 12: OnnxCrossEncoderReranker
+
+**Files:**
+- Create: `src/retrieve/rerank/onnx.ts`
+- Test: `test/rerank.onnx.test.ts`
+
+**Interfaces:**
+- Consumes: `OnnxRuntime`, `OnnxSession`, `makeTensor` (Task 3); `Reranker`, `RerankCandidate` (existing)
+- Produces:
+  - `OnnxCrossEncoderReranker implements Reranker`
+  - Constructor: `new OnnxCrossEncoderReranker({ modelPath, tokenizerPath, maxTokens?, batchSize?, session?, tokenizePair? })`
+
+A cross-encoder scores each `(query, candidate)` pair in one forward pass and sorts by score. It fits the existing `rerank(query, candidates) => string[]` signature with no interface change. Default model is `jina-reranker-v1-turbo-en` (37.8M, Apache-2.0) — note that its v2 and m0 successors are **CC-BY-NC-4.0**, so do not "upgrade" without re-checking the licence.
+
+Failure must degrade, not throw: Tier 4 is a refinement, so any error falls back to input order exactly as `LLMReranker` does at `src/retrieve/rerank/llm.ts:63`.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `test/rerank.onnx.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+import { OnnxCrossEncoderReranker } from "../src/retrieve/rerank/onnx.js";
+import type { OnnxSession } from "../src/embed/onnx/runtime.js";
+
+/** Scores each pair by a caller-supplied table, in batch order. */
+function stubSession(scores: number[]): OnnxSession {
+  let cursor = 0;
+  return {
+    async run(feeds) {
+      const [batch] = feeds.input_ids!.dims as [number, number];
+      const out = scores.slice(cursor, cursor + batch);
+      cursor += batch;
+      return { logits: { data: Float32Array.from(out), dims: [batch, 1] } };
+    },
+  };
+}
+
+const opts = (session: OnnxSession) => ({
+  modelPath: "/unused",
+  tokenizerPath: "/unused",
+  session,
+  tokenizePair: (q: string, d: string) => ({ ids: [q.length, d.length], typeIds: [0, 1] }),
+});
+
+const candidates = [
+  { id: "a", text: "unrelated" },
+  { id: "b", text: "the login form" },
+  { id: "c", text: "also unrelated" },
+];
+
+describe("OnnxCrossEncoderReranker", () => {
+  it("orders by descending score", async () => {
+    const r = new OnnxCrossEncoderReranker(opts(stubSession([0.1, 0.9, 0.2])));
+    expect(await r.rerank("login", candidates)).toEqual(["b", "c", "a"]);
+  });
+
+  it("returns [] for no candidates without touching the session", async () => {
+    let ran = false;
+    const r = new OnnxCrossEncoderReranker(
+      opts({ async run() { ran = true; return {}; } }),
+    );
+    expect(await r.rerank("q", [])).toEqual([]);
+    expect(ran).toBe(false);
+  });
+
+  it("returns every id exactly once", async () => {
+    const r = new OnnxCrossEncoderReranker(opts(stubSession([0.5, 0.5, 0.5])));
+    const out = await r.rerank("q", candidates);
+    expect([...out].sort()).toEqual(["a", "b", "c"]);
+  });
+
+  it("falls back to input order when the session throws", async () => {
+    const r = new OnnxCrossEncoderReranker(
+      opts({ async run() { throw new Error("boom"); } }),
+    );
+    expect(await r.rerank("q", candidates)).toEqual(["a", "b", "c"]);
+  });
+
+  it("batches without losing or reordering candidates", async () => {
+    const many = Array.from({ length: 10 }, (_, i) => ({ id: `c${i}`, text: `t${i}` }));
+    // ascending scores -> reversed output
+    const r = new OnnxCrossEncoderReranker({
+      ...opts(stubSession(many.map((_, i) => i))),
+      batchSize: 3,
+    });
+    const out = await r.rerank("q", many);
+    expect(out[0]).toBe("c9");
+    expect(out.length).toBe(10);
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx vitest run test/rerank.onnx.test.ts`
+Expected: FAIL — cannot resolve `../src/retrieve/rerank/onnx.js`.
+
+- [ ] **Step 3: Write the implementation**
+
+Create `src/retrieve/rerank/onnx.ts`:
+
+```ts
+/**
+ * Local Tier-4 reranker: a cross-encoder scoring each (query, candidate) pair in
+ * one forward pass. Replaces the Claude call with a 37.8M-param model.
+ *
+ * NOT in the package barrel — loads onnxruntime-node. Import from this path.
+ *
+ * Default weights: jina-reranker-v1-turbo-en (Apache-2.0). Its v2 and m0
+ * successors are CC-BY-NC-4.0 — do not "upgrade" without re-checking.
+ *
+ * Tier 4 is a refinement, never load-bearing, so every failure path returns the
+ * input order rather than throwing — matching LLMReranker.
+ */
+
+import { makeTensor, OnnxRuntime, type OnnxSession } from "../../embed/onnx/runtime.js";
+import type { Reranker, RerankCandidate } from "./types.js";
+
+export interface TokenizedPair {
+  ids: number[];
+  typeIds: number[];
+}
+
+export interface OnnxRerankerOptions {
+  modelPath: string;
+  tokenizerPath: string;
+  maxTokens?: number;
+  batchSize?: number;
+  session?: OnnxSession;
+  tokenizePair?: (query: string, doc: string) => TokenizedPair;
+}
+
+export class OnnxCrossEncoderReranker implements Reranker {
+  private readonly modelPath: string;
+  private readonly tokenizerPath: string;
+  private readonly maxTokens: number;
+  private readonly batchSize: number;
+  private readonly injectedSession: OnnxSession | undefined;
+  private readonly injectedTokenize: OnnxRerankerOptions["tokenizePair"];
+  private tokenizer: Promise<(q: string, d: string) => TokenizedPair> | undefined;
+
+  constructor(opts: OnnxRerankerOptions) {
+    this.modelPath = opts.modelPath;
+    this.tokenizerPath = opts.tokenizerPath;
+    this.maxTokens = opts.maxTokens ?? 512;
+    this.batchSize = opts.batchSize ?? 16;
+    this.injectedSession = opts.session;
+    this.injectedTokenize = opts.tokenizePair;
+  }
+
+  private session(): Promise<OnnxSession> {
+    return this.injectedSession
+      ? Promise.resolve(this.injectedSession)
+      : OnnxRuntime.session(this.modelPath);
+  }
+
+  private async tokenize(): Promise<(q: string, d: string) => TokenizedPair> {
+    if (this.injectedTokenize) return this.injectedTokenize;
+    this.tokenizer ??= (async () => {
+      const { Tokenizer } = (await import(
+        /* @vite-ignore */ "@huggingface/tokenizers"
+      )) as {
+        Tokenizer: {
+          fromFile(p: string): Promise<{
+            encode(a: string, b?: string): { ids: number[]; typeIds?: number[] };
+          }>;
+        };
+      };
+      const tok = await Tokenizer.fromFile(this.tokenizerPath);
+      return (q: string, d: string) => {
+        const e = tok.encode(q, d);
+        return { ids: e.ids, typeIds: e.typeIds ?? e.ids.map(() => 0) };
+      };
+    })();
+    return this.tokenizer;
+  }
+
+  async rerank(query: string, candidates: RerankCandidate[]): Promise<string[]> {
+    if (candidates.length === 0) return [];
+    try {
+      const tokenize = await this.tokenize();
+      const sess = await this.session();
+      const scores: number[] = [];
+
+      for (let start = 0; start < candidates.length; start += this.batchSize) {
+        const slice = candidates.slice(start, start + this.batchSize);
+        const encoded = slice.map((c) => {
+          const e = tokenize(query, c.text);
+          return {
+            ids: e.ids.slice(0, this.maxTokens),
+            typeIds: e.typeIds.slice(0, this.maxTokens),
+          };
+        });
+        const seq = Math.max(1, ...encoded.map((e) => e.ids.length));
+        const batch = encoded.length;
+        const ids = new BigInt64Array(batch * seq);
+        const mask = new BigInt64Array(batch * seq);
+        const types = new BigInt64Array(batch * seq);
+        for (let b = 0; b < batch; b++) {
+          const e = encoded[b]!;
+          for (let t = 0; t < seq; t++) {
+            const present = t < e.ids.length;
+            ids[b * seq + t] = BigInt(present ? e.ids[t]! : 0);
+            mask[b * seq + t] = BigInt(present ? 1 : 0);
+            types[b * seq + t] = BigInt(present ? e.typeIds[t]! : 0);
+          }
+        }
+        const out = await sess.run({
+          input_ids: makeTensor("int64", ids, [batch, seq]),
+          attention_mask: makeTensor("int64", mask, [batch, seq]),
+          token_type_ids: makeTensor("int64", types, [batch, seq]),
+        });
+        const logits = (out.logits ?? Object.values(out)[0]!) as { data: Float32Array };
+        for (let b = 0; b < batch; b++) scores.push(logits.data[b] ?? 0);
+      }
+
+      return candidates
+        .map((c, i) => ({ id: c.id, score: scores[i] ?? 0 }))
+        .sort((a, b) => b.score - a.score)
+        .map((x) => x.id);
+    } catch {
+      return candidates.map((c) => c.id); // fall back to input order
+    }
+  }
+}
+```
+
+- [ ] **Step 4: Run tests**
+
+Run: `npx vitest run test/rerank.onnx.test.ts test/rerank.test.ts && npm run typecheck`
+Expected: PASS.
+
+- [ ] **Step 5: Confirm the barrel excludes it**
+
+Run: `grep -n "rerank/onnx" src/index.ts`
+Expected: no output — it loads `onnxruntime-node`.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/retrieve/rerank/onnx.ts test/rerank.onnx.test.ts
+git commit -m "feat(retrieve): local ONNX cross-encoder reranker for Tier 4"
+```
+
+---
+
+### Task 13: OllamaCaptionProvider
+
+**Files:**
+- Create: `src/represent/caption/ollama.ts`
+- Modify: `src/index.ts`
+- Test: `test/caption.ollama.test.ts`
+
+**Interfaces:**
+- Consumes: `CaptionProvider` (existing), `CAPTION_SYSTEM`/`captionPrompt` from `src/represent/caption/prompt.js`
+- Produces:
+  - `OllamaCaptionProvider implements CaptionProvider`
+  - Constructor: `new OllamaCaptionProvider({ host?, model?, fetchImpl? })`
+  - `listVisionModels(host: string, fetchImpl?): Promise<string[]>` — local, vision-capable models from `/api/tags`
+
+**This one IS barrel-safe** — plain `fetch`, no native module — so it exports from `src/index.ts` alongside the Anthropic and Gemini captioners.
+
+**Security-relevant:** `listVisionModels` reads `/api/tags`, which returns only models resident on disk. That is deliberate. Ollama's *library* now includes cloud-hosted models (`gemini-3-flash-preview`, the `kimi-k2.*` family); a hardcoded list would let a user select one and route screenshots off the machine through the setting meant to keep them on it.
+
+Captions must degrade, not throw: a missing caption is one view lacking a vector for one segment, which `reconcileAndReembed` can fill later.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `test/caption.ollama.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+import { OllamaCaptionProvider, listVisionModels } from "../src/represent/caption/ollama.js";
+
+type FetchImpl = typeof globalThis.fetch;
+
+const ok = (body: unknown): FetchImpl =>
+  (async () => new Response(JSON.stringify(body), { status: 200 })) as FetchImpl;
+
+describe("OllamaCaptionProvider", () => {
+  it("posts base64 images to /api/chat and returns the message content", async () => {
+    let seen: { url: string; body: Record<string, unknown> } | undefined;
+    const fetchImpl = (async (url: string, init?: RequestInit) => {
+      seen = { url: String(url), body: JSON.parse(String(init?.body)) };
+      return new Response(JSON.stringify({ message: { content: "  a login screen  " } }), {
+        status: 200,
+      });
+    }) as FetchImpl;
+
+    const p = new OllamaCaptionProvider({ host: "http://h:1", model: "qwen3-vl:4b", fetchImpl });
+    const out = await p.caption([Uint8Array.from([1, 2, 3])], "context");
+
+    expect(out).toBe("a login screen");
+    expect(seen!.url).toBe("http://h:1/api/chat");
+    expect(seen!.body.model).toBe("qwen3-vl:4b");
+    expect(seen!.body.stream).toBe(false);
+    const messages = seen!.body.messages as { role: string; images?: string[] }[];
+    expect(messages[0]!.role).toBe("system");
+    expect(messages[1]!.images).toEqual([Buffer.from([1, 2, 3]).toString("base64")]);
+  });
+
+  it("returns empty string when the daemon is down, rather than throwing", async () => {
+    const fetchImpl = (async () => {
+      throw new Error("ECONNREFUSED");
+    }) as FetchImpl;
+    const p = new OllamaCaptionProvider({ fetchImpl });
+    expect(await p.caption([Uint8Array.from([1])])).toBe("");
+  });
+
+  it("returns empty string on a non-200, e.g. a deleted model", async () => {
+    const fetchImpl = (async () => new Response("model not found", { status: 404 })) as FetchImpl;
+    const p = new OllamaCaptionProvider({ fetchImpl });
+    expect(await p.caption([Uint8Array.from([1])])).toBe("");
+  });
+
+  it("returns empty string for no frames without calling the daemon", async () => {
+    let called = false;
+    const fetchImpl = (async () => {
+      called = true;
+      return new Response("{}", { status: 200 });
+    }) as FetchImpl;
+    expect(await new OllamaCaptionProvider({ fetchImpl }).caption([])).toBe("");
+    expect(called).toBe(false);
+  });
+});
+
+describe("listVisionModels", () => {
+  it("returns only locally-resident vision-capable models", async () => {
+    const fetchImpl = ok({
+      models: [
+        { name: "nomic-embed-text:latest", capabilities: ["embedding"] },
+        { name: "qwen3-vl:4b", capabilities: ["completion", "vision"] },
+        { name: "llama3:8b", capabilities: ["completion"] },
+        { name: "minicpm-v4.6:latest", capabilities: ["vision"] },
+      ],
+    });
+    expect(await listVisionModels("http://h:1", fetchImpl)).toEqual([
+      "qwen3-vl:4b",
+      "minicpm-v4.6:latest",
+    ]);
+  });
+
+  it("returns [] when the daemon is unreachable", async () => {
+    const fetchImpl = (async () => {
+      throw new Error("ECONNREFUSED");
+    }) as FetchImpl;
+    expect(await listVisionModels("http://h:1", fetchImpl)).toEqual([]);
+  });
+
+  it("tolerates entries with no capabilities array", async () => {
+    const fetchImpl = ok({ models: [{ name: "mystery" }] });
+    expect(await listVisionModels("http://h:1", fetchImpl)).toEqual([]);
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx vitest run test/caption.ollama.test.ts`
+Expected: FAIL — cannot resolve `../src/represent/caption/ollama.js`.
+
+- [ ] **Step 3: Write the implementation**
+
+Create `src/represent/caption/ollama.ts`:
+
+```ts
+/**
+ * Local VLM captioning through Ollama's /api/chat, which accepts base64 images.
+ *
+ * Barrel-safe: plain fetch, no native module, so this DOES export from the
+ * package barrel alongside the Anthropic and Gemini captioners.
+ *
+ * Best-effort by contract: a caption failure means one view lacks a vector for
+ * one segment, which reconcileAndReembed can fill later. It must never fail the
+ * represent pass, so every error path returns "".
+ */
+
+import type { CaptionProvider } from "../../embed/types.js";
+import { CAPTION_SYSTEM, captionPrompt } from "./prompt.js";
+
+export interface OllamaCaptionOptions {
+  host?: string;
+  model?: string;
+  /** Injected fetch (tests). */
+  fetchImpl?: typeof globalThis.fetch;
+}
+
+interface TagsResponse {
+  models?: { name?: string; capabilities?: string[] }[];
+}
+
+/**
+ * Locally-resident, vision-capable model names.
+ *
+ * Deliberately sourced from /api/tags rather than a hardcoded list: Ollama's
+ * library now includes CLOUD-hosted models, and offering one in a "local"
+ * settings dropdown would route screenshots off the machine invisibly. A model
+ * that is not pulled locally cannot appear here.
+ */
+export async function listVisionModels(
+  host: string,
+  fetchImpl: typeof globalThis.fetch = globalThis.fetch,
+): Promise<string[]> {
+  try {
+    const res = await fetchImpl(`${host}/api/tags`);
+    if (!res.ok) return [];
+    const json = (await res.json()) as TagsResponse;
+    return (json.models ?? [])
+      .filter((m) => Array.isArray(m.capabilities) && m.capabilities.includes("vision"))
+      .map((m) => m.name ?? "")
+      .filter((n) => n.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+export class OllamaCaptionProvider implements CaptionProvider {
+  private readonly host: string;
+  private readonly model: string;
+  private readonly fetchImpl: typeof globalThis.fetch;
+
+  constructor(opts: OllamaCaptionOptions = {}) {
+    this.host = opts.host ?? process.env.OLLAMA_HOST ?? "http://localhost:11434";
+    this.model = opts.model ?? "qwen3-vl:4b";
+    this.fetchImpl = opts.fetchImpl ?? globalThis.fetch;
+  }
+
+  async caption(frames: Uint8Array[], context?: string): Promise<string> {
+    if (frames.length === 0) return "";
+    try {
+      const res = await this.fetchImpl(`${this.host}/api/chat`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: this.model,
+          stream: false,
+          messages: [
+            { role: "system", content: CAPTION_SYSTEM },
+            {
+              role: "user",
+              content: captionPrompt(context),
+              images: frames.map((f) => Buffer.from(f).toString("base64")),
+            },
+          ],
+        }),
+      });
+      if (!res.ok) return "";
+      const json = (await res.json()) as { message?: { content?: string } };
+      return (json.message?.content ?? "").trim();
+    } catch {
+      return ""; // daemon down, model deleted, malformed response
+    }
+  }
+}
+```
+
+- [ ] **Step 4: Run tests**
+
+Run: `npx vitest run test/caption.ollama.test.ts test/caption.test.ts && npm run typecheck`
+Expected: PASS, all seven cases.
+
+- [ ] **Step 5: Export from the barrel**
+
+Add to `src/index.ts` beside the other captioners:
+
+```ts
+export {
+  OllamaCaptionProvider,
+  listVisionModels,
+  type OllamaCaptionOptions,
+} from "./represent/caption/ollama.js";
+```
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/represent/caption/ollama.ts src/index.ts test/caption.ollama.test.ts
+git commit -m "feat(caption): local Ollama VLM captioner with local-only model discovery"
+```
