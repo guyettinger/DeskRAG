@@ -63,6 +63,18 @@ export type DeepPartial<T> = {
   [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K];
 };
 
+/**
+ * Weight-download progress. Its own channel rather than a stage of
+ * IndexingProgress, because a download can begin from a SEARCH as well as from
+ * indexing — weights are fetched lazily on first use.
+ */
+export interface ModelDownloadProgress {
+  modelId: string;
+  receivedBytes: number;
+  totalBytes: number;
+  done: boolean;
+}
+
 /** What library features are usable given the current settings (renderer gating). */
 export interface Capabilities {
   imageSearch: boolean;
@@ -259,6 +271,18 @@ export interface DeskRagApi {
     detail(sessionId: string): Promise<SessionDetailDTO | null>;
     remove(sessionId: string): Promise<void>;
   };
+  models: {
+    /** Fires while weights download; may start from a search, not just indexing. */
+    onDownload(cb: (p: ModelDownloadProgress) => void): () => void;
+  };
+  ollama: {
+    /**
+     * Vision-capable models resident on THIS machine. Never a hardcoded list:
+     * Ollama's library now includes cloud-hosted models, and offering one here
+     * would route screenshots off the device.
+     */
+    visionModels(): Promise<string[]>;
+  };
   system: {
     env(): Promise<EnvInfo>;
   };
@@ -282,5 +306,7 @@ export const IPC = {
   sessionsList: "sessions:list",
   sessionsDetail: "sessions:detail",
   sessionsRemove: "sessions:remove",
+  modelDownloadEvent: "models:download-event",
+  ollamaVisionModels: "ollama:vision-models",
   systemEnv: "system:env",
 } as const;

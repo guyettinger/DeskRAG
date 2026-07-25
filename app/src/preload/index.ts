@@ -9,6 +9,7 @@ import {
   IPC,
   type DeskRagApi,
   type IndexingProgress,
+  type ModelDownloadProgress,
   type PermissionKind,
   type RecordingStatus,
   type SearchInput,
@@ -47,6 +48,13 @@ const api: DeskRagApi = {
     list: () => ipcRenderer.invoke(IPC.sessionsList),
     detail: (sessionId: string) => ipcRenderer.invoke(IPC.sessionsDetail, sessionId),
     remove: (sessionId: string) => ipcRenderer.invoke(IPC.sessionsRemove, sessionId),
+  },
+  models: {
+    onDownload: (cb: (p: ModelDownloadProgress) => void) =>
+      subscribe(IPC.modelDownloadEvent, cb),
+  },
+  ollama: {
+    visionModels: () => ipcRenderer.invoke(IPC.ollamaVisionModels),
   },
   system: {
     env: () => ipcRenderer.invoke(IPC.systemEnv),

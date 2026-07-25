@@ -4,9 +4,11 @@ import type {
   Capabilities,
   EnvInfo,
   ImageProvider,
+  ModelDownloadProgress,
   ProviderSettingsView,
   SettingsPatch,
   SettingsView,
+  TextProvider,
 } from "@shared/types";
 import { api } from "../api.js";
 
@@ -25,12 +27,23 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
     anthropic: "",
   });
   const [saved, setSaved] = useState(false);
+  const [visionModels, setVisionModels] = useState<string[]>([]);
+  const [download, setDownload] = useState<ModelDownloadProgress | null>(null);
 
   const load = (): void => {
     api.settings.get().then(setS);
     api.settings.capabilities().then(setCaps);
+    api.ollama.visionModels().then(setVisionModels);
   };
   useEffect(load, []);
+
+  // Weight downloads can start from a search, not just from this screen, so the
+  // indicator subscribes for the lifetime of the view.
+  useEffect(
+    () =>
+      api.models.onDownload((p) => setDownload(p.done ? null : p)),
+    [],
+  );
 
   if (!s) return <div className="spinner" />;
 
@@ -67,6 +80,54 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
 
   const p = s.providers;
 
+  /**
+   * Derived, never a toggle — so the badge cannot drift from what is configured.
+   * "none" counts as local: it sends nothing anywhere.
+   */
+  const fullyLocal =
+    p.textProvider === "onnx" &&
+    (p.imageProvider === "colsmol" || p.imageProvider === "none") &&
+    (p.captionProvider === "ollama" || p.captionProvider === "none") &&
+    (p.rerankProvider === "onnx" || p.rerankProvider === "none");
+
+  const applyLocalProfile = async (): Promise<void> => {
+    // Capture width must be >= 2048: below that, ColSmol's preprocessor UPSCALES,
+    // and sharp's magnification path diverges from the reference implementation
+    // enough that ~1% of patch vectors drift below cosine 0.90 — silently.
+    const raiseWidth = s.signals.screen.imageMaxWidth < 2048;
+    const enableAx = !s.signals.ax.enabled;
+    const notes = [
+      enableAx && "turn on accessibility capture (macOS will ask for permission)",
+      raiseWidth && `raise keyframe width to 2560 (from ${s.signals.screen.imageMaxWidth})`,
+    ].filter(Boolean);
+    if (
+      notes.length > 0 &&
+      !window.confirm(
+        `Use local models for everything?\n\nThis will also ${notes.join(", and ")}.\n\n` +
+          "AX labels are the exact-text search path — the local image model reads layout, not text.",
+      )
+    ) {
+      return;
+    }
+
+    const next = await api.settings.set({
+      providers: {
+        textProvider: "onnx",
+        imageProvider: "colsmol",
+        captionProvider: visionModels.length > 0 ? "ollama" : "none",
+        rerankProvider: "onnx",
+      },
+      signals: {
+        ax: { enabled: true },
+        ...(raiseWidth ? { screen: { imageMaxWidth: 2560 } } : {}),
+      },
+    });
+    setS(next);
+    setCaps(await api.settings.capabilities());
+    api.system.env().then(onEnv);
+    flash();
+  };
+
   return (
     <div className="page">
       <div className="page__head">
@@ -79,6 +140,99 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
       </div>
 
       {saved && <div className="banner" style={{ background: "color-mix(in srgb, var(--ok) 12%, var(--panel))", borderColor: "color-mix(in srgb, var(--ok) 40%, var(--hairline))" }}><span className="led ok" /> Saved</div>}
+
+      <div className="card">
+        <h2>
+          Local models{" "}
+          {fullyLocal && (
+            <span className="led ok" title="Nothing leaves this machine">
+              {" "}
+              Fully local
+            </span>
+          )}
+        </h2>
+        <p className="sub">
+          Run every AI step on this machine. Weights download once, then work offline.
+        </p>
+
+        <div className="form-row">
+          <div>
+            <label>Use local models for everything</label>
+            <div className="desc">
+              ONNX embeddings + reranking, Ollama captions, AX capture on
+            </div>
+          </div>
+          <button className="btn" onClick={() => void applyLocalProfile()}>
+            Apply
+          </button>
+        </div>
+
+        {download && (
+          <div className="form-row">
+            <div>
+              <label>Downloading {download.modelId}</label>
+              <div className="desc">
+                {Math.round((download.receivedBytes / Math.max(1, download.totalBytes)) * 100)}% —
+                one-time
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="form-row">
+          <div>
+            <label>Text embeddings</label>
+            <div className="desc">ONNX runs in-process; Ollama needs the daemon running</div>
+          </div>
+          <select
+            value={p.textProvider}
+            onChange={(e) => void patchProviders({ textProvider: e.target.value as TextProvider })}
+          >
+            <option value="ollama">Ollama</option>
+            <option value="onnx">ONNX (in-process)</option>
+          </select>
+        </div>
+
+        <div className="form-row">
+          <div>
+            <label>Caption model</label>
+            <div className="desc">
+              {visionModels.length > 0
+                ? "Vision models pulled on this machine"
+                : "No local vision model — run: ollama pull qwen3-vl:4b"}
+            </div>
+          </div>
+          <select
+            value={p.ollamaCaptionModel}
+            disabled={visionModels.length === 0}
+            onChange={(e) => void patchProviders({ ollamaCaptionModel: e.target.value })}
+          >
+            {/* Sourced from /api/tags, never hardcoded: Ollama's library now
+                includes cloud-hosted models, and listing one here would send
+                screenshots off the machine. */}
+            {visionModels.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+            {visionModels.length === 0 && <option value={p.ollamaCaptionModel}>—</option>}
+          </select>
+        </div>
+
+        <div className="form-row">
+          <div>
+            <label>Model directory</label>
+            <div className="desc">Leave blank for managed downloads under the app data dir</div>
+          </div>
+          <input
+            className="mono"
+            type="text"
+            placeholder="(managed)"
+            value={p.localModels.dir}
+            onChange={(e) => void patchProviders({ localModels: { dir: e.target.value } })}
+          />
+        </div>
+      </div>
 
       <div className="card">
         <h2>Embeddings</h2>
@@ -111,6 +265,7 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
             onChange={(e) => void patchProviders({ imageProvider: e.target.value as ImageProvider })}
           >
             <option value="none">None (text + behavior only)</option>
+            <option value="colsmol">ColSmol (local, late interaction)</option>
             <option value="voyage">Voyage (multimodal)</option>
             <option value="gemini">Gemini</option>
           </select>
@@ -125,6 +280,7 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
             onChange={(e) => void patchProviders({ captionProvider: e.target.value as CaptionProvider })}
           >
             <option value="none">None</option>
+            <option value="ollama">Ollama (local VLM)</option>
             <option value="anthropic">Anthropic (Claude)</option>
             <option value="gemini">Gemini</option>
           </select>
