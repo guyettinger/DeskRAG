@@ -266,6 +266,44 @@ searchFramePatches(query: Float32Array[], scope: FrameScope, k: number)
 Write order is unchanged and non-negotiable: SQLite transaction commits first,
 then the Lance add, serialized through the existing `Mutex`.
 
+### Verified against `@lancedb/lancedb@0.24.1`
+
+Checked empirically 2026-07-24 against a temp LanceDB, not inferred from docs.
+
+**MaxSim is genuine.** With query `[q1, q2]`, a row containing both `q1` and `q2`
+scored −1.0000 against 0.6187 for a row containing only `q1`. With a
+single-vector query `[q1]`, those two rows tie at 0.0000. Scores therefore
+aggregate a per-query-token maximum — real late interaction, not
+first-vector-only or mean-pooling.
+
+**`.where()` pre-filters, with and without an index.** The plan pushes the
+predicate into `LanceRead` as `full_filter` / `refine_filter`, below the ANN
+stage. Asking for `limit: 100` against a set where one row in three is in scope
+returned 100 in-scope rows; a post-filter would have returned ~33.
+
+**Variable patch counts per row are fine** — 2, 7, and 448 patches coexisted in
+one table. This matters because tile count varies with frame aspect ratio.
+
+**Latency**: 3,000 rows × 8 patches, IVF-PQ indexed, filtered top-50 query — 4ms.
+
+**Cosine is mandatory, and the default is a trap.** Index build with `l2` fails:
+
+```
+LanceError(Index): Build Vector Index: multivector type supports only cosine distance
+```
+
+But *brute-force* search silently defaults to `metric=l2` and still returns
+plausible ordering. So a multivector path developed without an index appears to
+work, then fails at index creation. The store must therefore set cosine in **both**
+places:
+
+```ts
+Index.ivfPq({ distanceType: "cosine", numPartitions, numSubVectors })
+tbl.vectorSearch(queryVectors).distanceType("cosine")
+```
+
+Float16 storage was verified working for the patch column.
+
 ### Patch-to-bbox mapping
 
 Highlights come from the MaxSim argmax. Token index → tile index → position in
@@ -515,8 +553,12 @@ treating a patch set as a missing single vector would corrupt the table.
 - **Multivector store round-trip** against a temp LanceDB: write N patch sets,
   read back, confirm shape and f16 storage.
 - **`.where()` composition** — a multivector search with an
-  `array_has_any(segment_ids, [...])` pre-filter returns only in-scope frames.
-  This is what makes Tier-2 scoping exact.
+  `array_has_any(segment_ids, [...])` pre-filter returns only in-scope frames,
+  and returns a full `limit` worth rather than a post-filtered remnant. This is
+  what makes Tier-2 scoping exact; it is verified but must stay verified.
+- **Cosine is set on both the index and the query.** Assert that a table built
+  without `distanceType: "cosine"` fails loudly rather than silently searching
+  under `l2`.
 - **Patch-to-bbox mapping** — synthetic geometry in, known pixel boxes out,
   including the non-square and global-view tiles.
 - **Tokenizer truncation** — pure JS, no weights needed.
@@ -558,10 +600,12 @@ treating a patch set as a missing single vector would corrupt the table.
 
 ## Open items
 
-1. **`.where()` pre-filter composition with multivector search.** Unverified, and
-   the top risk in this design: it is what makes Tier-2 scoping exact. If
-   pre-filtering does not compose, scoping must move to a post-filter with a
-   larger `k`, changing Tier-2 cost. **Verify before committing to the plan.**
+1. ~~`.where()` pre-filter composition with multivector search.~~ **Resolved
+   2026-07-24** — verified empirically; see "Verified against
+   `@lancedb/lancedb@0.24.1`". Pre-filtering composes with and without an index,
+   MaxSim is genuine, and variable patch counts are supported. The one surprise
+   was that cosine is mandatory while brute-force search silently defaults to
+   `l2`, which is now a design requirement rather than an open question.
 2. **The ColSmol projection dimension.** Assumed 128 from ColVision convention;
    `config.json` does not state it directly. Confirm from the ONNX output shape.
 3. **int8 quality for ColSmol specifically.** MaxSim sums per-token maxima, so
@@ -575,16 +619,14 @@ treating a patch set as a missing single vector would corrupt the table.
 
 ## Build order
 
-1. Verify Open Item 1 — `.where()` with multivector — before anything else. It
-   can invalidate the Tier-2 design.
-2. `src/embed/onnx/runtime.ts` + `text.ts`, with the `embed()` opts change.
-3. Store multivector table shape, `putFramePatches`, `searchFramePatches`, and
-   the reconciliation guard.
-4. `src/embed/onnx/colsmol.ts` + patch-to-bbox mapping, with geometry tests.
-5. Tier-2/Tier-3 local path in `retrieve/`, and `assemble.ts` highlights.
-6. `src/retrieve/rerank/onnx.ts`.
-7. `src/represent/caption/ollama.ts`.
-8. `app/src/main/models.ts` + `model-store.ts`.
-9. `DeskRagService` wiring: async `buildProviders()`, `capabilities()`,
+1. `src/embed/onnx/runtime.ts` + `text.ts`, with the `embed()` opts change.
+2. Store multivector table shape (cosine index), `putFramePatches`,
+   `searchFramePatches`, and the reconciliation guard.
+3. `src/embed/onnx/colsmol.ts` + patch-to-bbox mapping, with geometry tests.
+4. Tier-2/Tier-3 local path in `retrieve/`, and `assemble.ts` highlights.
+5. `src/retrieve/rerank/onnx.ts`.
+6. `src/represent/caption/ollama.ts`.
+7. `app/src/main/models.ts` + `model-store.ts`.
+8. `DeskRagService` wiring: async `buildProviders()`, `capabilities()`,
    `buildRetriever()` dispatch between single- and multi-vector paths.
-10. `shared/types.ts` DTO and IPC additions, Settings UI, local profile action.
+9. `shared/types.ts` DTO and IPC additions, Settings UI, local profile action.
