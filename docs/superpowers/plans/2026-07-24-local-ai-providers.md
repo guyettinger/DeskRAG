@@ -968,6 +968,27 @@ describe("multivector table", () => {
     ]);
     expect(await store.ensurePatchIndex(NS, 256)).toBe(false);
   });
+
+  it("proves l2 is rejected for multivector, which is why cosine is unconditional", async () => {
+    // Guards the trap: an unindexed table brute-forces with metric=l2 and returns
+    // plausible ordering, so nothing surfaces until index build — here.
+    const lancedb = await import("@lancedb/lancedb");
+    const rows = Array.from({ length: 400 }, (_, i) => ({
+      id: `f${i}`,
+      session_id: "s",
+      segment_ids: ["segA"],
+      patches: [vec(i), vec(i + 1), vec(i + 2)],
+    }));
+    await store.addPatches(NS, rows);
+    const tbl = await (store as unknown as {
+      open(ns: string): Promise<{ createIndex(c: string, o: unknown): Promise<void> }>;
+    }).open(NS);
+    await expect(
+      tbl.createIndex("patches", {
+        config: lancedb.Index.ivfPq({ distanceType: "l2", numPartitions: 16, numSubVectors: 8 }),
+      }),
+    ).rejects.toThrow(/cosine/i);
+  });
 });
 ```
 
@@ -1224,7 +1245,7 @@ afterEach(() => {
 
 async function addFrame(id: string, tMono: number): Promise<void> {
   await store.putFrames([
-    { id, sessionId, tMono, width: 1280, height: 800, phash: 0n, blobId: null },
+    { id, sessionId, tMono, width: 1280, height: 800, phash: 0n, frameOffset: 0, segmentIds: [] },
   ]);
 }
 
@@ -1827,15 +1848,9 @@ import {
   computeTileGeometry,
   expectedTokenCount,
   type TileConfig,
+  type TiledImage,
 } from "./geometry.js";
 import { OnnxRuntime, makeTensor, type OnnxSession } from "./runtime.js";
-
-export interface TiledImage {
-  /** One normalized CHW tile buffer per tile, grid order then global. */
-  tiles: Float32Array[];
-  width: number;
-  height: number;
-}
 
 export interface ColSmolOptions {
   modelPath: string;
@@ -1933,7 +1948,13 @@ export class ColSmolMultiVector implements MultiVectorProvider {
         off += t.length;
       }
       const res = (await sess.run({
-        pixel_values: makeTensor("float32", pixels, [1, tiled.tiles.length, -1]),
+        pixel_values: makeTensor("float32", pixels, [
+          1,
+          tiled.tiles.length,
+          3,
+          this.tileConfig.tileSize,
+          this.tileConfig.tileSize,
+        ]),
       })) as Record<string, { data: Float32Array; dims: number[] }>;
       const vectors = this.rows(res);
       if (vectors.length !== expected) {
@@ -2044,7 +2065,16 @@ export async function tileImageWithSharp(
 }
 ```
 
-Move the `TiledImage` interface into `geometry.ts` so both files can import it without a cycle.
+`TiledImage` is declared in `geometry.ts` (add it there in Task 7) so `colsmol.ts` and `colsmol-tiler.ts` both import it without a cycle:
+
+```ts
+export interface TiledImage {
+  /** One normalized CHW tile buffer per tile, grid order then global. */
+  tiles: Float32Array[];
+  width: number;
+  height: number;
+}
+```
 
 - [ ] **Step 7: Run tests and typecheck**
 
@@ -2118,10 +2148,10 @@ afterEach(() => {
 });
 
 async function frameWithBlob(id: string, tMono: number, bytes: number[]): Promise<void> {
-  const blob = await blobs.write(sessionId, "keyframe", "jpeg", Uint8Array.from(bytes));
-  await store.putBlobs([blob.row]);
+  const blob = await blobs.write(sessionId, "keyframe", Uint8Array.from(bytes), { tMonoStart: tMono, tMonoEnd: tMono, codec: "jpeg" });
+  await store.putBlobs([blob]);
   await store.putFrames([
-    { id, sessionId, tMono, width: 1280, height: 800, phash: 0n, blobId: blob.row.id },
+    { id, sessionId, tMono, width: 1280, height: 800, phash: 0n, blobId: blob.id, frameOffset: 0, segmentIds: [] },
   ]);
 }
 
@@ -2156,7 +2186,7 @@ describe("FramePatchRepresenter", () => {
   it("skips frames with no keyframe blob rather than failing the pass", async () => {
     await frameWithBlob("f1", 100, [1, 2, 3]);
     await store.putFrames([
-      { id: "f2", sessionId, tMono: 200, width: 1280, height: 800, phash: 0n, blobId: null },
+      { id: "f2", sessionId, tMono: 200, width: 1280, height: 800, phash: 0n, frameOffset: 0, segmentIds: [] },
     ]);
     const res = await new FramePatchRepresenter(store, {
       patchEmbedder: provider,
@@ -2315,8 +2345,10 @@ git commit -m "feat(represent): FramePatchRepresenter writes the frame_patches v
 **Files:**
 - Create: `src/retrieve/tier2-mv.ts`
 - Modify: `src/retrieve/assemble.ts`
+- Modify: `src/store/lance/tables.ts` (add `getFramePatches`)
+- Modify: `src/store/types.ts`, `src/store/store.ts` (mirror `getFramePatches`)
 - Modify: `src/index.ts`
-- Test: `test/tier2-mv.test.ts`
+- Test: `test/tier2-mv.test.ts`, `test/assemble.test.ts`, `test/dual-store.patches.test.ts`
 
 **Interfaces:**
 - Consumes: `MultiVectorProvider` (Task 1), `searchFramePatches` (Task 6), `patchIndexToBox`/`computeTileGeometry` (Task 7)
@@ -2372,8 +2404,8 @@ async function seed(): Promise<Tier2MultiVectorRetriever> {
     sharedTextSpace: true,
   });
   await store.putFrames([
-    { id: "f1", sessionId, tMono: 100, width: 1280, height: 800, phash: 0n, blobId: null },
-    { id: "f2", sessionId, tMono: 200, width: 1280, height: 800, phash: 0n, blobId: null },
+    { id: "f1", sessionId, tMono: 100, width: 1280, height: 800, phash: 0n, frameOffset: 0, segmentIds: [] },
+    { id: "f2", sessionId, tMono: 200, width: 1280, height: 800, phash: 0n, frameOffset: 0, segmentIds: [] },
   ]);
   const [pa, pb] = await provider.embedImages([
     Uint8Array.from([1, 2, 3]),
@@ -2611,7 +2643,38 @@ Add `patchEmbedder?: MultiVectorProvider` to `RetrieverOptions`. In the `Retriev
 
 Where the existing flow calls Tier 2 then Tier 3, the multivector branch calls `retrieveFrames`/`retrieveFramesUnscoped` and derives highlights from `highlightsFor`, then merges them with the AX-label FTS hits exactly as the single-vector branch merges ANN and FTS region hits. Do **not** run the region-image tier on the multivector branch — there is no `region_image` space in a local-only configuration.
 
-Because `highlightsFor` needs the frame's stored patch vectors, add a store read for them, or recompute by re-embedding the frame's keyframe. Prefer reading: add `getFramePatches(namespace, frameId): Promise<Float32Array[] | null>` to `LanceStore`/`DualStore` (a `query().where("id = '<id>'").select(["patches"])`), so a search never re-runs the model.
+`highlightsFor` needs the frame's stored patch vectors. Read them back rather than
+re-embedding the keyframe, so a search never re-runs the model. Add to `LanceStore`
+(and mirror on `VectorSide`, `Store`, and `DualStore`):
+
+```ts
+  /** The stored patch set for one frame, or null if the row is absent. */
+  async getFramePatches(namespace: string, frameId: string): Promise<Float32Array[] | null> {
+    const tbl = await this.open(namespace);
+    const rows = (await tbl
+      .query()
+      .where(idInClause("id", [frameId]))
+      .select(["patches"])
+      .limit(1)
+      .toArray()) as Array<{ patches: number[][] | Float32Array[] }>;
+    const row = rows[0];
+    if (!row) return null;
+    return row.patches.map((p) => Float32Array.from(p));
+  }
+```
+
+On `DualStore`, delegate straight through — this is a read, so it needs no `Mutex`
+and no SQLite leg:
+
+```ts
+  async getFramePatches(namespace: string, frameId: string): Promise<Float32Array[] | null> {
+    this.assertNamespaceRegistered(namespace);
+    return this.lance.getFramePatches(namespace, frameId);
+  }
+```
+
+Add a case to `test/dual-store.patches.test.ts` asserting a round-trip returns the
+same vector count that was written, and `null` for an unknown frame id.
 
 - [ ] **Step 6: Extend `test/assemble.test.ts`**
 
@@ -3452,7 +3515,10 @@ export const MODELS = {
 } satisfies Record<string, ModelSpec>;
 ```
 
-The `<COMMIT_SHA>` and `<SHA256>` placeholders are the **only** ones in this plan, and they are unavoidable: they must be captured against the live repos at implementation time. Fill them in this step before proceeding — do not leave them.
+`<COMMIT_SHA>` and `<SHA256>` are unavoidable — they must be captured against the
+live repos at implementation time. Fill them in during this step; do not leave
+them. Together with the ONNX I/O names recorded in Task 8 Step 2, these are the
+plan's **only** deferred values, and each has a capture command attached.
 
 - [ ] **Step 5: Write ModelStore**
 
