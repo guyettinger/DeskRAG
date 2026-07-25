@@ -238,6 +238,18 @@ export interface PermissionStatus {
 
 // --- the IPC API exposed on window.deskrag ----------------------------------
 
+/**
+ * Search results plus a reason when there are none. There is deliberately NO
+ * migration path between providers, so switching one leaves prior recordings
+ * indexed in a namespace the current provider never queries. Without this flag
+ * that looks identical to "nothing matched" over a full library.
+ */
+export interface SearchResultDTO {
+  frames: FrameHitDTO[];
+  /** True when no text vector space exists for the CURRENT provider. */
+  indexedUnderDifferentProvider?: boolean;
+}
+
 export interface SearchInput {
   text?: string;
   /** Raw image bytes for search-by-visual-example (requires an image provider). */
@@ -263,7 +275,7 @@ export interface DeskRagApi {
     onIndexing(cb: (p: IndexingProgress) => void): () => void;
   };
   search: {
-    query(input: SearchInput): Promise<FrameHitDTO[]>;
+    query(input: SearchInput): Promise<SearchResultDTO>;
     detail(frameId: string): Promise<ResultDetailDTO | null>;
   };
   sessions: {

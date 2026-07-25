@@ -58,7 +58,6 @@ import {
 } from "./model-store.js";
 import type {
   Capabilities,
-  FrameHitDTO,
   HighlightDTO,
   IndexingProgress,
   KeyframeMarkerDTO,
@@ -66,6 +65,7 @@ import type {
   RecordingStatus,
   ResultDetailDTO,
   SearchInput,
+  SearchResultDTO,
   SessionDetailDTO,
   SessionSummaryDTO,
   SessionVideoDTO,
@@ -548,7 +548,7 @@ export class DeskRagService {
     });
   }
 
-  async search(input: SearchInput): Promise<FrameHitDTO[]> {
+  async search(input: SearchInput): Promise<SearchResultDTO> {
     const prov = await this.buildProviders();
     if (input.imageBytes) {
       if (!prov.imageEmbedder && !prov.patchEmbedder) {
@@ -562,6 +562,18 @@ export class DeskRagService {
         );
       }
     }
+    // Namespaces diverge by design and there is no migration path, so prior
+    // recordings can sit in a space the CURRENT provider never queries. Detect
+    // that before searching, or an empty result over a full library is
+    // indistinguishable from "nothing matched".
+    const registered = new Set(this.store.listVectorSpaces().map((s) => s.namespace));
+    const hasCurrentTextSpace = (["digest", "caption", "transcript"] as const).some((view) =>
+      registered.has(new TextViewSearcher(prov.textEmbedder, view).namespace),
+    );
+    const hasAnyTextSpace = this.store
+      .listVectorSpaces()
+      .some((s) => s.view === "digest" || s.view === "caption" || s.view === "transcript");
+
     const retriever = this.buildRetriever(prov);
     const { frames } = await retriever.retrieve({
       ...(input.text ? { text: input.text } : {}),
@@ -569,7 +581,7 @@ export class DeskRagService {
     });
 
     this.lastHighlights.clear();
-    return frames.map((fr) => {
+    const hits = frames.map((fr) => {
       const frame = fr.frame ?? this.store.getFrame(fr.frameId);
       const session = frame ? this.store.getSession(frame.sessionId) : undefined;
       const seg = fr.segmentId ? this.store.getSegment(fr.segmentId) : undefined;
@@ -593,6 +605,15 @@ export class DeskRagService {
         highlightCount: highlights.length,
       };
     });
+
+    return {
+      frames: hits,
+      // Only meaningful when the miss is total: some vectors exist, just not in
+      // a space this provider can read.
+      ...(hits.length === 0 && hasAnyTextSpace && !hasCurrentTextSpace
+        ? { indexedUnderDifferentProvider: true }
+        : {}),
+    };
   }
 
   detail(frameId: string): ResultDetailDTO | null {
