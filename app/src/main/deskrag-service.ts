@@ -51,6 +51,7 @@ import {
 } from "deskrag";
 import type { SettingsStore } from "./settings.js";
 import { MODELS } from "./models.js";
+import { libUrl } from "./lib-resolve.js";
 import {
   ModelNotBuiltError,
   ModelStore,
@@ -298,7 +299,7 @@ export class DeskRagService {
    */
   private async loadOnnx<T>(path: string): Promise<T | null> {
     try {
-      return (await import(/* @vite-ignore */ path)) as T;
+      return (await import(/* @vite-ignore */ libUrl(path))) as T;
     } catch (err) {
       console.error(`[deskrag] ${path} unavailable:`, err);
       return null;
@@ -377,7 +378,7 @@ export class DeskRagService {
     exportName: string,
   ): Promise<Producer | null> {
     try {
-      const mod = (await import(/* @vite-ignore */ modulePath)) as Record<
+      const mod = (await import(/* @vite-ignore */ libUrl(modulePath))) as Record<
         string,
         new () => Producer
       >;
@@ -513,7 +514,7 @@ export class DeskRagService {
   private async loadCropper(): Promise<import("deskrag").RegionCropper | null> {
     try {
       const mod = (await import(
-        /* @vite-ignore */ "deskrag/represent/regions/sharp-cropper"
+        /* @vite-ignore */ libUrl("deskrag/represent/regions/sharp-cropper")
       )) as { SharpRegionCropper: new () => import("deskrag").RegionCropper };
       return new mod.SharpRegionCropper();
     } catch (err) {
