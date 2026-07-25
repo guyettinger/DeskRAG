@@ -232,6 +232,25 @@ export class Retriever {
     regionsByFrame: Map<string, RegionHit[]>,
     segScore: Map<string, number>,
   ): FrameResult[] {
+    // Frame distances are turned into scores by rank position within the
+    // candidate set, NOT by a fixed 1/(1+d) transform.
+    //
+    // 1/(1+d) assumes d >= 0, which holds for L2 and single-vector cosine
+    // distance but NOT for multivector MaxSim: LanceDB returns a negated
+    // similarity, so d sits around -1 and 1/(1+d) explodes through a pole —
+    // observed producing scores near -1e8 that happened to stay correctly
+    // ordered by luck. Rank position is monotone in distance for every metric
+    // and has no pole.
+    const finite = frameHits.filter((f) => !Number.isNaN(f.distance)).map((f) => f.distance);
+    const minD = finite.length ? Math.min(...finite) : 0;
+    const maxD = finite.length ? Math.max(...finite) : 0;
+    const spread = maxD - minD;
+    const frameScoreOf = (d: number): number => {
+      if (Number.isNaN(d)) return 0; // recalled by segment membership, not ANN
+      if (spread <= 0) return 1; // single candidate, or all tied
+      return (maxD - d) / spread; // 1 = nearest, 0 = furthest
+    };
+
     // Raw components per frame.
     const raw = frameHits.map((fh) => {
       const regions = regionsByFrame.get(fh.frameId) ?? [];
@@ -242,7 +261,7 @@ export class Retriever {
       const regionScore = regionScores.length
         ? regionScores.reduce((s, v) => s + v, 0) / regionScores.length
         : 0;
-      const frameScore = Number.isNaN(fh.distance) ? 0 : 1 / (1 + fh.distance);
+      const frameScore = frameScoreOf(fh.distance);
       const best = this.bestSegment(fh, segScore);
       return {
         fh,

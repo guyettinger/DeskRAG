@@ -2,10 +2,21 @@ import { describe, expect, it } from "vitest";
 import { NOMIC_PREFIX, OnnxTextEmbedding } from "../src/embed/onnx/text.js";
 import type { OnnxSession, OnnxTensor } from "../src/embed/onnx/runtime.js";
 
-/** Records feeds and returns a hidden state of all-ones so pooling is predictable. */
+/**
+ * Records feeds and returns a hidden state of all-ones so pooling is predictable.
+ *
+ * Enforces the REAL input contract: nomic's export declares input_ids,
+ * token_type_ids and attention_mask as required, and a permissive stub let a
+ * missing token_type_ids ship — it only surfaced against real weights.
+ */
+const REQUIRED_INPUTS = ["input_ids", "token_type_ids", "attention_mask"] as const;
+
 function stubSession(seen: Record<string, OnnxTensor>[]): OnnxSession {
   return {
     async run(feeds) {
+      for (const name of REQUIRED_INPUTS) {
+        if (!feeds[name]) throw new Error(`input '${name}' is missing in 'feeds'.`);
+      }
       seen.push(feeds);
       const [batch, seq] = feeds.input_ids!.dims as [number, number];
       const dims = 4;
@@ -86,6 +97,22 @@ describe("OnnxTextEmbedding", () => {
     });
     await e.embed(["anything long"]);
     expect(seen[0]!.input_ids!.dims).toEqual([1, 3]);
+  });
+
+  it("sends token_type_ids, which nomic's export requires", async () => {
+    const seen: Record<string, OnnxTensor>[] = [];
+    const e = new OnnxTextEmbedding(opts(stubSession(seen)));
+    await e.embed(["hello"]);
+    expect(Object.keys(seen[0]!).sort()).toEqual([
+      "attention_mask",
+      "input_ids",
+      "token_type_ids",
+    ]);
+    // Single sequence -> all zeros, same shape as the ids.
+    expect(seen[0]!.token_type_ids!.dims).toEqual(seen[0]!.input_ids!.dims);
+    expect(
+      Array.from(seen[0]!.token_type_ids!.data as BigInt64Array).every((v) => v === 0n),
+    ).toBe(true);
   });
 
   it("returns [] for no inputs without touching the session", async () => {

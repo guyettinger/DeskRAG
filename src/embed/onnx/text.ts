@@ -22,6 +22,8 @@ export const NOMIC_PREFIX = {
 
 export interface TokenizeResult {
   ids: number[];
+  /** Segment ids. Absent for a single sequence, where they are all zero. */
+  typeIds?: number[];
 }
 
 export interface OnnxTextOptions {
@@ -84,7 +86,13 @@ export class OnnxTextEmbedding implements EmbeddingProvider {
         JSON.parse(tokJson) as object,
         JSON.parse(cfgJson) as object,
       );
-      return (t: string) => ({ ids: tok.encode(t).ids });
+      return (t: string) => {
+        const e = tok.encode(t, { return_token_type_ids: true });
+        return {
+          ids: e.ids,
+          ...(e.token_type_ids ? { typeIds: e.token_type_ids } : {}),
+        };
+      };
     })();
     return this.loadedTokenizer;
   }
@@ -102,22 +110,30 @@ export class OnnxTextEmbedding implements EmbeddingProvider {
 
     // Truncate explicitly: an over-length sequence is a tensor shape error on the
     // ONNX path, not the graceful clamp Ollama's `truncate: true` gave us.
-    const encoded = inputs.map((t) =>
-      tokenize(`${prefix}${t}`).ids.slice(0, this.maxTokens),
-    );
-    const seq = Math.max(1, ...encoded.map((e) => e.length));
+    const encoded = inputs.map((t) => {
+      const e = tokenize(`${prefix}${t}`);
+      return {
+        ids: e.ids.slice(0, this.maxTokens),
+        typeIds: (e.typeIds ?? e.ids.map(() => 0)).slice(0, this.maxTokens),
+      };
+    });
+    const seq = Math.max(1, ...encoded.map((e) => e.ids.length));
     const batch = encoded.length;
 
     const ids = new BigInt64Array(batch * seq);
     const mask = new BigInt64Array(batch * seq);
+    // nomic's export declares token_type_ids as REQUIRED. All zeros for a single
+    // sequence, but omitting the tensor makes the session reject the call.
+    const types = new BigInt64Array(batch * seq);
     const masks: number[][] = [];
     for (let b = 0; b < batch; b++) {
       const row = encoded[b]!;
       const m: number[] = [];
       for (let t = 0; t < seq; t++) {
-        const present = t < row.length;
-        ids[b * seq + t] = BigInt(present ? row[t]! : 0);
+        const present = t < row.ids.length;
+        ids[b * seq + t] = BigInt(present ? row.ids[t]! : 0);
         mask[b * seq + t] = present ? 1n : 0n;
+        types[b * seq + t] = BigInt(present ? (row.typeIds[t] ?? 0) : 0);
         m.push(present ? 1 : 0);
       }
       masks.push(m);
@@ -126,6 +142,7 @@ export class OnnxTextEmbedding implements EmbeddingProvider {
     const sess = await this.session();
     const out = await sess.run({
       input_ids: makeTensor("int64", ids, [batch, seq]),
+      token_type_ids: makeTensor("int64", types, [batch, seq]),
       attention_mask: makeTensor("int64", mask, [batch, seq]),
     });
 
