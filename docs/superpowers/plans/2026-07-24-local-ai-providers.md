@@ -3796,3 +3796,420 @@ Expected: PASS. The typecheck will flag every place `providers.rerank` was read 
 git add app/src/shared/types.ts app/src/main/settings.ts app/test/settings.test.ts
 git commit -m "feat(app): provider settings for local models with rerank->rerankProvider migration"
 ```
+
+---
+
+### Task 16: DeskRagService wiring
+
+**Files:**
+- Modify: `app/src/main/deskrag-service.ts`
+- Create: `app/test/capabilities.test.ts`
+
+**Interfaces:**
+- Consumes: `MODELS`, `ModelStore` (Task 14); settings shape (Task 15); `OnnxTextEmbedding` (Task 4), `ColSmolMultiVector` (Task 8), `FramePatchRepresenter` (Task 9), `Tier2MultiVectorRetriever` (Task 10), `OnnxCrossEncoderReranker` (Task 12), `OllamaCaptionProvider` (Task 13)
+- Produces:
+  - `buildProviders(): Promise<Providers>` — **now async**
+  - `Providers` gains `textEmbedder: EmbeddingProvider`, `patchEmbedder: MultiVectorProvider | null`, and `reranker: Reranker | null`
+  - `capabilitiesFor(p: ProviderSettingsView): Capabilities` — extracted as a pure function so it is testable without Electron
+  - `onModelDownload(cb): () => void`
+
+**Why `buildProviders` goes async:** ONNX adapters load native code, so they arrive via `await import(/* @vite-ignore */ …)` inside try/catch, like `loadCropper()` already does. Both call sites (`index()` and `search()`) are already async.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `app/test/capabilities.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+import { capabilitiesFor } from "../src/main/deskrag-service.js";
+import type { ProviderSettingsView } from "../src/shared/types.js";
+
+const base: ProviderSettingsView = {
+  ollamaHost: "http://localhost:11434",
+  ollamaModel: "nomic-embed-text",
+  ollamaCaptionModel: "qwen3-vl:4b",
+  textProvider: "ollama",
+  imageProvider: "none",
+  captionProvider: "none",
+  rerankProvider: "none",
+  localModels: { dir: "" },
+  whisper: { binaryPath: "whisper-cli", modelPath: "" },
+  keys: { voyage: false, gemini: false, anthropic: false },
+};
+
+describe("capabilitiesFor", () => {
+  it("reports nothing enabled by default", () => {
+    expect(capabilitiesFor(base)).toEqual({
+      imageSearch: false, caption: false, rerank: false, transcript: false,
+    });
+  });
+
+  it("enables local capabilities with no API key at all", () => {
+    const c = capabilitiesFor({
+      ...base, imageProvider: "colsmol", captionProvider: "ollama", rerankProvider: "onnx",
+    });
+    expect(c.imageSearch).toBe(true);
+    expect(c.caption).toBe(true);
+    expect(c.rerank).toBe(true);
+  });
+
+  it("still gates cloud providers on key presence", () => {
+    expect(capabilitiesFor({ ...base, imageProvider: "voyage" }).imageSearch).toBe(false);
+    expect(
+      capabilitiesFor({ ...base, imageProvider: "voyage", keys: { ...base.keys, voyage: true } })
+        .imageSearch,
+    ).toBe(true);
+    expect(capabilitiesFor({ ...base, rerankProvider: "anthropic" }).rerank).toBe(false);
+  });
+
+  it("ties transcript to a whisper model path", () => {
+    expect(capabilitiesFor({ ...base, whisper: { binaryPath: "w", modelPath: "/m.bin" } }).transcript).toBe(true);
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npm --prefix app test -- capabilities`
+Expected: FAIL — `capabilitiesFor` is not exported.
+
+- [ ] **Step 3: Extract and rewrite `capabilities()`**
+
+In `deskrag-service.ts`, add the pure function at module scope and have the method delegate:
+
+```ts
+/**
+ * Pure so it is testable without Electron. Semantics are *configured intent*,
+ * not live reachability — as today, "voyage selected and a key present", never
+ * "voyage responded". Local providers need no key, so they are simply on.
+ */
+export function capabilitiesFor(p: ProviderSettingsView): Capabilities {
+  return {
+    imageSearch:
+      p.imageProvider === "colsmol" ||
+      (p.imageProvider === "voyage" && p.keys.voyage) ||
+      (p.imageProvider === "gemini" && p.keys.gemini),
+    caption:
+      p.captionProvider === "ollama" ||
+      (p.captionProvider === "anthropic" && p.keys.anthropic) ||
+      (p.captionProvider === "gemini" && p.keys.gemini),
+    rerank:
+      p.rerankProvider === "onnx" ||
+      (p.rerankProvider === "anthropic" && p.keys.anthropic),
+    transcript: Boolean(p.whisper.modelPath),
+  };
+}
+
+// on the class:
+  capabilities(): Capabilities {
+    return capabilitiesFor(this.settings.view().providers);
+  }
+```
+
+- [ ] **Step 4: Make `buildProviders` async**
+
+Add a `ModelStore` field initialised in `open()`, then rewrite:
+
+```ts
+  private async buildProviders(): Promise<Providers> {
+    const p = this.settings.view().providers;
+    const behavior = new BehaviorFeatureExtractor();
+
+    // --- text embedder -------------------------------------------------------
+    let textEmbedder: EmbeddingProvider = new OllamaTextEmbedding({
+      host: p.ollamaHost,
+      model: p.ollamaModel,
+    });
+    if (p.textProvider === "onnx") {
+      const mod = await this.loadOnnx<typeof import("deskrag/embed/onnx/text")>(
+        "deskrag/embed/onnx/text",
+      );
+      if (!mod) throw new Error("Local text embedding unavailable: onnxruntime-node failed to load.");
+      const dir = await this.models.ensure(MODELS.text);
+      textEmbedder = new mod.OnnxTextEmbedding({
+        modelPath: join(dir, "model_int8.onnx"),
+        tokenizerPath: join(dir, "tokenizer.json"),
+      });
+    }
+
+    // --- image / patch embedder ---------------------------------------------
+    let imageEmbedder: ImageEmbeddingProvider | null = null;
+    let patchEmbedder: MultiVectorProvider | null = null;
+    if (p.imageProvider === "colsmol") {
+      const mod = await this.loadOnnx<typeof import("deskrag/embed/onnx/colsmol")>(
+        "deskrag/embed/onnx/colsmol",
+      );
+      if (!mod) throw new Error("Local image search unavailable: onnxruntime-node failed to load.");
+      const dir = await this.models.ensure(MODELS.colsmol);
+      patchEmbedder = new mod.ColSmolMultiVector({
+        modelPath: join(dir, "model.onnx"),
+        tokenizerPath: join(dir, "tokenizer.json"),
+        tileConfig: await mod.readTileConfig(
+          join(dir, "preprocessor_config.json"),
+          join(dir, "config.json"),
+        ),
+      });
+    } else if (p.imageProvider === "voyage" && this.settings.key("voyage")) {
+      imageEmbedder = new VoyageImageEmbedding({ apiKey: this.settings.key("voyage")! });
+    } else if (p.imageProvider === "gemini" && this.settings.key("gemini")) {
+      imageEmbedder = new GeminiEmbedding({ apiKey: this.settings.key("gemini")! });
+    }
+
+    // --- captioner -----------------------------------------------------------
+    let captioner: LibCaptionProvider | null = null;
+    if (p.captionProvider === "ollama") {
+      captioner = new OllamaCaptionProvider({ host: p.ollamaHost, model: p.ollamaCaptionModel });
+    } else if (p.captionProvider === "anthropic" && this.settings.key("anthropic")) {
+      captioner = new AnthropicCaptionProvider({ apiKey: this.settings.key("anthropic")! });
+    } else if (p.captionProvider === "gemini" && this.settings.key("gemini")) {
+      captioner = new GeminiCaptionProvider({ apiKey: this.settings.key("gemini")! });
+    }
+
+    // --- reranker ------------------------------------------------------------
+    let reranker: Reranker | null = null;
+    if (p.rerankProvider === "onnx") {
+      const mod = await this.loadOnnx<typeof import("deskrag/retrieve/rerank/onnx")>(
+        "deskrag/retrieve/rerank/onnx",
+      );
+      if (mod) {
+        const dir = await this.models.ensure(MODELS.reranker);
+        reranker = new mod.OnnxCrossEncoderReranker({
+          modelPath: join(dir, "model_int8.onnx"),
+          tokenizerPath: join(dir, "tokenizer.json"),
+        });
+      }
+      // Tier 4 is a refinement: a missing reranker degrades, it does not throw.
+    } else if (p.rerankProvider === "anthropic" && this.settings.key("anthropic")) {
+      reranker = new LLMReranker({ apiKey: this.settings.key("anthropic")! });
+    }
+
+    const transcriber = new WhisperCppTranscription({
+      binaryPath: p.whisper.binaryPath,
+      ...(p.whisper.modelPath ? { modelPath: p.whisper.modelPath } : {}),
+    });
+
+    return { textEmbedder, behavior, imageEmbedder, patchEmbedder, captioner, reranker, transcriber };
+  }
+
+  /**
+   * Lazy import for modules that load native code. Returns null on failure so the
+   * caller can decide: refinements degrade, embedders throw. NEVER silently
+   * substitute a different embedder — that writes into a different vector space.
+   */
+  private async loadOnnx<T>(path: string): Promise<T | null> {
+    try {
+      return (await import(/* @vite-ignore */ path)) as T;
+    } catch (err) {
+      console.error(`[deskrag] ${path} unavailable:`, err);
+      return null;
+    }
+  }
+```
+
+Replace every `prov.ollama` reference in `index()` with `prov.textEmbedder`, and `await` both `buildProviders()` calls.
+
+- [ ] **Step 5: Add the patch indexing stage**
+
+In `index()`, alongside the existing frame/region stages:
+
+```ts
+    if (prov.patchEmbedder) {
+      stages.push({
+        name: "Frame patches",
+        run: () =>
+          new FramePatchRepresenter(this.store, {
+            patchEmbedder: prov.patchEmbedder!,
+            blobStore: this.blobs,
+          }).represent(sessionId),
+      });
+    }
+```
+
+The existing `Frame embeddings` and `Regions` stages stay gated on `prov.imageEmbedder`, so the two paths never both run.
+
+- [ ] **Step 6: Dispatch in `buildRetriever`**
+
+```ts
+    return new Retriever(this.store, {
+      searchers,
+      ...(prov.patchEmbedder
+        ? { patchEmbedder: prov.patchEmbedder }
+        : { imageEmbedder: prov.imageEmbedder ?? new NullImageEmbedder() }),
+      ...(prov.reranker ? { reranker: prov.reranker } : {}),
+    });
+```
+
+In `search()`, relax the image guard: with a `patchEmbedder`, a **text** query also reaches frames, so only reject an `imageBytes` query when neither an image nor a patch embedder is configured. Check for a registered `frame_patches` space in place of `frame_image` on the multivector path.
+
+- [ ] **Step 7: Wire the empty-search guard and download progress**
+
+Where `buildRetriever` collects `searchers`, if it ends up with **zero** text searchers, have `search()` return a result the renderer can distinguish from "no matches" — add `indexedUnderDifferentProvider: true` to the search response rather than returning a bare `[]`.
+
+Add a listener set mirroring `onIndexing`:
+
+```ts
+  onModelDownload(cb: (p: ModelDownloadProgress) => void): () => void {
+    this.modelListeners.add(cb);
+    return () => this.modelListeners.delete(cb);
+  }
+```
+
+and pass `onProgress: (p) => { for (const cb of this.modelListeners) cb(p); }` when constructing `ModelStore` in `open()`, along with `overrideDir: settings.view().providers.localModels.dir`.
+
+- [ ] **Step 8: Run everything**
+
+Run: `npm run build && npm --prefix app test && npm --prefix app run typecheck`
+Expected: PASS. `npm run build` first — the app imports `dist/`, not `src/`, so library changes must be compiled before the app typechecks.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add app/src/main/deskrag-service.ts app/test/capabilities.test.ts
+git commit -m "feat(app): wire local providers, async buildProviders, and multivector retrieval"
+```
+
+---
+
+### Task 17: IPC, preload, and the Settings UI
+
+**Files:**
+- Modify: `app/src/shared/types.ts`
+- Modify: `app/src/main/ipc.ts`
+- Modify: `app/src/preload/index.ts`
+- Modify: the Settings view under `app/src/renderer/`
+
+**Interfaces:**
+- Consumes: `capabilitiesFor`, `onModelDownload` (Task 16); `listVisionModels` (Task 13); settings shape (Task 15)
+- Produces:
+  - `IPC.modelDownloadEvent = "models:download-event"`, `IPC.ollamaVisionModels = "ollama:vision-models"`
+  - `window.deskrag.models.onDownload(cb)`, `window.deskrag.ollama.visionModels()`
+  - `SettingsPatch` accepts `signals.ax.enabled` (already present) — used by the local profile
+
+- [ ] **Step 1: Extend the shared contract**
+
+In `app/src/shared/types.ts`:
+
+```ts
+export interface ModelDownloadProgress {
+  modelId: string;
+  receivedBytes: number;
+  totalBytes: number;
+  done: boolean;
+}
+```
+
+Add to the `IPC` map:
+
+```ts
+  modelDownloadEvent: "models:download-event",
+  ollamaVisionModels: "ollama:vision-models",
+```
+
+Add to the `window.deskrag` API type:
+
+```ts
+    models: { onDownload(cb: (p: ModelDownloadProgress) => void): () => void };
+    ollama: { visionModels(): Promise<string[]> };
+```
+
+Add `indexedUnderDifferentProvider?: boolean` to the search response type.
+
+- [ ] **Step 2: Wire main and preload**
+
+In `app/src/main/ipc.ts`, forward `service.onModelDownload` to the renderer on `IPC.modelDownloadEvent` exactly as `recordingIndexingEvent` is forwarded, and add:
+
+```ts
+  ipcMain.handle(IPC.ollamaVisionModels, async () => {
+    const { listVisionModels } = await import("deskrag");
+    return listVisionModels(service.settingsStore.view().providers.ollamaHost);
+  });
+```
+
+In `app/src/preload/index.ts`, expose both through `contextBridge`, following the existing event-subscription pattern. **Bytes still never cross IPC** — this adds only progress numbers and model-name strings.
+
+- [ ] **Step 3: Build the Settings UI**
+
+Add a **Local models** section:
+
+- `textProvider` — radio: Ollama / ONNX (in-process)
+- `imageProvider` — select: None / ColSmol (local) / Voyage / Gemini
+- `captionProvider` — select: None / Ollama (local) / Anthropic / Gemini
+- `rerankProvider` — select: None / ONNX (local) / Anthropic
+- `ollamaCaptionModel` — **a select populated from `window.deskrag.ollama.visionModels()`**, never a free-text field or a hardcoded list. When it returns `[]`, render `ollama pull qwen3-vl:4b` as help text and disable the control.
+- `localModels.dir` — a path input, labelled as the air-gapped override
+
+Add a download-progress indicator subscribed to `models.onDownload`, showing `modelId` and a percentage, hidden once `done` is true.
+
+**The model dropdown must come from `/api/tags`.** Ollama's library includes cloud-hosted entries (`gemini-3-flash-preview`, `kimi-k2.*`); a hardcoded list would let a user select one and route screenshots off the machine through the setting meant to keep them on it. `/api/tags` returns only locally-resident models, so this is structural, not advisory.
+
+- [ ] **Step 4: Add the local profile action**
+
+A **"Use local models for everything"** button that applies:
+
+```ts
+await window.deskrag.settings.set({
+  providers: {
+    textProvider: "onnx",
+    imageProvider: "colsmol",
+    captionProvider: visionModels.length > 0 ? "ollama" : "none",
+    rerankProvider: "onnx",
+  },
+  signals: { ax: { enabled: true } },
+});
+```
+
+Show a confirmation naming the AX change before applying it: the local image tower cannot read screen text, AX labels in FTS5 are the substitute, and AX capture requires macOS accessibility permission. Flipping a capture-behaviour setting silently would be wrong.
+
+- [ ] **Step 5: Add the "Fully local" badge**
+
+Derived state, never a toggle, so it cannot drift from reality:
+
+```ts
+const fullyLocal =
+  p.textProvider === "onnx" &&
+  (p.imageProvider === "colsmol" || p.imageProvider === "none") &&
+  (p.captionProvider === "ollama" || p.captionProvider === "none") &&
+  (p.rerankProvider === "onnx" || p.rerankProvider === "none");
+```
+
+- [ ] **Step 6: Surface the empty-search state**
+
+Where results render, when the response carries `indexedUnderDifferentProvider`, show "These recordings were indexed with a different provider" instead of "No results". There is deliberately **no migration path** — this only stops the failure being silent.
+
+- [ ] **Step 7: Verify end to end**
+
+```bash
+npm run build && npm --prefix app run typecheck && npm --prefix app test
+npm run app:dev
+```
+
+Manually confirm: the vision-model dropdown lists only pulled models; the local profile prompts about AX; the badge lights only when every provider is local; a first local search shows download progress.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add app/src/shared/types.ts app/src/main/ipc.ts app/src/preload/index.ts app/src/renderer
+git commit -m "feat(app): local-models settings, local profile, and download progress"
+```
+
+---
+
+## Appendix: smoke tests (`ONNX_SMOKE=1`)
+
+Not part of any task's gate — they need real weights. Add once Task 16 lands, following the existing skip convention (`test/live.smoke.test.ts`).
+
+- **Token count** — a 1280×800 fixture yields exactly `expectedTokenCount(computeTileGeometry(1280, 800))` = 448 vectors.
+- **Cross-modal alignment** — the single most important assertion in the design:
+  ```
+  MaxSim(embedQueries("a login form"), embedImages(login_screenshot))
+    > MaxSim(embedQueries("a login form"), embedImages(unrelated_screenshot))
+  ```
+  If this fails, the local image path is broken and nothing else in the suite catches it.
+- **Highlight plausibility** — a query for known on-screen text argmaxes to a patch overlapping that text's real location.
+- **Golden vectors** for `OnnxTextEmbedding`.
+- **Reranker ordering** on a real cross-encoder.
+
+## Appendix: one-off scripts
+
+- **int8 vs fp32 recall** per model, run once to confirm the manifest defaults. Highest risk for ColSmol: MaxSim sums per-token maxima, so quantization error accumulates across ~448 tokens rather than perturbing a single cosine.
+- **Per-session storage** measured against the 69 MB estimate for a 10-minute session at f16.
