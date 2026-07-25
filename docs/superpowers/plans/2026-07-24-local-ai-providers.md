@@ -2062,3 +2062,661 @@ Expected: no output.
 git add src/embed/onnx/colsmol.ts src/embed/onnx/colsmol-tiler.ts src/embed/onnx/geometry.ts scripts/inspect-onnx.mjs test/onnx.colsmol.test.ts
 git commit -m "feat(embed): ColSmolMultiVector adapter with config-driven tiling"
 ```
+
+---
+
+### Task 9: FramePatchRepresenter — write patch vectors for a session
+
+**Files:**
+- Create: `src/represent/frame-patch-representer.ts`
+- Modify: `src/index.ts`
+- Test: `test/frame-patches.test.ts`
+
+**Interfaces:**
+- Consumes: `MultiVectorProvider` (Task 1), `putFramePatches` (Task 6), `BlobStore`
+- Produces:
+  - `FramePatchRepresenterOptions { patchEmbedder: MultiVectorProvider; blobStore: BlobStore }`
+  - `FramePatchRepresentResult { frameCount: number; embeddedCount: number; namespace: string }`
+  - `class FramePatchRepresenter { constructor(store: Store, opts); represent(sessionId: string): Promise<FramePatchRepresentResult> }`
+
+Mirrors `FrameRepresenter` (`src/represent/frame-representer.ts`) — same constructor shape, same result shape, same lazy segment association — but writes a multi-vector row per keyframe instead of one vector. It is barrel-safe: the provider is injected, so this file loads no native code.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `test/frame-patches.test.ts`:
+
+```ts
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { ulid } from "ulid";
+import { DualStore } from "../src/store/store.js";
+import { BlobStore } from "../src/store/blob-store.js";
+import { FramePatchRepresenter } from "../src/represent/frame-patch-representer.js";
+import { FakeMultiVectorProvider } from "../src/embed/fake.js";
+import { namespaceFor } from "../src/embed/types.js";
+
+const provider = new FakeMultiVectorProvider(16, 3);
+const NS = namespaceFor("frame_patches", provider);
+
+let dir: string;
+let store: DualStore;
+let blobs: BlobStore;
+let sessionId: string;
+
+beforeEach(async () => {
+  dir = mkdtempSync(join(tmpdir(), "fpr-"));
+  store = await DualStore.open(join(dir, "app.db"), join(dir, "lance"));
+  blobs = new BlobStore(join(dir, "blobs"));
+  sessionId = ulid();
+  await store.putSession({ id: sessionId, startedAt: Date.now() });
+});
+afterEach(() => {
+  store.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+async function frameWithBlob(id: string, tMono: number, bytes: number[]): Promise<void> {
+  const blob = await blobs.write(sessionId, "keyframe", "jpeg", Uint8Array.from(bytes));
+  await store.putBlobs([blob.row]);
+  await store.putFrames([
+    { id, sessionId, tMono, width: 1280, height: 800, phash: 0n, blobId: blob.row.id },
+  ]);
+}
+
+describe("FramePatchRepresenter", () => {
+  it("registers the namespace and embeds every keyframe with a blob", async () => {
+    await frameWithBlob("f1", 100, [1, 2, 3]);
+    await frameWithBlob("f2", 200, [4, 5, 6]);
+    const res = await new FramePatchRepresenter(store, {
+      patchEmbedder: provider,
+      blobStore: blobs,
+    }).represent(sessionId);
+
+    expect(res.namespace).toBe(NS);
+    expect(res.frameCount).toBe(2);
+    expect(res.embeddedCount).toBe(2);
+    expect(store.listVectorSpaces().map((s) => s.namespace)).toContain(NS);
+  });
+
+  it("makes each frame retrievable by its own bytes", async () => {
+    await frameWithBlob("f1", 100, [1, 2, 3]);
+    await frameWithBlob("f2", 200, [9, 9, 9]);
+    await new FramePatchRepresenter(store, {
+      patchEmbedder: provider,
+      blobStore: blobs,
+    }).represent(sessionId);
+
+    const [q] = await provider.embedImages([Uint8Array.from([9, 9, 9])]);
+    const hits = await store.searchFramePatches(NS, q!, 5);
+    expect(hits[0]!.id).toBe("f2");
+  });
+
+  it("skips frames with no keyframe blob rather than failing the pass", async () => {
+    await frameWithBlob("f1", 100, [1, 2, 3]);
+    await store.putFrames([
+      { id: "f2", sessionId, tMono: 200, width: 1280, height: 800, phash: 0n, blobId: null },
+    ]);
+    const res = await new FramePatchRepresenter(store, {
+      patchEmbedder: provider,
+      blobStore: blobs,
+    }).represent(sessionId);
+    expect(res.frameCount).toBe(2);
+    expect(res.embeddedCount).toBe(1);
+  });
+
+  it("is idempotent — a second pass does not duplicate rows", async () => {
+    await frameWithBlob("f1", 100, [1, 2, 3]);
+    const r = new FramePatchRepresenter(store, { patchEmbedder: provider, blobStore: blobs });
+    await r.represent(sessionId);
+    await r.represent(sessionId);
+    const [q] = await provider.embedImages([Uint8Array.from([1, 2, 3])]);
+    const hits = await store.searchFramePatches(NS, q!, 10);
+    expect(hits.filter((h) => h.id === "f1").length).toBe(1);
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx vitest run test/frame-patches.test.ts`
+Expected: FAIL — cannot resolve `../src/represent/frame-patch-representer.js`.
+
+- [ ] **Step 3: Write the implementation**
+
+Create `src/represent/frame-patch-representer.ts`:
+
+```ts
+/**
+ * Writes the `frame_patches` view: one late-interaction patch set per keyframe.
+ *
+ * The multi-vector counterpart to FrameRepresenter. Segment association is set
+ * lazily here, at represent time, because segments are detected after capture —
+ * the denormalized segment_ids column is what lets Tier 2 pre-filter its scope
+ * without a cross-engine round-trip mid-search.
+ *
+ * Barrel-safe: the provider is injected, so this file loads no native code.
+ */
+
+import type { MultiVectorProvider } from "../embed/types.js";
+import { namespaceFor } from "../embed/types.js";
+import type { BlobStore } from "../store/blob-store.js";
+import type { FramePatchInsert, Store } from "../store/types.js";
+
+export interface FramePatchRepresenterOptions {
+  patchEmbedder: MultiVectorProvider;
+  blobStore: BlobStore;
+}
+
+export interface FramePatchRepresentResult {
+  frameCount: number;
+  embeddedCount: number;
+  namespace: string;
+}
+
+export class FramePatchRepresenter {
+  private readonly patchEmbedder: MultiVectorProvider;
+  private readonly blobStore: BlobStore;
+  readonly namespace: string;
+
+  constructor(
+    private readonly store: Store,
+    opts: FramePatchRepresenterOptions,
+  ) {
+    this.patchEmbedder = opts.patchEmbedder;
+    this.blobStore = opts.blobStore;
+    this.namespace = namespaceFor("frame_patches", this.patchEmbedder);
+  }
+
+  async represent(sessionId: string): Promise<FramePatchRepresentResult> {
+    await this.store.registerVectorSpace({
+      namespace: this.namespace,
+      view: "frame_patches",
+      providerId: this.patchEmbedder.id,
+      model: this.patchEmbedder.model,
+      dimensions: this.patchEmbedder.dimensions,
+      sharedTextSpace: true, // one model embeds both images and queries
+    });
+
+    const frames = this.store.getFramesBySession(sessionId);
+    const segments = this.store.getSegmentsBySession(sessionId);
+    const rows: FramePatchInsert[] = [];
+
+    for (const frame of frames) {
+      if (!frame.blobId) continue; // no keyframe bytes — nothing to embed
+      const blob = this.store.getBlob(frame.blobId);
+      if (!blob) continue;
+      const bytes = await this.blobStore.read(blob);
+      const [patches] = await this.patchEmbedder.embedImages([bytes]);
+      if (!patches || patches.length === 0) continue; // never write an empty row
+
+      const segmentIds = segments
+        .filter((s) => frame.tMono >= s.tMonoStart && frame.tMono <= s.tMonoEnd)
+        .map((s) => s.id);
+
+      rows.push({
+        frameId: frame.id,
+        sessionId,
+        segmentIds,
+        namespace: this.namespace,
+        patches,
+      });
+    }
+
+    if (rows.length > 0) await this.store.putFramePatches(rows);
+    return {
+      frameCount: frames.length,
+      embeddedCount: rows.length,
+      namespace: this.namespace,
+    };
+  }
+}
+```
+
+- [ ] **Step 4: Make the write idempotent**
+
+`putFramePatches` appends, so a second pass would duplicate. In `DualStore.putFramePatches`, delete existing rows for the incoming ids before adding:
+
+```ts
+      for (const [ns, batch] of byNamespace) {
+        await this.lance.deleteByIds(ns, batch.map((r) => r.id));
+        await this.lance.addPatches(ns, batch);
+        await this.lance.ensurePatchIndex(ns);
+      }
+```
+
+- [ ] **Step 5: Run tests**
+
+Run: `npx vitest run test/frame-patches.test.ts test/dual-store.patches.test.ts && npm run typecheck`
+Expected: PASS, all four new cases including idempotency.
+
+- [ ] **Step 6: Export from the barrel and commit**
+
+Add to `src/index.ts` beside the other representers (no native code, so it belongs in the barrel):
+
+```ts
+export {
+  FramePatchRepresenter,
+  type FramePatchRepresenterOptions,
+  type FramePatchRepresentResult,
+} from "./represent/frame-patch-representer.js";
+```
+
+```bash
+git add src/represent/frame-patch-representer.ts src/store/store.ts src/index.ts test/frame-patches.test.ts
+git commit -m "feat(represent): FramePatchRepresenter writes the frame_patches view"
+```
+
+---
+
+### Task 10: Tier-2 multivector retrieval and MaxSim highlights
+
+**Files:**
+- Create: `src/retrieve/tier2-mv.ts`
+- Modify: `src/retrieve/assemble.ts`
+- Modify: `src/index.ts`
+- Test: `test/tier2-mv.test.ts`
+
+**Interfaces:**
+- Consumes: `MultiVectorProvider` (Task 1), `searchFramePatches` (Task 6), `patchIndexToBox`/`computeTileGeometry` (Task 7)
+- Produces:
+  - `Tier2MultiVectorOptions { topN?: number; hydrate?: boolean; maxHighlights?: number }`
+  - `class Tier2MultiVectorRetriever` with `readonly namespace`, `retrieveFrames(query, segmentIds): Promise<FrameHit[]>`, `retrieveFramesUnscoped(query): Promise<FrameHit[]>`, `highlightsFor(frameId, queryVectors, patches, width, height): RegionHit[]`
+  - `RetrieverOptions` gains `patchEmbedder?: MultiVectorProvider`
+
+**Behaviour difference from Tier 2 single-vector:** this path serves **text** queries as well as image queries, because ColSmol embeds both into one space. `Tier2Retriever` only fires on `query.image`.
+
+Highlights come from the MaxSim argmax: for each query vector, the best-matching patch index maps through `patchIndexToBox` to a frame-space box. `matchedBy` is `["ann"]`, `regionId` is synthetic (`<frameId>#p<index>`) since no `regions` row backs it, and `role`/`label` are null — AX-label FTS still supplies real labels alongside.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `test/tier2-mv.test.ts`:
+
+```ts
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { ulid } from "ulid";
+import { DualStore } from "../src/store/store.js";
+import { Tier2MultiVectorRetriever } from "../src/retrieve/tier2-mv.js";
+import { FakeMultiVectorProvider } from "../src/embed/fake.js";
+import { computeTileGeometry } from "../src/embed/onnx/geometry.js";
+
+const provider = new FakeMultiVectorProvider(16, 3);
+
+let dir: string;
+let store: DualStore;
+let sessionId: string;
+
+beforeEach(async () => {
+  dir = mkdtempSync(join(tmpdir(), "t2mv-"));
+  store = await DualStore.open(join(dir, "app.db"), join(dir, "lance"));
+  sessionId = ulid();
+  await store.putSession({ id: sessionId, startedAt: Date.now() });
+});
+afterEach(() => {
+  store.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+async function seed(): Promise<Tier2MultiVectorRetriever> {
+  const t2 = new Tier2MultiVectorRetriever(store, provider, { topN: 10 });
+  await store.registerVectorSpace({
+    namespace: t2.namespace,
+    view: "frame_patches",
+    providerId: provider.id,
+    model: provider.model,
+    dimensions: provider.dimensions,
+    sharedTextSpace: true,
+  });
+  await store.putFrames([
+    { id: "f1", sessionId, tMono: 100, width: 1280, height: 800, phash: 0n, blobId: null },
+    { id: "f2", sessionId, tMono: 200, width: 1280, height: 800, phash: 0n, blobId: null },
+  ]);
+  const [pa, pb] = await provider.embedImages([
+    Uint8Array.from([1, 2, 3]),
+    Uint8Array.from([9, 9, 9]),
+  ]);
+  await store.putFramePatches([
+    { frameId: "f1", sessionId, segmentIds: ["segA"], namespace: t2.namespace, patches: pa! },
+    { frameId: "f2", sessionId, segmentIds: ["segB"], namespace: t2.namespace, patches: pb! },
+  ]);
+  return t2;
+}
+
+describe("Tier2MultiVectorRetriever", () => {
+  it("serves an IMAGE query", async () => {
+    const t2 = await seed();
+    const hits = await t2.retrieveFramesUnscoped({ image: Uint8Array.from([9, 9, 9]) });
+    expect(hits[0]!.frameId).toBe("f2");
+  });
+
+  it("serves a TEXT query — the single-vector tier cannot", async () => {
+    const t2 = await seed();
+    const hits = await t2.retrieveFramesUnscoped({ text: "anything" });
+    expect(hits.length).toBeGreaterThan(0);
+  });
+
+  it("scopes to the Tier-1 segments", async () => {
+    const t2 = await seed();
+    const hits = await t2.retrieveFrames({ image: Uint8Array.from([9, 9, 9]) }, ["segA"]);
+    expect(hits.map((h) => h.frameId)).toEqual(["f1"]);
+  });
+
+  it("returns [] for a query with neither text nor image", async () => {
+    const t2 = await seed();
+    expect(await t2.retrieveFramesUnscoped({})).toEqual([]);
+  });
+
+  it("returns [] for an empty scope rather than widening", async () => {
+    const t2 = await seed();
+    expect(await t2.retrieveFrames({ image: Uint8Array.from([1]) }, [])).toEqual([]);
+  });
+
+  it("derives one highlight per query vector from the MaxSim argmax", async () => {
+    const t2 = await seed();
+    const [patches] = await provider.embedImages([Uint8Array.from([1, 2, 3])]);
+    const [q] = await provider.embedQueries(["x"]);
+    const hl = t2.highlightsFor("f1", q!, patches!, 1280, 800);
+    expect(hl.length).toBeGreaterThan(0);
+    expect(hl.length).toBeLessThanOrEqual(q!.length);
+    for (const h of hl) {
+      expect(h.frameId).toBe("f1");
+      expect(h.matchedBy).toEqual(["ann"]);
+      expect(h.regionId).toMatch(/^f1#p\d+$/);
+      expect(h.bbox.x + h.bbox.w).toBeLessThanOrEqual(1280);
+      expect(h.bbox.y + h.bbox.h).toBeLessThanOrEqual(800);
+    }
+  });
+
+  it("dedupes highlights when several query vectors hit the same patch", async () => {
+    const t2 = await seed();
+    const [patches] = await provider.embedImages([Uint8Array.from([1, 2, 3])]);
+    const q = [patches![0]!, patches![0]!, patches![0]!]; // all argmax to patch 0
+    const hl = t2.highlightsFor("f1", q, patches!, 1280, 800);
+    expect(hl.length).toBe(1);
+  });
+
+  it("caps highlights at maxHighlights", async () => {
+    const t2 = new Tier2MultiVectorRetriever(store, provider, { maxHighlights: 1 });
+    const geo = computeTileGeometry(1280, 800);
+    expect(geo.tokensPerTile).toBe(64); // guards the geometry assumption
+    const [patches] = await provider.embedImages([Uint8Array.from([1, 2, 3])]);
+    const [q] = await provider.embedQueries(["x"]);
+    expect(t2.highlightsFor("f1", q!, patches!, 1280, 800).length).toBeLessThanOrEqual(1);
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx vitest run test/tier2-mv.test.ts`
+Expected: FAIL — cannot resolve `../src/retrieve/tier2-mv.js`.
+
+- [ ] **Step 3: Write the implementation**
+
+Create `src/retrieve/tier2-mv.ts`:
+
+```ts
+/**
+ * Tier-2 over the late-interaction `frame_patches` space.
+ *
+ * Differs from Tier2Retriever in two ways that matter:
+ *  - it serves TEXT queries as well as image queries, because ColSmol embeds both
+ *    into one space, so a text query reaches frames directly;
+ *  - highlights fall out of the MaxSim argmax instead of a separate region ANN —
+ *    the patches ARE the regions.
+ *
+ * Barrel-safe: the provider is injected, so no native module loads here.
+ */
+
+import type { MultiVectorProvider } from "../embed/types.js";
+import { namespaceFor } from "../embed/types.js";
+import { computeTileGeometry, patchIndexToBox } from "../embed/onnx/geometry.js";
+import type { Store } from "../store/types.js";
+import type { FrameHit, Query, RegionHit } from "./types.js";
+
+export interface Tier2MultiVectorOptions {
+  topN?: number;
+  hydrate?: boolean;
+  /** Upper bound on highlight boxes per frame. */
+  maxHighlights?: number;
+}
+
+export class Tier2MultiVectorRetriever {
+  readonly namespace: string;
+  private readonly topN: number;
+  private readonly hydrate: boolean;
+  private readonly maxHighlights: number;
+
+  constructor(
+    private readonly store: Store,
+    private readonly provider: MultiVectorProvider,
+    opts: Tier2MultiVectorOptions = {},
+  ) {
+    this.namespace = namespaceFor("frame_patches", provider);
+    this.topN = opts.topN ?? 30;
+    this.hydrate = opts.hydrate ?? true;
+    this.maxHighlights = opts.maxHighlights ?? 8;
+  }
+
+  /** Query vectors for either modality, or null when the query carries neither. */
+  private async queryVectors(q: Query): Promise<Float32Array[] | null> {
+    if (q.image) {
+      const [v] = await this.provider.embedImages([q.image]);
+      return v ?? null;
+    }
+    if (q.text && q.text.length > 0) {
+      const [v] = await this.provider.embedQueries([q.text]);
+      return v ?? null;
+    }
+    return null;
+  }
+
+  async retrieveFrames(query: Query, segmentIds: string[]): Promise<FrameHit[]> {
+    if (segmentIds.length === 0) return [];
+    const vecs = await this.queryVectors(query);
+    if (!vecs) return [];
+    const hits = await this.store.searchFramePatches(this.namespace, vecs, this.topN, {
+      segmentIds,
+    });
+    return this.hydrateHits(hits);
+  }
+
+  async retrieveFramesUnscoped(query: Query): Promise<FrameHit[]> {
+    const vecs = await this.queryVectors(query);
+    if (!vecs) return [];
+    const hits = await this.store.searchFramePatches(this.namespace, vecs, this.topN);
+    return this.hydrateHits(hits);
+  }
+
+  /**
+   * Highlight boxes from the MaxSim argmax: for each query vector, the
+   * best-matching patch, mapped to frame coordinates. Deduped by patch index and
+   * capped, ordered best-first.
+   */
+  highlightsFor(
+    frameId: string,
+    queryVectors: Float32Array[],
+    patches: Float32Array[],
+    width: number,
+    height: number,
+  ): RegionHit[] {
+    const geo = computeTileGeometry(width, height);
+    const best = new Map<number, number>(); // patch index -> best similarity
+
+    for (const q of queryVectors) {
+      let argmax = -1;
+      let top = -Infinity;
+      for (let p = 0; p < patches.length; p++) {
+        const sim = dot(q, patches[p]!);
+        if (sim > top) {
+          top = sim;
+          argmax = p;
+        }
+      }
+      if (argmax < 0) continue;
+      const prev = best.get(argmax);
+      if (prev === undefined || top > prev) best.set(argmax, top);
+    }
+
+    return [...best.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, this.maxHighlights)
+      .flatMap(([index, sim]) => {
+        const bbox = patchIndexToBox(index, geo);
+        if (!bbox) return [];
+        return [
+          {
+            // Synthetic: no `regions` row backs a patch. AX-label FTS still
+            // contributes real, labelled regions alongside these.
+            regionId: `${frameId}#p${index}`,
+            frameId,
+            bbox,
+            role: null,
+            label: null,
+            matchedBy: ["ann"] as ("ann" | "fts")[],
+            distance: 1 - sim,
+          } satisfies RegionHit,
+        ];
+      });
+  }
+
+  private hydrateHits(hits: { id: string; distance: number }[]): FrameHit[] {
+    return hits.map((h) => {
+      const frame = this.hydrate ? this.store.getFrame(h.id) : undefined;
+      return { frameId: h.id, distance: h.distance, ...(frame ? { frame } : {}) };
+    });
+  }
+}
+
+function dot(a: Float32Array, b: Float32Array): number {
+  let n = 0;
+  const len = Math.min(a.length, b.length);
+  for (let i = 0; i < len; i++) n += a[i]! * b[i]!;
+  return n;
+}
+```
+
+- [ ] **Step 4: Run the tier-2 tests**
+
+Run: `npx vitest run test/tier2-mv.test.ts && npm run typecheck`
+Expected: PASS, all eight cases.
+
+- [ ] **Step 5: Dispatch from `assemble.ts`**
+
+Add `patchEmbedder?: MultiVectorProvider` to `RetrieverOptions`. In the `Retriever` constructor, build a `Tier2MultiVectorRetriever` when it is present and prefer it over the single-vector `Tier2Retriever`; keep the existing path otherwise. The two never run together — selection is by which provider was configured.
+
+Where the existing flow calls Tier 2 then Tier 3, the multivector branch calls `retrieveFrames`/`retrieveFramesUnscoped` and derives highlights from `highlightsFor`, then merges them with the AX-label FTS hits exactly as the single-vector branch merges ANN and FTS region hits. Do **not** run the region-image tier on the multivector branch — there is no `region_image` space in a local-only configuration.
+
+Because `highlightsFor` needs the frame's stored patch vectors, add a store read for them, or recompute by re-embedding the frame's keyframe. Prefer reading: add `getFramePatches(namespace, frameId): Promise<Float32Array[] | null>` to `LanceStore`/`DualStore` (a `query().where("id = '<id>'").select(["patches"])`), so a search never re-runs the model.
+
+- [ ] **Step 6: Extend `test/assemble.test.ts`**
+
+Add a case building a `Retriever` with `patchEmbedder: new FakeMultiVectorProvider(16, 3)` and no `imageEmbedder`, asserting that a text query returns frames with non-empty `highlights` whose `regionId` matches `/#p\d+$/`.
+
+Run: `npx vitest run test/assemble.test.ts`
+Expected: PASS.
+
+- [ ] **Step 7: Export and commit**
+
+```ts
+export {
+  Tier2MultiVectorRetriever,
+  type Tier2MultiVectorOptions,
+} from "./retrieve/tier2-mv.js";
+```
+
+```bash
+git add src/retrieve/tier2-mv.ts src/retrieve/assemble.ts src/store/store.ts src/store/lance/tables.ts src/index.ts test/tier2-mv.test.ts test/assemble.test.ts
+git commit -m "feat(retrieve): Tier-2 multivector retrieval with MaxSim-derived highlights"
+```
+
+---
+
+### Task 11: TextViewSearcher passes the query role
+
+**Files:**
+- Modify: `src/retrieve/searchers.ts`
+- Test: `test/retrieve.test.ts` (extend)
+
+**Interfaces:**
+- Consumes: `EmbedOptions` (Task 1)
+- Produces: no signature change — `TextViewSearcher.queryVector` now calls `embed(text, { role: "query" })`
+
+This is small but load-bearing: with the prefix on documents only, every query would land in a subtly different region of the space and retrieval would degrade silently.
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `test/retrieve.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+import { TextViewSearcher } from "../src/retrieve/searchers.js";
+import type { EmbedOptions, EmbeddingProvider } from "../src/embed/types.js";
+
+describe("TextViewSearcher role", () => {
+  it("embeds the query with role=query, not the document default", async () => {
+    const seen: (EmbedOptions | undefined)[] = [];
+    const probe: EmbeddingProvider = {
+      id: "probe",
+      model: "probe",
+      dimensions: 4,
+      async embed(inputs, opts) {
+        seen.push(opts);
+        return inputs.map(() => Float32Array.from([1, 0, 0, 0]));
+      },
+    };
+    await new TextViewSearcher(probe, "digest").queryVector({ text: "hello" });
+    expect(seen[0]).toEqual({ role: "query" });
+  });
+
+  it("does not embed at all for an empty query", async () => {
+    const seen: unknown[] = [];
+    const probe: EmbeddingProvider = {
+      id: "probe",
+      model: "probe",
+      dimensions: 4,
+      async embed(inputs) {
+        seen.push(inputs);
+        return [];
+      },
+    };
+    expect(await new TextViewSearcher(probe, "digest").queryVector({})).toBeNull();
+    expect(seen.length).toBe(0);
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx vitest run test/retrieve.test.ts -t "role=query"`
+Expected: FAIL — `seen[0]` is `undefined`.
+
+- [ ] **Step 3: Make the change**
+
+In `src/retrieve/searchers.ts`:
+
+```ts
+  async queryVector(q: Query): Promise<Float32Array | null> {
+    if (q.text === undefined || q.text.length === 0) return null;
+    // Asymmetric embedding: documents were embedded with role "document", so a
+    // query must say so or it lands in a different part of the space.
+    const [vec] = await this.embedder.embed([q.text], { role: "query" });
+    return vec ?? null;
+  }
+```
+
+- [ ] **Step 4: Run tests**
+
+Run: `npm test && npm run typecheck`
+Expected: PASS. The fake embedder ignores `opts`, so the exact-match placements the existing retrieval tests rely on are unchanged.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/retrieve/searchers.ts test/retrieve.test.ts
+git commit -m "feat(retrieve): TextViewSearcher embeds with role=query"
+```
