@@ -30,17 +30,22 @@ Two crash fixes are committed and verified end-to-end under Electron:
 ONNX inference now runs in a utilityProcess, and enableCpuMemArena is off.
 ColSmol is ~18.4s and ~1.3GB peak per frame.
 
-Task 1 (streaming downloads) and Task 4 (PEP 723 + .gitignore) are DONE and
-committed — 350b7f2 and 9ad62a3. All four gates pass. `hf` is installed at
-~/.local/bin/hf. Nothing else has been touched.
+Tasks 0-4 are DONE and committed (350b7f2, 9ad62a3, f23fdcb, 5aa18e4). The
+artifact is published at guyettinger/colSmol-256M-dynamic-onnx, pinned in the
+manifest at commit SHA 93956db0e440eebd497bc776e7bf34a06830b0c6. All four gates
+pass. scripts/e2e-local.mjs passes against the real weights (24.5s, both queries
+rank correctly). A real 3.5MB download through ModelStore against the published
+repo verified redirect-following, streaming progress and the sha256.
 
-REMAINING (plan task numbers)
-- Task 0: publish to guyettinger/colSmol-256M-dynamic-onnx. BLOCKS tasks 2/3/5.
-  Needs the user's HF write token — give them the commands, do not ask for it.
-  The repo does not exist yet (the API 401s), so this has not been started.
-- Tasks 2, 3, 5: manifest repoint, delete the source:"local" mechanism,
-  end-to-end verification. Task 3 must not be reordered before Task 2 —
-  typecheck must pass at every commit.
+REMAINING — Task 5 steps 3, 4, 5, 7 only. They need the GUI and a real
+recording, so they cannot be done headlessly:
+  3. npm run build && npm run app:dev; Settings -> Local models -> ColSmol.
+     Watch the percentage CLIMB (that is the observable proof Task 1 worked).
+  4. Confirm five files, no .partial, model.onnx sha256 cf13ca0c...
+  5. Record a short session, Stop, confirm indexing completes.
+  7. rm -rf the colSmol-256M-dynamic.bak backup, only after 4-6 pass.
+The staged copy has ALREADY been moved to colSmol-256M-dynamic.bak (step 2), so
+the app will download. Restore it by renaming back if the download misbehaves.
 
 ALSO UNVERIFIED: the user has not yet confirmed a real recording indexes
 cleanly since the crash fixes landed. Confirm that before trusting Task 5.

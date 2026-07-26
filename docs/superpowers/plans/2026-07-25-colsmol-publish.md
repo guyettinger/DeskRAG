@@ -55,7 +55,7 @@
 The five validated files plus a model card are staged at:
 `~/Library/Application Support/deskrag-app/DeskRAG/models/colSmol-256M-dynamic/`
 
-- [ ] **Step 1: Upload (requires a write token — run these yourself)**
+- [x] **Step 1: Upload (requires a write token — run these yourself)**
 
 ```bash
 uv tool install "huggingface_hub[cli]"
@@ -66,7 +66,7 @@ hf upload guyettinger/colSmol-256M-dynamic-onnx \
   --type model
 ```
 
-- [ ] **Step 2: Capture the commit SHA**
+- [x] **Step 2: Capture the commit SHA**
 
 ```bash
 curl -s https://huggingface.co/api/models/guyettinger/colSmol-256M-dynamic-onnx \
@@ -75,7 +75,7 @@ curl -s https://huggingface.co/api/models/guyettinger/colSmol-256M-dynamic-onnx 
 
 Record the 40-character hex string. Everywhere below writes `PASTE_UPLOAD_SHA_HERE`; substitute this value. **Do not proceed to Task 2 with the placeholder in place** — typecheck will pass but the download will 404 at runtime.
 
-- [ ] **Step 3: Verify the upload serves the exact bytes**
+- [x] **Step 3: Verify the upload serves the exact bytes**
 
 ```bash
 curl -sL "https://huggingface.co/guyettinger/colSmol-256M-dynamic-onnx/resolve/PASTE_UPLOAD_SHA_HERE/config.json" \
@@ -340,7 +340,7 @@ second read and progress becomes genuinely incremental."
 - Consumes: the commit SHA from Task 0 Step 2.
 - Produces: `MODELS.colsmol` with `source: "download"`. After this task no `ModelSpec` in the codebase uses `source: "local"`, which is what unblocks Task 3.
 
-- [ ] **Step 1: Replace the colsmol entry**
+- [x] **Step 1: Replace the colsmol entry**
 
 Replace lines 93-111 of `app/src/main/models.ts` entirely with:
 
@@ -382,7 +382,7 @@ Replace lines 93-111 of `app/src/main/models.ts` entirely with:
 
 `id` is unchanged and must stay unchanged — see Global Constraints.
 
-- [ ] **Step 2: Rewrite the file header**
+- [x] **Step 2: Rewrite the file header**
 
 Replace the "TWO KINDS OF ENTRY" block (lines 11-22) with:
 
@@ -397,17 +397,17 @@ Replace the "TWO KINDS OF ENTRY" block (lines 11-22) with:
  * download it like any other model rather than building it locally.
 ```
 
-- [ ] **Step 3: Verify the SHA placeholder is gone**
+- [x] **Step 3: Verify the SHA placeholder is gone**
 
 Run: `grep -rn "PASTE_UPLOAD_SHA_HERE" app/src/`
 Expected: no output. If it prints a line, go back to Task 0.
 
-- [ ] **Step 4: Typecheck**
+- [x] **Step 4: Typecheck**
 
 Run: `npm --prefix app run typecheck`
 Expected: clean. `setupHint` and `source: "local"` still exist in the interface — they are simply unused now, which Task 3 cleans up.
 
-- [ ] **Step 5: Verify the pinned URL actually resolves**
+- [x] **Step 5: Verify the pinned URL actually resolves**
 
 ```bash
 curl -sI "https://huggingface.co/guyettinger/colSmol-256M-dynamic-onnx/resolve/$(grep -A1 'colSmol-256M-dynamic-onnx' app/src/main/models.ts | grep revision | cut -d'"' -f2)/config.json" | head -1
@@ -415,7 +415,7 @@ curl -sI "https://huggingface.co/guyettinger/colSmol-256M-dynamic-onnx/resolve/$
 
 Expected: `HTTP/2 200` or a 302 to a CDN URL. A 404 means the SHA or repo name is wrong.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add app/src/main/models.ts
@@ -443,7 +443,7 @@ sha256, exactly like nomic and jina."
 
 **Why:** ColSmol was the only `source: "local"` entry. Publishing it strands the branch, the error class, `setupHint`, and the service-layer special case. One diagnostic is worth keeping in changed form: under `overrideDir`, `ensureOnce` returns the directory unchecked, so a mis-pointed `localModels.dir` surfaces as a raw ENOENT from inside onnxruntime.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 In `app/test/model-store.test.ts`, **delete the entire `describe("ModelStore — local source", …)` block (lines 123-157)**. Then add this test inside `describe("ModelStore — download source", …)`:
 
@@ -467,12 +467,12 @@ Change the import on line 14 to:
 import { ModelFilesMissingError, ModelStore } from "../src/main/model-store.js";
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npm --prefix app run test -- model-store`
 Expected: FAIL — `ModelFilesMissingError` is not exported.
 
-- [ ] **Step 3: Replace the error class**
+- [x] **Step 3: Replace the error class**
 
 In `app/src/main/model-store.ts`, replace `ModelNotBuiltError` (lines 37-50) with:
 
@@ -498,7 +498,7 @@ export class ModelFilesMissingError extends Error {
 }
 ```
 
-- [ ] **Step 4: Replace the two branches at the top of `ensureOnce`**
+- [x] **Step 4: Replace the two branches at the top of `ensureOnce`**
 
 Replace lines 93-111 (from `private async ensureOnce` through `if (this.overrideDir) return target;`) with:
 
@@ -524,7 +524,7 @@ Then update the header comment at lines 12-14, replacing the "Locally-produced m
  * hand-curated directory instead, verifying only that the files are present.
 ```
 
-- [ ] **Step 5: Narrow `ModelSpec` in `app/src/main/models.ts`**
+- [x] **Step 5: Narrow `ModelSpec` in `app/src/main/models.ts`**
 
 In the `ModelSpec` interface (lines 32-42), change:
 
@@ -545,7 +545,7 @@ and delete these two lines entirely:
   setupHint?: string;
 ```
 
-- [ ] **Step 6: Simplify the indexing failure path**
+- [x] **Step 6: Simplify the indexing failure path**
 
 In `app/src/main/deskrag-service.ts`, remove `ModelNotBuiltError,` from the import block at line 56. Then replace lines 403-416 with:
 
@@ -558,22 +558,22 @@ In `app/src/main/deskrag-service.ts`, remove `ModelNotBuiltError,` from the impo
 
 A failed download is an ordinary transient error, not the actionable setup state the special case existed to report.
 
-- [ ] **Step 7: Run the tests to verify they pass**
+- [x] **Step 7: Run the tests to verify they pass**
 
 Run: `npm --prefix app run test -- model-store`
 Expected: PASS. The pre-existing "uses overrideDir and skips download and verification entirely" test still passes — it writes `model.onnx` before calling, so the new presence check is satisfied.
 
-- [ ] **Step 8: Verify nothing references the deleted names**
+- [x] **Step 8: Verify nothing references the deleted names**
 
 Run: `grep -rn "ModelNotBuiltError\|setupHint" app/src app/test`
 Expected: no output.
 
-- [ ] **Step 9: Full app gate**
+- [x] **Step 9: Full app gate**
 
 Run: `npm --prefix app run typecheck && npm --prefix app run test`
 Expected: both clean.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add app/src/main/model-store.ts app/src/main/models.ts \
@@ -693,7 +693,7 @@ was built and validated against."
 **Interfaces:**
 - Consumes: Tasks 1-4 complete, Task 0 uploaded.
 
-- [ ] **Step 1: Full gates**
+- [x] **Step 1: Full gates**
 
 ```bash
 npm run typecheck && npm test
@@ -702,7 +702,7 @@ npm --prefix app run typecheck && npm --prefix app run test
 
 Expected: all clean. The library suite should be entirely unaffected — a failure there means the `src/` seam was crossed by mistake.
 
-- [ ] **Step 2: Force a real download**
+- [x] **Step 2: Force a real download**
 
 ```bash
 mv "$HOME/Library/Application Support/deskrag-app/DeskRAG/models/colSmol-256M-dynamic" \
@@ -733,7 +733,7 @@ Expected: five files, no `.partial` remaining, and the hash equals
 
 Record a short session with ColSmol as the image provider, then Stop. Expected: indexing completes through the frame/region stages with no `ModelNotBuiltError` and no "Indexing failed" stage. This is the original bug, fixed.
 
-- [ ] **Step 6: Full pipeline against real weights**
+- [x] **Step 6: Full pipeline against real weights**
 
 ```bash
 node scripts/e2e-local.mjs "$HOME/Library/Application Support/deskrag-app/DeskRAG/models"
