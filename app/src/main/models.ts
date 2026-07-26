@@ -8,18 +8,14 @@
  * change while the namespace kept claiming the same model, and vectors would
  * silently stop being comparable to those already in that Lance table.
  *
- * TWO KINDS OF ENTRY:
+ * Every entry is fetched from HuggingFace and verified against sha256.
  *
- *   source: "download" — fetched from HuggingFace and verified against sha256.
- *
- *   source: "local"    — produced ON THIS MACHINE by a setup script. ColSmol is
- *     one of these. The published export (onnx-community/colSmol-256M-ONNX) is
- *     traced at exactly 13 tiles and rejects any other count; DeskRAG frames
- *     tile to 13 only at landscape ratios, and a 5:4 or square display needs 17.
- *     scripts/export-colsmol.py re-exports with a dynamic tile count. The result
- *     is ~950MB and generated per-machine, so there is nothing to download and
- *     no checksum to pin — ModelStore verifies presence and reports the exact
- *     command when the files are missing.
+ * ColSmol is a re-export, not the upstream weights: the published export
+ * (onnx-community/colSmol-256M-ONNX) is traced at exactly 13 tiles and rejects
+ * any other count, while DeskRAG's 16:10 frames tile to 7 and a 5:4 display
+ * needs 17. scripts/export-colsmol.py re-exports with a dynamic tile count;
+ * the result is published to guyettinger/colSmol-256M-dynamic-onnx so users
+ * download it like any other model rather than building it locally.
  */
 
 export interface ModelFile {
@@ -92,22 +88,36 @@ export const MODELS = {
   },
   colsmol: {
     id: "colSmol-256M-dynamic",
-    source: "local",
+    source: "download",
+    repo: "guyettinger/colSmol-256M-dynamic-onnx",
+    revision: "93956db0e440eebd497bc776e7bf34a06830b0c6",
     files: [
-      { path: "model.onnx" },
-      { path: "tokenizer.json" },
-      { path: "tokenizer_config.json" },
-      { path: "preprocessor_config.json" },
-      { path: "config.json" },
+      {
+        path: "model.onnx",
+        sha256: "cf13ca0c6951a4607c303dbe15fd9c8161289ff624f8582ce539cca2ccd99084",
+        bytes: 953919521,
+      },
+      {
+        path: "tokenizer.json",
+        sha256: "77eaa5071d562289dbd9c18f8a998124d899a4a0a4311b1a4b6964a873d306b8",
+        bytes: 3548416,
+      },
+      {
+        path: "tokenizer_config.json",
+        sha256: "e5bc53ee738178fca59eac1df6dc821576d1082ffedb7b8f8dfe97ceab43eb92",
+        bytes: 28274,
+      },
+      {
+        path: "preprocessor_config.json",
+        sha256: "6b8e11369a62e97e3b2f37a0dd1440b9018d177f7ecd2cfc2492e316b930a78a",
+        bytes: 489,
+      },
+      {
+        path: "config.json",
+        sha256: "e68e589bbc081d258f585d32ff90d41f0eededdddd5d5d38f006d80ff7de0c0d",
+        bytes: 7268,
+      },
     ],
-    setupHint:
-      "Local image search needs a dynamic-tile ColSmol export, which is built on " +
-      "this machine because the published one only accepts 13 tiles.\n" +
-      "  pip install torch transformers colpali-engine onnx\n" +
-      "  python scripts/export-colsmol.py --out <modelsDir>/colSmol-256M-dynamic/model.onnx\n" +
-      "Then copy tokenizer.json, tokenizer_config.json and preprocessor_config.json " +
-      "from onnx-community/colSmol-256M-ONNX, and config.json from vidore/colSmol-256M, " +
-      "into the same directory.",
   },
 } satisfies Record<string, ModelSpec>;
 
