@@ -57,6 +57,8 @@ import {
   ModelStore,
   type ModelDownloadProgress,
 } from "./model-store.js";
+import { OnnxHost } from "./onnx-host.js";
+import { spawnOnnxWorker } from "./onnx-spawn.js";
 import type {
   Capabilities,
   HighlightDTO,
@@ -119,6 +121,12 @@ export class DeskRagService {
   private state: RecordingStatus = { state: "idle", activeSignals: [] };
 
   private models!: ModelStore;
+  /**
+   * ONNX inference runs OUT OF PROCESS. One ColSmol frame peaks at 3-5GB, which
+   * aborts the main process via V8's OOM handler when it lands next to
+   * Chromium, LanceDB and libvips. See onnx-host.ts.
+   */
+  private onnx!: OnnxHost;
   private stateListeners = new Set<(s: RecordingStatus) => void>();
   private indexingListeners = new Set<(p: IndexingProgress) => void>();
   private modelListeners = new Set<(p: ModelDownloadProgress) => void>();
@@ -149,9 +157,13 @@ export class DeskRagService {
         for (const cb of this.modelListeners) cb(p);
       },
     });
+    // 60s idle: back-to-back searches reuse a warm worker (a session costs
+    // hundreds of ms to build), but the weights do not sit resident forever.
+    this.onnx = new OnnxHost({ spawn: spawnOnnxWorker, idleMs: 60_000 });
   }
 
   close(): void {
+    this.onnx?.shutdown();
     this.store?.close();
   }
 
@@ -214,6 +226,7 @@ export class DeskRagService {
       textEmbedder = new mod.OnnxTextEmbedding({
         modelPath: join(dir, "model_int8.onnx"),
         tokenizerPath: join(dir, "tokenizer.json"),
+        session: this.onnx.session(join(dir, "model_int8.onnx")),
       });
     }
 
@@ -231,6 +244,7 @@ export class DeskRagService {
       patchEmbedder = new mod.ColSmolMultiVector({
         modelPath: join(dir, "model.onnx"),
         tokenizerPath: join(dir, "tokenizer.json"),
+        session: this.onnx.session(join(dir, "model.onnx")),
         // Read tiling from the model's own config rather than assuming it.
         tileConfig: await mod.readTileConfig(
           join(dir, "preprocessor_config.json"),
@@ -268,6 +282,7 @@ export class DeskRagService {
           reranker = new mod.OnnxCrossEncoderReranker({
             modelPath: join(dir, "model_int8.onnx"),
             tokenizerPath: join(dir, "tokenizer.json"),
+            session: this.onnx.session(join(dir, "model_int8.onnx")),
           });
         } catch (err) {
           console.error("[deskrag] local reranker unavailable:", err);

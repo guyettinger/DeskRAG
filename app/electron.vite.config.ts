@@ -30,7 +30,16 @@ export default defineConfig({
       alias: [sharedAlias, ...deskragAliases],
     },
     build: {
-      rollupOptions: { external: nativeExternals },
+      rollupOptions: {
+        // Two entries: the app, and the ONNX utility process it forks.
+        // Inference runs in a separate process so a 1-2GB ColSmol frame and 18s
+        // of blocking native compute stay out of the browser main thread.
+        input: {
+          index: resolve(__dirname, "src/main/index.ts"),
+          "onnx-worker": resolve(__dirname, "src/main/onnx-worker.ts"),
+        },
+        external: nativeExternals,
+      },
     },
   },
   preload: {
