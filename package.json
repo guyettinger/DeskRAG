@@ -29,6 +29,7 @@
     "test:watch": "vitest",
     "build": "tsc -p tsconfig.build.json",
     "build:ax": "swiftc -O native/ax-dump.swift -o native/ax-dump",
+    "smoke:onnx-electron": "npm run build && node scripts/onnx-electron-smoke.mjs",
     "gen:brand": "tsx scripts/brand/index.ts",
     "app:install": "npm --prefix app install",
     "app:dev": "npm run build && npm --prefix app run dev",

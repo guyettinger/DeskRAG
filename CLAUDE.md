@@ -19,6 +19,7 @@ npx vitest run -t "scoped ANN"              # tests matching a name
 npm run test:watch     # vitest watch
 npm run build:ax       # compile the macOS AX sidecar (swiftc) -> native/ax-dump (gitignored)
 npm run gen:brand      # regenerate assets/ + app/build/ icons from scripts/brand/geometry.ts
+npm run smoke:onnx-electron   # ColSmol x3 under the Electron allocator — the ONE crash vitest cannot reach
 ```
 
 App (`app/`) — separate package, separate install, separate gate. The app is
@@ -36,6 +37,7 @@ npm --prefix app run typecheck     # the app's gate (renderer + node tsconfigs)
 
 - **Tests are the source of truth for behavior.** Prefer running the relevant test file over reasoning about correctness; the suite is fast (~6s) and deterministic.
 - **Live/native tests skip cleanly** without their dependency: provider smokes need `OLLAMA_SMOKE=1` / `VOYAGE_API_KEY` / `GEMINI_API_KEY` / `ANTHROPIC_API_KEY`; the ffmpeg and Swift-sidecar tests skip when `ffmpeg`/`swiftc` are absent. CI-safe by default.
+- **`npm test` structurally cannot catch the ONNX allocator crashes.** Both need Chromium's allocator (bare node's malloc satisfies the same request) AND a second run (ORT's mem-pattern block is only allocated from run #2). Vitest gives neither, so `SESSION_OPTIONS` has assertions that *pin* the flags but can never fail on the real symptom — `npm run smoke:onnx-electron` is what actually reproduces it. Any future change to ORT session options, tile counts, or model exports wants that smoke, not the suite.
 - **`assets/` and `app/build/` are generated, never hand-edited.** They're derived from `scripts/brand/geometry.ts` by `npm run gen:brand`; a drift guard in `test/brand.assets.test.ts` byte-compares committed output against a fresh render and fails on hand edits.
 
 ## Architecture — the load-bearing seams
