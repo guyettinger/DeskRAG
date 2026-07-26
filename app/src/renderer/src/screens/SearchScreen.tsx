@@ -94,8 +94,8 @@ export function SearchScreen(): React.JSX.Element {
 
       {!caps?.imageSearch && (
         <div className="search__meta">
-          Text and behavioral search run locally. Add a Voyage or Gemini key in Settings to enable
-          image-example search and region highlights.
+          Text and behavioral search are on. Choose an image model in Settings to enable
+          image-example search and region highlights — it downloads once, then runs offline.
         </div>
       )}
 

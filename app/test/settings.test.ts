@@ -1,4 +1,5 @@
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -22,7 +23,7 @@ function seed(providers: Record<string, unknown>): void {
 }
 
 describe("defaults", () => {
-  it("ships local-capable but not local-forced", () => {
+  it("ships with every optional model off", () => {
     const p = new SettingsStore(dir).view().providers;
     expect(p.textProvider).toBe("ollama");
     expect(p.imageProvider).toBe("none");
@@ -32,37 +33,41 @@ describe("defaults", () => {
     expect(p.localModels.dir).toBe("");
   });
 
-  it("never exposes raw keys to the renderer view", () => {
-    const v = new SettingsStore(dir).view();
-    expect(v.providers.keys).toEqual({ voyage: false, gemini: false, anthropic: false });
+  it("exposes no key field at all — there is nothing to hold", () => {
+    expect(new SettingsStore(dir).view().providers).not.toHaveProperty("keys");
   });
 });
 
-describe("rerank -> rerankProvider migration", () => {
-  it("maps legacy rerank:true to anthropic", () => {
-    seed({ rerank: true });
-    expect(new SettingsStore(dir).view().providers.rerankProvider).toBe("anthropic");
+describe("unknown persisted values", () => {
+  // Settings left by a build that had cloud providers, or a hand-edited file.
+  // Carrying one forward would ask the app to construct a provider that no
+  // longer exists.
+  it.each([
+    ["imageProvider", "voyage", "none"],
+    ["captionProvider", "anthropic", "none"],
+    ["rerankProvider", "anthropic", "none"],
+    ["textProvider", "gemini", "ollama"],
+  ])("resets %s=%s to %s", (field, bad, expected) => {
+    seed({ [field]: bad });
+    expect(new SettingsStore(dir).view().providers[field as "imageProvider"]).toBe(expected);
   });
 
-  it("maps legacy rerank:false to none", () => {
-    seed({ rerank: false });
-    expect(new SettingsStore(dir).view().providers.rerankProvider).toBe("none");
-  });
-
-  it("prefers an explicit rerankProvider over the legacy flag", () => {
-    seed({ rerank: true, rerankProvider: "onnx" });
-    expect(new SettingsStore(dir).view().providers.rerankProvider).toBe("onnx");
-  });
-
-  it("drops the legacy key on the next persist", () => {
-    seed({ rerank: true });
+  it("rewrites the reset value on the next persist", () => {
+    seed({ imageProvider: "voyage" });
     const s = new SettingsStore(dir);
     s.apply({ providers: { textProvider: "onnx" } });
     const raw = JSON.parse(readFileSync(join(dir, "settings.json"), "utf8")) as {
       providers: Record<string, unknown>;
     };
-    expect(raw.providers.rerank).toBeUndefined();
-    expect(raw.providers.rerankProvider).toBe("anthropic");
+    expect(raw.providers.imageProvider).toBe("none");
+  });
+
+  it("keeps valid siblings when resetting one field", () => {
+    seed({ imageProvider: "voyage", textProvider: "onnx", ollamaHost: "http://h:1" });
+    const p = new SettingsStore(dir).view().providers;
+    expect(p.imageProvider).toBe("none");
+    expect(p.textProvider).toBe("onnx");
+    expect(p.ollamaHost).toBe("http://h:1");
   });
 
   it("falls back to defaults on a corrupt settings file", () => {
@@ -72,8 +77,22 @@ describe("rerank -> rerankProvider migration", () => {
   });
 });
 
+describe("stale key storage", () => {
+  it("deletes a leftover keys.enc — no code path can read it any more", () => {
+    mkdirSync(dir, { recursive: true });
+    const keys = join(dir, "keys.enc");
+    writeFileSync(keys, "encrypted-secrets");
+    new SettingsStore(dir);
+    expect(existsSync(keys)).toBe(false);
+  });
+
+  it("is a no-op when there is none", () => {
+    expect(() => new SettingsStore(dir)).not.toThrow();
+  });
+});
+
 describe("apply", () => {
-  it("round-trips the new provider fields and survives a reload", () => {
+  it("round-trips the provider fields and survives a reload", () => {
     const s = new SettingsStore(dir);
     const v = s.apply({
       providers: {
@@ -101,15 +120,10 @@ describe("apply", () => {
     expect(p.whisper).toEqual({ binaryPath: "whisper-x", modelPath: "/m.bin" });
   });
 
-  it("applies the local profile in one patch, including AX capture", () => {
+  it("patches providers and signals together", () => {
     const s = new SettingsStore(dir);
     const v = s.apply({
-      providers: {
-        textProvider: "onnx",
-        imageProvider: "colsmol",
-        captionProvider: "ollama",
-        rerankProvider: "onnx",
-      },
+      providers: { imageProvider: "colsmol" },
       signals: { ax: { enabled: true }, screen: { imageMaxWidth: 2560 } },
     });
     expect(v.signals.ax.enabled).toBe(true);

@@ -9,11 +9,10 @@
  * `TextViewSearcher` passes "query".
  */
 
-import { readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
 import type { EmbedOptions, EmbeddingProvider } from "../types.js";
 import { l2Normalize, meanPool } from "./pooling.js";
 import { OnnxRuntime, makeTensor, type OnnxSession } from "./runtime.js";
+import { defaultConfigPath, loadTokenizer } from "./tokenizer.js";
 
 export const NOMIC_PREFIX = {
   document: "search_document: ",
@@ -60,32 +59,17 @@ export class OnnxTextEmbedding implements EmbeddingProvider {
     this.modelPath = opts.modelPath;
     this.tokenizerPath = opts.tokenizerPath;
     this.tokenizerConfigPath =
-      opts.tokenizerConfigPath ??
-      join(dirname(opts.tokenizerPath), "tokenizer_config.json");
+      opts.tokenizerConfigPath ?? defaultConfigPath(opts.tokenizerPath);
     this.maxTokens = opts.maxTokens ?? 2048;
     this.injectedSession = opts.session;
     this.injectedTokenize = opts.tokenize;
   }
 
-  /**
-   * @huggingface/tokenizers takes PARSED JSON in its constructor and encodes
-   * synchronously — there is no `fromFile`. tokenizer_config.json is optional;
-   * an absent one degrades to defaults rather than failing the load.
-   */
+  /** A single sequence — token_type_ids are all zero, but nomic requires them. */
   private async tokenizer(): Promise<(t: string) => TokenizeResult> {
     if (this.injectedTokenize) return this.injectedTokenize;
     this.loadedTokenizer ??= (async () => {
-      const { Tokenizer } = await import(
-        /* @vite-ignore */ "@huggingface/tokenizers"
-      );
-      const [tokJson, cfgJson] = await Promise.all([
-        readFile(this.tokenizerPath, "utf8"),
-        readFile(this.tokenizerConfigPath, "utf8").catch(() => "{}"),
-      ]);
-      const tok = new Tokenizer(
-        JSON.parse(tokJson) as object,
-        JSON.parse(cfgJson) as object,
-      );
+      const tok = await loadTokenizer(this.tokenizerPath, this.tokenizerConfigPath);
       return (t: string) => {
         const e = tok.encode(t, { return_token_type_ids: true });
         return {

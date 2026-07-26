@@ -23,7 +23,6 @@
  */
 
 import { readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
 import type { MultiVectorProvider } from "../types.js";
 import { l2Normalize } from "./pooling.js";
 import {
@@ -35,6 +34,7 @@ import {
 } from "./geometry.js";
 import { buildImagePrompt, buildQueryPrompt, imageTokenPositions } from "./colsmol-prompt.js";
 import { OnnxRuntime, makeTensor, type OnnxSession } from "./runtime.js";
+import { defaultConfigPath, loadTokenizer } from "./tokenizer.js";
 
 export interface ColSmolOptions {
   modelPath: string;
@@ -103,8 +103,7 @@ export class ColSmolMultiVector implements MultiVectorProvider {
     this.modelPath = opts.modelPath;
     this.tokenizerPath = opts.tokenizerPath;
     this.tokenizerConfigPath =
-      opts.tokenizerConfigPath ??
-      join(dirname(opts.tokenizerPath), "tokenizer_config.json");
+      opts.tokenizerConfigPath ?? defaultConfigPath(opts.tokenizerPath);
     this.injectedSession = opts.session;
     this.injectedTokenize = opts.tokenize;
     this.injectedTiler = opts.tileImage;
@@ -116,18 +115,11 @@ export class ColSmolMultiVector implements MultiVectorProvider {
       : OnnxRuntime.session(this.modelPath);
   }
 
+  /** Ids only — ColSmol's prompt builder handles the special tokens itself. */
   private async tokenizer(): Promise<(t: string) => { ids: number[] }> {
     if (this.injectedTokenize) return this.injectedTokenize;
     this.loadedTokenizer ??= (async () => {
-      const { Tokenizer } = await import(/* @vite-ignore */ "@huggingface/tokenizers");
-      const [tokJson, cfgJson] = await Promise.all([
-        readFile(this.tokenizerPath, "utf8"),
-        readFile(this.tokenizerConfigPath, "utf8").catch(() => "{}"),
-      ]);
-      const tok = new Tokenizer(
-        JSON.parse(tokJson) as object,
-        JSON.parse(cfgJson) as object,
-      );
+      const tok = await loadTokenizer(this.tokenizerPath, this.tokenizerConfigPath);
       return (t: string) => ({ ids: tok.encode(t).ids });
     })();
     return this.loadedTokenizer;
