@@ -1,3 +1,12 @@
+# /// script
+# requires-python = "==3.12.*"
+# dependencies = [
+#   "torch==2.11.0",
+#   "transformers==5.14.1",
+#   "colpali-engine==0.3.17",
+#   "onnx==1.22.0",
+# ]
+# ///
 """
 Re-export vidore/colSmol-256M to ONNX with a DYNAMIC tile count.
 
@@ -18,10 +27,19 @@ into a trace. Both are replaced here with shape-static equivalents:
      numerically identical (masked-out positions keep the 0 fill) but static.
 
 Usage:
-    python scripts/export-colsmol.py --out /path/to/model.onnx [--tiles 7]
+    uv run scripts/export-colsmol.py --out /path/to/model.onnx [--tiles 7]
 
-Requires torch, transformers, colpali-engine, onnx in the active environment.
-The export is CPU/fp32 and takes several minutes.
+uv reads the PEP 723 block above and provisions its own CPython 3.12 plus the
+pinned dependencies — no venv to manage. The pins matter: the monkeypatches
+below target version-sensitive transformers internals.
+
+MAINTAINER TOOL. The app does not run this; it downloads the published export
+(guyettinger/colSmol-256M-dynamic-onnx). Regenerate only to change the export
+itself, then re-upload and update MODELS.colsmol in app/src/main/models.ts.
+
+The export is CPU/fp32. Validate the result before publishing:
+    uv run --with onnxruntime --with numpy scripts/validate-colsmol-onnx.py \
+      --onnx /path/to/model.onnx
 """
 
 from __future__ import annotations
