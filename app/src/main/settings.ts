@@ -1,11 +1,14 @@
 /**
- * SettingsStore — persists non-secret settings as JSON and API keys encrypted at
- * rest via Electron safeStorage (OS keychain-backed). Keys never leave the main
- * process in plaintext; the renderer only learns whether a key is present.
+ * SettingsStore — persists settings as JSON under the app data dir.
+ *
+ * There are no secrets to hold: every provider runs on this machine, so there is
+ * no API key, no `safeStorage`, and no `keys.enc`. A stale keys.enc from a build
+ * that had cloud providers is deleted on open rather than left sitting on disk
+ * encrypted-but-unreadable.
  */
 
-import { app, safeStorage } from "electron";
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { app } from "electron";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type {
   SettingsView,
@@ -14,10 +17,8 @@ import type {
   ProviderSettingsView,
 } from "@shared/types";
 
-type KeyName = "voyage" | "gemini" | "anthropic";
-
 interface PersistedSettings {
-  providers: Omit<ProviderSettingsView, "keys">;
+  providers: ProviderSettingsView;
   signals: SignalConfig;
 }
 
@@ -42,49 +43,55 @@ const DEFAULTS: PersistedSettings = {
   },
 };
 
+/**
+ * The allowed value of each provider field. A persisted value outside its set —
+ * a hand-edited file, or a selection left by a build that had cloud providers —
+ * resets to the default rather than being carried forward, which would let the
+ * app try to construct a provider that no longer exists.
+ */
+const PROVIDER_VALUES = {
+  textProvider: ["ollama", "onnx"],
+  imageProvider: ["none", "colsmol"],
+  captionProvider: ["none", "ollama"],
+  rerankProvider: ["none", "onnx"],
+} as const satisfies Partial<Record<keyof ProviderSettingsView, readonly string[]>>;
+
+type ProviderKey = keyof typeof PROVIDER_VALUES;
+
 export class SettingsStore {
   private readonly dir: string;
   private readonly settingsPath: string;
-  private readonly keysPath: string;
   private settings: PersistedSettings;
-  private keys: Partial<Record<KeyName, string>> = {};
 
   constructor(dataDir: string) {
     this.dir = dataDir;
     if (!existsSync(this.dir)) mkdirSync(this.dir, { recursive: true });
     this.settingsPath = join(this.dir, "settings.json");
-    this.keysPath = join(this.dir, "keys.enc");
+    // No code path reads this any more; leaving it would be encrypted secrets
+    // with no owner.
+    rmSync(join(this.dir, "keys.enc"), { force: true });
     this.settings = this.load();
-    this.keys = this.loadKeys();
   }
 
   private load(): PersistedSettings {
     if (!existsSync(this.settingsPath)) return structuredClone(DEFAULTS);
     try {
-      const raw = JSON.parse(readFileSync(this.settingsPath, "utf8")) as Partial<PersistedSettings> & {
-        providers?: Partial<PersistedSettings["providers"]> & { rerank?: boolean };
+      const raw = JSON.parse(readFileSync(this.settingsPath, "utf8")) as Partial<PersistedSettings>;
+      const providers: ProviderSettingsView = {
+        ...DEFAULTS.providers,
+        ...raw.providers,
+        whisper: { ...DEFAULTS.providers.whisper, ...raw.providers?.whisper },
+        localModels: { ...DEFAULTS.providers.localModels, ...raw.providers?.localModels },
       };
-
-      // Legacy `rerank: boolean` -> `rerankProvider`. A plain spread would leave
-      // the stale key sitting inert and silently disable a user's reranking.
-      const legacy = raw.providers?.rerank;
-      const rerankProvider =
-        raw.providers?.rerankProvider ??
-        (legacy === true
-          ? "anthropic"
-          : legacy === false
-            ? "none"
-            : DEFAULTS.providers.rerankProvider);
-      const { rerank: _dropped, ...persistedProviders } = raw.providers ?? {};
+      for (const key of Object.keys(PROVIDER_VALUES) as ProviderKey[]) {
+        const allowed: readonly string[] = PROVIDER_VALUES[key];
+        if (!allowed.includes(providers[key])) {
+          providers[key] = DEFAULTS.providers[key] as never;
+        }
+      }
 
       return {
-        providers: {
-          ...DEFAULTS.providers,
-          ...persistedProviders,
-          rerankProvider,
-          whisper: { ...DEFAULTS.providers.whisper, ...raw.providers?.whisper },
-          localModels: { ...DEFAULTS.providers.localModels, ...raw.providers?.localModels },
-        },
+        providers,
         signals: {
           screen: { ...DEFAULTS.signals.screen, ...raw.signals?.screen },
           input: { ...DEFAULTS.signals.input, ...raw.signals?.input },
@@ -102,42 +109,8 @@ export class SettingsStore {
     writeFileSync(this.settingsPath, JSON.stringify(this.settings, null, 2), "utf8");
   }
 
-  private loadKeys(): Partial<Record<KeyName, string>> {
-    if (!existsSync(this.keysPath)) return {};
-    try {
-      const enc = readFileSync(this.keysPath);
-      if (!safeStorage.isEncryptionAvailable()) return {};
-      const json = safeStorage.decryptString(enc);
-      return JSON.parse(json) as Partial<Record<KeyName, string>>;
-    } catch {
-      return {};
-    }
-  }
-
-  private persistKeys(): void {
-    if (!safeStorage.isEncryptionAvailable()) return; // no keychain -> don't write plaintext
-    const enc = safeStorage.encryptString(JSON.stringify(this.keys));
-    writeFileSync(this.keysPath, enc);
-  }
-
-  /** Full view for the renderer — keys reduced to presence booleans. */
   view(): SettingsView {
-    return {
-      providers: {
-        ...this.settings.providers,
-        keys: {
-          voyage: Boolean(this.keys.voyage),
-          gemini: Boolean(this.keys.gemini),
-          anthropic: Boolean(this.keys.anthropic),
-        },
-      },
-      signals: this.settings.signals,
-    };
-  }
-
-  /** Raw key access — main process only. */
-  key(name: KeyName): string | undefined {
-    return this.keys[name];
+    return { providers: this.settings.providers, signals: this.settings.signals };
   }
 
   apply(patch: SettingsPatch): SettingsView {
@@ -166,14 +139,6 @@ export class SettingsStore {
         audio: { ...s.audio, ...p.audio },
         ax: { ...s.ax, ...p.ax },
       };
-    }
-    if (patch.keys) {
-      for (const [k, v] of Object.entries(patch.keys) as [KeyName, string | null | undefined][]) {
-        if (v === undefined) continue;
-        if (v === null || v === "") delete this.keys[k];
-        else this.keys[k] = v;
-      }
-      this.persistKeys();
     }
     this.persist();
     return this.view();

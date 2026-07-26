@@ -11,53 +11,53 @@ import {
   FakeMultiVectorProvider,
 } from "../src/embed/fake.js";
 
-const gemini: NamespacedProvider = {
-  id: "gemini",
-  model: "gemini-embedding-2",
-  dimensions: 3072,
+const nomic: NamespacedProvider = {
+  id: "onnx",
+  model: "nomic-embed-text-v1.5",
+  dimensions: 768,
 };
 
 describe("namespaceFor", () => {
   it("builds view:provider:model:dims", () => {
-    expect(namespaceFor("caption", gemini)).toBe(
-      "caption:gemini:gemini-embedding-2:3072",
+    expect(namespaceFor("caption", nomic)).toBe(
+      "caption:onnx:nomic-embed-text-v1.5:768",
     );
   });
 
   it("distinguishes different views, models, and dims (the discipline)", () => {
     const ns = new Set([
-      namespaceFor("caption", gemini),
-      namespaceFor("digest", gemini),
-      namespaceFor("caption", { ...gemini, model: "gemini-embedding-001" }),
-      namespaceFor("caption", { ...gemini, dimensions: 768 }),
-      namespaceFor("caption", { ...gemini, id: "voyage" }),
+      namespaceFor("caption", nomic),
+      namespaceFor("digest", nomic),
+      namespaceFor("caption", { ...nomic, model: "nomic-embed-text-v1" }),
+      namespaceFor("caption", { ...nomic, dimensions: 256 }),
+      namespaceFor("caption", { ...nomic, id: "ollama" }),
     ]);
     expect(ns.size).toBe(5); // all five are distinct spaces
   });
 
   it("rejects ids/models containing the ':' separator", () => {
-    expect(() => namespaceFor("caption", { ...gemini, id: "a:b" })).toThrow();
-    expect(() => namespaceFor("caption", { ...gemini, model: "x:y" })).toThrow();
+    expect(() => namespaceFor("caption", { ...nomic, id: "a:b" })).toThrow();
+    expect(() => namespaceFor("caption", { ...nomic, model: "x:y" })).toThrow();
   });
 
   it("rejects non-positive/non-integer dimensions", () => {
-    expect(() => namespaceFor("caption", { ...gemini, dimensions: 0 })).toThrow();
-    expect(() => namespaceFor("caption", { ...gemini, dimensions: 1.5 })).toThrow();
+    expect(() => namespaceFor("caption", { ...nomic, dimensions: 0 })).toThrow();
+    expect(() => namespaceFor("caption", { ...nomic, dimensions: 1.5 })).toThrow();
   });
 
   it("round-trips through parseNamespace", () => {
-    const ns = namespaceFor("region_image", gemini);
+    const ns = namespaceFor("region_image", nomic);
     expect(parseNamespace(ns)).toEqual({
       view: "region_image",
-      providerId: "gemini",
-      model: "gemini-embedding-2",
-      dimensions: 3072,
+      providerId: "onnx",
+      model: "nomic-embed-text-v1.5",
+      dimensions: 768,
     });
   });
 
   it("parseNamespace rejects malformed / unknown-view strings", () => {
     expect(() => parseNamespace("a:b:c")).toThrow();
-    expect(() => parseNamespace("bogus:gemini:m:3072")).toThrow();
+    expect(() => parseNamespace("bogus:onnx:m:768")).toThrow();
   });
 });
 

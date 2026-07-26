@@ -19,12 +19,22 @@ export interface SignalConfig {
 
 // --- providers / settings ----------------------------------------------------
 
+/**
+ * Every provider runs on this machine. There is no remote option and no API key
+ * anywhere in the app — that is the privacy guarantee, made structural rather
+ * than left to how the user filled in Settings.
+ */
+
 /** Where text embeddings come from. Ollama needs a daemon; onnx runs in-process. */
 export type TextProvider = "ollama" | "onnx";
-/** `colsmol` is the local late-interaction path; the rest are single-vector. */
-export type ImageProvider = "none" | "colsmol" | "voyage" | "gemini";
-export type CaptionProvider = "none" | "ollama" | "anthropic" | "gemini";
-export type RerankProvider = "none" | "onnx" | "anthropic";
+/**
+ * The two local visual paths, mutually exclusive because they index different
+ * vector spaces — the library's Retriever rejects both at once.
+ *   colsmol — late interaction, patch highlights, no region rows (no Tier 3)
+ */
+export type ImageProvider = "none" | "colsmol";
+export type CaptionProvider = "none" | "ollama";
+export type RerankProvider = "none" | "onnx";
 
 export interface ProviderSettingsView {
   ollamaHost: string;
@@ -38,8 +48,6 @@ export interface ProviderSettingsView {
   /** "" means managed downloads under the app data dir. */
   localModels: { dir: string };
   whisper: { binaryPath: string; modelPath: string };
-  /** Presence only — raw API keys never cross to the renderer. */
-  keys: { voyage: boolean; gemini: boolean; anthropic: boolean };
 }
 
 export interface SettingsView {
@@ -49,14 +57,12 @@ export interface SettingsView {
 
 export interface SettingsPatch {
   providers?: Partial<
-    Omit<ProviderSettingsView, "keys" | "whisper" | "localModels"> & {
+    Omit<ProviderSettingsView, "whisper" | "localModels"> & {
       whisper: Partial<{ binaryPath: string; modelPath: string }>;
       localModels: Partial<{ dir: string }>;
     }
   >;
   signals?: DeepPartial<SignalConfig>;
-  /** New key values; `null` clears a stored key, `undefined`/absent leaves it. */
-  keys?: Partial<Record<"voyage" | "gemini" | "anthropic", string | null>>;
 }
 
 export type DeepPartial<T> = {

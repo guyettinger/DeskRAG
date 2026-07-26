@@ -17,11 +17,6 @@ import {
   DualStore,
   BlobStore,
   OllamaTextEmbedding,
-  VoyageImageEmbedding,
-  GeminiEmbedding,
-  AnthropicCaptionProvider,
-  GeminiCaptionProvider,
-  LLMReranker,
   BehaviorFeatureExtractor,
   CaptureSession,
   FfmpegScreenProducer,
@@ -74,9 +69,13 @@ import type {
 interface Providers {
   textEmbedder: EmbeddingProvider;
   behavior: BehaviorFeatureExtractor;
-  /** Single-vector visual path (cloud). Mutually exclusive with patchEmbedder. */
+  /**
+   * Single-vector visual path — frame + region embeddings, and therefore the
+   * Tier-3 region ANN + AX-label FTS highlights. Mutually exclusive with
+   * patchEmbedder: the library's Retriever rejects both at once.
+   */
   imageEmbedder: ImageEmbeddingProvider | null;
-  /** Late-interaction visual path (local). Mutually exclusive with imageEmbedder. */
+  /** Late-interaction visual path. Mutually exclusive with imageEmbedder. */
   patchEmbedder: MultiVectorProvider | null;
   captioner: LibCaptionProvider | null;
   reranker: Reranker | null;
@@ -86,23 +85,15 @@ interface Providers {
 /**
  * Capabilities as a pure function so it is testable without Electron.
  *
- * Semantics are *configured intent*, not live reachability — as before, this
- * reports "Voyage selected and a key present", never "Voyage responded". Local
- * providers need no key, so selecting one is enough.
+ * Semantics are *configured intent*, not live reachability: this reports
+ * "ColSmol is selected", never "ColSmol loaded". Every provider is local and
+ * needs no credential, so selecting one is the whole of the condition.
  */
 export function capabilitiesFor(p: ProviderSettingsView): Capabilities {
   return {
-    imageSearch:
-      p.imageProvider === "colsmol" ||
-      (p.imageProvider === "voyage" && p.keys.voyage) ||
-      (p.imageProvider === "gemini" && p.keys.gemini),
-    caption:
-      p.captionProvider === "ollama" ||
-      (p.captionProvider === "anthropic" && p.keys.anthropic) ||
-      (p.captionProvider === "gemini" && p.keys.gemini),
-    rerank:
-      p.rerankProvider === "onnx" ||
-      (p.rerankProvider === "anthropic" && p.keys.anthropic),
+    imageSearch: p.imageProvider !== "none",
+    caption: p.captionProvider !== "none",
+    rerank: p.rerankProvider !== "none",
     transcript: Boolean(p.whisper.modelPath),
   };
 }
@@ -247,10 +238,6 @@ export class DeskRagService {
           join(dir, "config.json"),
         ),
       });
-    } else if (p.imageProvider === "voyage" && this.settings.key("voyage")) {
-      imageEmbedder = new VoyageImageEmbedding({ apiKey: this.settings.key("voyage")! });
-    } else if (p.imageProvider === "gemini" && this.settings.key("gemini")) {
-      imageEmbedder = new GeminiEmbedding({ apiKey: this.settings.key("gemini")! });
     }
 
     // --- captioner ------------------------------------------------------------
@@ -260,10 +247,6 @@ export class DeskRagService {
         host: p.ollamaHost,
         model: p.ollamaCaptionModel,
       });
-    } else if (p.captionProvider === "anthropic" && this.settings.key("anthropic")) {
-      captioner = new AnthropicCaptionProvider({ apiKey: this.settings.key("anthropic")! });
-    } else if (p.captionProvider === "gemini" && this.settings.key("gemini")) {
-      captioner = new GeminiCaptionProvider({ apiKey: this.settings.key("gemini")! });
     }
 
     // --- reranker (Tier 4 is a refinement: degrade, never throw) --------------
@@ -284,8 +267,6 @@ export class DeskRagService {
           console.error("[deskrag] local reranker unavailable:", err);
         }
       }
-    } else if (p.rerankProvider === "anthropic" && this.settings.key("anthropic")) {
-      reranker = new LLMReranker({ apiKey: this.settings.key("anthropic")! });
     }
 
     const transcriber = new WhisperCppTranscription({

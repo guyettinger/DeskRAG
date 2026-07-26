@@ -27,7 +27,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "build": "tsc -p tsconfig.build.json",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "build:ax": "swiftc -O native/ax-dump.swift -o native/ax-dump",
     "smoke:onnx-electron": "npm run build && node scripts/onnx-electron-smoke.mjs",
     "gen:brand": "tsx scripts/brand/index.ts",
@@ -37,15 +37,13 @@
     "app:dist": "npm run build && npm --prefix app run dist"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.72.1",
     "@huggingface/tokenizers": "0.1.3",
     "@lancedb/lancedb": "^0.24.0",
     "apache-arrow": "18.1.0",
     "better-sqlite3": "^12.4.1",
     "onnxruntime-node": "1.27.0",
     "sharp": "^0.35.3",
-    "ulid": "^3.0.1",
-    "undici": "^7.16.0"
+    "ulid": "^3.0.1"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

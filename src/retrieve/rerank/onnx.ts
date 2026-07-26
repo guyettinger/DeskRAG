@@ -12,6 +12,10 @@
  */
 
 import { makeTensor, OnnxRuntime, type OnnxSession } from "../../embed/onnx/runtime.js";
+import {
+  defaultConfigPath,
+  loadTokenizer,
+} from "../../embed/onnx/tokenizer.js";
 import type { Reranker, RerankCandidate } from "./types.js";
 
 export interface TokenizedPair {
@@ -43,8 +47,7 @@ export class OnnxCrossEncoderReranker implements Reranker {
     this.modelPath = opts.modelPath;
     this.tokenizerPath = opts.tokenizerPath;
     this.tokenizerConfigPath =
-      opts.tokenizerConfigPath ??
-      opts.tokenizerPath.replace(/tokenizer\.json$/, "tokenizer_config.json");
+      opts.tokenizerConfigPath ?? defaultConfigPath(opts.tokenizerPath);
     this.maxTokens = opts.maxTokens ?? 512;
     this.batchSize = opts.batchSize ?? 16;
     this.injectedSession = opts.session;
@@ -60,16 +63,7 @@ export class OnnxCrossEncoderReranker implements Reranker {
   private async tokenizer(): Promise<(q: string, d: string) => TokenizedPair> {
     if (this.injectedTokenize) return this.injectedTokenize;
     this.loadedTokenizer ??= (async () => {
-      const { readFile } = await import("node:fs/promises");
-      const { Tokenizer } = await import(/* @vite-ignore */ "@huggingface/tokenizers");
-      const [tokJson, cfgJson] = await Promise.all([
-        readFile(this.tokenizerPath, "utf8"),
-        readFile(this.tokenizerConfigPath, "utf8").catch(() => "{}"),
-      ]);
-      const tok = new Tokenizer(
-        JSON.parse(tokJson) as object,
-        JSON.parse(cfgJson) as object,
-      );
+      const tok = await loadTokenizer(this.tokenizerPath, this.tokenizerConfigPath);
       return (q: string, d: string) => {
         // Cross-encoders score a PAIR, so the document rides in text_pair and
         // token_type_ids marks the boundary.

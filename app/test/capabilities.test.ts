@@ -12,7 +12,6 @@ const base: ProviderSettingsView = {
   rerankProvider: "none",
   localModels: { dir: "" },
   whisper: { binaryPath: "whisper-cli", modelPath: "" },
-  keys: { voyage: false, gemini: false, anthropic: false },
 };
 
 describe("capabilitiesFor", () => {
@@ -25,54 +24,34 @@ describe("capabilitiesFor", () => {
     });
   });
 
-  it("enables local capabilities with no API key at all", () => {
+  it("enables a capability on selection alone — local models need no credential", () => {
     const c = capabilitiesFor({
       ...base,
       imageProvider: "colsmol",
       captionProvider: "ollama",
       rerankProvider: "onnx",
     });
-    expect(c.imageSearch).toBe(true);
-    expect(c.caption).toBe(true);
-    expect(c.rerank).toBe(true);
-  });
-
-  it("still gates cloud providers on key presence", () => {
-    expect(capabilitiesFor({ ...base, imageProvider: "voyage" }).imageSearch).toBe(false);
-    expect(
-      capabilitiesFor({
-        ...base,
-        imageProvider: "voyage",
-        keys: { ...base.keys, voyage: true },
-      }).imageSearch,
-    ).toBe(true);
-
-    expect(capabilitiesFor({ ...base, rerankProvider: "anthropic" }).rerank).toBe(false);
-    expect(
-      capabilitiesFor({
-        ...base,
-        rerankProvider: "anthropic",
-        keys: { ...base.keys, anthropic: true },
-      }).rerank,
-    ).toBe(true);
-
-    expect(capabilitiesFor({ ...base, captionProvider: "gemini" }).caption).toBe(false);
-  });
-
-  it("does not let one provider's key enable another", () => {
-    // A Gemini key must not turn on a Voyage-backed image search.
-    const c = capabilitiesFor({
-      ...base,
-      imageProvider: "voyage",
-      keys: { ...base.keys, gemini: true },
+    expect(c).toEqual({
+      imageSearch: true,
+      caption: true,
+      rerank: true,
+      transcript: false,
     });
-    expect(c.imageSearch).toBe(false);
+  });
+
+  it("keeps the three provider capabilities independent", () => {
+    expect(capabilitiesFor({ ...base, imageProvider: "colsmol" })).toEqual({
+      imageSearch: true,
+      caption: false,
+      rerank: false,
+      transcript: false,
+    });
   });
 
   it("ties transcript to a whisper model path, not the binary", () => {
-    expect(capabilitiesFor({ ...base, whisper: { binaryPath: "w", modelPath: "" } }).transcript).toBe(
-      false,
-    );
+    expect(
+      capabilitiesFor({ ...base, whisper: { binaryPath: "w", modelPath: "" } }).transcript,
+    ).toBe(false);
     expect(
       capabilitiesFor({ ...base, whisper: { binaryPath: "w", modelPath: "/m.bin" } }).transcript,
     ).toBe(true);

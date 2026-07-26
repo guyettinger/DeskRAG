@@ -12,7 +12,7 @@
 
 It's inspired by VideoRAG and PixelRAG, with a key advantage over pure-pixel systems: on the desktop we read real UI structure from the **accessibility tree**, giving free, labeled region proposals — grounded bounding boxes and roles that video systems must infer.
 
-Everything runs locally. TypeScript throughout, strict types, pluggable AI providers (local Ollama / ONNX, or remote Voyage / Gemini / Anthropic).
+**Every model runs on your machine.** There is no cloud provider, no API key, and no network call to anything but a daemon on localhost — the privacy claim is structural, not a matter of how you configured it. TypeScript throughout, strict types, pluggable local providers (Ollama, in-process ONNX, whisper.cpp).
 
 ---
 
@@ -22,7 +22,7 @@ Everything runs locally. TypeScript throughout, strict types, pluggable AI provi
 - **Structural vector discipline** — every embedding is namespaced `view:provider:model:dims`, with one physical LanceDB table per namespace, so incomparable vector spaces *cannot* be mixed in a search.
 - **Monotonic timeline** — all correlation is on a monotonic `t_mono` clock, immune to wall-clock/NTP/DST jumps.
 - **Six embeddable views** per experience — transcript (local whisper.cpp STT), VLM caption, structured-event digest, behavioral feature vector, whole-frame image, and region image.
-- **Coarse-to-fine retrieval** — pHash → segment RRF → frame ANN → region ANN + accessibility-label full-text search → optional LLM rerank — returning **highlights**: the matched region bounding boxes + labels to outline *where* on the recalled frame the match is.
+- **Coarse-to-fine retrieval** — pHash → segment RRF → frame ANN → region ANN + accessibility-label full-text search → optional cross-encoder rerank — returning **highlights**: the matched region bounding boxes + labels to outline *where* on the recalled frame the match is.
 - **The PixelRAG edge, grounded** — region proposals fuse the accessibility tree, interaction hotspots (weighted DBSCAN over clicks/dwell — a signal video RAG can't have), and grid tiling.
 - **A desktop app, not just a library** — [DeskRAGApp](#desktop-app--deskragapp) (Electron + React) drives the whole pipeline from a UI: record, auto-index, then search your sessions as a contact sheet of keyframes.
 
@@ -35,7 +35,7 @@ Everything runs locally. TypeScript throughout, strict types, pluggable AI provi
  active-win (focus)   │   boundaries      │   caption      behavior │   Tier1 segment ANN + RRF
  ffmpeg  (screen→JPEG)├─▶ + multi-        ├─▶ frame-image  region-  ├─▶ Tier2 frame ANN  (scoped)
  ax-dump (AX tree)    │   granularity     │   image                 │   Tier3 region ANN + AX-FTS
- (mic/desktop audio)  ┘   overlapping     ┘   (each → a namespaced  ┘   Tier4 LLM rerank (optional)
+ (mic/desktop audio)  ┘   overlapping     ┘   (each → a namespaced  ┘   Tier4 rerank (optional)
                           windows              vector space)             → assemble → ranked frames
                                                                             + region highlights
         store/  ──  SQLite (relational truth + event firehose)  ⇄  LanceDB (vectors + scoped ANN)
@@ -73,31 +73,31 @@ rebuilding one and breaking the other.
 
 - **Record** — a per-signal switchboard (screen, input, active window, microphone, accessibility tree), each with a status LED and an inline note when it's missing a macOS permission (with a Grant / Open Settings link) or a tool like `ffmpeg` or the AX sidecar. Plus an elapsed timecode and a start/stop that reports indexing stage by stage. Closing the window hides to a menu-bar tray that keeps recording and can start/stop from its menu.
 - **Search** — a text query, or an image file as a visual example (gated on an image provider being configured). Results come back as a contact sheet of keyframes with score, timecode, wall-clock time, segment digest, and a highlight count; click one for a detail view with the full keyframe, region highlight boxes, the captured accessibility elements, and the segment's digest / caption / transcript.
-- **Settings** — embeddings (Ollama host + model, image provider Voyage / Gemini, caption provider Anthropic / Gemini, Tier-4 LLM rerank), API keys, local Whisper binary + model paths, and capture defaults (frame rate, keyframe max width, audio device, chunk seconds).
+- **Settings** — four groups of local configuration: models (text embeddings, image model, captions, Tier-4 rerank, model directory), Ollama (host + embedding/caption models), the local Whisper binary + model paths, and capture defaults (frame rate, keyframe max width, audio device, chunk seconds). No keys, because there is nothing to authenticate to.
 
 **How it's wired.** `src/main` is the *only* process that touches the library, the
 store, and native modules; `src/preload` is a typed `contextBridge`; `src/renderer`
 (React) sees nothing but plain serializable DTOs and calls IPC. Keyframes reach the
-UI over a custom `deskrag://` protocol rather than as base64. API keys are encrypted
-into the OS keychain via Electron `safeStorage` and never cross to the renderer.
+UI over a custom `deskrag://` protocol rather than as base64.
 
-**Local-first, degrading gracefully.** Text + behavioral search and keyframe
-thumbnails work fully offline with Ollama; every remote provider is optional, and
-a missing key, binary, or native module disables exactly one feature instead of
-breaking startup. Stopping a recording auto-runs segment → represent, with the
-frame/caption/region and transcript stages included only when their provider is
-configured.
+**Degrades gracefully.** Text + behavioral search and keyframe thumbnails work with
+nothing but Ollama running; every other model is optional, and a missing binary or
+native module disables exactly one feature instead of breaking startup. Stopping a
+recording auto-runs segment → represent, with the frame/caption/region and
+transcript stages included only when their model is configured. Model weights are
+downloaded once, verified against a pinned sha256, and then used offline.
 
 **Data** lives under Electron's `<userData>/DeskRAG/` (in dev,
 `~/Library/Application Support/deskrag-app/DeskRAG/`) — `app.db` (SQLite),
-`lance/` (vectors), `blobs/` (keyframes + audio), plus `settings.json`,
-`keys.enc`, and `sessions.json`.
+`lance/` (vectors), `blobs/` (keyframes + audio), `models/` (downloaded weights),
+plus `settings.json`.
 
-> **Native ABI note:** Electron ships its own Node ABI, so `rebuild:native` rebuilds
-> `better-sqlite3` for Electron — which breaks the library's `npm test` until you
-> rebuild it back for system Node (`npm rebuild better-sqlite3`). `sharp` and
-> `@lancedb/lancedb` are N-API/prebuilt and unaffected. App-local native copies are
-> future work; this version targets dev use.
+> **Native ABI note:** Electron ships its own Node ABI, which is why `app/` is not
+> an npm workspace member: it keeps its own `app/node_modules` with a
+> `better-sqlite3` rebuilt for Electron, while the library's root copy stays
+> Node-ABI for `npm test`. Neither rebuild touches the other. `sharp`,
+> `@lancedb/lancedb`, `uiohook-napi` and `active-win` are N-API/prebuilt and are
+> never rebuilt.
 
 ## Requirements
 
@@ -108,7 +108,7 @@ configured.
   - **`uiohook-napi`**, **`active-win`** (optionalDependencies) — mouse/keyboard + focused-window capture.
   - **`swiftc`** (Xcode Command Line Tools) — build the accessibility sidecar: `npm run build:ax`.
   - **`whisper.cpp`** binary + a model file — local transcription of captured audio (set in the app under Settings → Transcription, or wire `WhisperCppTranscription` directly).
-  - Provider keys for remote embedders/captioners: `VOYAGE_API_KEY`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`; or a local Ollama daemon.
+  - An **Ollama** daemon — text embeddings and VLM captions, if you'd rather not use the in-process ONNX path. Nothing else needs a network.
 - **macOS permissions** for live capture: Screen Recording, Accessibility, and Input Monitoring (granted to the launching process — for the app, that's DeskRAGApp in dev, Electron).
 
 ## Install
@@ -152,7 +152,7 @@ const sessionId = await session.start();
 await session.stop();
 
 // --- represent ------------------------------------------------------------
-const embed = new FakeEmbeddingProvider();            // swap for Voyage / Gemini / Ollama
+const embed = new FakeEmbeddingProvider();            // swap for OllamaTextEmbedding / OnnxTextEmbedding
 await new Segmenter(store).segment(sessionId);
 await new Representer(store, { digestEmbedder: embed, behavior: new BehaviorFeatureExtractor() }).represent(sessionId);
 await new FrameRepresenter(store, { imageEmbedder: embed, blobStore: blobs }).represent(sessionId);
@@ -172,16 +172,30 @@ The **test suite is the executable documentation** — `test/assemble.test.ts` (
 
 ## Providers
 
-| Role | Local | Remote |
-|---|---|---|
-| Text embedding | Ollama (`nomic-embed-text`) | Voyage (`voyage-3`), Gemini (`gemini-embedding-2`) |
-| Image embedding | — | Voyage (`voyage-multimodal-3`), Gemini (`gemini-embedding-2`) — shared text/image space |
-| Behavioral vector | builtin (`input-dynamics-v1`, 12-dim) | — |
-| Transcription (STT) | whisper.cpp (binary + model on disk) | — |
-| VLM caption | — | Anthropic (`claude-opus-4-8`), Gemini |
-| LLM rerank | — | Anthropic (`claude-opus-4-8`) |
+Every provider runs on this machine. There is no remote option — not a disabled
+one, not a key field left blank. Adapters either talk to a daemon on localhost or
+run the model in-process.
 
-Anthropic has no embeddings endpoint — pair it (captioning/rerank) with a local embedder or Voyage/Gemini for vectors. Every provider has a deterministic **fake** used in tests.
+| Role | Provider | Model |
+|---|---|---|
+| Text embedding | Ollama (daemon) | `nomic-embed-text` |
+| Text embedding | ONNX (in-process) | `nomic-embed-text-v1.5` (int8) |
+| Image, late interaction | ONNX (in-process) | `colSmol-256M-dynamic` — patches *are* the regions, so highlights fall out of the MaxSim argmax |
+| Behavioral vector | builtin | `input-dynamics-v1`, 12-dim |
+| VLM caption | Ollama (daemon) | any vision model you've pulled, e.g. `qwen3-vl:4b` |
+| Transcription (STT) | whisper.cpp (subprocess) | a `ggml-*.bin` on disk |
+| Rerank (Tier 4) | ONNX (in-process) | `jina-reranker-v1-turbo-en` |
+
+Weights are fetched once from HuggingFace at a **pinned commit SHA** and verified
+against a recorded sha256 — a moving `main` would change the model while the
+namespace kept claiming the same one, silently breaking vector comparability.
+Acquisition lives in the app, never the library: `deskrag` on npm fetches nothing
+at install or runtime.
+
+`ImageEmbeddingProvider` (single-vector `frame_image` + `region_image` → Tier-3
+region ANN and AX-label FTS) is a live seam with a deterministic fake behind it;
+every provider has one, which is what keeps the test suite offline and
+deterministic.
 
 ## Development
 

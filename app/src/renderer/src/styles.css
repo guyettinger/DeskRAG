@@ -845,15 +845,6 @@ input.mono {
 select {
   cursor: pointer;
 }
-.key-state {
-  font-size: 11px;
-  font-family: var(--font-mono);
-  color: var(--ok);
-  margin-left: 8px;
-}
-.key-state.unset {
-  color: var(--muted-dim);
-}
 .inline {
   display: flex;
   gap: 8px;

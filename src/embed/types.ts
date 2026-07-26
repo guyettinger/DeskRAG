@@ -42,7 +42,7 @@ export const MULTIVECTOR_VIEWS: ReadonlySet<View> = new Set<View>([
 ]);
 
 /**
- * Asymmetric embedding role. nomic-embed-v1.5 requires `search_document: ` on
+ * Asymmetric embedding role. nomic-embed-text-v1.5 requires `search_document: ` on
  * stored text and `search_query: ` on queries; omitting them raises no error and
  * silently degrades retrieval. Providers that do not care ignore this.
  */
@@ -56,9 +56,9 @@ export interface EmbedOptions {
  * feature extractor (which is not a network provider but still owns a namespace).
  */
 export interface NamespacedProvider {
-  /** Provider id, e.g. "gemini", "voyage", "ollama", "builtin". */
+  /** Provider id, e.g. "onnx", "ollama", "builtin". */
   readonly id: string;
-  /** Model id, e.g. "gemini-embedding-2", "voyage-3", "nomic-embed-text". */
+  /** Model id, e.g. "nomic-embed-text-v1.5", "colSmol-256M-dynamic". */
   readonly model: string;
   /** Output dimensionality; part of the namespace (a truncated model differs). */
   readonly dimensions: number;
@@ -70,9 +70,10 @@ export interface EmbeddingProvider extends NamespacedProvider {
 
 export interface ImageEmbeddingProvider extends NamespacedProvider {
   /**
-   * True for nomic-vision / voyage-multimodal / jina / gemini-embedding-2: text
-   * queries can hit image vectors directly because text and image share one
-   * embedding space.
+   * True when text and image land in ONE embedding space, so a text query could
+   * hit image vectors directly — as with nomic-embed-vision-v1.5, whose tower
+   * shares a space with nomic-embed-text-v1.5. Recorded as vector-space metadata
+   * on the Lance table; Tier 2/3 themselves only ever call `embedImages`.
    */
   readonly sharedTextSpace: boolean;
   embedImages(images: Uint8Array[]): Promise<Float32Array[]>;
@@ -159,7 +160,7 @@ export interface RegionProposer {
 /**
  * The single source of truth for namespace strings.
  *
- *   namespaceFor("caption", geminiProvider) === "caption:gemini:gemini-embedding-2:3072"
+ *   namespaceFor("digest", onnxTextProvider) === "digest:onnx:nomic-embed-text-v1.5:768"
  *
  * Colons are the separator, so provider ids / models must not contain them. We
  * validate that here rather than silently producing a corrupt namespace.

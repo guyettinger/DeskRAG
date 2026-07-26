@@ -4,19 +4,21 @@
 
 <h1 align="center">DeskRAGApp</h1>
 
-A simple Electron desktop app over the [DeskRAG](../README.md) library: configure
-providers, grant macOS permissions, toggle capture signals, record an experience,
-then search your sessions as a contact sheet of keyframes and drill into any hit.
+A simple Electron desktop app over the [DeskRAG](../README.md) library: pick your
+local models, grant macOS permissions, toggle capture signals, record an
+experience, then search your sessions as a contact sheet of keyframes and drill
+into any hit.
 
 - **electron-vite + React + TypeScript.** `src/main` owns the library (store,
   capture, pipeline, providers); `src/preload` is a typed contextBridge; `src/renderer`
   is the UI. The renderer never touches Node or native code.
-- **Local-first.** Text + behavioral search and keyframe thumbnails work offline
-  with Ollama. Image-example search + region highlights need a Voyage/Gemini key.
+- **Fully local.** Every model runs on this machine — an Ollama daemon on
+  localhost, or ONNX in-process. There is no cloud provider and no API key
+  anywhere in the app, so nothing you record can leave the device.
 - **Auto-index after Stop.** Stopping a recording runs segment → represent
   (digest/behavior always; frame/caption/region and transcript when configured).
-- **Keys** are stored encrypted in the OS keychain (`safeStorage`), never sent to
-  the renderer in plaintext.
+- **Weights download once**, verified against a pinned sha256, into
+  `<userData>/DeskRAG/models/` — then everything works offline.
 - **Keyframes stream over a `deskrag://frame/<blobId>` protocol** rather than being
   marshalled through IPC as base64.
 
@@ -25,8 +27,8 @@ then search your sessions as a contact sheet of keyframes and drill into any hit
 | Screen | What's there |
 | --- | --- |
 | **Record** | Signal switchboard (screen · input · active window · microphone · accessibility tree) with a status LED each, inline notes for a missing permission (Grant / Open Settings) or a missing tool (`ffmpeg`, `ax-dump`), elapsed timecode, and stage-by-stage indexing progress after Stop. |
-| **Search** | Text query, or an image file as a visual example (needs an image provider). Hits render as a contact sheet of keyframes — timecode, wall-clock, segment digest, score, highlight count — and open into a detail view with the full keyframe, region highlight boxes, the captured AX elements, and the segment's digest / caption / transcript. |
-| **Settings** | Embeddings (Ollama host + model, image provider, caption provider, Tier-4 rerank), API keys, local Whisper binary + model, and capture defaults (frame rate, keyframe max width, audio device, chunk seconds). |
+| **Search** | Text query, or an image file as a visual example (needs an image model). Hits render as a contact sheet of keyframes — timecode, wall-clock, segment digest, score, highlight count — and open into a detail view with the full keyframe, region highlight boxes, the captured AX elements, and the segment's digest / caption / transcript. |
+| **Settings** | Four groups: **Models** (text embeddings, image model, captions, Tier-4 rerank, model directory), **Ollama** (host, embedding model, caption model), **Transcription** (whisper.cpp binary + model), and **Capture defaults** (frame rate, keyframe max width, audio device, chunk seconds). Choosing the image model warns if your keyframe width is under 2048, where its preprocessor upscales and match quality degrades with no visible error. |
 
 Closing the window hides the app to a menu-bar tray — **recording keeps running**,
 and the tray menu can start/stop it. Only Quit closes the store.
@@ -98,6 +100,7 @@ app from the Record screen.
 
 Everything lives under `<userData>/DeskRAG/` — in dev that's
 `~/Library/Application Support/deskrag-app/DeskRAG/`: `app.db` (SQLite),
-`lance/` (vectors), `blobs/` (keyframes + audio), `settings.json`, `keys.enc`,
-`sessions.json`. (`<userData>` follows Electron's app name, so a packaged build
-with a `productName` set will use a different parent directory.)
+`lance/` (vectors), `blobs/` (keyframes + audio), `models/` (downloaded weights),
+and `settings.json`. There are no secrets to store. (`<userData>` follows
+Electron's app name, so a packaged build with a `productName` set will use a
+different parent directory.)

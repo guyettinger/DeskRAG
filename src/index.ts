@@ -2,8 +2,6 @@
 export * from "./embed/types.js";
 export { FakeEmbeddingProvider, FakeMultiVectorProvider } from "./embed/fake.js";
 export { OllamaTextEmbedding } from "./embed/ollama.js";
-export { VoyageTextEmbedding, VoyageImageEmbedding } from "./embed/voyage.js";
-export { GeminiEmbedding } from "./embed/gemini.js";
 
 // store/ — the dual-store seam
 export * from "./store/types.js";
@@ -128,8 +126,6 @@ export {
   type CaptionRepresentResult,
 } from "./represent/caption/caption-representer.js";
 export { FakeCaptionProvider } from "./represent/caption/fake.js";
-export { AnthropicCaptionProvider, type AnthropicCaptionOptions } from "./represent/caption/anthropic.js";
-export { GeminiCaptionProvider, type GeminiCaptionOptions } from "./represent/caption/gemini.js";
 // Local VLM captioner. Barrel-safe (plain fetch); `listVisionModels` is what the
 // app's model picker must use — see its doc comment for why a hardcoded list is
 // unsafe now that Ollama's library includes cloud-hosted models.
@@ -167,10 +163,10 @@ export {
 export { Tier3Retriever, type Tier3Options } from "./retrieve/tier3.js";
 export { Retriever, type RetrieverOptions } from "./retrieve/assemble.js";
 export { TextViewSearcher, BehaviorViewSearcher } from "./retrieve/searchers.js";
-// Tier-4 rerank
+// Tier-4 rerank. The real reranker is a local ONNX cross-encoder and therefore
+// NOT here — import it from "./retrieve/rerank/onnx.js".
 export type { Reranker, RerankCandidate } from "./retrieve/rerank/types.js";
 export { FakeReranker } from "./retrieve/rerank/fake.js";
-export { LLMReranker, type LLMRerankerOptions } from "./retrieve/rerank/llm.js";
 export type {
   Query,
   ViewSearcher,
