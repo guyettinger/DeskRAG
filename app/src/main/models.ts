@@ -19,7 +19,7 @@
  */
 
 export interface ModelFile {
-  /** Path within the repo (download) or basename on disk (local). */
+  /** Path within the repo; the basename is what lands on disk. */
   path: string;
   sha256?: string;
   bytes?: number;
@@ -27,14 +27,12 @@ export interface ModelFile {
 
 export interface ModelSpec {
   id: string;
-  source: "download" | "local";
+  source: "download";
   /** HuggingFace repo id. Download entries only. */
   repo?: string;
   /** Commit SHA — never "main". Download entries only. */
   revision?: string;
   files: ModelFile[];
-  /** Shown when a local-source model is absent. */
-  setupHint?: string;
 }
 
 export const MODELS = {

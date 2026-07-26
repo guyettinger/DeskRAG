@@ -10,9 +10,8 @@
  * unverified file: wrong weights produce vectors that are silently wrong while
  * sitting in a table claiming otherwise.
  *
- * Locally-produced models (ColSmol) are not downloaded at all — see models.ts.
- * They are checked for presence and, when absent, reported with the exact setup
- * command rather than a bare ENOENT.
+ * Every model is downloaded. The `overrideDir` escape hatch reads from a
+ * hand-curated directory instead, verifying only that the files are present.
  */
 
 import { createHash } from "node:crypto";
@@ -47,18 +46,23 @@ export interface ModelStoreOptions {
   progressIntervalBytes?: number;
 }
 
-/** Thrown when a locally-produced model has not been built yet. */
-export class ModelNotBuiltError extends Error {
+/**
+ * Thrown when `overrideDir` points at a directory missing files. That path
+ * skips downloading and verification by design, so this is the only chance to
+ * report the gap before onnxruntime fails on a nonexistent path.
+ */
+export class ModelFilesMissingError extends Error {
   constructor(
     readonly modelId: string,
     readonly missing: string[],
-    hint: string,
     dir: string,
   ) {
     super(
-      `Model "${modelId}" is not built. Missing in ${dir}: ${missing.join(", ")}\n\n${hint}`,
+      `Model "${modelId}" is incomplete in ${dir} — missing: ${missing.join(", ")}. ` +
+        `This directory comes from the "Model directory" setting, which disables ` +
+        `managed downloads. Add the missing files or clear that setting.`,
     );
-    this.name = "ModelNotBuiltError";
+    this.name = "ModelFilesMissingError";
   }
 }
 
@@ -108,22 +112,15 @@ export class ModelStore {
   private async ensureOnce(spec: ModelSpec): Promise<string> {
     const target = this.dirFor(spec);
 
-    if (spec.source === "local") {
+    if (this.overrideDir) {
+      // Hand-curated: trusted, so no download and no checksum. But an
+      // incomplete directory must fail here, with names.
       const missing = spec.files
         .map((f) => basename(f.path))
         .filter((name) => !existsSync(join(target, name)));
-      if (missing.length > 0) {
-        throw new ModelNotBuiltError(
-          spec.id,
-          missing,
-          spec.setupHint ?? "See scripts/ for the build step.",
-          target,
-        );
-      }
+      if (missing.length > 0) throw new ModelFilesMissingError(spec.id, missing, target);
       return target;
     }
-
-    if (this.overrideDir) return target; // curated by hand; trust it
 
     mkdirSync(target, { recursive: true });
     const total = spec.files.reduce((n, f) => n + (f.bytes ?? 0), 0);
@@ -155,10 +152,18 @@ export class ModelStore {
         // updated as bytes pass, so verification costs no second read.
         const hash = createHash("sha256");
         const out = createWriteStream(partial);
+        // createWriteStream opens the fd asynchronously, so an open failure
+        // can arrive long after the read loop has already thrown — and
+        // destroy() attaches no listener of its own. An unhandled 'error'
+        // event would take the whole Electron main process down, so hold one
+        // listener for the stream's entire life and consume it below.
+        let streamErr: Error | undefined;
+        out.on("error", (e: Error) => (streamErr ??= e));
         let fileBytes = 0;
         let emitted = 0;
         try {
           for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+            if (streamErr) throw streamErr; // don't pour a GB into a dead stream
             const buf = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
             hash.update(buf);
             fileBytes += buf.length;
@@ -174,6 +179,10 @@ export class ModelStore {
             }
           }
           await new Promise<void>((resolve, reject) => {
+            if (streamErr) {
+              reject(streamErr);
+              return;
+            }
             out.once("error", reject);
             out.end(resolve);
           });

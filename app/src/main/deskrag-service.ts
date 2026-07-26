@@ -52,11 +52,7 @@ import {
 import type { SettingsStore } from "./settings.js";
 import { MODELS } from "./models.js";
 import { libUrl } from "./lib-resolve.js";
-import {
-  ModelNotBuiltError,
-  ModelStore,
-  type ModelDownloadProgress,
-} from "./model-store.js";
+import { ModelStore, type ModelDownloadProgress } from "./model-store.js";
 import { OnnxHost } from "./onnx-host.js";
 import { spawnOnnxWorker } from "./onnx-spawn.js";
 import type {
@@ -417,17 +413,7 @@ export class DeskRagService {
       await this.index(sessionId);
     } catch (err) {
       console.error("[deskrag] indexing failed:", err);
-      // A model that was never built is a setup problem with a known fix, not a
-      // crash — surface the instruction instead of leaving the user with a
-      // progress bar that silently stopped.
-      this.emitIndexing({
-        stage:
-          err instanceof ModelNotBuiltError
-            ? `Setup needed — ${err.message.split("\n")[0]}`
-            : "Indexing failed — see logs",
-        done: 0,
-        total: 0,
-      });
+      this.emitIndexing({ stage: "Indexing failed — see logs", done: 0, total: 0 });
     }
     this.state = { state: "idle", activeSignals: [] };
     this.emitState();

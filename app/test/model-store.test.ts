@@ -11,7 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ModelNotBuiltError, ModelStore } from "../src/main/model-store.js";
+import { ModelFilesMissingError, ModelStore } from "../src/main/model-store.js";
 import type { ModelSpec } from "../src/main/models.js";
 
 const BODY = Buffer.from("weights-bytes");
@@ -174,40 +174,47 @@ describe("ModelStore — download source", () => {
     expect(existsSync(join(dir, "test-model", "model.onnx.partial"))).toBe(false);
     expect(existsSync(join(dir, "test-model", "model.onnx"))).toBe(false);
   });
-});
 
-describe("ModelStore — local source", () => {
-  const localSpec: ModelSpec = {
-    id: "colSmol-256M-dynamic",
-    source: "local",
-    files: [{ path: "model.onnx" }, { path: "tokenizer.json" }],
-    setupHint: "run scripts/export-colsmol.py",
-  };
-
-  it("throws an actionable error naming the missing files and the command", async () => {
-    const store = new ModelStore(dir, { baseUrl: base });
-    const err = await store.ensure(localSpec).catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(ModelNotBuiltError);
-    const e = err as ModelNotBuiltError;
-    expect(e.missing).toEqual(["model.onnx", "tokenizer.json"]);
-    expect(e.message).toContain("export-colsmol.py");
-    expect(served).toBe(0); // never tries to download a locally-built model
+  it("does not leak an unhandled stream error when the write target vanishes", async () => {
+    const seen: unknown[] = [];
+    const onUncaught = (e: unknown) => seen.push(e);
+    process.on("uncaughtException", onUncaught);
+    try {
+      const store = new ModelStore(dir, {
+        baseUrl: base,
+        fetchImpl: (async () => {
+          // ensureOnce has already mkdir'd the target. Removing it here makes
+          // createWriteStream's deferred open fail with ENOENT *after* the
+          // body has errored — the ordering that leaves destroy() holding an
+          // error nobody listens for.
+          rmSync(join(dir, "test-model"), { recursive: true, force: true });
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(c) {
+                c.error(new Error("boom"));
+              },
+            }),
+            { status: 200 },
+          );
+        }) as unknown as typeof fetch,
+      });
+      await expect(store.ensure(spec())).rejects.toThrow(/boom/);
+      await new Promise((r) => setTimeout(r, 150)); // let the deferred open land
+      expect(seen).toEqual([]);
+    } finally {
+      process.off("uncaughtException", onUncaught);
+    }
   });
 
-  it("lists only the files that are actually absent", async () => {
-    mkdirSync(join(dir, "colSmol-256M-dynamic"), { recursive: true });
-    writeFileSync(join(dir, "colSmol-256M-dynamic", "model.onnx"), "x");
-    const store = new ModelStore(dir, { baseUrl: base });
-    const err = (await store.ensure(localSpec).catch((e: unknown) => e)) as ModelNotBuiltError;
-    expect(err.missing).toEqual(["tokenizer.json"]);
-  });
-
-  it("returns the directory once every file is present", async () => {
-    const d = join(dir, "colSmol-256M-dynamic");
-    mkdirSync(d, { recursive: true });
-    writeFileSync(join(d, "model.onnx"), "x");
-    writeFileSync(join(d, "tokenizer.json"), "{}");
-    const store = new ModelStore(dir, { baseUrl: base });
-    expect(await store.ensure(localSpec)).toBe(d);
+  it("throws with the missing names when overrideDir is incomplete", async () => {
+    const over = mkdtempSync(join(tmpdir(), "over-"));
+    mkdirSync(join(over, "test-model"), { recursive: true }); // dir exists, file does not
+    const store = new ModelStore(dir, { baseUrl: base, overrideDir: over });
+    const err = await store.ensure(spec()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ModelFilesMissingError);
+    expect((err as ModelFilesMissingError).missing).toEqual(["model.onnx"]);
+    expect((err as ModelFilesMissingError).modelId).toBe("test-model");
+    expect(served).toBe(0); // an override never downloads
+    rmSync(over, { recursive: true, force: true });
   });
 });
