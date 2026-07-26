@@ -17,6 +17,10 @@ import type { ModelSpec } from "../src/main/models.js";
 const BODY = Buffer.from("weights-bytes");
 const SHA = createHash("sha256").update(BODY).digest("hex");
 
+// 512KB served in 64KB chunks — enough to observe streaming progress.
+const BIG = Buffer.alloc(512 * 1024, 7);
+const BIG_SHA = createHash("sha256").update(BIG).digest("hex");
+
 let server: Server;
 let base: string;
 let dir: string;
@@ -29,6 +33,14 @@ beforeEach(async () => {
     served++;
     if (req.url?.includes("missing")) {
       res.writeHead(404).end("nope");
+      return;
+    }
+    if (req.url?.includes("big")) {
+      res.writeHead(200, { "content-length": String(BIG.length) });
+      for (let i = 0; i < BIG.length; i += 64 * 1024) {
+        res.write(BIG.subarray(i, i + 64 * 1024));
+      }
+      res.end();
       return;
     }
     res.writeHead(200, { "content-length": String(BODY.length) }).end(BODY);
@@ -47,6 +59,14 @@ const spec = (sha = SHA, path = "onnx/model.onnx"): ModelSpec => ({
   repo: "org/repo",
   revision: "abc123",
   files: [{ path, sha256: sha, bytes: BODY.length }],
+});
+
+const bigSpec = (): ModelSpec => ({
+  id: "test-model",
+  source: "download",
+  repo: "org/repo",
+  revision: "abc123",
+  files: [{ path: "big.onnx", sha256: BIG_SHA, bytes: BIG.length }],
 });
 
 describe("ModelStore — download source", () => {
@@ -117,6 +137,42 @@ describe("ModelStore — download source", () => {
     await store.ensure(spec());
     expect(urls[0]).toContain("/org/repo/resolve/abc123/onnx/model.onnx");
     expect(urls[0]).not.toContain("/main/");
+  });
+
+  it("streams to disk with incremental progress, not one jump to 100%", async () => {
+    const events: number[] = [];
+    const store = new ModelStore(dir, {
+      baseUrl: base,
+      progressIntervalBytes: 1, // emit on every chunk
+      onProgress: (p) => events.push(p.receivedBytes),
+    });
+    await store.ensure(bigSpec());
+
+    expect(readFileSync(join(dir, "test-model", "big.onnx")).length).toBe(BIG.length);
+    // Real intermediate readings, not just 0 and total.
+    const mid = events.filter((n) => n > 0 && n < BIG.length);
+    expect(mid.length).toBeGreaterThan(0);
+    // Progress never goes backwards.
+    expect(events).toEqual([...events].sort((a, b) => a - b));
+  });
+
+  it("leaves no .partial when the stream fails mid-download", async () => {
+    const store = new ModelStore(dir, {
+      baseUrl: base,
+      fetchImpl: (async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(c) {
+              c.enqueue(new Uint8Array([1, 2, 3]));
+              c.error(new Error("boom"));
+            },
+          }),
+          { status: 200 },
+        )) as unknown as typeof fetch,
+    });
+    await expect(store.ensure(spec())).rejects.toThrow(/boom/);
+    expect(existsSync(join(dir, "test-model", "model.onnx.partial"))).toBe(false);
+    expect(existsSync(join(dir, "test-model", "model.onnx"))).toBe(false);
   });
 });
 

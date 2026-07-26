@@ -1,9 +1,10 @@
 /**
  * Downloads and verifies model weights into <userData>/DeskRAG/models/<id>/.
  *
- * Streams to <file>.partial, verifies SHA-256, then renames atomically — a
- * partial file never looks complete, so an interrupted download cannot poison a
- * namespace. Same discipline as reserveBlob/commitBlob in the library.
+ * Streams to <file>.partial while hashing incrementally, verifies SHA-256, then
+ * renames atomically — a partial file never looks complete, so an interrupted
+ * download cannot poison a namespace. Nothing is buffered whole: the largest
+ * model is ~950MB and this runs in the Electron main process.
  *
  * On checksum mismatch it DELETES and THROWS. There is no fallback to an
  * unverified file: wrong weights produce vectors that are silently wrong while
@@ -15,7 +16,14 @@
  */
 
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { once } from "node:events";
+import {
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  renameSync,
+  rmSync,
+} from "node:fs";
 import { basename, join } from "node:path";
 import type { ModelSpec } from "./models.js";
 
@@ -32,6 +40,11 @@ export interface ModelStoreOptions {
   baseUrl?: string;
   fetchImpl?: typeof globalThis.fetch;
   onProgress?: (p: ModelDownloadProgress) => void;
+  /**
+   * Emit a progress event at most this often, in bytes downloaded. A 954MB
+   * model at chunk granularity would be ~15k IPC messages; tests set 1.
+   */
+  progressIntervalBytes?: number;
 }
 
 /** Thrown when a locally-produced model has not been built yet. */
@@ -54,6 +67,7 @@ export class ModelStore {
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof globalThis.fetch;
   private readonly onProgress: ((p: ModelDownloadProgress) => void) | undefined;
+  private readonly progressIntervalBytes: number;
   private readonly inflight = new Map<string, Promise<string>>();
 
   constructor(
@@ -65,6 +79,7 @@ export class ModelStore {
     this.baseUrl = opts.baseUrl ?? "https://huggingface.co";
     this.fetchImpl = opts.fetchImpl ?? globalThis.fetch;
     this.onProgress = opts.onProgress;
+    this.progressIntervalBytes = opts.progressIntervalBytes ?? 4 * 1024 * 1024;
   }
 
   /** Directory that will hold a spec's files, download or not. */
@@ -133,11 +148,42 @@ export class ModelStore {
       try {
         const res = await this.fetchImpl(url);
         if (!res.ok) throw new Error(`download failed: ${res.status} ${url}`);
-        const bytes = Buffer.from(await res.arrayBuffer());
-        writeFileSync(partial, bytes);
+        if (!res.body) throw new Error(`download failed: empty body ${url}`);
+
+        // Stream rather than buffer: model.onnx is ~950MB and arrayBuffer()
+        // would hold all of it in the main process at once. The hash is
+        // updated as bytes pass, so verification costs no second read.
+        const hash = createHash("sha256");
+        const out = createWriteStream(partial);
+        let fileBytes = 0;
+        let emitted = 0;
+        try {
+          for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+            const buf = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+            hash.update(buf);
+            fileBytes += buf.length;
+            if (!out.write(buf)) await once(out, "drain"); // backpressure
+            if (fileBytes - emitted >= this.progressIntervalBytes) {
+              emitted = fileBytes;
+              this.onProgress?.({
+                modelId: spec.id,
+                receivedBytes: received + fileBytes,
+                totalBytes: total,
+                done: false,
+              });
+            }
+          }
+          await new Promise<void>((resolve, reject) => {
+            out.once("error", reject);
+            out.end(resolve);
+          });
+        } catch (err) {
+          out.destroy();
+          throw err;
+        }
 
         if (file.sha256) {
-          const actual = createHash("sha256").update(bytes).digest("hex");
+          const actual = hash.digest("hex");
           if (actual !== file.sha256) {
             rmSync(partial, { force: true });
             throw new Error(
@@ -146,7 +192,7 @@ export class ModelStore {
           }
         }
         renameSync(partial, dest); // atomic: only now does it look complete
-        received += bytes.length;
+        received += fileBytes;
         this.onProgress?.({
           modelId: spec.id,
           receivedBytes: received,
