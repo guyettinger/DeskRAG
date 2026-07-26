@@ -7,19 +7,34 @@ describe("SESSION_OPTIONS", () => {
   it("disables the CPU memory arena", () => {
     // NOT stylistic. MEASURED with real ColSmol weights at 13 tiles, running
     // under the Electron binary's allocator:
-    //   arena on  -> SIGTRAP (V8 fatal error), peak ~5GB
-    //   arena off -> completes, peak ~1.33GB
-    // ORT's BFCArena requests a single ~2GiB block. Chromium's PartitionAlloc,
-    // which the Electron binary uses for `operator new`, refuses it and aborts
-    // the process. Plain Node's malloc allows it — which is exactly why this
-    // suite passes either way and only the packaged app crashes. Removing this
-    // line reintroduces that crash silently.
+    //   arena on  -> SIGTRAP in BFCArena::Extend, on the first run
+    //   arena off -> completes
+    // ORT's BFCArena requests a single ~2GiB block. Chromium's allocator, which
+    // the Electron binary uses for `operator new`, refuses it and crashes the
+    // process deliberately. Plain Node's malloc allows it — which is exactly
+    // why this suite passes either way and only the packaged app crashes.
+    // Removing this line reintroduces that crash silently.
     expect(SESSION_OPTIONS.enableCpuMemArena).toBe(false);
   });
 
+  it("disables the memory-pattern planner", () => {
+    // The arena's SIBLING, and a separate crash: the pattern planner records
+    // the activation layout on run #1 and from run #2 onward pre-allocates one
+    // fused block for the whole graph in ExecutionFrame's constructor, which
+    // Chromium's allocator also refuses (EXC_BREAKPOINT; utilityProcess reports
+    // `exit code=5`). MEASURED in an Electron utility process, real weights,
+    // a real 2560x1440 keyframe:
+    //   pattern on,  1 run  -> OK          <- why this went unnoticed
+    //   pattern on,  2 runs -> run 2 kills the worker
+    //   pattern off, 3 runs -> OK, RSS flat at 1.30GB, no throughput cost
+    // Note the run-#2 shape: NO single-image test, here or under bare node,
+    // can fail when this regresses. Only a repeated real run catches it.
+    expect(SESSION_OPTIONS.enableMemPattern).toBe(false);
+  });
+
   it("keeps full graph optimization", () => {
-    // The arena is the memory problem; optimization is not. Disabling it would
-    // cost speed and fix nothing — verified: mem-pattern alone still SIGTRAPs.
+    // The two allocator flags above are the memory problem; optimization is
+    // not. Disabling it would cost speed and fix neither crash.
     expect(SESSION_OPTIONS.graphOptimizationLevel).toBe("all");
   });
 });

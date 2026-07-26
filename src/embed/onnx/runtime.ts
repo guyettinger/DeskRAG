@@ -63,22 +63,34 @@ export function makeTensor(
  * Session options, exported so they can be asserted on — see
  * test/onnx.runtime.test.ts.
  *
- * `enableCpuMemArena: false` is load-bearing, not tuning. ORT's BFCArena grows
- * by requesting one huge block (observed: 2GiB for ColSmol at 13 tiles).
- * Chromium's PartitionAlloc — which the Electron binary uses for `operator
- * new`, in the main process AND in a utilityProcess — refuses an allocation
- * that size and aborts with a V8 fatal error. Plain Node's malloc allows it, so
- * `npm test` and any bare-node script pass either way; only the app dies.
+ * BOTH memory flags are load-bearing, not tuning. Each disables a DIFFERENT
+ * single huge allocation, and each one alone still crashes the app:
  *
- * Turning the arena off also drops peak RSS for one ColSmol frame from ~5GB to
- * ~1.33GB, because memory is returned instead of cached. It costs roughly 50%
- * throughput (12.1s -> 18.4s per frame on CPU), which is the right trade for
- * not crashing.
+ *   enableCpuMemArena  ORT's BFCArena grows by requesting one huge block
+ *                      (observed: 2GiB for ColSmol at 13 tiles). Crashes in
+ *                      `BFCArena::Extend`, on the FIRST run.
+ *   enableMemPattern   ORT's pattern planner records the activation layout on
+ *                      the first run and from the SECOND run onward
+ *                      pre-allocates one fused block for the whole graph in
+ *                      `ExecutionFrame`'s constructor. Crashes there, and only
+ *                      ever on run #2 — which is why single-image checks pass.
+ *
+ * Chromium's allocator — which the Electron binary uses for `operator new`, in
+ * the main process AND in a utilityProcess — refuses an allocation that size
+ * and turns the failure into a deliberate crash (EXC_BREAKPOINT/SIGTRAP,
+ * surfaced by utilityProcess as `exit code=5`). Plain Node's malloc allows it,
+ * so `npm test` and any bare-node script pass either way; only the app dies.
+ *
+ * Measured under the Electron binary, real ColSmol weights, a real 2560x1440
+ * keyframe (13 tiles), three consecutive runs: 16.3/16.3/16.5s, RSS flat at
+ * 1.30GB. Disabling the pattern planner costs no measurable throughput; the
+ * arena costs some, and is still the right trade for not crashing.
  */
 export const SESSION_OPTIONS = {
   executionProviders: ["cpu"],
   graphOptimizationLevel: "all",
   enableCpuMemArena: false,
+  enableMemPattern: false,
 } as const;
 
 const cache = new Map<string, Promise<OnnxSession>>();
