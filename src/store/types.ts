@@ -136,6 +136,15 @@ export interface FrameVectorInsert {
 
 // --- registry -----------------------------------------------------------------
 
+/** A frame's late-interaction patch set. Many vectors, one row. */
+export interface FramePatchInsert {
+  frameId: string;
+  sessionId: string;
+  segmentIds: string[];
+  namespace: string;
+  patches: Float32Array[];
+}
+
 export interface VectorSpaceInsert {
   namespace: string;
   view: View;
@@ -297,6 +306,8 @@ export interface Store {
   // then the frame_image vector (Lance) with segment_ids denormalized.
   associateFrameSegments(frameId: string, segmentIds: string[]): Promise<void>;
   putFrameVectors(rows: FrameVectorInsert[]): Promise<void>;
+  /** Late-interaction patch sets (frame_patches view). Replaces any existing row. */
+  putFramePatches(rows: FramePatchInsert[]): Promise<void>;
 
   // accessibility-tree snapshot for a keyframe (captured live; read at represent time)
   putFrameAx(frameId: string, elements: UIElement[]): Promise<void>;
@@ -329,6 +340,15 @@ export interface Store {
     k: number,
     scope?: FrameScope,
   ): Promise<SearchHit[]>;
+  /** MaxSim search over a frame_patches space; `query` is one vector per token. */
+  searchFramePatches(
+    namespace: string,
+    query: Float32Array[],
+    k: number,
+    scope?: FrameScope,
+  ): Promise<SearchHit[]>;
+  /** A frame's stored patch set, for highlights without re-running the model. */
+  getFramePatches(namespace: string, frameId: string): Promise<Float32Array[] | null>;
   searchRegions(
     namespace: string,
     vector: Float32Array,

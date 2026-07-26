@@ -19,7 +19,8 @@ export type View =
   | "transcript" // STT text (mic + desktop audio)
   | "behavior" // numeric input-dynamics feature vector
   | "frame_image" // whole-frame image embedding
-  | "region_image"; // region-crop image embedding (the PixelRAG part)
+  | "region_image" // region-crop image embedding (the PixelRAG part)
+  | "frame_patches"; // multi-vector late-interaction frame patches
 
 export const VIEWS: readonly View[] = [
   "caption",
@@ -28,7 +29,26 @@ export const VIEWS: readonly View[] = [
   "behavior",
   "frame_image",
   "region_image",
+  "frame_patches",
 ] as const;
+
+/**
+ * Views whose Lance table holds MANY vectors per row (late interaction), not one.
+ * The store consults this instead of widening `parseNamespace`, which keeps its
+ * four-part shape.
+ */
+export const MULTIVECTOR_VIEWS: ReadonlySet<View> = new Set<View>([
+  "frame_patches",
+]);
+
+/**
+ * Asymmetric embedding role. nomic-embed-v1.5 requires `search_document: ` on
+ * stored text and `search_query: ` on queries; omitting them raises no error and
+ * silently degrades retrieval. Providers that do not care ignore this.
+ */
+export interface EmbedOptions {
+  role?: "document" | "query";
+}
 
 /**
  * Minimal shape needed to derive a namespace. Both {@link EmbeddingProvider} and
@@ -45,7 +65,7 @@ export interface NamespacedProvider {
 }
 
 export interface EmbeddingProvider extends NamespacedProvider {
-  embed(inputs: string[]): Promise<Float32Array[]>;
+  embed(inputs: string[], opts?: EmbedOptions): Promise<Float32Array[]>;
 }
 
 export interface ImageEmbeddingProvider extends NamespacedProvider {
@@ -56,6 +76,19 @@ export interface ImageEmbeddingProvider extends NamespacedProvider {
    */
   readonly sharedTextSpace: boolean;
   embedImages(images: Uint8Array[]): Promise<Float32Array[]>;
+}
+
+/**
+ * Late-interaction provider: one model embeds both images and queries into the
+ * same space, emitting MANY vectors each. `dimensions` is the PER-VECTOR width
+ * (e.g. 128), not the total, so `namespaceFor` stays meaningful.
+ */
+export interface MultiVectorProvider extends NamespacedProvider {
+  readonly multiVector: true;
+  /** Per image: N vectors of `dimensions` each. */
+  embedImages(images: Uint8Array[]): Promise<Float32Array[][]>;
+  /** Per query: M vectors of `dimensions` each. */
+  embedQueries(texts: string[]): Promise<Float32Array[][]>;
 }
 
 export interface CaptionProvider {

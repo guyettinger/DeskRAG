@@ -21,7 +21,10 @@ export class TextViewSearcher implements ViewSearcher {
 
   async queryVector(q: Query): Promise<Float32Array | null> {
     if (q.text === undefined || q.text.length === 0) return null;
-    const [vec] = await this.embedder.embed([q.text]);
+    // Asymmetric embedding: documents were embedded with role "document", so a
+    // query must say so or it lands in a different region of the same space —
+    // no error, just quietly worse retrieval.
+    const [vec] = await this.embedder.embed([q.text], { role: "query" });
     return vec ?? null;
   }
 }

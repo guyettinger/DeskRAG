@@ -25,9 +25,12 @@ const DEFAULTS: PersistedSettings = {
   providers: {
     ollamaHost: "http://localhost:11434",
     ollamaModel: "nomic-embed-text",
+    ollamaCaptionModel: "qwen3-vl:4b",
+    textProvider: "ollama",
     imageProvider: "none",
     captionProvider: "none",
-    rerank: false,
+    rerankProvider: "none",
+    localModels: { dir: "" },
     whisper: { binaryPath: "whisper-cli", modelPath: "" },
   },
   signals: {
@@ -58,9 +61,30 @@ export class SettingsStore {
   private load(): PersistedSettings {
     if (!existsSync(this.settingsPath)) return structuredClone(DEFAULTS);
     try {
-      const raw = JSON.parse(readFileSync(this.settingsPath, "utf8")) as Partial<PersistedSettings>;
+      const raw = JSON.parse(readFileSync(this.settingsPath, "utf8")) as Partial<PersistedSettings> & {
+        providers?: Partial<PersistedSettings["providers"]> & { rerank?: boolean };
+      };
+
+      // Legacy `rerank: boolean` -> `rerankProvider`. A plain spread would leave
+      // the stale key sitting inert and silently disable a user's reranking.
+      const legacy = raw.providers?.rerank;
+      const rerankProvider =
+        raw.providers?.rerankProvider ??
+        (legacy === true
+          ? "anthropic"
+          : legacy === false
+            ? "none"
+            : DEFAULTS.providers.rerankProvider);
+      const { rerank: _dropped, ...persistedProviders } = raw.providers ?? {};
+
       return {
-        providers: { ...DEFAULTS.providers, ...raw.providers, whisper: { ...DEFAULTS.providers.whisper, ...raw.providers?.whisper } },
+        providers: {
+          ...DEFAULTS.providers,
+          ...persistedProviders,
+          rerankProvider,
+          whisper: { ...DEFAULTS.providers.whisper, ...raw.providers?.whisper },
+          localModels: { ...DEFAULTS.providers.localModels, ...raw.providers?.localModels },
+        },
         signals: {
           screen: { ...DEFAULTS.signals.screen, ...raw.signals?.screen },
           input: { ...DEFAULTS.signals.input, ...raw.signals?.input },
@@ -118,10 +142,18 @@ export class SettingsStore {
 
   apply(patch: SettingsPatch): SettingsView {
     if (patch.providers) {
-      const { whisper, ...rest } = patch.providers;
+      // Nested objects merge rather than replace, so a partial patch cannot
+      // silently blank a sibling field.
+      const { whisper, localModels, ...rest } = patch.providers;
       this.settings.providers = { ...this.settings.providers, ...rest };
       if (whisper) {
         this.settings.providers.whisper = { ...this.settings.providers.whisper, ...whisper };
+      }
+      if (localModels) {
+        this.settings.providers.localModels = {
+          ...this.settings.providers.localModels,
+          ...localModels,
+        };
       }
     }
     if (patch.signals) {

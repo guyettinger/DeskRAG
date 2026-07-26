@@ -10,6 +10,8 @@ export function SearchScreen(): React.JSX.Element {
   const [results, setResults] = useState<FrameHitDTO[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Prior recordings live in a namespace the current provider cannot read. */
+  const [staleProvider, setStaleProvider] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [caps, setCaps] = useState<Capabilities | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -23,7 +25,9 @@ export function SearchScreen(): React.JSX.Element {
     setLoading(true);
     setError(null);
     try {
-      setResults(await api.search.query({ text: text.trim() }));
+      const r = await api.search.query({ text: text.trim() });
+      setResults(r.frames);
+      setStaleProvider(Boolean(r.indexedUnderDifferentProvider));
     } catch (e) {
       setError(String(e));
     } finally {
@@ -36,7 +40,9 @@ export function SearchScreen(): React.JSX.Element {
     setError(null);
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
-      setResults(await api.search.query({ imageBytes: bytes }));
+      const r = await api.search.query({ imageBytes: bytes });
+      setResults(r.frames);
+      setStaleProvider(Boolean(r.indexedUnderDifferentProvider));
     } catch (e) {
       setError(String(e));
     } finally {
@@ -109,8 +115,24 @@ export function SearchScreen(): React.JSX.Element {
           {results.length === 0 ? (
             <div className="empty">
               <GhostLottie size={104} className="empty__ghost" playing />
-              <h3>No matches</h3>
-              <p>Try different words, or record more sessions first.</p>
+              {staleProvider ? (
+                <>
+                  {/* Not "no matches": vectors exist, but in a namespace this
+                      provider cannot read. Switching providers is deliberate and
+                      has no migration path, so say so rather than imply the
+                      library is empty. */}
+                  <h3>Indexed with a different provider</h3>
+                  <p>
+                    These recordings were indexed by another embedding model. Switch back in
+                    Settings, or record a new session to index with the current one.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <h3>No matches</h3>
+                  <p>Try different words, or record more sessions first.</p>
+                </>
+              )}
             </div>
           ) : (
             <div className="sheet">

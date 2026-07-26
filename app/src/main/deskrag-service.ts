@@ -38,47 +38,73 @@ import {
   Retriever,
   TextViewSearcher,
   BehaviorViewSearcher,
+  FramePatchRepresenter,
+  OllamaCaptionProvider,
   type Producer,
+  type EmbeddingProvider,
   type ImageEmbeddingProvider,
+  type MultiVectorProvider,
   type CaptionProvider as LibCaptionProvider,
   type BlobRow,
+  type Reranker,
   type ViewSearcher,
 } from "deskrag";
 import type { SettingsStore } from "./settings.js";
+import { MODELS } from "./models.js";
+import { libUrl } from "./lib-resolve.js";
+import { ModelStore, type ModelDownloadProgress } from "./model-store.js";
+import { OnnxHost } from "./onnx-host.js";
+import { spawnOnnxWorker } from "./onnx-spawn.js";
 import type {
   Capabilities,
-  FrameHitDTO,
   HighlightDTO,
   IndexingProgress,
   KeyframeMarkerDTO,
+  ProviderSettingsView,
   RecordingStatus,
   ResultDetailDTO,
   SearchInput,
+  SearchResultDTO,
   SessionDetailDTO,
   SessionSummaryDTO,
   SessionVideoDTO,
   SignalKind,
 } from "@shared/types";
 
-/** Placeholder image embedder for when no image provider is configured. Text and
- *  behavioral queries never invoke it; image search is gated off in that case. */
-class NullImageEmbedder implements ImageEmbeddingProvider {
-  readonly id = "none";
-  readonly model = "none";
-  readonly dimensions = 1;
-  readonly sharedTextSpace = false;
-  async embedImages(): Promise<Float32Array[]> {
-    throw new Error("no image embedding provider configured");
-  }
+interface Providers {
+  textEmbedder: EmbeddingProvider;
+  behavior: BehaviorFeatureExtractor;
+  /** Single-vector visual path (cloud). Mutually exclusive with patchEmbedder. */
+  imageEmbedder: ImageEmbeddingProvider | null;
+  /** Late-interaction visual path (local). Mutually exclusive with imageEmbedder. */
+  patchEmbedder: MultiVectorProvider | null;
+  captioner: LibCaptionProvider | null;
+  reranker: Reranker | null;
+  transcriber: WhisperCppTranscription;
 }
 
-interface Providers {
-  ollama: OllamaTextEmbedding;
-  behavior: BehaviorFeatureExtractor;
-  imageEmbedder: ImageEmbeddingProvider | null;
-  captioner: LibCaptionProvider | null;
-  reranker: LLMReranker | null;
-  transcriber: WhisperCppTranscription;
+/**
+ * Capabilities as a pure function so it is testable without Electron.
+ *
+ * Semantics are *configured intent*, not live reachability — as before, this
+ * reports "Voyage selected and a key present", never "Voyage responded". Local
+ * providers need no key, so selecting one is enough.
+ */
+export function capabilitiesFor(p: ProviderSettingsView): Capabilities {
+  return {
+    imageSearch:
+      p.imageProvider === "colsmol" ||
+      (p.imageProvider === "voyage" && p.keys.voyage) ||
+      (p.imageProvider === "gemini" && p.keys.gemini),
+    caption:
+      p.captionProvider === "ollama" ||
+      (p.captionProvider === "anthropic" && p.keys.anthropic) ||
+      (p.captionProvider === "gemini" && p.keys.gemini),
+    rerank:
+      p.rerankProvider === "onnx" ||
+      (p.rerankProvider === "anthropic" && p.keys.anthropic),
+    transcript: Boolean(p.whisper.modelPath),
+  };
 }
 
 export class DeskRagService {
@@ -90,8 +116,16 @@ export class DeskRagService {
   private session: CaptureSession | undefined;
   private state: RecordingStatus = { state: "idle", activeSignals: [] };
 
+  private models!: ModelStore;
+  /**
+   * ONNX inference runs OUT OF PROCESS. One ColSmol frame peaks at 3-5GB, which
+   * aborts the main process via V8's OOM handler when it lands next to
+   * Chromium, LanceDB and libvips. See onnx-host.ts.
+   */
+  private onnx!: OnnxHost;
   private stateListeners = new Set<(s: RecordingStatus) => void>();
   private indexingListeners = new Set<(p: IndexingProgress) => void>();
+  private modelListeners = new Set<(p: ModelDownloadProgress) => void>();
   /** Region highlights from the most recent search, for detail() to reuse. */
   private lastHighlights = new Map<string, HighlightDTO[]>();
 
@@ -113,9 +147,19 @@ export class DeskRagService {
       join(this.dir, "lance"),
     );
     this.blobs = new BlobStore(join(this.dir, "blobs"));
+    this.models = new ModelStore(join(this.dir, "models"), {
+      overrideDir: this.settings.view().providers.localModels.dir,
+      onProgress: (p) => {
+        for (const cb of this.modelListeners) cb(p);
+      },
+    });
+    // 60s idle: back-to-back searches reuse a warm worker (a session costs
+    // hundreds of ms to build), but the weights do not sit resident forever.
+    this.onnx = new OnnxHost({ spawn: spawnOnnxWorker, idleMs: 60_000 });
   }
 
   close(): void {
+    this.onnx?.shutdown();
     this.store?.close();
   }
 
@@ -128,6 +172,12 @@ export class DeskRagService {
   onIndexing(cb: (p: IndexingProgress) => void): () => void {
     this.indexingListeners.add(cb);
     return () => this.indexingListeners.delete(cb);
+  }
+  /** Weight downloads can start from search(), not just index(), so this is its
+   *  own channel rather than a stage of IndexingProgress. */
+  onModelDownload(cb: (p: ModelDownloadProgress) => void): () => void {
+    this.modelListeners.add(cb);
+    return () => this.modelListeners.delete(cb);
   }
   private emitState(): void {
     for (const cb of this.stateListeners) cb(this.state);
@@ -142,52 +192,133 @@ export class DeskRagService {
 
   // --- providers ------------------------------------------------------------
 
-  private buildProviders(): Providers {
-    const v = this.settings.view();
-    const p = v.providers;
-    const ollama = new OllamaTextEmbedding({ host: p.ollamaHost, model: p.ollamaModel });
+  /**
+   * Async because the ONNX adapters load native code and therefore arrive via
+   * `await import()`, like loadCropper() already does.
+   *
+   * An EMBEDDER that cannot load throws. It must never silently fall back to a
+   * different embedder: that writes into a different vector space while the user
+   * believes otherwise. Refinements (the reranker) degrade quietly instead.
+   */
+  private async buildProviders(): Promise<Providers> {
+    const p = this.settings.view().providers;
     const behavior = new BehaviorFeatureExtractor();
 
+    // --- text embedder --------------------------------------------------------
+    let textEmbedder: EmbeddingProvider = new OllamaTextEmbedding({
+      host: p.ollamaHost,
+      model: p.ollamaModel,
+    });
+    if (p.textProvider === "onnx") {
+      const mod = await this.loadOnnx<typeof import("deskrag/embed/onnx/text")>(
+        "deskrag/embed/onnx/text",
+      );
+      if (!mod) {
+        throw new Error(
+          "Local text embedding is unavailable: onnxruntime-node failed to load.",
+        );
+      }
+      const dir = await this.models.ensure(MODELS.text);
+      textEmbedder = new mod.OnnxTextEmbedding({
+        modelPath: join(dir, "model_int8.onnx"),
+        tokenizerPath: join(dir, "tokenizer.json"),
+        session: this.onnx.session(join(dir, "model_int8.onnx")),
+      });
+    }
+
+    // --- visual path (exactly one, or neither) --------------------------------
     let imageEmbedder: ImageEmbeddingProvider | null = null;
-    if (p.imageProvider === "voyage" && this.settings.key("voyage")) {
+    let patchEmbedder: MultiVectorProvider | null = null;
+    if (p.imageProvider === "colsmol") {
+      const mod = await this.loadOnnx<typeof import("deskrag/embed/onnx/colsmol")>(
+        "deskrag/embed/onnx/colsmol",
+      );
+      if (!mod) {
+        throw new Error("Local image search is unavailable: onnxruntime-node failed to load.");
+      }
+      const dir = await this.models.ensure(MODELS.colsmol);
+      patchEmbedder = new mod.ColSmolMultiVector({
+        modelPath: join(dir, "model.onnx"),
+        tokenizerPath: join(dir, "tokenizer.json"),
+        session: this.onnx.session(join(dir, "model.onnx")),
+        // Read tiling from the model's own config rather than assuming it.
+        tileConfig: await mod.readTileConfig(
+          join(dir, "preprocessor_config.json"),
+          join(dir, "config.json"),
+        ),
+      });
+    } else if (p.imageProvider === "voyage" && this.settings.key("voyage")) {
       imageEmbedder = new VoyageImageEmbedding({ apiKey: this.settings.key("voyage")! });
     } else if (p.imageProvider === "gemini" && this.settings.key("gemini")) {
       imageEmbedder = new GeminiEmbedding({ apiKey: this.settings.key("gemini")! });
     }
 
+    // --- captioner ------------------------------------------------------------
     let captioner: LibCaptionProvider | null = null;
-    if (p.captionProvider === "anthropic" && this.settings.key("anthropic")) {
+    if (p.captionProvider === "ollama") {
+      captioner = new OllamaCaptionProvider({
+        host: p.ollamaHost,
+        model: p.ollamaCaptionModel,
+      });
+    } else if (p.captionProvider === "anthropic" && this.settings.key("anthropic")) {
       captioner = new AnthropicCaptionProvider({ apiKey: this.settings.key("anthropic")! });
     } else if (p.captionProvider === "gemini" && this.settings.key("gemini")) {
       captioner = new GeminiCaptionProvider({ apiKey: this.settings.key("gemini")! });
     }
 
-    const reranker =
-      p.rerank && this.settings.key("anthropic")
-        ? new LLMReranker({ apiKey: this.settings.key("anthropic")! })
-        : null;
+    // --- reranker (Tier 4 is a refinement: degrade, never throw) --------------
+    let reranker: Reranker | null = null;
+    if (p.rerankProvider === "onnx") {
+      const mod = await this.loadOnnx<typeof import("deskrag/retrieve/rerank/onnx")>(
+        "deskrag/retrieve/rerank/onnx",
+      );
+      if (mod) {
+        try {
+          const dir = await this.models.ensure(MODELS.reranker);
+          reranker = new mod.OnnxCrossEncoderReranker({
+            modelPath: join(dir, "model_int8.onnx"),
+            tokenizerPath: join(dir, "tokenizer.json"),
+            session: this.onnx.session(join(dir, "model_int8.onnx")),
+          });
+        } catch (err) {
+          console.error("[deskrag] local reranker unavailable:", err);
+        }
+      }
+    } else if (p.rerankProvider === "anthropic" && this.settings.key("anthropic")) {
+      reranker = new LLMReranker({ apiKey: this.settings.key("anthropic")! });
+    }
 
     const transcriber = new WhisperCppTranscription({
       binaryPath: p.whisper.binaryPath,
       ...(p.whisper.modelPath ? { modelPath: p.whisper.modelPath } : {}),
     });
 
-    return { ollama, behavior, imageEmbedder, captioner, reranker, transcriber };
+    return {
+      textEmbedder,
+      behavior,
+      imageEmbedder,
+      patchEmbedder,
+      captioner,
+      reranker,
+      transcriber,
+    };
+  }
+
+  /**
+   * Lazy import for modules that load native code. Returns null on failure so the
+   * caller decides: refinements degrade, embedders throw.
+   */
+  private async loadOnnx<T>(path: string): Promise<T | null> {
+    try {
+      return (await import(/* @vite-ignore */ libUrl(path))) as T;
+    } catch (err) {
+      console.error(`[deskrag] ${path} unavailable:`, err);
+      return null;
+    }
   }
 
   capabilities(): Capabilities {
-    const v = this.settings.view();
-    const p = v.providers;
-    return {
-      imageSearch:
-        (p.imageProvider === "voyage" && p.keys.voyage) ||
-        (p.imageProvider === "gemini" && p.keys.gemini),
-      caption:
-        (p.captionProvider === "anthropic" && p.keys.anthropic) ||
-        (p.captionProvider === "gemini" && p.keys.gemini),
-      rerank: p.rerank && p.keys.anthropic,
-      transcript: Boolean(p.whisper.modelPath),
-    };
+    return capabilitiesFor(this.settings.view().providers);
   }
 
   // --- recording ------------------------------------------------------------
@@ -258,7 +389,7 @@ export class DeskRagService {
     exportName: string,
   ): Promise<Producer | null> {
     try {
-      const mod = (await import(/* @vite-ignore */ modulePath)) as Record<
+      const mod = (await import(/* @vite-ignore */ libUrl(modulePath))) as Record<
         string,
         new () => Producer
       >;
@@ -282,6 +413,7 @@ export class DeskRagService {
       await this.index(sessionId);
     } catch (err) {
       console.error("[deskrag] indexing failed:", err);
+      this.emitIndexing({ stage: "Indexing failed — see logs", done: 0, total: 0 });
     }
     this.state = { state: "idle", activeSignals: [] };
     this.emitState();
@@ -290,7 +422,7 @@ export class DeskRagService {
 
   /** segment -> represent, gated on configured providers, with progress. */
   private async index(sessionId: string): Promise<void> {
-    const prov = this.buildProviders();
+    const prov = await this.buildProviders();
     const hasAudio = this.store
       .getBlobsBySession(sessionId)
       .some((b) => b.media === "mic" || b.media === "desktop_audio");
@@ -302,7 +434,7 @@ export class DeskRagService {
         name: "Digest + behavior",
         run: () =>
           new Representer(this.store, {
-            digestEmbedder: prov.ollama,
+            digestEmbedder: prov.textEmbedder,
             behavior: prov.behavior,
           }).represent(sessionId),
       },
@@ -318,13 +450,28 @@ export class DeskRagService {
           }).represent(sessionId),
       });
     }
+    if (prov.patchEmbedder) {
+      // The multivector path replaces BOTH the frame and region image stages:
+      // patches are the regions. It is also by far the slowest stage (seconds
+      // per frame), so it reports per-frame progress.
+      stages.push({
+        name: "Frame patches",
+        run: () =>
+          new FramePatchRepresenter(this.store, {
+            patchEmbedder: prov.patchEmbedder!,
+            blobStore: this.blobs,
+            onProgress: (done, total) =>
+              this.emitIndexing({ stage: `Frame patches ${done}/${total}`, done, total }),
+          }).represent(sessionId),
+      });
+    }
     if (prov.captioner) {
       stages.push({
         name: "Captions",
         run: () =>
           new CaptionRepresenter(this.store, {
             captioner: prov.captioner!,
-            captionEmbedder: prov.ollama,
+            captionEmbedder: prov.textEmbedder,
             blobStore: this.blobs,
           }).represent(sessionId),
       });
@@ -350,7 +497,7 @@ export class DeskRagService {
         run: () =>
           new TranscriptRepresenter(this.store, {
             transcriber: prov.transcriber,
-            transcriptEmbedder: prov.ollama,
+            transcriptEmbedder: prov.textEmbedder,
             blobStore: this.blobs,
           }).represent(sessionId),
       });
@@ -368,7 +515,7 @@ export class DeskRagService {
   private async loadCropper(): Promise<import("deskrag").RegionCropper | null> {
     try {
       const mod = (await import(
-        /* @vite-ignore */ "deskrag/represent/regions/sharp-cropper"
+        /* @vite-ignore */ libUrl("deskrag/represent/regions/sharp-cropper")
       )) as { SharpRegionCropper: new () => import("deskrag").RegionCropper };
       return new mod.SharpRegionCropper();
     } catch (err) {
@@ -385,32 +532,50 @@ export class DeskRagService {
     const registered = new Set(this.store.listVectorSpaces().map((s) => s.namespace));
     const searchers: ViewSearcher[] = [];
     for (const view of ["digest", "caption", "transcript"] as const) {
-      const s = new TextViewSearcher(prov.ollama, view);
+      const s = new TextViewSearcher(prov.textEmbedder, view);
       if (registered.has(s.namespace)) searchers.push(s);
     }
     // Behavior searcher is always safe: it returns null (and is skipped) unless
     // the query carries a behavior vector, so it never hits a missing table.
     searchers.push(new BehaviorViewSearcher(prov.behavior));
+    // Exactly one visual path, or neither — Retriever rejects both at once.
     return new Retriever(this.store, {
       searchers,
-      imageEmbedder: prov.imageEmbedder ?? new NullImageEmbedder(),
+      ...(prov.patchEmbedder
+        ? { patchEmbedder: prov.patchEmbedder }
+        : prov.imageEmbedder
+          ? { imageEmbedder: prov.imageEmbedder }
+          : {}),
       ...(prov.reranker ? { reranker: prov.reranker } : {}),
     });
   }
 
-  async search(input: SearchInput): Promise<FrameHitDTO[]> {
-    const prov = this.buildProviders();
+  async search(input: SearchInput): Promise<SearchResultDTO> {
+    const prov = await this.buildProviders();
     if (input.imageBytes) {
-      if (!prov.imageEmbedder) {
+      if (!prov.imageEmbedder && !prov.patchEmbedder) {
         throw new Error("Image search requires a configured image provider (Settings).");
       }
-      const hasFrameSpace = this.store.listVectorSpaces().some((s) => s.view === "frame_image");
-      if (!hasFrameSpace) {
+      // Each visual path indexes a different view, so check the one in use.
+      const wantView = prov.patchEmbedder ? "frame_patches" : "frame_image";
+      if (!this.store.listVectorSpaces().some((s) => s.view === wantView)) {
         throw new Error(
           "No image-indexed frames yet. Record a session with an image provider set, then try again.",
         );
       }
     }
+    // Namespaces diverge by design and there is no migration path, so prior
+    // recordings can sit in a space the CURRENT provider never queries. Detect
+    // that before searching, or an empty result over a full library is
+    // indistinguishable from "nothing matched".
+    const registered = new Set(this.store.listVectorSpaces().map((s) => s.namespace));
+    const hasCurrentTextSpace = (["digest", "caption", "transcript"] as const).some((view) =>
+      registered.has(new TextViewSearcher(prov.textEmbedder, view).namespace),
+    );
+    const hasAnyTextSpace = this.store
+      .listVectorSpaces()
+      .some((s) => s.view === "digest" || s.view === "caption" || s.view === "transcript");
+
     const retriever = this.buildRetriever(prov);
     const { frames } = await retriever.retrieve({
       ...(input.text ? { text: input.text } : {}),
@@ -418,7 +583,7 @@ export class DeskRagService {
     });
 
     this.lastHighlights.clear();
-    return frames.map((fr) => {
+    const hits = frames.map((fr) => {
       const frame = fr.frame ?? this.store.getFrame(fr.frameId);
       const session = frame ? this.store.getSession(frame.sessionId) : undefined;
       const seg = fr.segmentId ? this.store.getSegment(fr.segmentId) : undefined;
@@ -442,6 +607,15 @@ export class DeskRagService {
         highlightCount: highlights.length,
       };
     });
+
+    return {
+      frames: hits,
+      // Only meaningful when the miss is total: some vectors exist, just not in
+      // a space this provider can read.
+      ...(hits.length === 0 && hasAnyTextSpace && !hasCurrentTextSpace
+        ? { indexedUnderDifferentProvider: true }
+        : {}),
+    };
   }
 
   detail(frameId: string): ResultDetailDTO | null {

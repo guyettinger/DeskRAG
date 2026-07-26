@@ -96,7 +96,14 @@ export class FfmpegScreenProducer implements Producer {
     // the pHash/keyframe pipeline sees exactly the stream it always did.
     const inputRate = videoPath ? this.videoFps : fps;
     const head = [
-      "-hide_banner", "-loglevel", "error",
+      // `warning`, not `error`, on purpose. macOS avfoundation logs
+      //   "Selected pixel format (yuv420p) is not supported by the input device"
+      // at ERROR level and its recovery
+      //   "Overriding selected pixel format to use uyvy422 instead"
+      // at WARNING. At `error` the user sees only the alarming half of a pair
+      // that ffmpeg then handles itself, which reads as a failed capture when
+      // capture is in fact fine. These are one-time startup lines, not per-frame.
+      "-hide_banner", "-loglevel", "warning",
       "-f", this.opts.inputFormat ?? "avfoundation",
       ...(this.opts.omitInputFramerate ? [] : ["-framerate", String(inputRate)]),
       "-i", input,

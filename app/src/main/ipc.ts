@@ -21,6 +21,7 @@ export function registerIpc(
   };
   service.onState((s) => send(IPC.recordingStateEvent, s));
   service.onIndexing((p) => send(IPC.recordingIndexingEvent, p));
+  service.onModelDownload((p) => send(IPC.modelDownloadEvent, p));
 
   ipcMain.handle(IPC.settingsGet, () => settings.view());
   ipcMain.handle(IPC.settingsSet, (_e, patch: SettingsPatch) => settings.apply(patch));
@@ -40,5 +41,16 @@ export function registerIpc(
   ipcMain.handle(IPC.sessionsList, () => service.listSessions());
   ipcMain.handle(IPC.sessionsDetail, (_e, sessionId: string) => service.sessionDetail(sessionId));
   ipcMain.handle(IPC.sessionsRemove, (_e, sessionId: string) => service.removeSession(sessionId));
+  /**
+   * Vision-capable models resident on this machine. Sourced from Ollama's
+   * /api/tags rather than a hardcoded list: its library now includes
+   * cloud-hosted entries, and offering one in a "local" picker would route
+   * screenshots off the device. Only names cross the bridge.
+   */
+  ipcMain.handle(IPC.ollamaVisionModels, async (): Promise<string[]> => {
+    const { listVisionModels } = await import("deskrag");
+    return listVisionModels(settings.view().providers.ollamaHost);
+  });
+
   ipcMain.handle(IPC.systemEnv, () => envInfo(service));
 }

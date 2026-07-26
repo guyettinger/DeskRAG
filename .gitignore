@@ -19,6 +19,10 @@ out/
 native/ax-dump
 native/ax-dump.dSYM/
 
+# python bytecode from scripts/*.py (maintainer export tooling)
+__pycache__/
+*.pyc
+
 # brand asset build scratch directory
 app/build/*.iconset/
 

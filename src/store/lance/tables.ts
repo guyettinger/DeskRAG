@@ -9,11 +9,19 @@
  */
 
 import * as lancedb from "@lancedb/lancedb";
-import { Field, FixedSizeList, Float32, List, Schema, Utf8 } from "apache-arrow";
+import {
+  Field,
+  FixedSizeList,
+  Float16,
+  Float32,
+  List,
+  Schema,
+  Utf8,
+} from "apache-arrow";
 import { parseNamespace } from "../../embed/types.js";
 
 /** Which physical row shape a namespace's view maps to. */
-export type TableKind = "segment" | "frame" | "region";
+export type TableKind = "segment" | "frame" | "region" | "frame_patches";
 
 export function kindForView(view: string): TableKind {
   switch (view) {
@@ -21,6 +29,8 @@ export function kindForView(view: string): TableKind {
       return "frame";
     case "region_image":
       return "region";
+    case "frame_patches":
+      return "frame_patches";
     default:
       return "segment"; // caption | digest | transcript | behavior
   }
@@ -38,6 +48,25 @@ function vectorField(dims: number): Field {
   return new Field(
     "vector",
     new FixedSizeList(dims, new Field("item", new Float32(), true)),
+    true,
+  );
+}
+
+/**
+ * Multivector column: a variable-length list of fixed-width vectors, one per
+ * image patch. Stored as float16 — half the bytes of f32 for ~448 vectors per
+ * frame, and LanceDB scores multivector in f16/f32/f64 alike.
+ */
+function patchesField(dims: number): Field {
+  return new Field(
+    "patches",
+    new List(
+      new Field(
+        "item",
+        new FixedSizeList(dims, new Field("item", new Float16(), true)),
+        true,
+      ),
+    ),
     true,
   );
 }
@@ -70,6 +99,13 @@ function schemaFor(kind: TableKind, dims: number): Schema {
         new Field("session_id", utf8(), false),
         vectorField(dims),
       ]);
+    case "frame_patches":
+      return new Schema([
+        new Field("id", utf8(), false),
+        new Field("session_id", utf8(), false),
+        new Field("segment_ids", new List(new Field("item", utf8(), true)), true),
+        patchesField(dims),
+      ]);
   }
 }
 
@@ -93,6 +129,14 @@ export interface RegionVecRow {
   vector: number[];
 }
 export type VecRow = SegmentVecRow | FrameVecRow | RegionVecRow;
+
+/** A frame's late-interaction patch set. Row counts differ between frames. */
+export interface FramePatchRow {
+  id: string;
+  session_id: string;
+  segment_ids: string[];
+  patches: number[][];
+}
 
 export interface SearchResult {
   id: string;
@@ -120,9 +164,44 @@ export interface VectorSide {
     k: number,
     frameIds: string[],
   ): Promise<SearchResult[]>;
+  // --- late interaction (frame_patches) -------------------------------------
+  addPatches(namespace: string, rows: FramePatchRow[]): Promise<void>;
+  /** MaxSim search; `query` is one vector per query token. */
+  searchFramePatches(
+    namespace: string,
+    query: Float32Array[],
+    k: number,
+    scope?: { segmentIds?: string[]; frameIds?: string[] },
+  ): Promise<SearchResult[]>;
+  /** Build the cosine index once the table can train one. False if too small. */
+  ensurePatchIndex(namespace: string, minRows?: number): Promise<boolean>;
+  /** A frame's stored patch set, for deriving highlights without re-embedding. */
+  getFramePatches(namespace: string, frameId: string): Promise<Float32Array[] | null>;
+
   deleteByIds(namespace: string, ids: string[]): Promise<void>;
   allIds(namespace: string): Promise<string[]>;
   close(): Promise<void>;
+}
+
+/**
+ * Arrow hands nested lists back as Vector-like objects, not plain arrays, and the
+ * exact shape depends on how the column was read. Normalize defensively to
+ * Float32Array rows so callers never depend on Arrow's internals.
+ */
+function toVectorList(value: unknown): Float32Array[] | null {
+  if (value == null) return null;
+  const outer = Array.isArray(value)
+    ? value
+    : typeof (value as { toArray?: () => unknown[] }).toArray === "function"
+      ? (value as { toArray: () => unknown[] }).toArray()
+      : null;
+  if (!outer) return null;
+  return outer.map((row) => {
+    if (row instanceof Float32Array) return row;
+    if (Array.isArray(row)) return Float32Array.from(row as number[]);
+    const inner = (row as { toArray?: () => ArrayLike<number> }).toArray?.();
+    return Float32Array.from(inner ?? []);
+  });
 }
 
 /** SQL string literal for an id list: id IN ('a','b'). ULIDs are quote-free. */
@@ -167,13 +246,11 @@ export class LanceStore implements VectorSide {
     return this.search(namespace, vector, k);
   }
 
-  /** Frame search scoped by segment membership (array column) and/or frame ids. */
-  async searchFrame(
-    namespace: string,
-    vector: Float32Array,
-    k: number,
-    scope?: { segmentIds?: string[]; frameIds?: string[] },
-  ): Promise<SearchResult[]> {
+  /** Shared scope predicate for frame-shaped tables (single- and multi-vector). */
+  private frameFilter(scope?: {
+    segmentIds?: string[];
+    frameIds?: string[];
+  }): string | undefined {
     const clauses: string[] = [];
     if (scope?.frameIds && scope.frameIds.length > 0) {
       clauses.push(idInClause("id", scope.frameIds));
@@ -186,8 +263,17 @@ export class LanceStore implements VectorSide {
       // the scope. Prefilter (the default) restricts the ANN to survivors.
       clauses.push(`array_has_any(segment_ids, [${list}])`);
     }
-    const filter = clauses.length ? clauses.join(" AND ") : undefined;
-    return this.search(namespace, vector, k, filter);
+    return clauses.length ? clauses.join(" AND ") : undefined;
+  }
+
+  /** Frame search scoped by segment membership (array column) and/or frame ids. */
+  async searchFrame(
+    namespace: string,
+    vector: Float32Array,
+    k: number,
+    scope?: { segmentIds?: string[]; frameIds?: string[] },
+  ): Promise<SearchResult[]> {
+    return this.search(namespace, vector, k, this.frameFilter(scope));
   }
 
   /** Region search scoped to a set of frames (Tier-3). */
@@ -212,6 +298,82 @@ export class LanceStore implements VectorSide {
     if (filter) q = q.where(filter); // prefilter is the default in the JS SDK
     const rows = (await q.toArray()) as Array<{ id: string; _distance: number }>;
     return rows.map((r) => ({ id: r.id, distance: r._distance }));
+  }
+
+  // --- late interaction (frame_patches) ---------------------------------------
+
+  async addPatches(namespace: string, rows: FramePatchRow[]): Promise<void> {
+    if (rows.length === 0) return;
+    const tbl = await this.open(namespace);
+    await tbl.add(rows as unknown as Record<string, unknown>[]);
+  }
+
+  /**
+   * Late-interaction frame search. `query` is one vector per query token; LanceDB
+   * scores by MaxSim.
+   *
+   * `.distanceType("cosine")` is mandatory and unconditional: multivector supports
+   * ONLY cosine, but an UNINDEXED table silently brute-forces with metric=l2 and
+   * still returns plausible ordering — so omitting it fails quietly in dev and
+   * only surfaces later, when index creation rejects l2 outright.
+   */
+  async searchFramePatches(
+    namespace: string,
+    query: Float32Array[],
+    k: number,
+    scope?: { segmentIds?: string[]; frameIds?: string[] },
+  ): Promise<SearchResult[]> {
+    if (query.length === 0) return [];
+    if (scope?.frameIds && scope.frameIds.length === 0) return [];
+    const tbl = await this.open(namespace);
+    let q = tbl
+      .vectorSearch(query.map((v) => Array.from(v)))
+      .distanceType("cosine")
+      .limit(k);
+    const filter = this.frameFilter(scope);
+    if (filter) q = q.where(filter); // prefilter is the default in the JS SDK
+    const rows = (await q.toArray()) as Array<{ id: string; _distance: number }>;
+    return rows.map((r) => ({ id: r.id, distance: r._distance }));
+  }
+
+  /**
+   * Build the cosine IVF-PQ index once the table is big enough to train one.
+   * Returns false (without throwing) when there are too few rows — brute-force
+   * search stays correct, just slower.
+   */
+  async ensurePatchIndex(namespace: string, minRows = 256): Promise<boolean> {
+    const tbl = await this.open(namespace);
+    if ((await tbl.countRows()) < minRows) return false;
+    const existing = await tbl.listIndices();
+    if (existing.some((i) => i.columns.includes("patches"))) return true;
+    try {
+      await tbl.createIndex("patches", {
+        config: lancedb.Index.ivfPq({
+          distanceType: "cosine", // multivector supports ONLY cosine
+          numPartitions: 16,
+          numSubVectors: 8,
+        }),
+      });
+      return true;
+    } catch {
+      return false; // not enough distinct vectors to train yet
+    }
+  }
+
+  async getFramePatches(
+    namespace: string,
+    frameId: string,
+  ): Promise<Float32Array[] | null> {
+    const tbl = await this.open(namespace);
+    const rows = (await tbl
+      .query()
+      .where(idInClause("id", [frameId]))
+      .select(["patches"])
+      .limit(1)
+      .toArray()) as Array<{ patches: unknown }>;
+    const row = rows[0];
+    if (!row) return null;
+    return toVectorList(row.patches);
   }
 
   async deleteByIds(namespace: string, ids: string[]): Promise<void> {

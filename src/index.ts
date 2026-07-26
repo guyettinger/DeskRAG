@@ -1,6 +1,6 @@
 // embed/ — provider interfaces, namespacing, adapters
 export * from "./embed/types.js";
-export { FakeEmbeddingProvider } from "./embed/fake.js";
+export { FakeEmbeddingProvider, FakeMultiVectorProvider } from "./embed/fake.js";
 export { OllamaTextEmbedding } from "./embed/ollama.js";
 export { VoyageTextEmbedding, VoyageImageEmbedding } from "./embed/voyage.js";
 export { GeminiEmbedding } from "./embed/gemini.js";
@@ -83,6 +83,13 @@ export {
   type FrameRepresenterOptions,
   type FrameRepresentResult,
 } from "./represent/frame-representer.js";
+// Multi-vector counterpart (frame_patches view). Barrel-safe: the provider is
+// injected, so nothing native loads from here.
+export {
+  FramePatchRepresenter,
+  type FramePatchRepresenterOptions,
+  type FramePatchRepresentResult,
+} from "./represent/frame-patch-representer.js";
 // region pipeline (Tier 3 represent/)
 export { axFilter, type AxFilterOptions } from "./represent/regions/ax.js";
 export {
@@ -123,6 +130,14 @@ export {
 export { FakeCaptionProvider } from "./represent/caption/fake.js";
 export { AnthropicCaptionProvider, type AnthropicCaptionOptions } from "./represent/caption/anthropic.js";
 export { GeminiCaptionProvider, type GeminiCaptionOptions } from "./represent/caption/gemini.js";
+// Local VLM captioner. Barrel-safe (plain fetch); `listVisionModels` is what the
+// app's model picker must use — see its doc comment for why a hardcoded list is
+// unsafe now that Ollama's library includes cloud-hosted models.
+export {
+  OllamaCaptionProvider,
+  listVisionModels,
+  type OllamaCaptionOptions,
+} from "./represent/caption/ollama.js";
 // transcript view (STT) — the FakeTranscription + representer are pure; the
 // whisper.cpp adapter spawns a subprocess and is imported from its own path.
 export {
@@ -145,6 +160,10 @@ export {
 } from "./retrieve/rrf.js";
 export { Tier1Retriever } from "./retrieve/retriever.js";
 export { Tier2Retriever, type Tier2Options } from "./retrieve/tier2.js";
+export {
+  Tier2MultiVectorRetriever,
+  type Tier2MultiVectorOptions,
+} from "./retrieve/tier2-mv.js";
 export { Tier3Retriever, type Tier3Options } from "./retrieve/tier3.js";
 export { Retriever, type RetrieverOptions } from "./retrieve/assemble.js";
 export { TextViewSearcher, BehaviorViewSearcher } from "./retrieve/searchers.js";

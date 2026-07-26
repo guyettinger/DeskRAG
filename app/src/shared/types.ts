@@ -19,15 +19,24 @@ export interface SignalConfig {
 
 // --- providers / settings ----------------------------------------------------
 
-export type ImageProvider = "none" | "voyage" | "gemini";
-export type CaptionProvider = "none" | "anthropic" | "gemini";
+/** Where text embeddings come from. Ollama needs a daemon; onnx runs in-process. */
+export type TextProvider = "ollama" | "onnx";
+/** `colsmol` is the local late-interaction path; the rest are single-vector. */
+export type ImageProvider = "none" | "colsmol" | "voyage" | "gemini";
+export type CaptionProvider = "none" | "ollama" | "anthropic" | "gemini";
+export type RerankProvider = "none" | "onnx" | "anthropic";
 
 export interface ProviderSettingsView {
   ollamaHost: string;
   ollamaModel: string;
+  /** The VLM used for captions — distinct from the embedding model. */
+  ollamaCaptionModel: string;
+  textProvider: TextProvider;
   imageProvider: ImageProvider;
   captionProvider: CaptionProvider;
-  rerank: boolean;
+  rerankProvider: RerankProvider;
+  /** "" means managed downloads under the app data dir. */
+  localModels: { dir: string };
   whisper: { binaryPath: string; modelPath: string };
   /** Presence only — raw API keys never cross to the renderer. */
   keys: { voyage: boolean; gemini: boolean; anthropic: boolean };
@@ -40,8 +49,9 @@ export interface SettingsView {
 
 export interface SettingsPatch {
   providers?: Partial<
-    Omit<ProviderSettingsView, "keys" | "whisper"> & {
+    Omit<ProviderSettingsView, "keys" | "whisper" | "localModels"> & {
       whisper: Partial<{ binaryPath: string; modelPath: string }>;
+      localModels: Partial<{ dir: string }>;
     }
   >;
   signals?: DeepPartial<SignalConfig>;
@@ -52,6 +62,18 @@ export interface SettingsPatch {
 export type DeepPartial<T> = {
   [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K];
 };
+
+/**
+ * Weight-download progress. Its own channel rather than a stage of
+ * IndexingProgress, because a download can begin from a SEARCH as well as from
+ * indexing — weights are fetched lazily on first use.
+ */
+export interface ModelDownloadProgress {
+  modelId: string;
+  receivedBytes: number;
+  totalBytes: number;
+  done: boolean;
+}
 
 /** What library features are usable given the current settings (renderer gating). */
 export interface Capabilities {
@@ -216,6 +238,18 @@ export interface PermissionStatus {
 
 // --- the IPC API exposed on window.deskrag ----------------------------------
 
+/**
+ * Search results plus a reason when there are none. There is deliberately NO
+ * migration path between providers, so switching one leaves prior recordings
+ * indexed in a namespace the current provider never queries. Without this flag
+ * that looks identical to "nothing matched" over a full library.
+ */
+export interface SearchResultDTO {
+  frames: FrameHitDTO[];
+  /** True when no text vector space exists for the CURRENT provider. */
+  indexedUnderDifferentProvider?: boolean;
+}
+
 export interface SearchInput {
   text?: string;
   /** Raw image bytes for search-by-visual-example (requires an image provider). */
@@ -241,13 +275,25 @@ export interface DeskRagApi {
     onIndexing(cb: (p: IndexingProgress) => void): () => void;
   };
   search: {
-    query(input: SearchInput): Promise<FrameHitDTO[]>;
+    query(input: SearchInput): Promise<SearchResultDTO>;
     detail(frameId: string): Promise<ResultDetailDTO | null>;
   };
   sessions: {
     list(): Promise<SessionSummaryDTO[]>;
     detail(sessionId: string): Promise<SessionDetailDTO | null>;
     remove(sessionId: string): Promise<void>;
+  };
+  models: {
+    /** Fires while weights download; may start from a search, not just indexing. */
+    onDownload(cb: (p: ModelDownloadProgress) => void): () => void;
+  };
+  ollama: {
+    /**
+     * Vision-capable models resident on THIS machine. Never a hardcoded list:
+     * Ollama's library now includes cloud-hosted models, and offering one here
+     * would route screenshots off the device.
+     */
+    visionModels(): Promise<string[]>;
   };
   system: {
     env(): Promise<EnvInfo>;
@@ -272,5 +318,7 @@ export const IPC = {
   sessionsList: "sessions:list",
   sessionsDetail: "sessions:detail",
   sessionsRemove: "sessions:remove",
+  modelDownloadEvent: "models:download-event",
+  ollamaVisionModels: "ollama:vision-models",
   systemEnv: "system:env",
 } as const;

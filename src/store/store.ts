@@ -10,6 +10,7 @@ import { hamming64, i64ToU64, openDb, u64ToI64, type Db } from "./sqlite/db.js";
 import {
   kindForView,
   LanceStore,
+  type FramePatchRow,
   type VecRow,
   type VectorSide,
 } from "./lance/tables.js";
@@ -21,6 +22,7 @@ import type {
   EventInsert,
   EventRow,
   FrameInsert,
+  FramePatchInsert,
   FrameRow,
   FrameScope,
   FrameVectorInsert,
@@ -517,6 +519,48 @@ export class DualStore implements Store {
     });
   }
 
+  /**
+   * Late-interaction patch sets. Association (SQLite) commits FIRST, then the
+   * Lance add — a crash between leaves a detectable gap, never an orphan vector.
+   *
+   * Replaces any existing row for the same frame so a re-run of the representer
+   * does not duplicate patch sets.
+   */
+  async putFramePatches(rows: FramePatchInsert[]): Promise<void> {
+    if (rows.length === 0) return;
+    await this.mutex.run(async () => {
+      const tx = this.db.transaction((batch: FramePatchInsert[]) => {
+        for (const r of batch) {
+          for (const sid of r.segmentIds) {
+            this.stmts.insertFrameSegment.run(r.frameId, sid);
+          }
+        }
+      });
+      tx(rows);
+
+      const byNs = new Map<string, FramePatchRow[]>();
+      for (const r of rows) {
+        this.requireSpace(r.namespace);
+        const list = byNs.get(r.namespace) ?? [];
+        list.push({
+          id: r.frameId,
+          session_id: r.sessionId,
+          segment_ids: r.segmentIds,
+          patches: r.patches.map((v) => Array.from(v)),
+        });
+        byNs.set(r.namespace, list);
+      }
+      for (const [ns, list] of byNs) {
+        await this.lance.deleteByIds(
+          ns,
+          list.map((r) => r.id),
+        );
+        await this.lance.addPatches(ns, list);
+        await this.lance.ensurePatchIndex(ns);
+      }
+    });
+  }
+
   // --- session lifecycle + relational reads ----------------------------------
 
   async endSession(sessionId: string, endedAt: number): Promise<void> {
@@ -651,11 +695,24 @@ export class DualStore implements Store {
       ).map((r) => r.id);
 
       // Lance first (delete order rule), by entity kind per namespace.
+      // Exhaustive on purpose: a ternary chain here silently sent any new kind
+      // to regionIds, which for frame_patches meant its rows were never deleted.
+      const idsForKind = (kind: ReturnType<typeof kindForView>): string[] => {
+        switch (kind) {
+          case "segment":
+            return segIds;
+          case "frame":
+          case "frame_patches": // keyed by frame id, like frame_image
+            return frameIds;
+          case "region":
+            return regionIds;
+        }
+      };
       for (const space of this.spaces.values()) {
-        const kind = kindForView(space.view);
-        const ids =
-          kind === "segment" ? segIds : kind === "frame" ? frameIds : regionIds;
-        await this.lance.deleteByIds(space.namespace, ids);
+        await this.lance.deleteByIds(
+          space.namespace,
+          idsForKind(kindForView(space.view)),
+        );
       }
 
       // Then SQLite. CASCADE clears event/blob/segment/frame/region/frame_segment;
@@ -701,6 +758,24 @@ export class DualStore implements Store {
     return this.lance.searchFrame(namespace, vector, k, scope);
   }
 
+  async searchFramePatches(
+    namespace: string,
+    query: Float32Array[],
+    k: number,
+    scope?: FrameScope,
+  ): Promise<SearchHit[]> {
+    this.requireSpace(namespace);
+    return this.lance.searchFramePatches(namespace, query, k, scope);
+  }
+
+  async getFramePatches(
+    namespace: string,
+    frameId: string,
+  ): Promise<Float32Array[] | null> {
+    this.requireSpace(namespace);
+    return this.lance.getFramePatches(namespace, frameId);
+  }
+
   async searchRegions(
     namespace: string,
     vector: Float32Array,
@@ -742,7 +817,17 @@ export class DualStore implements Store {
 
       // Expected SQLite ids that SHOULD have a vector in this namespace.
       let expected: Set<string>;
-      if (kind === "region") {
+      if (kind === "frame_patches") {
+        // Late-interaction rows hold MANY vectors under a FRAME id. The
+        // per-entity "one row, one vector" model does not apply: a patch set is
+        // regenerated wholesale by FramePatchRepresenter, never row-by-row. So
+        // nothing is ever "missing" here.
+        //
+        // Orphan pruning below still runs, and MUST compare against frame ids —
+        // treating this as a segment space would find no matching segment row
+        // and delete every patch row in the table.
+        expected = new Set();
+      } else if (kind === "region") {
         expected = allRegionIds; // regions always carry a vector at write time
       } else if (kind === "frame") {
         // Only frames with a stored image (blob) can have a frame_image vector.
@@ -772,7 +857,7 @@ export class DualStore implements Store {
       const entityExists =
         kind === "region"
           ? (id: string) => allRegionIds.has(id)
-          : kind === "frame"
+          : kind === "frame" || kind === "frame_patches"
             ? (id: string) => allFrameIds.has(id)
             : (id: string) => this.stmts.selectSegmentById.get(id) !== undefined;
 
