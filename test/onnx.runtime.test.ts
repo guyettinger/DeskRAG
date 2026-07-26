@@ -1,7 +1,28 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { OnnxRuntime, makeTensor } from "../src/embed/onnx/runtime.js";
+import { OnnxRuntime, SESSION_OPTIONS, makeTensor } from "../src/embed/onnx/runtime.js";
 
 afterEach(() => OnnxRuntime.reset());
+
+describe("SESSION_OPTIONS", () => {
+  it("disables the CPU memory arena", () => {
+    // NOT stylistic. MEASURED with real ColSmol weights at 13 tiles, running
+    // under the Electron binary's allocator:
+    //   arena on  -> SIGTRAP (V8 fatal error), peak ~5GB
+    //   arena off -> completes, peak ~1.33GB
+    // ORT's BFCArena requests a single ~2GiB block. Chromium's PartitionAlloc,
+    // which the Electron binary uses for `operator new`, refuses it and aborts
+    // the process. Plain Node's malloc allows it — which is exactly why this
+    // suite passes either way and only the packaged app crashes. Removing this
+    // line reintroduces that crash silently.
+    expect(SESSION_OPTIONS.enableCpuMemArena).toBe(false);
+  });
+
+  it("keeps full graph optimization", () => {
+    // The arena is the memory problem; optimization is not. Disabling it would
+    // cost speed and fix nothing — verified: mem-pattern alone still SIGTRAPs.
+    expect(SESSION_OPTIONS.graphOptimizationLevel).toBe("all");
+  });
+});
 
 describe("makeTensor", () => {
   it("builds a float32 tensor with the given dims", () => {

@@ -59,6 +59,28 @@ export function makeTensor(
   return { data, dims };
 }
 
+/**
+ * Session options, exported so they can be asserted on — see
+ * test/onnx.runtime.test.ts.
+ *
+ * `enableCpuMemArena: false` is load-bearing, not tuning. ORT's BFCArena grows
+ * by requesting one huge block (observed: 2GiB for ColSmol at 13 tiles).
+ * Chromium's PartitionAlloc — which the Electron binary uses for `operator
+ * new`, in the main process AND in a utilityProcess — refuses an allocation
+ * that size and aborts with a V8 fatal error. Plain Node's malloc allows it, so
+ * `npm test` and any bare-node script pass either way; only the app dies.
+ *
+ * Turning the arena off also drops peak RSS for one ColSmol frame from ~5GB to
+ * ~1.33GB, because memory is returned instead of cached. It costs roughly 50%
+ * throughput (12.1s -> 18.4s per frame on CPU), which is the right trade for
+ * not crashing.
+ */
+export const SESSION_OPTIONS = {
+  executionProviders: ["cpu"],
+  graphOptimizationLevel: "all",
+  enableCpuMemArena: false,
+} as const;
+
 const cache = new Map<string, Promise<OnnxSession>>();
 
 export const OnnxRuntime = {
@@ -73,10 +95,7 @@ export const OnnxRuntime = {
         throw new Error(`ONNX weights not found at ${key}`);
       }
       const { InferenceSession, Tensor } = await ort();
-      const sess = await InferenceSession.create(key, {
-        executionProviders: ["cpu"],
-        graphOptimizationLevel: "all",
-      });
+      const sess = await InferenceSession.create(key, { ...SESSION_OPTIONS });
       return {
         async run(feeds: Record<string, OnnxTensor>) {
           const wrapped: Record<string, unknown> = {};
