@@ -30,13 +30,17 @@ Two crash fixes are committed and verified end-to-end under Electron:
 ONNX inference now runs in a utilityProcess, and enableCpuMemArena is off.
 ColSmol is ~18.4s and ~1.3GB peak per frame.
 
+Task 1 (streaming downloads) and Task 4 (PEP 723 + .gitignore) are DONE and
+committed — 350b7f2 and 9ad62a3. All four gates pass. `hf` is installed at
+~/.local/bin/hf. Nothing else has been touched.
+
 REMAINING (plan task numbers)
 - Task 0: publish to guyettinger/colSmol-256M-dynamic-onnx. BLOCKS tasks 2/3/5.
   Needs the user's HF write token — give them the commands, do not ask for it.
-- Task 1: stream ModelStore downloads (currently arrayBuffer()s whole files;
-  the new model is 954MB in the Electron main process). Independent, start here.
-- Tasks 2-5: manifest repoint, delete the source:"local" mechanism, PEP 723 +
-  .gitignore, end-to-end verification.
+  The repo does not exist yet (the API 401s), so this has not been started.
+- Tasks 2, 3, 5: manifest repoint, delete the source:"local" mechanism,
+  end-to-end verification. Task 3 must not be reordered before Task 2 —
+  typecheck must pass at every commit.
 
 ALSO UNVERIFIED: the user has not yet confirmed a real recording indexes
 cleanly since the crash fixes landed. Confirm that before trusting Task 5.

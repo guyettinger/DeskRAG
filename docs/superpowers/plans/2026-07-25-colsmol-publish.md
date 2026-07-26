@@ -100,7 +100,7 @@ Independent of Task 0 — start here.
 
 **Why:** `ensureOnce` currently does `Buffer.from(await res.arrayBuffer())`, holding each file whole in memory. At 954 MB that is a ~1 GB allocation in the process that must not fall over. Streaming also makes `receivedBytes` genuinely incremental instead of jumping 0 → total.
 
-- [ ] **Step 1: Add the big-body route to the fixture server**
+- [x] **Step 1: Add the big-body route to the fixture server**
 
 In `app/test/model-store.test.ts`, add after the `BODY`/`SHA` constants (line 18):
 
@@ -135,7 +135,7 @@ const bigSpec = (): ModelSpec => ({
 });
 ```
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 Add these two tests inside `describe("ModelStore — download source", …)`:
 
@@ -177,13 +177,13 @@ Add these two tests inside `describe("ModelStore — download source", …)`:
   });
 ```
 
-- [ ] **Step 3: Run the tests to verify they fail**
+- [x] **Step 3: Run the tests to verify they fail**
 
 Run: `npm --prefix app run test -- model-store`
 
 Expected: "streams to disk with incremental progress" FAILS (`mid.length` is 0 — the current per-file emission produces only the final reading). The mid-stream test may already pass by accident via the existing `catch`; that is fine, it guards the new code path.
 
-- [ ] **Step 4: Add the new imports and the option**
+- [x] **Step 4: Add the new imports and the option**
 
 In `app/src/main/model-store.ts`, change the import block at lines 17-20 to:
 
@@ -223,7 +223,7 @@ Add the private field beside the others (after line 56) and initialise it in the
     this.progressIntervalBytes = opts.progressIntervalBytes ?? 4 * 1024 * 1024;
 ```
 
-- [ ] **Step 5: Replace the download body with a streaming read**
+- [x] **Step 5: Replace the download body with a streaming read**
 
 > Line numbers cited in this plan are **pre-edit** references to the file as it
 > stands at the start of the task. Step 4 already shifted them. Anchor on the
@@ -305,17 +305,17 @@ Also update the file header comment (line 5) — "Streams to `<file>.partial`" i
  * model is ~950MB and this runs in the Electron main process.
 ```
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 Run: `npm --prefix app run test -- model-store`
 Expected: PASS, all cases including the pre-existing checksum, no-redownload, shared-promise, and pinned-revision tests.
 
-- [ ] **Step 7: Typecheck**
+- [x] **Step 7: Typecheck**
 
 Run: `npm --prefix app run typecheck`
 Expected: clean.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add app/src/main/model-store.ts app/test/model-store.test.ts
@@ -600,7 +600,7 @@ ModelFilesMissingError instead of failing later as a raw ENOENT."
 
 **Why:** the pip/python instructions previously lived in the deleted `setupHint`. The script stays a maintainer tool — nothing in the app invokes it — but regenerating must stay a single reproducible command. The monkeypatches target version-sensitive `transformers` internals, so the pins matter. These four versions are the ones the shipped artifact was built and validated with.
 
-- [ ] **Step 1: Add the PEP 723 block**
+- [x] **Step 1: Add the PEP 723 block**
 
 Insert at the very top of `scripts/export-colsmol.py`, **above** the module docstring (PEP 723 blocks must precede code but the docstring must remain the module docstring — placing it first as a comment is correct and keeps the docstring in position 1 for `__doc__`):
 
@@ -616,7 +616,7 @@ Insert at the very top of `scripts/export-colsmol.py`, **above** the module docs
 # ///
 ```
 
-- [ ] **Step 2: Update the usage lines in the docstring**
+- [x] **Step 2: Update the usage lines in the docstring**
 
 Replace lines 20-24 of the docstring:
 
@@ -647,7 +647,7 @@ The export is CPU/fp32. Validate the result before publishing:
       --onnx /path/to/model.onnx
 ```
 
-- [ ] **Step 3: Ignore Python bytecode**
+- [x] **Step 3: Ignore Python bytecode**
 
 Append to `.gitignore`, after the `native/ax-dump` block:
 
@@ -657,7 +657,7 @@ __pycache__/
 *.pyc
 ```
 
-- [ ] **Step 4: Verify the script still runs under uv with only the inline metadata**
+- [x] **Step 4: Verify the script still runs under uv with only the inline metadata**
 
 Run:
 
@@ -667,12 +667,12 @@ uv run scripts/export-colsmol.py --help
 
 Expected: argparse usage text listing `--out`, `--model`, `--tiles`, `--opset`. This proves uv resolved the PEP 723 block without any `--with` flags. It does not re-export the model.
 
-- [ ] **Step 5: Verify the pycache is no longer reported**
+- [x] **Step 5: Verify the pycache is no longer reported**
 
 Run: `git status --short scripts/`
 Expected: no `?? scripts/__pycache__/` line.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add scripts/export-colsmol.py .gitignore
