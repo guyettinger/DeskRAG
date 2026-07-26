@@ -51,7 +51,7 @@ const DEFAULTS: PersistedSettings = {
  */
 const PROVIDER_VALUES = {
   textProvider: ["ollama", "onnx"],
-  imageProvider: ["none", "colsmol"],
+  imageProvider: ["none", "nomic", "colsmol"],
   captionProvider: ["none", "ollama"],
   rerankProvider: ["none", "onnx"],
 } as const satisfies Partial<Record<keyof ProviderSettingsView, readonly string[]>>;

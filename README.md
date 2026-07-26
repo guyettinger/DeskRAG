@@ -180,7 +180,8 @@ run the model in-process.
 |---|---|---|
 | Text embedding | Ollama (daemon) | `nomic-embed-text` |
 | Text embedding | ONNX (in-process) | `nomic-embed-text-v1.5` (int8) |
-| Image, late interaction | ONNX (in-process) | `colSmol-256M-dynamic` — patches *are* the regions, so highlights fall out of the MaxSim argmax |
+| Image, single-vector | ONNX (in-process) | `nomic-embed-vision-v1.5` (int8) — writes region rows, so Tier 3 + AX-label FTS highlights work |
+| Image, late interaction | ONNX (in-process) | `colSmol-256M-dynamic` — patches *are* the regions, so highlights fall out of the MaxSim argmax instead |
 | Behavioral vector | builtin | `input-dynamics-v1`, 12-dim |
 | VLM caption | Ollama (daemon) | any vision model you've pulled, e.g. `qwen3-vl:4b` |
 | Transcription (STT) | whisper.cpp (subprocess) | a `ggml-*.bin` on disk |
@@ -192,10 +193,14 @@ namespace kept claiming the same one, silently breaking vector comparability.
 Acquisition lives in the app, never the library: `deskrag` on npm fetches nothing
 at install or runtime.
 
-`ImageEmbeddingProvider` (single-vector `frame_image` + `region_image` → Tier-3
-region ANN and AX-label FTS) is a live seam with a deterministic fake behind it;
-every provider has one, which is what keeps the test suite offline and
-deterministic.
+The two image paths are **mutually exclusive** — they index different vector
+spaces, and `Retriever` rejects both at once. Nomic Vision is the cheaper default
+(~70ms/frame) and is the one that gives you region highlights searchable by UI
+role; ColSmol is seconds per frame and needs keyframes captured at ≥2048px, but
+matches at patch granularity.
+
+Every provider has a deterministic **fake** behind the same interface, which is
+what keeps the test suite offline and deterministic.
 
 ## Development
 

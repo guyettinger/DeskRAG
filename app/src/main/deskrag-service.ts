@@ -220,7 +220,22 @@ export class DeskRagService {
     // --- visual path (exactly one, or neither) --------------------------------
     let imageEmbedder: ImageEmbeddingProvider | null = null;
     let patchEmbedder: MultiVectorProvider | null = null;
-    if (p.imageProvider === "colsmol") {
+    if (p.imageProvider === "nomic") {
+      const mod = await this.loadOnnx<typeof import("deskrag/embed/onnx/image")>(
+        "deskrag/embed/onnx/image",
+      );
+      if (!mod) {
+        throw new Error("Local image search is unavailable: onnxruntime-node failed to load.");
+      }
+      const dir = await this.models.ensure(MODELS.vision);
+      imageEmbedder = new mod.OnnxImageEmbedding({
+        modelPath: join(dir, "model_int8.onnx"),
+        // Read input size + normalization from the model's own config rather
+        // than assuming it, as the ColSmol branch does for tiling.
+        preprocessorPath: join(dir, "preprocessor_config.json"),
+        session: this.onnx.session(join(dir, "model_int8.onnx")),
+      });
+    } else if (p.imageProvider === "colsmol") {
       const mod = await this.loadOnnx<typeof import("deskrag/embed/onnx/colsmol")>(
         "deskrag/embed/onnx/colsmol",
       );

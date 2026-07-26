@@ -30,9 +30,10 @@ export type TextProvider = "ollama" | "onnx";
 /**
  * The two local visual paths, mutually exclusive because they index different
  * vector spaces — the library's Retriever rejects both at once.
- *   colsmol — late interaction, patch highlights, no region rows (no Tier 3)
+ *   nomic   — single-vector; writes region rows, so Tier 3 + AX-label FTS work
+ *   colsmol — late interaction; patches ARE the regions, so no Tier 3
  */
-export type ImageProvider = "none" | "colsmol";
+export type ImageProvider = "none" | "nomic" | "colsmol";
 export type CaptionProvider = "none" | "ollama";
 export type RerankProvider = "none" | "onnx";
 

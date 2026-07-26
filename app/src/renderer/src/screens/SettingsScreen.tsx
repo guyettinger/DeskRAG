@@ -129,13 +129,20 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
         <div className="form-row">
           <div>
             <label>Image model</label>
-            <div className="desc">For search-by-image + region highlights</div>
+            <div className="desc">
+              {p.imageProvider === "colsmol"
+                ? "Slower (seconds per frame), and highlights come from matched patches"
+                : p.imageProvider === "nomic"
+                  ? "Fast, and adds labelled region highlights you can search by UI role"
+                  : "For search-by-image + region highlights"}
+            </div>
           </div>
           <select
             value={p.imageProvider}
             onChange={(e) => void patchProviders({ imageProvider: e.target.value as ImageProvider })}
           >
             <option value="none">None (text + behavior only)</option>
+            <option value="nomic">Nomic Vision (recommended)</option>
             <option value="colsmol">ColSmol (late interaction)</option>
           </select>
         </div>
