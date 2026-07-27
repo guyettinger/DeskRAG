@@ -990,100 +990,148 @@ select {
   color: #fff;
 }
 
-/* --- player -------------------------------------------------------------- */
+/* --- player (Vidstack default layout, re-tinted) -------------------------- */
+/* The layout is Vidstack's; every colour, radius and typeface below comes from
+   the app's own tokens, so the player reads as part of the instrument rather
+   than as a web video player dropped into it. */
 .player {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
-.player__video {
-  width: 100%;
-  max-height: 56vh;
-  border-radius: var(--radius);
-  background: #06080b;
-  border: 1px solid var(--hairline-soft);
+.stagehead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.stagehead__when {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.stagehead__meta {
+  font-size: 11px;
+  color: var(--muted);
 }
 .player__note {
   font-size: 13px;
   color: var(--muted);
   line-height: 1.5;
 }
-.player__bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.player__time {
-  font-size: 12px;
-  color: var(--muted);
-  margin-left: 4px;
-}
-.player__speed {
-  margin-left: auto;
-  background: var(--panel);
-  color: var(--text);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
-  padding: 6px 8px;
-  font-size: 12px;
-}
 .player__meta {
   font-size: 11px;
   color: var(--muted-dim);
 }
 
-.scrub {
-  position: relative;
-  height: 6px;
-  border-radius: 3px;
-  background: var(--hairline);
-  cursor: pointer;
+.player__media {
+  width: 100%;
+  max-height: 56vh;
+  border-radius: var(--radius);
+  overflow: hidden;
 }
-.scrub__fill {
-  height: 100%;
-  border-radius: 3px;
-  background: var(--accent);
-}
-.scrub__head {
-  position: absolute;
-  top: -3px;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--accent);
-  transform: translateX(-50%);
-  pointer-events: none;
+.player__media video {
+  width: 100%;
+  max-height: 56vh;
+  object-fit: contain;
 }
 
-.ticks {
+.vds-video-layout {
+  --video-brand: var(--accent);
+  --video-controls-color: var(--text);
+  --video-focus-ring-color: var(--accent);
+  --video-bg: #06080b;
+  --video-border: 1px solid var(--hairline-soft);
+  --video-border-radius: var(--radius);
+  --video-font-family: var(--font-ui);
+  --video-slider-thumbnail-border: 1px solid var(--hairline);
+  --video-slider-thumbnail-border-radius: 6px;
+
+  --media-button-hover-bg: color-mix(in srgb, var(--accent) 18%, transparent);
+  --media-slider-track-bg: var(--hairline);
+  --media-slider-track-fill-bg: var(--accent);
+  --media-slider-track-progress-bg: var(--muted-dim);
+  --media-slider-thumb-bg: var(--accent);
+  --media-slider-thumb-border: 1px solid var(--ink);
+  --media-slider-preview-bg: var(--panel);
+  --media-slider-value-bg: var(--elevated);
+  --media-slider-value-color: var(--text);
+  /* Keyframe boundaries. The divider is the tick — it sits on the track. */
+  --media-chapters-divider: 2px solid var(--ink);
+  --media-slider-chapter-title-color: var(--text);
+  --media-slider-chapter-title-bg: var(--panel);
+
+  --media-menu-bg: var(--panel);
+  --media-menu-border: 1px solid var(--hairline);
+  --media-menu-border-radius: var(--radius-sm);
+  --media-menu-text-color: var(--text);
+  --media-menu-text-secondary-color: var(--muted);
+  --media-menu-item-hover-bg: var(--elevated);
+  --media-menu-font-size: 13px;
+
+  --media-tooltip-bg-color: var(--elevated);
+  --media-tooltip-border: 1px solid var(--hairline);
+  --media-tooltip-color: var(--text);
+  --media-tooltip-border-radius: var(--radius-sm);
+  --media-tooltip-font-size: 11px;
+}
+/* Timecodes stay tabular monospace, like every other readout in the app. */
+.vds-video-layout .vds-time,
+.vds-video-layout .vds-slider-value,
+.vds-video-layout .vds-time-slider .vds-slider-chapter-title {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* --- keyframe filmstrip -------------------------------------------------- */
+.filmstrip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--hairline) transparent;
+}
+.filmstrip__item {
+  flex: 0 0 auto;
+  width: 128px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  text-align: left;
+}
+.filmstrip__item:hover {
+  border-color: var(--hairline);
+}
+.filmstrip__item.is-active {
+  border-color: var(--amber);
+}
+.filmstrip__thumb {
   position: relative;
-  height: 14px;
+  height: 74px;
+  border-radius: 5px;
+  overflow: hidden;
+  background: #06080b;
+  display: grid;
+  place-items: center;
 }
-.tick {
-  position: absolute;
-  top: 0;
-  width: 2px;
-  height: 7px;
-  border-radius: 1px;
-  background: var(--muted-dim);
-  transform: translateX(-50%);
-  cursor: pointer;
+.filmstrip__thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
-.tick:hover,
-.tick.is-near {
-  background: var(--amber);
-  height: 12px;
+.filmstrip__tc {
+  display: block;
+  padding: 4px 2px 0;
+  font-size: 10px;
+  color: var(--muted-dim);
 }
-.tick__peek {
-  position: absolute;
-  bottom: 18px;
-  width: 168px;
-  border-radius: 6px;
-  border: 1px solid var(--hairline);
-  box-shadow: var(--shadow);
-  transform: translateX(-50%);
-  pointer-events: none;
-  z-index: 5;
+.filmstrip__item.is-active .filmstrip__tc {
+  color: var(--amber);
 }
 
 /* --- confirm ------------------------------------------------------------- */

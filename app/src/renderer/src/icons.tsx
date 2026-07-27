@@ -52,3 +52,28 @@ export const IconImage = (p: P): React.JSX.Element => (
     <path d="M21 16l-5-5-9 9" />
   </svg>
 );
+
+/* Player transport. The bar is the keyframe being jumped to, so the glyphs read
+   as "snap to the previous/next indexed frame", not as a 10s seek. */
+export const IconPrevKeyframe = (p: P): React.JSX.Element => (
+  <svg {...base} {...p}>
+    <path d="M6 5.5v13" />
+    <path d="M19 6.2v11.6L10 12z" fill="currentColor" stroke="none" />
+  </svg>
+);
+
+export const IconNextKeyframe = (p: P): React.JSX.Element => (
+  <svg {...base} {...p}>
+    <path d="M18 5.5v13" />
+    <path d="M5 6.2v11.6L14 12z" fill="currentColor" stroke="none" />
+  </svg>
+);
+
+/* A frame under a loupe — "open this keyframe with its regions". */
+export const IconInspect = (p: P): React.JSX.Element => (
+  <svg {...base} {...p}>
+    <path d="M20 12.5V5.5a1.5 1.5 0 0 0-1.5-1.5h-13A1.5 1.5 0 0 0 4 5.5v9A1.5 1.5 0 0 0 5.5 16h6" />
+    <circle cx="16.5" cy="16.5" r="3.5" />
+    <path d="M19.2 19.2L21.5 21.5" />
+  </svg>
+);
