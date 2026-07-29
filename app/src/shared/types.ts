@@ -140,6 +140,13 @@ export interface FrameHitDTO {
   highlightCount: number;
 }
 
+/**
+ * A captured accessibility element. Flat array + `parent` back-references rather
+ * than nested objects, matching the sidecar's wire format: main fills the links
+ * (from the sidecar, or by containment for older captures) so the renderer never
+ * has to reconstruct them. A parent always precedes its children, so a single
+ * forward pass can build the tree. Bboxes are in frame space — screen points.
+ */
 export interface UIElementDTO {
   role: string;
   label?: string;
@@ -148,6 +155,10 @@ export interface UIElementDTO {
   w: number;
   h: number;
   focused?: boolean;
+  /** Index into the same `ax` array; absent means root. */
+  parent?: number;
+  /** Depth among emitted elements; absent means 0. */
+  depth?: number;
 }
 
 export interface ResultDetailDTO {

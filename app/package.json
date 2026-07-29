@@ -1,7 +1,7 @@
 {
   "name": "deskrag-app",
   "version": "0.0.1",
-  "description": "DeskRAGApp \u2014 desktop UI for DeskRAG local-first session memory",
+  "description": "DeskRAGApp — desktop UI for DeskRAG local-first session memory",
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
@@ -30,6 +30,7 @@
     "@electron/rebuild": "^4.2.0",
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",
+    "@vidstack/react": "^1.15.6",
     "@vitejs/plugin-react": "^4.3.4",
     "electron": "^43.2.0",
     "electron-builder": "^26.15.3",

@@ -28,7 +28,16 @@ export interface FfmpegScreenOptions {
   /** Grayscale hash-frame size fed to dHash. */
   grayW?: number;
   grayH?: number;
-  /** Full-resolution dims recorded on the frame row (informational). */
+  /**
+   * The frame's coordinate space, recorded on every frame row. NOT informational
+   * and NOT ffmpeg's pixel resolution: this must be the display's size in SCREEN
+   * POINTS, because that is the space AX bboxes and mouse hotspots arrive in, and
+   * everything downstream maps out of it (SharpRegionCropper scales frame space →
+   * the downscaled JPEG). Leaving these at 0 silently disables the whole region
+   * pipeline — axFilter cuts every element as a whole-window container, grid
+   * tiling produces zero-width boxes, hotspots clamp to nothing, and Tier-2 patch
+   * highlights early-return — so no regions and no highlights are ever produced.
+   */
   width?: number;
   height?: number;
   /** Persist a full JPEG keyframe image per frame (frame_image + region crops). */

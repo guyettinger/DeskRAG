@@ -15,7 +15,7 @@
   --accent: #7c9cff; /* interactive */
   --accent-ink: #0f1216;
   --rec: #ff5a4d; /* live / recording only */
-  --amber: #ffc24b; /* region + AX overlays */
+  --amber: #ffc24b; /* search-hit region highlights (AX selection uses --accent) */
   --ok: #58d5a3;
 
   --radius: 10px;
@@ -662,15 +662,20 @@ a:focus-visible {
   padding: 32px;
   z-index: 40;
 }
+/* A DEFINITE height (not max-height) plus an explicitly bounded row is what lets
+   .detail__side scroll: with the default `auto` row the track sizes to its
+   content, so the side panel never gets a height to overflow and a long AX tree
+   just ran off the clipped bottom of the modal. */
 .detail {
   width: min(1120px, 100%);
-  max-height: 90vh;
+  height: min(90vh, 900px);
   background: var(--panel);
   border: 1px solid var(--hairline);
   border-radius: 14px;
   box-shadow: var(--shadow);
   display: grid;
   grid-template-columns: 1.55fr 1fr;
+  grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
 }
 .detail__stage {
@@ -678,17 +683,25 @@ a:focus-visible {
   display: grid;
   place-items: center;
   position: relative;
-  min-height: 320px;
+  min-height: 0;
+  /* AX bboxes are GLOBAL screen coords, so an element on a second display sits
+     outside the captured frame. Clip rather than blow out the grid. */
+  overflow: hidden;
 }
+/* The canvas is the positioning context for every bbox, so it has to be exactly
+   the painted image rect or the percentages drift. Driving it from the image's
+   own aspect ratio (set inline on load) makes object-fit a no-op — there is no
+   letterboxing left inside the box. */
 .detail__canvas {
   position: relative;
+  aspect-ratio: var(--frame-ar, 16 / 9);
   max-width: 100%;
-  max-height: 90vh;
+  max-height: 100%;
 }
 .detail__canvas img {
   display: block;
-  max-width: 100%;
-  max-height: 90vh;
+  width: 100%;
+  height: 100%;
   object-fit: contain;
 }
 .bbox {
@@ -696,6 +709,21 @@ a:focus-visible {
   border: 1.5px solid var(--amber);
   border-radius: 2px;
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+}
+/* AX selection, deliberately not amber: amber means "this matched your search",
+   blue means "this is the element you picked in the tree". They coexist. */
+.bbox--ax {
+  border-color: var(--accent);
+  background: rgba(124, 156, 255, 0.14);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.5),
+    0 0 12px rgba(124, 156, 255, 0.35);
+}
+.bbox--ax-hover {
+  border-style: dashed;
+  border-color: var(--accent);
+  background: none;
+  box-shadow: none;
 }
 .bbox__label {
   position: absolute;
@@ -708,6 +736,17 @@ a:focus-visible {
   padding: 1px 4px;
   border-radius: 3px;
   white-space: nowrap;
+  max-width: 100vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* An element flush with the top of the frame has no room above it for its tag. */
+.bbox__label--inside {
+  top: 1px;
+  left: 1px;
+}
+.bbox__label--ax {
+  background: var(--accent);
 }
 .detail__side {
   padding: 22px 24px;
@@ -715,6 +754,8 @@ a:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 18px;
+  min-width: 0;
+  min-height: 0;
 }
 .detail__close {
   position: absolute;
@@ -768,23 +809,94 @@ a:focus-visible {
   color: var(--muted-dim);
   font-style: italic;
 }
-.axlist {
+/* ---- accessibility tree ------------------------------------------------- */
+
+.field__head {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
 }
-.axtag {
+.field__action {
+  font-size: 10.5px;
+  color: var(--accent);
+  white-space: nowrap;
+}
+.field__action:hover {
+  text-decoration: underline;
+}
+.axtree {
+  display: flex;
+  flex-direction: column;
+  /* Bleed to the panel gutter so the row hover/selection reads as a list, not a
+     stack of chips. */
+  margin: 0 -6px;
+}
+.axtree__row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 3px 6px;
+  border-radius: 5px;
   font-family: var(--font-mono);
   font-size: 10.5px;
-  padding: 3px 7px;
-  border-radius: 5px;
-  background: var(--elevated);
-  border: 1px solid var(--hairline-soft);
+  line-height: 1.5;
   color: var(--muted);
+  text-align: left;
 }
-.axtag b {
+.axtree__row:hover {
+  background: var(--elevated);
+}
+.axtree__row--selected,
+.axtree__row--selected:hover {
+  background: rgba(124, 156, 255, 0.16);
+  color: var(--accent);
+}
+.axtree__row--off {
+  color: var(--muted-dim);
+  cursor: default;
+}
+.axtree__row--off:hover {
+  background: none;
+}
+.axtree__caret {
+  flex: 0 0 11px;
+  color: var(--muted-dim);
+  transition: transform 0.12s ease;
+}
+.axtree__caret--open {
+  transform: rotate(90deg);
+}
+.axtree__role {
+  flex: 0 0 auto;
+}
+.axtree__label {
   color: var(--text);
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.axtree__row--selected .axtree__label {
+  color: var(--accent);
+}
+.axtree__row--off .axtree__label {
+  color: var(--muted-dim);
+  font-weight: 400;
+}
+/* Sits beside the label, not flush right: at this panel width `margin-left:auto`
+   strands the number a few hundred px from the row it belongs to. */
+.axtree__count {
+  flex: 0 0 auto;
+  margin-left: 2px;
+  color: var(--muted-dim);
+  font-size: 9.5px;
+}
+.axtree__hint {
+  font-size: 11px;
+  color: var(--muted-dim);
+  font-style: italic;
 }
 
 /* ---- settings ----------------------------------------------------------- */
@@ -990,100 +1102,148 @@ select {
   color: #fff;
 }
 
-/* --- player -------------------------------------------------------------- */
+/* --- player (Vidstack default layout, re-tinted) -------------------------- */
+/* The layout is Vidstack's; every colour, radius and typeface below comes from
+   the app's own tokens, so the player reads as part of the instrument rather
+   than as a web video player dropped into it. */
 .player {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
-.player__video {
-  width: 100%;
-  max-height: 56vh;
-  border-radius: var(--radius);
-  background: #06080b;
-  border: 1px solid var(--hairline-soft);
+.stagehead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.stagehead__when {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.stagehead__meta {
+  font-size: 11px;
+  color: var(--muted);
 }
 .player__note {
   font-size: 13px;
   color: var(--muted);
   line-height: 1.5;
 }
-.player__bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.player__time {
-  font-size: 12px;
-  color: var(--muted);
-  margin-left: 4px;
-}
-.player__speed {
-  margin-left: auto;
-  background: var(--panel);
-  color: var(--text);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
-  padding: 6px 8px;
-  font-size: 12px;
-}
 .player__meta {
   font-size: 11px;
   color: var(--muted-dim);
 }
 
-.scrub {
-  position: relative;
-  height: 6px;
-  border-radius: 3px;
-  background: var(--hairline);
-  cursor: pointer;
+.player__media {
+  width: 100%;
+  max-height: 56vh;
+  border-radius: var(--radius);
+  overflow: hidden;
 }
-.scrub__fill {
-  height: 100%;
-  border-radius: 3px;
-  background: var(--accent);
-}
-.scrub__head {
-  position: absolute;
-  top: -3px;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--accent);
-  transform: translateX(-50%);
-  pointer-events: none;
+.player__media video {
+  width: 100%;
+  max-height: 56vh;
+  object-fit: contain;
 }
 
-.ticks {
+.vds-video-layout {
+  --video-brand: var(--accent);
+  --video-controls-color: var(--text);
+  --video-focus-ring-color: var(--accent);
+  --video-bg: #06080b;
+  --video-border: 1px solid var(--hairline-soft);
+  --video-border-radius: var(--radius);
+  --video-font-family: var(--font-ui);
+  --video-slider-thumbnail-border: 1px solid var(--hairline);
+  --video-slider-thumbnail-border-radius: 6px;
+
+  --media-button-hover-bg: color-mix(in srgb, var(--accent) 18%, transparent);
+  --media-slider-track-bg: var(--hairline);
+  --media-slider-track-fill-bg: var(--accent);
+  --media-slider-track-progress-bg: var(--muted-dim);
+  --media-slider-thumb-bg: var(--accent);
+  --media-slider-thumb-border: 1px solid var(--ink);
+  --media-slider-preview-bg: var(--panel);
+  --media-slider-value-bg: var(--elevated);
+  --media-slider-value-color: var(--text);
+  /* Keyframe boundaries. The divider is the tick — it sits on the track. */
+  --media-chapters-divider: 2px solid var(--ink);
+  --media-slider-chapter-title-color: var(--text);
+  --media-slider-chapter-title-bg: var(--panel);
+
+  --media-menu-bg: var(--panel);
+  --media-menu-border: 1px solid var(--hairline);
+  --media-menu-border-radius: var(--radius-sm);
+  --media-menu-text-color: var(--text);
+  --media-menu-text-secondary-color: var(--muted);
+  --media-menu-item-hover-bg: var(--elevated);
+  --media-menu-font-size: 13px;
+
+  --media-tooltip-bg-color: var(--elevated);
+  --media-tooltip-border: 1px solid var(--hairline);
+  --media-tooltip-color: var(--text);
+  --media-tooltip-border-radius: var(--radius-sm);
+  --media-tooltip-font-size: 11px;
+}
+/* Timecodes stay tabular monospace, like every other readout in the app. */
+.vds-video-layout .vds-time,
+.vds-video-layout .vds-slider-value,
+.vds-video-layout .vds-time-slider .vds-slider-chapter-title {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* --- keyframe filmstrip -------------------------------------------------- */
+.filmstrip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--hairline) transparent;
+}
+.filmstrip__item {
+  flex: 0 0 auto;
+  width: 128px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  text-align: left;
+}
+.filmstrip__item:hover {
+  border-color: var(--hairline);
+}
+.filmstrip__item.is-active {
+  border-color: var(--amber);
+}
+.filmstrip__thumb {
   position: relative;
-  height: 14px;
+  height: 74px;
+  border-radius: 5px;
+  overflow: hidden;
+  background: #06080b;
+  display: grid;
+  place-items: center;
 }
-.tick {
-  position: absolute;
-  top: 0;
-  width: 2px;
-  height: 7px;
-  border-radius: 1px;
-  background: var(--muted-dim);
-  transform: translateX(-50%);
-  cursor: pointer;
+.filmstrip__thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
-.tick:hover,
-.tick.is-near {
-  background: var(--amber);
-  height: 12px;
+.filmstrip__tc {
+  display: block;
+  padding: 4px 2px 0;
+  font-size: 10px;
+  color: var(--muted-dim);
 }
-.tick__peek {
-  position: absolute;
-  bottom: 18px;
-  width: 168px;
-  border-radius: 6px;
-  border: 1px solid var(--hairline);
-  box-shadow: var(--shadow);
-  transform: translateX(-50%);
-  pointer-events: none;
-  z-index: 5;
+.filmstrip__item.is-active .filmstrip__tc {
+  color: var(--amber);
 }
 
 /* --- confirm ------------------------------------------------------------- */

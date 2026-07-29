@@ -36,18 +36,34 @@ describe.skipIf(!hasSwiftc)("ax-dump Swift sidecar", () => {
 
   it("emits the exact contract JSON (deterministic --self-test)", async () => {
     const els = await new SwiftAxSource({ binaryPath: bin, args: ["--self-test"] }).query();
+    // The root omits `parent` entirely (encodeIfPresent), and the child's depth is
+    // derived from the link by coerceAxElements rather than read off the wire.
     expect(els).toEqual([
-      { role: "Button", label: "Save", x: 100, y: 200, w: 80, h: 30, focused: true },
+      { role: "Window", x: 0, y: 0, w: 1000, h: 1000 },
+      { role: "Button", label: "Save", x: 100, y: 200, w: 80, h: 30, focused: true, parent: 0, depth: 1 },
     ]);
   });
 
   it("its output flows through axFilter into a labeled AX region", async () => {
     const els = await new SwiftAxSource({ binaryPath: bin, args: ["--self-test"] }).query();
+    // The Window is the whole frame, so axFilter drops it as a container — the
+    // hierarchy fields ride along without changing what becomes a region.
     const regions = axFilter(els, { frameW: 1000, frameH: 1000 });
     expect(regions).toHaveLength(1);
     expect(regions[0]!.source).toBe("ax");
     expect(regions[0]!.label).toBe("Save");
     expect(regions[0]!.priority).toBe(5); // base 2 + label 1 + focused 2
+  });
+
+  it("a live walk emits parent links that resolve to earlier elements", async () => {
+    const els = await new SwiftAxSource({ binaryPath: bin }).query();
+    for (const [i, e] of els.entries()) {
+      if (e.parent === undefined) continue;
+      expect(e.parent).toBeLessThan(i); // pre-order: no forward refs, no cycles
+      expect(e.depth).toBe((els[e.parent]!.depth ?? 0) + 1);
+    }
+    // Without AX permission the walk yields [], which is a valid (vacuous) pass.
+    if (els.length > 1) expect(els.some((e) => e.parent !== undefined)).toBe(true);
   });
 
   it("a live query returns a valid element array (empty if no AX permission)", async () => {
