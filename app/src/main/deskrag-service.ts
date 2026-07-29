@@ -13,6 +13,7 @@
  */
 
 import { join } from "node:path";
+import { screen } from "electron";
 import {
   DualStore,
   BlobStore,
@@ -35,6 +36,7 @@ import {
   BehaviorViewSearcher,
   FramePatchRepresenter,
   OllamaCaptionProvider,
+  nestAxElements,
   type Producer,
   type EmbeddingProvider,
   type ImageEmbeddingProvider,
@@ -332,11 +334,19 @@ export class DeskRagService {
     });
 
     if (sig.screen.enabled) {
+      // Frame space is SCREEN POINTS, not ffmpeg's pixel resolution (2x on
+      // Retina) and not the downscaled JPEG's size — it has to match the space AX
+      // bboxes and uiohook mouse points arrive in, which is what Electron's
+      // display size reports. Omitting it leaves every frame row at 0x0, which
+      // silently disables AX/grid/hotspot region proposal and all highlights.
+      const display = screen.getPrimaryDisplay().size;
       session.addProducer(
         new FfmpegScreenProducer({
           fps: sig.screen.fps,
           imageMaxWidth: sig.screen.imageMaxWidth,
           storeImages: true,
+          width: display.width,
+          height: display.height,
         }),
       );
       active.push("screen");
@@ -624,7 +634,10 @@ export class DeskRagService {
       // Most specific (shortest) segment is the best label context.
       .sort((a, b) => a.tMonoEnd - a.tMonoStart - (b.tMonoEnd - b.tMonoStart));
     const seg = segs[0];
-    const ax = this.store.getFrameAx(frameId).map((e) => ({
+    // nestAxElements is a pass-through for anything the current sidecar captured
+    // (it already emits parent links); it only does geometric work for frames
+    // recorded before that, so the renderer can always just read parent/depth.
+    const ax = nestAxElements(this.store.getFrameAx(frameId)).map((e) => ({
       role: e.role,
       ...(e.label !== undefined ? { label: e.label } : {}),
       x: e.x,
@@ -632,6 +645,8 @@ export class DeskRagService {
       w: e.w,
       h: e.h,
       ...(e.focused !== undefined ? { focused: e.focused } : {}),
+      ...(e.parent !== undefined ? { parent: e.parent } : {}),
+      ...(e.depth !== undefined ? { depth: e.depth } : {}),
     }));
     return {
       frameId,

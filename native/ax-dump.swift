@@ -3,7 +3,14 @@
 // Walks the focused window's AXUIElement tree of the target app (frontmost by
 // default, or `--pid <n>`) and prints a FLAT JSON array of UI elements to stdout:
 //   [{ "role": String, "label"?: String, "x": Double, "y": Double,
-//      "w": Double, "h": Double, "focused"?: Bool }, ...]
+//      "w": Double, "h": Double, "focused"?: Bool, "parent"?: Int }, ...]
+//
+// The array is flat but not structureless: `parent` is a back-reference to an
+// earlier index (the walk is pre-order, so a parent always precedes its children)
+// and its absence means root. Nodes the walk skips — no role, or no usable bbox —
+// are transparent: their children reparent to the nearest emitted ancestor, so
+// `parent` chains never dangle. Depth is NOT emitted; the TS side derives it from
+// `parent` so the two can't disagree after an element is dropped in validation.
 //
 // Coordinates are global screen coordinates, top-left origin (the Accessibility
 // API's native space) — the same space as uiohook mouse hotspots, so no flip.
@@ -29,6 +36,9 @@ struct AXElem: Codable {
     let w: Double
     let h: Double
     let focused: Bool?
+    /// Index of the nearest emitted ancestor; nil for a root. Synthesized Codable
+    /// uses encodeIfPresent, so roots stay as compact as they were before.
+    let parent: Int?
 }
 
 final class AXReader {
@@ -90,12 +100,16 @@ final class AXReader {
         return arr
     }
 
-    func walk(_ el: AXUIElement, depth: Int) {
-        if visited >= maxNodes || depth > maxDepth || outOfTime {
+    /// `rawDepth` counts every node visited (it drives the depth cap); `parent` is
+    /// the index of the nearest ancestor that actually made it into `elements`.
+    func walk(_ el: AXUIElement, rawDepth: Int, parent: Int?) {
+        if visited >= maxNodes || rawDepth > maxDepth || outOfTime {
             truncated = true
             return
         }
         visited += 1
+        // Skipped nodes are transparent: children inherit the parent we were given.
+        var childParent = parent
         if let rawRole = str(el, kAXRoleAttribute as String),
            let pos = point(el, kAXPositionAttribute as String),
            let size = extent(el, kAXSizeAttribute as String),
@@ -104,14 +118,16 @@ final class AXReader {
             let role = rawRole.hasPrefix("AX") ? String(rawRole.dropFirst(2)) : rawRole
             let label = str(el, kAXTitleAttribute as String)
                 ?? str(el, kAXDescriptionAttribute as String)
+            childParent = elements.count
             elements.append(AXElem(
                 role: role, label: label,
                 x: Double(pos.x), y: Double(pos.y),
                 w: Double(size.width), h: Double(size.height),
-                focused: flag(el, kAXFocusedAttribute as String)
+                focused: flag(el, kAXFocusedAttribute as String),
+                parent: parent
             ))
         }
-        for child in children(el) { walk(child, depth: depth + 1) }
+        for child in children(el) { walk(child, rawDepth: rawDepth + 1, parent: childParent) }
     }
 }
 
@@ -125,9 +141,13 @@ func emit(_ elements: [AXElem]) {
 let args = CommandLine.arguments
 
 // Deterministic contract self-check (no AX access) — used by the test suite to
-// verify the JSON encoding + sidecar wiring regardless of permission state.
+// verify the JSON encoding + sidecar wiring regardless of permission state. Two
+// elements, so the parent back-reference is part of the checked contract.
 if args.contains("--self-test") {
-    emit([AXElem(role: "Button", label: "Save", x: 100, y: 200, w: 80, h: 30, focused: true)])
+    emit([
+        AXElem(role: "Window", label: nil, x: 0, y: 0, w: 1000, h: 1000, focused: nil, parent: nil),
+        AXElem(role: "Button", label: "Save", x: 100, y: 200, w: 80, h: 30, focused: true, parent: 0),
+    ])
     exit(0)
 }
 
@@ -173,12 +193,12 @@ let reader = AXReader(budgetMs: budgetMs)
 var focusedWindow: CFTypeRef?
 if AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &focusedWindow) == .success,
    let win = focusedWindow, CFGetTypeID(win) == AXUIElementGetTypeID() {
-    reader.walk(win as! AXUIElement, depth: 0)
+    reader.walk(win as! AXUIElement, rawDepth: 0, parent: nil)
 } else {
     var windows: CFTypeRef?
     if AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &windows) == .success,
        let arr = windows as? [AXUIElement], let first = arr.first {
-        reader.walk(first, depth: 0)
+        reader.walk(first, rawDepth: 0, parent: nil)
     }
 }
 
