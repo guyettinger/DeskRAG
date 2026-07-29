@@ -135,6 +135,14 @@ export interface UIElement {
   h: number;
   /** The currently-focused element — always preserved through region budgeting. */
   focused?: boolean;
+  /**
+   * Index of this element's parent in the same array; absent means root. The AX
+   * walk is a tree but the wire format is flat (see native/ax-dump.swift), so
+   * hierarchy travels as back-references — a parent always precedes its children.
+   */
+  parent?: number;
+  /** Depth among *emitted* elements. Derived from `parent`; absent means 0. */
+  depth?: number;
 }
 
 export type RegionSource = "ax" | "hotspot" | "grid";

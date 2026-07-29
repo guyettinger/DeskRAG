@@ -25,6 +25,7 @@ export { AxCapturer } from "./capture/ax/ax-capturer.js";
 export { NoopAxSource } from "./capture/ax/noop.js";
 export { SwiftAxSource, type SwiftAxSourceOptions } from "./capture/ax/swift-ax-source.js";
 export { parseAxElements, coerceAxElements } from "./capture/ax/parse.js";
+export { nestAxElements } from "./capture/ax/tree.js";
 // frame pipeline (pure) + ffmpeg screen producer (child_process only).
 // Native producers (uiohook-input, active-window) are intentionally NOT exported
 // here so importing the package never loads their optional native modules;
