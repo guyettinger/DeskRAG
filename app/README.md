@@ -4,14 +4,13 @@
 
 <h1 align="center">DeskRAGApp</h1>
 
-A simple Electron desktop app over the [DeskRAG](../README.md) library: pick your
-local models, grant macOS permissions, toggle capture signals, record an
-experience, then search your sessions as a contact sheet of keyframes and drill
-into any hit.
+An Electron desktop app over the [DeskRAG](../README.md) library: pick your local
+models, grant macOS permissions, toggle capture signals, record an experience, then
+play it back with the index on the timeline — or search your sessions as a contact
+sheet of keyframes and drill into any hit.
 
-- **electron-vite + React + TypeScript.** `src/main` owns the library (store,
-  capture, pipeline, providers); `src/preload` is a typed contextBridge; `src/renderer`
-  is the UI. The renderer never touches Node or native code.
+- **electron-vite + React + TypeScript.** Four screens: Record, Library, Search,
+  Settings.
 - **Fully local.** Every model runs on this machine — an Ollama daemon on
   localhost, or ONNX in-process. There is no cloud provider and no API key
   anywhere in the app, so nothing you record can leave the device.
@@ -19,19 +18,83 @@ into any hit.
   (digest/behavior always; frame/caption/region and transcript when configured).
 - **Weights download once**, verified against a pinned sha256, into
   `<userData>/DeskRAG/models/` — then everything works offline.
-- **Keyframes stream over a `deskrag://frame/<blobId>` protocol** rather than being
-  marshalled through IPC as base64.
 
 ## Screens
 
-| Screen | What's there |
-| --- | --- |
-| **Record** | Signal switchboard (screen · input · active window · microphone · accessibility tree) with a status LED each, inline notes for a missing permission (Grant / Open Settings) or a missing tool (`ffmpeg`, `ax-dump`), elapsed timecode, and stage-by-stage indexing progress after Stop. |
-| **Search** | Text query, or an image file as a visual example (needs an image model). Hits render as a contact sheet of keyframes — timecode, wall-clock, segment digest, score, highlight count — and open into a detail view with the full keyframe, region highlight boxes, the captured AX elements, and the segment's digest / caption / transcript. |
-| **Settings** | Four groups: **Models** (text embeddings, image model, captions, Tier-4 rerank, model directory), **Ollama** (host, embedding model, caption model), **Transcription** (whisper.cpp binary + model), and **Capture defaults** (frame rate, keyframe max width, audio device, chunk seconds). Two image models are offered — Nomic Vision (fast, adds labelled region highlights) and ColSmol (late interaction, seconds per frame); picking ColSmol warns if your keyframe width is under 2048, where its preprocessor upscales and match quality degrades with no visible error. |
+### Record
+
+Signal switchboard (screen · input · active window · microphone · accessibility
+tree) with a status LED each, inline notes for a missing permission (Grant / Open
+Settings) or a missing tool (`ffmpeg`, `ax-dump`), elapsed timecode, and
+stage-by-stage indexing progress after Stop.
+
+![Record screen](../docs/images/record.png)
+
+### Library
+
+Every session you've captured, with the index put on the timeline. Keyframes become
+player **chapter cues** — so the scrubber is divided at exactly the frames that were
+indexed — and thumbnail images on scrub. Below the frame, a filmstrip tracks the
+playhead and scrolls to the nearest keyframe. Sessions delete with a confirm, which
+removes the rows and then the blobs.
+
+Playback has **no audio**: the screen video is video-only, so volume and mute
+controls are removed rather than shown inert. Fullscreen and picture-in-picture are
+removed too — this is an inspection surface, so the frame is always letterboxed
+whole, never cropped.
+
+![Library screen](../docs/images/library.png)
+
+### Search
+
+Text query, or an image file as a visual example (needs an image model). Hits render
+as a contact sheet of keyframes — timecode, wall-clock, segment digest, score,
+highlight count — and open into a detail view with the full keyframe, region
+highlight boxes, the captured AX elements as a locatable tree, and the segment's
+digest / caption / transcript.
+
+![Search screen](../docs/images/search.png)
+
+![Detail view](../docs/images/detail.png)
+
+### Settings
+
+Four groups: **Models** (text embeddings, image model, captions, Tier-4 rerank, model
+directory), **Ollama** (host, embedding model, caption model), **Transcription**
+(whisper.cpp binary + model), and **Capture defaults** (frame rate, keyframe max
+width, audio device, chunk seconds). Two image models are offered — Nomic Vision
+(fast, adds labelled region highlights) and ColSmol (late interaction, seconds per
+frame); picking ColSmol warns if your keyframe width is under 2048, where its
+preprocessor upscales and match quality degrades with no visible error.
+
+![Settings screen](../docs/images/settings.png)
 
 Closing the window hides the app to a menu-bar tray — **recording keeps running**,
 and the tray menu can start/stop it. Only Quit closes the store.
+
+> Screenshots are generated from the built app by `npm run gen:shots` (repo root) —
+> see [docs/setup.md](../docs/setup.md#maintainer-tooling).
+
+## How it's wired
+
+`src/main` is the *only* process that touches the library, the store, and native
+modules; `src/preload` is a typed `contextBridge`; `src/renderer` (React) sees
+nothing but plain serializable DTOs and calls IPC. `src/shared/types.ts` is the
+contract between them — DTOs plus the IPC channel-name map — so main and preload
+can't drift.
+
+Keyframes reach the UI over a custom `deskrag://` protocol rather than as base64:
+`deskrag://frame/<blobId>` buffers an image whole, and `deskrag://media/<blobId>`
+streams video with `Range` → `206`, which is the only way Chromium will let a
+`<video>` seek.
+
+## Degrades gracefully
+
+Text + behavioral search and keyframe thumbnails work with nothing but Ollama
+running; every other model is optional, and a missing binary or native module
+disables exactly one feature instead of breaking startup. Stopping a recording
+auto-runs segment → represent, with the frame/caption/region and transcript stages
+included only when their model is configured.
 
 ## Setup (dev)
 
