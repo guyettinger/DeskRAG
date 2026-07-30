@@ -36,6 +36,7 @@ import type {
   ViewSearcher,
 } from "./types.js";
 
+/** How wide each tier casts and how the per-tier scores are combined. */
 export interface RetrieverOptions {
   weights?: RetrieverWeights;
   tier1?: Tier1Options;
@@ -64,6 +65,14 @@ const DEFAULT_WEIGHTS: RetrieverWeights = { frame: 1, region: 0.5, segment: 0.5 
 /** Score assigned to an FTS-only region hit (no ANN distance). */
 const FTS_ONLY_SCORE = 0.5;
 
+/**
+ * The coarse-to-fine capstone: one `retrieve()` call runs every applicable tier,
+ * narrowing scope at each step, and returns ranked frames with `highlights`.
+ *
+ * Its `searchers` may only name namespaces present in `store.listVectorSpaces()` —
+ * `searchSegments` throws otherwise, and caption/transcript spaces don't exist
+ * until something has been indexed with those providers.
+ */
 export class Retriever {
   private readonly tier1: Tier1Retriever;
   /** Single-vector visual path (cloud providers). Absent on the local path. */

@@ -16,17 +16,23 @@ import { namespaceFor } from "../embed/types.js";
 import type { BlobStore } from "../store/blob-store.js";
 import type { FrameVectorInsert, Store } from "../store/types.js";
 
+/** The image model and the blob store the keyframe bytes are read from. */
 export interface FrameRepresenterOptions {
   imageEmbedder: ImageEmbeddingProvider;
   blobStore: BlobStore;
 }
 
+/** How many frames were seen versus actually embedded, and into which namespace. */
 export interface FrameRepresentResult {
   frameCount: number;
   embeddedCount: number;
   namespace: string;
 }
 
+/**
+ * Embeds whole keyframes into the `frame_image` view (Tier 2), denormalizing each
+ * frame's `segment_ids` onto the vector so the ANN can be scoped exactly.
+ */
 export class FrameRepresenter {
   private readonly imageEmbedder: ImageEmbeddingProvider;
   private readonly blobStore: BlobStore;

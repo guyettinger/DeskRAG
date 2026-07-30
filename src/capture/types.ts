@@ -46,6 +46,11 @@ export interface AudioChunk {
   codec: string;
 }
 
+/**
+ * What a producer is handed at `start()`. It is the ONLY channel a producer has to
+ * the outside world — producers never touch the store, not even for files their own
+ * subprocess writes (those go through `reserveBlob`/`commitBlob`).
+ */
 export interface CaptureContext {
   readonly sessionId: string;
   readonly clock: MonotonicClock;
@@ -69,6 +74,10 @@ export interface CaptureContext {
   commitBlob(blobId: string, meta: { tMonoStart: number; tMonoEnd: number }): Promise<void>;
 }
 
+/**
+ * A signal source. Stamps events on the session's monotonic clock and hands them to
+ * the `CaptureContext`; `stop()` must not resolve until the signal is fully drained.
+ */
 export interface Producer {
   readonly id: string;
   start(ctx: CaptureContext): void | Promise<void>;

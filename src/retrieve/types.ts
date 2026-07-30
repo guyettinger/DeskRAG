@@ -8,6 +8,10 @@
 import type { View } from "../embed/types.js";
 import type { FrameRow, SegmentRow } from "../store/types.js";
 
+/**
+ * What to recall. Any combination of the three modes; each is routed to the views
+ * that can answer it, and the combination decides which tiers run.
+ */
 export interface Query {
   /** Natural-language intent — routed to text views (digest/caption/...). */
   text?: string;
@@ -32,6 +36,7 @@ export interface PerViewHit {
   distance: number;
 }
 
+/** A Tier-1 segment, with the per-view provenance that produced its fused rank. */
 export interface SegmentHit {
   segmentId: string;
   /** Fused RRF score. */
@@ -41,6 +46,7 @@ export interface SegmentHit {
   segment?: SegmentRow;
 }
 
+/** Tier 1's output on its own — the scope Tier 2 narrows into. */
 export interface RetrievalResult {
   segments: SegmentHit[];
 }
@@ -65,6 +71,7 @@ export interface RegionHit {
   distance?: number;
 }
 
+/** How wide Tier 1 fans across views, and how hard RRF damps deep ranks. */
 export interface Tier1Options {
   /** RRF damping constant. */
   rrfK?: number;

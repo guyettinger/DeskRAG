@@ -16,17 +16,24 @@ import type { Store, SegmentVectorInsert } from "../store/types.js";
 import { buildDigest, type DigestEvent } from "./digest.js";
 import { BehaviorFeatureExtractor, type BehaviorEvent } from "./behavior.js";
 
+/** The providers backing the event-only views. `behavior` defaults to a fresh extractor. */
 export interface RepresenterOptions {
   digestEmbedder: EmbeddingProvider;
   behavior?: BehaviorFeatureExtractor;
 }
 
+/** What was written, and into which namespaces. */
 export interface RepresentResult {
   segmentCount: number;
   digestNamespace: string;
   behaviorNamespace: string;
 }
 
+/**
+ * Builds the event-only per-segment views — digest text and the behavioral vector —
+ * and persists them, text to SQLite before vectors to Lance so a crash between the
+ * two leaves a gap `reconcile()` can refill.
+ */
 export class Representer {
   private readonly digestEmbedder: EmbeddingProvider;
   private readonly behavior: BehaviorFeatureExtractor;
