@@ -5,13 +5,14 @@ import {
   Poster,
   Tooltip,
   Track,
+  isVideoProvider,
   useMediaPlayer,
   type MediaPlayerInstance,
   type VTTContent,
 } from "@vidstack/react";
 import { DefaultVideoLayout, defaultLayoutIcons } from "@vidstack/react/player/layouts/default";
 import type { KeyframeMarkerDTO, SessionDetailDTO } from "@shared/types";
-import { timecode } from "../api.js";
+import { keyframeLabel } from "../api.js";
 import { IconInspect, IconNextKeyframe, IconPrevKeyframe } from "../icons.js";
 import { DetailView } from "./DetailView.js";
 import { KeyframeStrip } from "./KeyframeStrip.js";
@@ -181,7 +182,9 @@ export function SessionPlayer({ detail }: { detail: SessionDetailDTO }): React.J
   }, [keyframes]);
 
   // Keyframes as chapters: the slider is divided at exactly the frames that
-  // were indexed, and hovering one names its segment.
+  // were indexed, and hovering one names its segment. This one track feeds every
+  // label in the layout — the control bar title, the slider's chapter titles and
+  // its hover preview, and the chapters menu.
   const chapters = useMemo<VTTContent | null>(() => {
     if (keyframes.length === 0 || total <= 0) return null;
     const clamp = (sec: number): number => Math.min(Math.max(sec, 0), total);
@@ -190,7 +193,7 @@ export function SessionPlayer({ detail }: { detail: SessionDetailDTO }): React.J
         // Start at 0 so the track has no dead lead-in before the first keyframe.
         startTime: i === 0 ? 0 : clamp(k.offsetSec),
         endTime: i === keyframes.length - 1 ? total : clamp(keyframes[i + 1]!.offsetSec),
-        text: k.segmentDigest ?? timecode(k.tMono),
+        text: keyframeLabel(k),
       }))
       .filter((cue) => cue.endTime - cue.startTime > 0.05);
     return cues.length > 0 ? { cues } : null;
@@ -244,8 +247,10 @@ export function SessionPlayer({ detail }: { detail: SessionDetailDTO }): React.J
         keyDisabled={openFrame !== null}
         keyShortcuts={{
           togglePaused: "k Space",
-          toggleFullscreen: "f",
-          togglePictureInPicture: "i",
+          // Fullscreen and picture-in-picture are removed from this player, so
+          // their default keys must go too or they come back by keyboard.
+          toggleFullscreen: null,
+          togglePictureInPicture: null,
           // No audio track exists on a screen recording.
           toggleMuted: null,
           volumeUp: null,
@@ -271,6 +276,13 @@ export function SessionPlayer({ detail }: { detail: SessionDetailDTO }): React.J
         onDurationChange={(value) => {
           if (Number.isFinite(value) && value > 0) setDuration(value);
         }}
+        // The <video> element carries its own picture-in-picture affordance,
+        // independent of the button and the keybinding removed above. provider-
+        // change is the documented place to configure a provider; provider-setup
+        // is too late.
+        onProviderChange={(provider) => {
+          if (isVideoProvider(provider)) provider.video.disablePictureInPicture = true;
+        }}
       >
         <MediaProvider>
           <Poster className="vds-poster" alt="" />
@@ -285,6 +297,13 @@ export function SessionPlayer({ detail }: { detail: SessionDetailDTO }): React.J
           thumbnails={thumbnails}
           playbackRates={SPEEDS}
           sliderChaptersMinWidth={240}
+          // The small layout stacks a centred play button, a top menu row and a
+          // bottom slider — an arrangement for chrome floating over a whole
+          // frame. Docked in a bar it just stretches into dead space, and this
+          // player is always a desktop stage, so keep the one-row large layout
+          // at every size (the window can go to 900x600, which would otherwise
+          // trip the default width < 576 || height < 380 switch).
+          smallLayoutWhen={false}
           noAudioGain
           menuGroup="bottom"
           slots={{
@@ -299,6 +318,14 @@ export function SessionPlayer({ detail }: { detail: SessionDetailDTO }): React.J
             airPlayButton: null,
             googleCastButton: null,
             downloadButton: null,
+            // This player is a desktop inspection surface: a floating window and
+            // a fullscreen canvas both take the frame away from the keyframe
+            // strip and the stage header that give it context.
+            pipButton: null,
+            fullscreenButton: null,
+            // Still rendered even though the button beside it is null — the
+            // layout's slot() emits before/after regardless of the default being
+            // replaced — so Inspect stays at the end of the bar.
             beforeFullscreenButton: (
               <InspectButton keyframes={keyframes} onInspect={setOpenFrame} />
             ),

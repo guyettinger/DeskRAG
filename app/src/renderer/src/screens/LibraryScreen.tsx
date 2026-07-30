@@ -50,7 +50,7 @@ export function LibraryScreen(): React.JSX.Element {
   if (!sessions) return <div className="spinner" />;
 
   return (
-    <div className="page">
+    <div className="page page--fill">
       <div className="page__head">
         <span className="eyebrow">Library</span>
         <h1>Your recordings</h1>

@@ -255,6 +255,19 @@ a:focus-visible {
   max-width: 1000px;
   margin: 0 auto;
 }
+/* A page that owns the whole content area instead of flowing down it: full width,
+   the height .content already has, and a bounded flex column so the panes inside
+   scroll rather than the page. */
+.page--fill {
+  max-width: none;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.page--fill .page__head {
+  flex: none;
+}
 .page__head {
   margin-bottom: 26px;
 }
@@ -1003,23 +1016,32 @@ select {
 }
 
 /* --- library ------------------------------------------------------------- */
+/* The list and the stage fill the content area and scroll internally, so the
+   page itself never scrolls. Every link in the chain from .page--fill down needs
+   min-height: 0 or the row grows to fit the video instead of bounding it. */
 .library {
   display: grid;
   grid-template-columns: 300px 1fr;
+  grid-template-rows: minmax(0, 1fr);
   gap: 18px;
   margin-top: 20px;
-  align-items: start;
+  align-items: stretch;
+  flex: 1;
+  min-height: 0;
 }
 .library__list {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  max-height: 72vh;
+  min-height: 0;
   overflow-y: auto;
   padding-right: 4px;
 }
 .library__stage {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+  min-height: 0;
 }
 
 .sessioncard {
@@ -1110,6 +1132,8 @@ select {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  flex: 1;
+  min-height: 0;
 }
 .stagehead {
   display: flex;
@@ -1117,6 +1141,7 @@ select {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 12px;
+  flex: none;
 }
 .stagehead__when {
   font-size: 16px;
@@ -1135,18 +1160,133 @@ select {
 .player__meta {
   font-size: 11px;
   color: var(--muted-dim);
+  flex: none;
 }
 
+/* The player takes the height the stage leaves and splits it in two: the frame,
+   and a docked control row under it. Vidstack's own rules are almost all wrapped
+   in :where() (specificity 0), so plain class selectors retune it without
+   !important. */
 .player__media {
+  /* Beats :where([data-view-type='video']) { aspect-ratio: 16/9 }, which would
+     otherwise letterbox the recording inside a box of the wrong shape. */
+  aspect-ratio: auto;
   width: 100%;
-  max-height: 56vh;
+  height: 100%;
+  flex: 1;
+  /* Explicit floor, ~200px of frame plus the ~100px docked bar. It cannot be left
+     to the flex default: `min-height: auto` resolves to the content-based minimum
+     only while overflow is visible, and this box sets overflow: hidden (for the
+     rounded corners), which makes that automatic minimum 0 — the player would
+     collapse under its own rows. */
+  min-height: 300px;
+  display: grid;
+  /* minmax(0, …), not the implicit `auto`: an auto column is floored at its
+     content's min-content width, and the control row below carries caption-length
+     text (see .vds-slider-chapter-title). That floor would widen the column past
+     the stage and scale the video — at width: 100% of the column — with it. */
+  grid-template-columns: minmax(0, 1fr);
+  /* The frame takes whatever the docked bar leaves. The bar, filmstrip, meta and
+     page head are all fixed height, so in a short window (the app allows 900x600)
+     this row is the only thing that can give — hence the floor above, past which
+     the interface stops filling and .content scrolls instead. */
+  grid-template-rows: minmax(0, 1fr) auto;
   border-radius: var(--radius);
   overflow: hidden;
 }
+.player__media [data-media-provider] {
+  grid-area: 1 / 1;
+  height: 100%;
+  min-height: 0;
+  aspect-ratio: auto;
+}
+/* Scaled to the largest size that fits, never cropped: this is an inspection
+   surface, so losing edge pixels is worse than a thin letterbox. */
 .player__media video {
   width: 100%;
-  max-height: 56vh;
+  height: 100%;
+  max-height: none;
+  aspect-ratio: auto;
   object-fit: contain;
+}
+/* The poster has to match the video exactly, or the frame jumps the moment
+   playback starts. Vidstack scopes its own `object-fit: contain` to
+   `.vds-poster :where(img)`, but <Poster> renders the <img> *as* .vds-poster with
+   nothing inside it — so that rule never matches and the keyframe falls back to
+   `fill`, stretching it (measured: a 2560x1440 keyframe in a 2.87 box). */
+.player__media .vds-poster {
+  object-fit: contain;
+}
+
+/* .vds-video-layout is display: contents, so these are all direct grid items of
+   the player. Pinning them to row 1 keeps the overlays on the frame and off the
+   control row (an abspos grid item is contained by its grid area). */
+.player__media .vds-gesture,
+.player__media .vds-captions,
+.player__media .vds-buffering-indicator,
+.player__media .vds-kb-bezel {
+  grid-area: 1 / 1;
+}
+/* Fullscreen is removed from this player, and keyframe stepping replaced ±10s
+   seeking — but both gestures are hardcoded inside DefaultVideoGestures. A
+   gesture is hit-tested by its rect, so display: none disables it; this is how
+   Vidstack disables its own (see its pointer: coarse rules). */
+.player__media .vds-gesture[action="toggle:fullscreen"],
+.player__media .vds-gesture[action="seek:-10"],
+.player__media .vds-gesture[action="seek:10"] {
+  display: none;
+}
+
+/* The transport is a row under the frame, not an overlay across it — so it never
+   covers the pixels being inspected, and there is nothing to auto-hide. */
+.player__media .vds-controls {
+  grid-area: 2 / 1;
+  position: relative;
+  inset: auto;
+  height: auto;
+  opacity: 1;
+  visibility: visible;
+  background-image: none; /* the scrim only makes sense over video */
+  background: var(--panel);
+  padding: 6px 4px 4px;
+}
+/* Docked, the spacers and the empty top/centre groups have nothing to push. */
+.player__media .vds-controls > .vds-controls-spacer {
+  display: none;
+}
+.player__media .vds-controls-group:not(
+    :has(.vds-button, .vds-slider, .vds-time, .vds-chapter-title, .vds-menu)
+  ) {
+  display: none;
+}
+/* Pulls the slider down onto the bar when floating; nothing to overlap now. */
+.player__media .vds-controls-group:nth-last-child(2) {
+  margin-bottom: 0;
+}
+/* Every flex link between the bar and its text has to be allowed to shrink, or
+   the title's intrinsic width propagates back up to the grid column. */
+.player__media .vds-controls,
+.player__media .vds-controls-group,
+.player__media .vds-time-slider,
+.player__media .vds-chapter-title {
+  min-width: 0;
+}
+/* A caption is a sentence, not a chapter name. Vidstack caps neither of the two
+   places one lands: the bar title ellipsizes on one line (its own rule), and the
+   scrubber's hover label gets a width here and wraps instead of measuring the
+   whole string. Untruncated text lives in the chapters menu and the strip
+   tooltip. */
+.player__media .vds-chapter-title {
+  font-size: 13px;
+}
+.player__media .vds-slider-chapter-title {
+  max-width: 260px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+/* The player hides the cursor while the controls are hidden — they never are. */
+.player__media[data-started]:not([data-controls]) {
+  cursor: auto;
 }
 
 .vds-video-layout {
@@ -1205,6 +1345,7 @@ select {
   padding-bottom: 4px;
   scrollbar-width: thin;
   scrollbar-color: var(--hairline) transparent;
+  flex: none;
 }
 .filmstrip__item {
   flex: 0 0 auto;

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from "react";
 import type { KeyframeMarkerDTO } from "@shared/types";
-import { timecode } from "../api.js";
+import { keyframeLabel, timecode } from "../api.js";
 
 interface Props {
   keyframes: KeyframeMarkerDTO[];
@@ -27,15 +27,25 @@ export function KeyframeStrip({
 
   // Centre the active keyframe. Scrolling the container directly rather than
   // scrollIntoView(), which would also scroll the page behind it.
+  //
+  // Measured with rects, NOT offsetLeft: offsetLeft is relative to the nearest
+  // positioned ancestor, and nothing from .filmstrip up to <body> is positioned,
+  // so it reports a document-space number (rail + session list + page padding
+  // included) that scrolls the clicked keyframe clean out of view.
+  //
+  // An item already fully in view is left alone — otherwise a click would yank
+  // the thing just clicked, and playback would nudge the strip at every
+  // keyframe boundary.
   useEffect(() => {
     const strip = stripRef.current;
     if (!strip || !activeFrameId) return;
     const el = strip.querySelector<HTMLElement>(`[data-frame="${CSS.escape(activeFrameId)}"]`);
     if (!el) return;
-    strip.scrollTo({
-      left: el.offsetLeft - strip.clientWidth / 2 + el.clientWidth / 2,
-      behavior: "smooth",
-    });
+    const stripRect = strip.getBoundingClientRect();
+    const elRect = el.getBoundingClientRect();
+    if (elRect.left >= stripRect.left && elRect.right <= stripRect.right) return;
+    const delta = elRect.left - stripRect.left - (strip.clientWidth - elRect.width) / 2;
+    strip.scrollTo({ left: strip.scrollLeft + delta, behavior: "smooth" });
   }, [activeFrameId]);
 
   if (keyframes.length === 0) return null;
@@ -47,7 +57,7 @@ export function KeyframeStrip({
           key={k.frameId}
           data-frame={k.frameId}
           className={`filmstrip__item${activeFrameId === k.frameId ? " is-active" : ""}`}
-          title={k.segmentDigest ?? timecode(k.tMono)}
+          title={keyframeLabel(k)}
           onClick={() => (onSeek ? onSeek(k.offsetSec) : onInspect(k.frameId))}
           onDoubleClick={() => onInspect(k.frameId)}
         >
