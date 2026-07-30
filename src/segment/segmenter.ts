@@ -21,6 +21,7 @@ import {
   type SegmenterOptions,
 } from "./types.js";
 
+/** What one segmentation pass produced, per granularity. */
 export interface SegmentResult {
   boundaries: Boundary[];
   /** Persisted segment ids grouped by granularity name. */
@@ -28,6 +29,11 @@ export interface SegmentResult {
   endTMono: number;
 }
 
+/**
+ * Turns a session's events into segments: detects event-driven boundaries, then
+ * windows them at multiple overlapping granularities. Runs after capture, which is
+ * why frame↔segment association is set later, at represent time.
+ */
 export class Segmenter {
   private readonly dwellGapMs: number;
   private readonly granularities: GranularityConfig[];

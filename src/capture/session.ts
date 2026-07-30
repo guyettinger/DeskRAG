@@ -20,6 +20,7 @@ import type { AxSource } from "./ax/types.js";
 import type { BlobStore } from "../store/blob-store.js";
 import type { CaptureContext, Producer } from "./types.js";
 
+/** What the session injects into producers, and how it batches their events. */
 export interface CaptureSessionOptions extends BatcherOptions {
   deviceId?: string;
   meta?: unknown;
@@ -33,6 +34,11 @@ export interface CaptureSessionOptions extends BatcherOptions {
   axSource?: AxSource;
 }
 
+/**
+ * Orchestrates producers over one recording: mints the session id, owns the
+ * monotonic clock and the event batcher, and brokers blob reservation so producers
+ * stay ignorant of the store.
+ */
 export class CaptureSession {
   readonly clock: MonotonicClock;
   private readonly producers: Producer[] = [];

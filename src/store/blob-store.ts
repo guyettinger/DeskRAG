@@ -22,12 +22,18 @@ const EXT: Record<string, string> = {
   wav: "wav",
 };
 
+/** The monotonic span a blob covers, plus its container/codec when not implied. */
 export interface BlobWriteMeta {
   tMonoStart: number;
   tMonoEnd: number;
   codec?: string;
 }
 
+/**
+ * Content storage for large media. Bytes are plain files under a root dir; the
+ * relational `blob` row is the index. Deleting a session is two calls in order —
+ * `store.deleteSession(id)` then `blobs.removeSession(id)`.
+ */
 export class BlobStore {
   constructor(private readonly root: string) {}
 

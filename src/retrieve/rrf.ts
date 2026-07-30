@@ -11,6 +11,7 @@
  * cross-view agreement is the signal.
  */
 
+/** One view's ranked ids, as fed to `reciprocalRankFusion`. */
 export interface RankedList {
   /** Stable label for this list's source (e.g. a namespace). */
   key: string;
@@ -18,6 +19,7 @@ export interface RankedList {
   ids: string[];
 }
 
+/** A fused result: the RRF score plus which lists contributed, and at what rank. */
 export interface FusedItem {
   id: string;
   score: number;

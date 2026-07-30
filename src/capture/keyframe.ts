@@ -10,6 +10,7 @@
 
 import { hamming64 } from "./phash.js";
 
+/** Thresholds deciding which sampled frames are worth keeping as keyframes. */
 export interface KeyframeGateOptions {
   /** Min Hamming distance from the last kept frame to keep a new one. */
   hammingThreshold?: number;
@@ -17,6 +18,7 @@ export interface KeyframeGateOptions {
   sceneChangeThreshold?: number;
 }
 
+/** The gate's verdict on one frame, and why. */
 export interface GateDecision {
   keep: boolean;
   /** True when kept because of a scene-change spike (not just dedup). */
@@ -25,6 +27,10 @@ export interface GateDecision {
   distancePrev: number;
 }
 
+/**
+ * Decides which sampled frames become keyframes: dedups near-identical screens by
+ * perceptual-hash distance, and forces one through on a scene-change spike.
+ */
 export class KeyframeGate {
   private readonly hammingThreshold: number;
   private readonly sceneChangeThreshold: number;

@@ -52,6 +52,17 @@ function parseJson(s: string | null): unknown {
   return s === null ? null : JSON.parse(s);
 }
 
+/**
+ * The only place SQLite and LanceDB are both known. Callers see one `Store`.
+ *
+ * Every vector-bearing write commits the SQLite transaction FIRST, then adds to
+ * Lance, and all writes serialize through a mutex so that pair cannot interleave.
+ * A crash in between leaves a relational row with no vector — detectable, and
+ * re-embeddable by `reconcileAndReembed`. The reverse order would leave orphan
+ * vectors that nothing can find.
+ *
+ * Open it with `DualStore.open()`; the constructor is private.
+ */
 export class DualStore implements Store {
   private readonly mutex = new Mutex();
   private readonly spaces = new Map<string, VectorSpaceInsert>();

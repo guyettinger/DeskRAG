@@ -1,35 +1,79 @@
-// embed/ — provider interfaces, namespacing, adapters
+/**
+ * `deskrag` — local-first multimodal desktop session memory.
+ *
+ * The public surface, grouped by pipeline stage: capture → segment → represent →
+ * retrieve, over the dual store. Every stage is explicit and composed by the
+ * caller; see docs/library-usage.md for the shape end to end.
+ *
+ * **Adapters that load a native module or spawn a subprocess are deliberately not
+ * re-exported here** — `onnxruntime-node`, `uiohook-napi`, `active-win`, `sharp`,
+ * and the ffmpeg/Swift sidecars — so importing this package never force-loads
+ * native code. Import those from their own paths; each group below says which.
+ */
+
+/**
+ * embed/ — the provider interfaces and the namespacing that keeps vector spaces
+ * apart. Every vector is namespaced `view:provider:model:dimensions` via
+ * `namespaceFor()`, and LanceDB keys one physical table per namespace, so two
+ * models physically cannot land in one similarity search.
+ *
+ * The ONNX adapters (in-process models) live under `./embed/onnx/`.
+ */
 export * from "./embed/types.js";
 export { FakeEmbeddingProvider, FakeMultiVectorProvider } from "./embed/fake.js";
 export { OllamaTextEmbedding } from "./embed/ollama.js";
 
-// store/ — the dual-store seam
+/**
+ * store/ — the dual-store seam. SQLite is the relational source of truth and the
+ * high-volume event firehose; LanceDB owns all vectors and scoped ANN. `DualStore`
+ * is the only place both engines are known, and it enforces the write order
+ * (SQLite commits first, then the Lance add) that makes a crash between them
+ * recoverable. `BlobStore` is plain files — the store only records where they are.
+ */
 export * from "./store/types.js";
 export { DualStore } from "./store/store.js";
 export { BlobStore, type BlobWriteMeta } from "./store/blob-store.js";
 export { hamming64, u64ToI64, i64ToU64 } from "./store/sqlite/db.js";
 
-// timeline/ — monotonic clock, ring buffer, stream sync
+/**
+ * timeline/ — the monotonic clock everything correlates on. Signals are stamped
+ * with `t_mono`, an offset from a session epoch, never wall-clock: NTP steps and
+ * DST would otherwise reorder events against each other.
+ */
 export { MonotonicClock } from "./timeline/clock.js";
 export { RingBuffer } from "./timeline/ring-buffer.js";
 export { mergeSortedByTMono, isMonotonic, type Stamped } from "./timeline/sync.js";
 
-// capture/ — producer contract + session orchestration
+/**
+ * capture/ — the producer contract and the session that orchestrates producers.
+ * A `Producer` emits stamped events; `CaptureSession` batches them into the store
+ * and owns blob reservation, so producers never touch the store themselves.
+ */
 export type { Producer, CaptureContext, EmittedEvent, EventKind, AudioChunk } from "./capture/types.js";
 export { CaptureSession, type CaptureSessionOptions } from "./capture/session.js";
 export { EventBatcher, type BatcherOptions } from "./capture/batcher.js";
 export { SyntheticInputProducer } from "./capture/synthetic.js";
-// accessibility capture (AX tree) — sidecar contract + no-op fallback
+
+/**
+ * Accessibility capture — the sidecar contract, its parser, and a no-op fallback.
+ * AX is captured live and stored (`frame_ax`), then read back at represent time via
+ * `StoredAxProvider`; it is never queried live during represent, because by then
+ * the UI has moved on.
+ */
 export type { AxSource } from "./capture/ax/types.js";
 export { AxCapturer } from "./capture/ax/ax-capturer.js";
 export { NoopAxSource } from "./capture/ax/noop.js";
 export { SwiftAxSource, type SwiftAxSourceOptions } from "./capture/ax/swift-ax-source.js";
 export { parseAxElements, coerceAxElements } from "./capture/ax/parse.js";
 export { nestAxElements } from "./capture/ax/tree.js";
-// frame pipeline (pure) + ffmpeg screen producer (child_process only).
-// Native producers (uiohook-input, active-window) are intentionally NOT exported
-// here so importing the package never loads their optional native modules;
-// import them directly from "./capture/producers/…" when doing input/window capture.
+
+/**
+ * The frame pipeline (pure) plus the ffmpeg screen producer (`child_process` only,
+ * hence barrel-safe). Native producers — uiohook-input, active-window — are
+ * intentionally NOT exported here so importing the package never loads their
+ * optional native modules; import them directly from `./capture/producers/…`
+ * when doing input/window capture.
+ */
 export { dHash, resizeNearestGray } from "./capture/phash.js";
 export { KeyframeGate, type KeyframeGateOptions, type GateDecision } from "./capture/keyframe.js";
 export {
@@ -43,14 +87,20 @@ export {
   FfmpegScreenProducer,
   type FfmpegScreenOptions,
 } from "./capture/producers/ffmpeg-screen.js";
-// audio capture (child_process only, like the screen producer) + WAV helper
+
+/** Audio capture (`child_process` only, like the screen producer) + a WAV helper. */
 export {
   FfmpegAudioProducer,
   type FfmpegAudioOptions,
 } from "./capture/producers/ffmpeg-audio.js";
 export { encodeWav, type WavFormat } from "./capture/producers/wav.js";
 
-// segment/ — boundary detection + multi-granularity windowing
+/**
+ * segment/ — boundary detection plus multi-granularity overlapping windowing.
+ * Boundaries are event-driven (focus change, dwell gap, bookmark); segments are
+ * detected after capture, which is why frame↔segment association is set lazily at
+ * represent time.
+ */
 export { Segmenter, type SegmentResult } from "./segment/segmenter.js";
 export { computeBoundaries } from "./segment/boundaries.js";
 export { windowSegments } from "./segment/windowing.js";
@@ -63,7 +113,11 @@ export {
   type SegmenterOptions,
 } from "./segment/types.js";
 
-// represent/ — per-segment embeddable views (event-only ones so far)
+/**
+ * represent/ — the embeddable views. `Representer` builds the event-only ones
+ * (digest text + behavioral vector); the frame-dependent ones each have their own
+ * representer so they can be skipped when their provider is not configured.
+ */
 export { buildDigest, type DigestEvent } from "./represent/digest.js";
 export {
   BehaviorFeatureExtractor,
@@ -82,14 +136,23 @@ export {
   type FrameRepresenterOptions,
   type FrameRepresentResult,
 } from "./represent/frame-representer.js";
-// Multi-vector counterpart (frame_patches view). Barrel-safe: the provider is
-// injected, so nothing native loads from here.
+/**
+ * Multi-vector counterpart of `FrameRepresenter` (the `frame_patches` view).
+ * Barrel-safe: the provider is injected, so nothing native loads from here.
+ */
 export {
   FramePatchRepresenter,
   type FramePatchRepresenterOptions,
   type FramePatchRepresentResult,
 } from "./represent/frame-patch-representer.js";
-// region pipeline (Tier 3 represent/)
+
+/**
+ * The region pipeline (Tier 3) — the PixelRAG edge. Three proposal sources fuse via
+ * NMS with a cross-source agreement bump: the AX tree (real labeled bboxes),
+ * interaction hotspots (weighted DBSCAN over clicks/dwell — the signal video RAG
+ * lacks), and grid tiling. `RegionCropper` is an interface; the sharp-backed
+ * implementation is native and lives at `./represent/regions/sharp-cropper.js`.
+ */
 export { axFilter, type AxFilterOptions } from "./represent/regions/ax.js";
 export {
   dbscanWeighted,
@@ -120,23 +183,30 @@ export {
   type RegionRepresentResult,
 } from "./represent/regions/region-representer.js";
 export { StoredAxProvider } from "./represent/regions/stored-ax-provider.js";
-// caption view (view 2) — VLM captioning
+
+/** The caption view — a local VLM describes each keyframe. */
 export {
   CaptionRepresenter,
   type CaptionRepresenterOptions,
   type CaptionRepresentResult,
 } from "./represent/caption/caption-representer.js";
 export { FakeCaptionProvider } from "./represent/caption/fake.js";
-// Local VLM captioner. Barrel-safe (plain fetch); `listVisionModels` is what the
-// app's model picker must use — see its doc comment for why a hardcoded list is
-// unsafe now that Ollama's library includes cloud-hosted models.
+/**
+ * Local VLM captioner. Barrel-safe (plain fetch); `listVisionModels` is what the
+ * app's model picker must use — see its doc comment for why a hardcoded list is
+ * unsafe now that Ollama's library includes cloud-hosted models.
+ */
 export {
   OllamaCaptionProvider,
   listVisionModels,
   type OllamaCaptionOptions,
 } from "./represent/caption/ollama.js";
-// transcript view (STT) — the FakeTranscription + representer are pure; the
-// whisper.cpp adapter spawns a subprocess and is imported from its own path.
+
+/**
+ * The transcript view (STT). The `FakeTranscription` and the representer are pure;
+ * `WhisperCppTranscription` spawns a subprocess, but takes its binary path as
+ * configuration rather than loading a native module, so it stays barrel-safe.
+ */
 export {
   TranscriptRepresenter,
   type TranscriptRepresenterOptions,
@@ -148,7 +218,14 @@ export {
   type WhisperCppOptions,
 } from "./represent/transcript/whisper-cpp.js";
 
-// retrieve/ — coarse-to-fine tiers (Tier 1: multi-view segment ANN + RRF)
+/**
+ * retrieve/ — the coarse-to-fine tiers. Each narrows the scope the next one
+ * searches, and retrieval never widens: Tier 1 fuses per-view segment ANN with
+ * Reciprocal Rank Fusion (not score averaging — the scales differ), Tier 2 searches
+ * frames scoped to those segments, Tier 3 searches regions scoped to those frames,
+ * and `Retriever` assembles the result with `highlights` — the matched region boxes
+ * and labels that say *where* on the recalled frame the match is.
+ */
 export {
   reciprocalRankFusion,
   DEFAULT_RRF_K,
@@ -164,8 +241,10 @@ export {
 export { Tier3Retriever, type Tier3Options } from "./retrieve/tier3.js";
 export { Retriever, type RetrieverOptions } from "./retrieve/assemble.js";
 export { TextViewSearcher, BehaviorViewSearcher } from "./retrieve/searchers.js";
-// Tier-4 rerank. The real reranker is a local ONNX cross-encoder and therefore
-// NOT here — import it from "./retrieve/rerank/onnx.js".
+/**
+ * Tier-4 rerank. The real reranker is a local ONNX cross-encoder and therefore NOT
+ * here — import it from `./retrieve/rerank/onnx.js`.
+ */
 export type { Reranker, RerankCandidate } from "./retrieve/rerank/types.js";
 export { FakeReranker } from "./retrieve/rerank/fake.js";
 export type {
