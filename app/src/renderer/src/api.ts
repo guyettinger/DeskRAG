@@ -1,4 +1,4 @@
-import type { DeskRagApi } from "@shared/types";
+import type { DeskRagApi, KeyframeMarkerDTO } from "@shared/types";
 
 export const api: DeskRagApi = window.deskrag;
 
@@ -27,6 +27,18 @@ export function wallClock(ms: number): string {
 
 export function elapsed(fromMs: number): string {
   return timecode(Date.now() - fromMs);
+}
+
+/**
+ * How a keyframe is named wherever it is labelled — chapter cues, the control
+ * bar title, the chapters menu, the filmstrip tooltip.
+ *
+ * The VLM caption describes what is on screen, so it wins; the templated event
+ * digest is the fallback for sessions indexed without a captioner, and the
+ * timecode for those with neither view represented.
+ */
+export function keyframeLabel(k: KeyframeMarkerDTO): string {
+  return k.segmentCaption ?? k.segmentDigest ?? timecode(k.tMono);
 }
 
 /** Byte count -> a compact human string (1.4 GB). */

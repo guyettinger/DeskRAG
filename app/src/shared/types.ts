@@ -212,6 +212,12 @@ export interface KeyframeMarkerDTO {
   /** Position within the video: (tMono - video.tMonoStart) / 1000. */
   offsetSec: number;
   thumbUrl: string | null;
+  /**
+   * The VLM caption of the enclosing segment — the preferred label everywhere a
+   * keyframe is named. Null unless a captioner was configured when the session
+   * was indexed, which is why `segmentDigest` stays as the fallback.
+   */
+  segmentCaption: string | null;
   segmentDigest: string | null;
 }
 

@@ -703,11 +703,15 @@ export class DeskRagService {
         }
       : null;
 
+    // One read for every segment of the session, rather than a getSegment() per
+    // keyframe — a long recording has thousands of frames over a few segments.
+    const segById = new Map(this.store.getSegmentsBySession(sessionId).map((seg) => [seg.id, seg]));
+
     // Frames come back ordered by t_mono, so markers are already in timeline order.
     const keyframes: KeyframeMarkerDTO[] = this.store.getFramesBySession(sessionId).map((f) => {
       // Most specific (shortest) segment is the best label, as in detail().
       const seg = f.segmentIds
-        .map((segId) => this.store.getSegment(segId))
+        .map((segId) => segById.get(segId))
         .filter((x): x is NonNullable<typeof x> => Boolean(x))
         .sort((a, b) => a.tMonoEnd - a.tMonoStart - (b.tMonoEnd - b.tMonoStart))[0];
       return {
@@ -715,6 +719,7 @@ export class DeskRagService {
         tMono: f.tMono,
         offsetSec: video ? Math.max(0, (f.tMono - video.tMonoStart) / 1000) : f.tMono / 1000,
         thumbUrl: f.blobId ? `deskrag://frame/${f.blobId}` : null,
+        segmentCaption: seg?.caption ?? null,
         segmentDigest: seg?.digest ?? null,
       };
     });
