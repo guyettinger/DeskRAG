@@ -36,7 +36,7 @@ permissions, and how it's wired.
 <tr>
 <td><img src="docs/images/record.png" alt="Record screen"><br><strong>Record</strong> — a per-signal switchboard with live permission status.</td>
 <td><img src="docs/images/search.png" alt="Search screen"><br><strong>Search</strong> — hits come back as a contact sheet of keyframes.</td>
-<td><img src="docs/images/detail.png" alt="Detail view"><br><strong>Detail</strong> — highlights, AX tree, digest, caption, transcript.</td>
+<td><img src="docs/images/detail.png" alt="Detail view"><br><strong>Detail</strong> — pick an accessibility node to locate it on the frame.</td>
 </tr>
 </table>
 

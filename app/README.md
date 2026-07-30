@@ -48,12 +48,22 @@ whole, never cropped.
 ### Search
 
 Text query, or an image file as a visual example (needs an image model). Hits render
-as a contact sheet of keyframes — timecode, wall-clock, segment digest, score,
-highlight count — and open into a detail view with the full keyframe, region
-highlight boxes, the captured AX elements as a locatable tree, and the segment's
-digest / caption / transcript.
+as a contact sheet of keyframes — timecode, wall-clock, segment digest, score, and a
+highlight count.
 
 ![Search screen](../docs/images/search.png)
+
+### Detail
+
+The frame inspector, reached from either side: **Inspect** in the player's control
+bar, or by clicking a search hit. It shows the full keyframe with the segment's
+digest / caption / transcript, and everything the accessibility tree captured.
+
+Two things get drawn over the frame, and which you see depends on how you arrived.
+A search hit carries **region highlights** — the boxes that matched the query.
+Selecting a row in the **accessibility tree** locates that element on the frame
+instead, with its label; the screenshot below is opened from the Library, so there
+is no query and the AX locator is the only overlay.
 
 ![Detail view](../docs/images/detail.png)
 

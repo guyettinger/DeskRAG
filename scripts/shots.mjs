@@ -41,15 +41,29 @@ const SETTLE_MS = 8000;
  */
 const SHOTS = [
   { id: "record", nav: 0, settle: ".transport" },
-  { id: "library", nav: 1, settle: ".library, .empty", ready: ".player, .empty" },
   {
-    id: "search",
-    nav: 2,
-    settle: ".searchbar",
-    query: "reviewing the pull request in the editor",
-    // Captured straight after the search shot, while the hits are still on screen.
-    detail: { id: "detail", open: ".sheet .frame", settle: ".detail", close: ".detail__close" },
+    id: "library",
+    nav: 1,
+    settle: ".library, .empty",
+    ready: ".player, .empty",
+    // The detail view is captured from the Library, not from Search, on purpose.
+    // DetailView draws detail.highlights unconditionally, and a search hit carries
+    // them — under ColSmol those are patch-argmax boxes, which scatter across the
+    // frame as small yellow rectangles with no labels and read as noise. Opened
+    // from the Library there is no query, so highlights is empty and the AX
+    // locator (below) is the only thing drawn.
+    detail: {
+      id: "detail",
+      open: '[aria-label="Inspect keyframe"]',
+      settle: ".detail",
+      // Select a labelled, on-frame AX node so the blue locator box + its label
+      // land on the keyframe — the point of the panel. Rows marked --off are
+      // outside the captured frame and would draw nothing.
+      select: ".axtree__row:not(.axtree__row--off):has(.axtree__label)",
+      close: ".detail__close",
+    },
   },
+  { id: "search", nav: 2, settle: ".searchbar", query: "reviewing the pull request in the editor" },
   { id: "settings", nav: 3, settle: ".card" },
 ];
 
@@ -126,10 +140,20 @@ async function main() {
 
       // Best effort: only reachable when the screen above produced something to open.
       if (shot.detail) {
-        const { id, open, settle, close } = shot.detail;
+        const { id, open, settle, select, close } = shot.detail;
         console.log(`→ ${id}`);
         const target = page.locator(open).first();
         if ((await target.count()) && (await soften(page, settle, id, "detail view", () => target.click()))) {
+          // The panel renders before its AX payload arrives, so `.detail` being
+          // visible does not mean there are rows yet. locator.click() auto-waits;
+          // a plain count() here would snapshot 0 and silently skip the selection.
+          if (select) {
+            await page
+              .locator(select)
+              .first()
+              .click({ timeout: SETTLE_MS })
+              .catch(() => console.warn(`  ! ${id}: no locatable AX row (${select}) — no locator box drawn`));
+          }
           await page.waitForTimeout(1500);
           await capture(page, id);
           await page.locator(close).click();
