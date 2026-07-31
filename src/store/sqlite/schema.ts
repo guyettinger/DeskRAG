@@ -118,6 +118,57 @@ CREATE TABLE IF NOT EXISTS vector_space (
   shared_text_space  INTEGER NOT NULL,   -- 0/1
   created_at         INTEGER NOT NULL
 );
+
+-- Experience trace graphs (src/trace/). Nodes are verified states, edges are
+-- action sequences. SQLite ONLY: visual corroboration reuses the region/frame
+-- vectors already in Lance by id, so a graph registers no vector_space and a
+-- graph write has no SQLite->Lance ordering hazard.
+CREATE TABLE IF NOT EXISTS trace_graph (
+  id          TEXT PRIMARY KEY,
+  entry_node  TEXT NOT NULL,
+  created_at  INTEGER NOT NULL           -- wall-clock ms, DISPLAY ONLY
+);
+
+-- Node and edge ids are scoped to their graph, not global: Graph.entry and
+-- Edge.from/to are resolved within one graph, so two graphs may each have an
+-- "n0". Hence the composite key.
+CREATE TABLE IF NOT EXISTS trace_node (
+  id            TEXT NOT NULL,
+  graph_id      TEXT NOT NULL REFERENCES trace_graph(id) ON DELETE CASCADE,
+  predicates    TEXT NOT NULL,           -- JSON Predicate[]
+  visual        TEXT,                    -- JSON {frameBlobId, phash}
+  intervene     TEXT NOT NULL,           -- none | select | synthesize
+  observations  INTEGER NOT NULL,
+  ord           INTEGER NOT NULL,        -- preserves authored order on read
+  PRIMARY KEY (graph_id, id)
+);
+CREATE INDEX IF NOT EXISTS idx_trace_node_graph ON trace_node(graph_id, ord);
+
+CREATE TABLE IF NOT EXISTS trace_edge (
+  id            TEXT NOT NULL,
+  graph_id      TEXT NOT NULL REFERENCES trace_graph(id) ON DELETE CASCADE,
+  from_node     TEXT NOT NULL,
+  to_node       TEXT NOT NULL,
+  actions       TEXT NOT NULL,           -- JSON Action[]
+  guard         TEXT,                    -- JSON Predicate[]
+  provenance    TEXT NOT NULL,           -- recorded | synthesized
+  observations  INTEGER NOT NULL,
+  attempts      INTEGER NOT NULL,
+  successes     INTEGER NOT NULL,
+  lift_warnings TEXT,                    -- JSON string[]
+  ord           INTEGER NOT NULL,
+  PRIMARY KEY (graph_id, id)
+);
+CREATE INDEX IF NOT EXISTS idx_trace_edge_graph ON trace_edge(graph_id, ord);
+CREATE INDEX IF NOT EXISTS idx_trace_edge_from ON trace_edge(graph_id, from_node);
+
+CREATE TABLE IF NOT EXISTS trace_slot (
+  graph_id  TEXT NOT NULL REFERENCES trace_graph(id) ON DELETE CASCADE,
+  name      TEXT NOT NULL,
+  samples   TEXT NOT NULL,               -- JSON string[]
+  ord       INTEGER NOT NULL,
+  PRIMARY KEY (graph_id, name)
+);
 `;
 
 /** Pragmas applied on every connection open. WAL = single-writer + concurrent reads. */

@@ -11,6 +11,19 @@
  */
 
 import type { UIElement, View } from "../embed/types.js";
+// The dependency runs ONE way: store/ knows the Graph type, trace/ never imports
+// store/. `trace/` stays a pure leaf; persistence lives here because `trace/`
+// owns no database.
+import type { Graph as TraceGraph } from "../trace/types.js";
+
+export type { TraceGraph };
+
+export interface TraceGraphSummary {
+  id: string;
+  nodes: number;
+  edges: number;
+  createdAt: number;
+}
 
 // --- relational insert shapes (mirror the SQLite entities) --------------------
 
@@ -383,6 +396,22 @@ export interface Store {
    * files — call `BlobStore.removeSession` after this, in that order.
    */
   deleteSession(sessionId: string): Promise<void>;
+
+  // experience trace graphs (src/trace/) — SQLite only, no vector space
+
+  /**
+   * Upsert a whole graph in one transaction. Delete-then-insert of the child
+   * rows, so the write is idempotent and a graph that shrank actually shrinks.
+   * Registers **no** vector space: visual corroboration reuses the region/frame
+   * vectors already in Lance by id, so there is no ordering hazard here.
+   */
+  putGraph(graph: TraceGraph): Promise<void>;
+  /** One graph with its nodes, edges and slots, or undefined if the id is unknown. */
+  getGraph(id: string): TraceGraph | undefined;
+  /** Every graph with its counts, newest first. */
+  listGraphs(): TraceGraphSummary[];
+  /** Delete a graph; nodes, edges and slots cascade. */
+  deleteGraph(id: string): Promise<void>;
 
   // scoped search (retrieval tiers)
 
