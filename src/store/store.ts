@@ -488,6 +488,7 @@ export class DualStore implements Store {
       //    survive without vectors and reconciliation re-embeds them later.
       const byNs = new Map<string, VecRow[]>();
       for (const r of rows) {
+        if (r.vector === undefined) continue; // proposed but not embedded
         this.requireSpace(r.vector.namespace);
         const list = byNs.get(r.vector.namespace) ?? [];
         list.push({
@@ -941,7 +942,9 @@ export class DualStore implements Store {
         // and delete every patch row in the table.
         expected = new Set();
       } else if (kind === "region") {
-        expected = allRegionIds; // regions always carry a vector at write time
+        // Every region row is re-embeddable from its frame blob + bbox, whether
+        // it lost its vector to a crash or was written by a proposal-only pass.
+        expected = allRegionIds;
       } else if (kind === "frame") {
         // Only frames with a stored image (blob) can have a frame_image vector.
         // An imageless frame legitimately has none, so it is NOT "missing"; a

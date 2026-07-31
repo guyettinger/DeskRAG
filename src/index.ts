@@ -295,7 +295,14 @@ export {
   type Gesture,
   type GestureOptions,
 } from "./trace/gestures.js";
-export { liftTrace, resolveKeys, slotNameFor, type LiftInput, type AxSnapshot } from "./trace/lift.js";
+export {
+  liftTrace,
+  resolveKeys,
+  slotNameFor,
+  type LiftInput,
+  type AxSnapshot,
+  type RegionsAtFrame,
+} from "./trace/lift.js";
 export { mergeTrace, edgeSignature, actionSignature, discoveredVariables } from "./trace/merge.js";
 export {
   printGraph,

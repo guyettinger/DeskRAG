@@ -41,13 +41,27 @@ export interface AxSnapshot {
   framePhash?: string;
 }
 
+/**
+ * The regions in force at a t_mono, together with the frame they were proposed
+ * from. They travel as one value because the visual anchor layer needs both, and
+ * sourcing them separately is precisely the bug this shape prevents: most AX
+ * snapshots are boundary-triggered and carry no frame, so taking the pHash from
+ * the snapshot while taking regions from the nearest keyframe dropped the layer
+ * almost everywhere.
+ */
+export interface RegionsAtFrame {
+  frameId: string;
+  framePhash: string;
+  regions: readonly AnchorRegion[];
+}
+
 export interface LiftInput {
   sessionId: string;
   events: readonly TraceEvent[];
   endTMono: number;
   /** The stored AX snapshot nearest at/just before `tMono`. */
   axAt?(tMono: number): AxSnapshot | undefined;
-  regionsAt?(tMono: number): readonly AnchorRegion[];
+  regionsAt?(tMono: number): RegionsAtFrame | undefined;
   /**
    * The display a point belongs to, at that t_mono. The t_mono is required
    * because topology CHANGES mid-session (a monitor plugged in), and resolving a
@@ -202,14 +216,20 @@ function buildNode(id: string, tMono: number, events: readonly TraceEvent[], inp
   const snap = input.axAt?.(tMono);
   const ctx = focusContext(tMono, events);
   const predicates = extractPredicates(snap?.elements ?? [], ctx);
+  // Prefer the snapshot's own frame; fall back to the nearest frame, since a
+  // boundary snapshot has none and a settled screen is exactly what the last
+  // keyframe shows. Identity stays predicate-primary — visual only corroborates.
+  const at = input.regionsAt?.(tMono);
+  const visual =
+    snap?.frameId !== undefined && snap.framePhash !== undefined
+      ? { frameBlobId: snap.frameId, phash: snap.framePhash }
+      : at !== undefined
+        ? { frameBlobId: at.frameId, phash: at.framePhash }
+        : undefined;
   return {
     id,
     predicates,
-    // A boundary snapshot has no frame, so no visual layer. Node identity is
-    // predicate-primary; visual only corroborates, so this degrades gracefully.
-    ...(snap?.frameId !== undefined && snap.framePhash !== undefined
-      ? { visual: { frameBlobId: snap.frameId, phash: snap.framePhash } }
-      : {}),
+    ...(visual !== undefined ? { visual } : {}),
     intervene: "select",
     observations: 1,
   };
@@ -233,17 +253,16 @@ function focusContext(tMono: number, events: readonly TraceEvent[]): PredicateCo
 function anchorFor(point: Vec2, tMono: number, input: LiftInput): Anchor {
   const snap = input.axAt?.(tMono);
   const bounds = input.windowBoundsAt?.(tMono);
+  // The pHash comes from the frame the REGIONS came from, never from the AX
+  // snapshot: a boundary snapshot has no frame, and the two must agree or the
+  // visual layer describes one frame's geometry with another's signature.
+  const at = input.regionsAt?.(tMono);
   return buildAnchor({
     point,
     displayId: input.displayIdAt?.(point, tMono) ?? "D0",
     ...(bounds !== undefined ? { windowBounds: bounds } : {}),
-    ...(snap !== undefined
-      ? {
-          ax: snap.elements,
-          ...(snap.framePhash !== undefined ? { framePhash: snap.framePhash } : {}),
-        }
-      : {}),
-    ...(input.regionsAt !== undefined ? { regions: input.regionsAt(tMono) } : {}),
+    ...(snap !== undefined ? { ax: snap.elements } : {}),
+    ...(at !== undefined ? { framePhash: at.framePhash, regions: at.regions } : {}),
   });
 }
 

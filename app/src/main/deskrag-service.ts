@@ -495,21 +495,25 @@ export class DeskRagService {
           }).represent(sessionId),
       });
     }
-    if (prov.imageEmbedder) {
-      stages.push({
-        name: "Regions",
-        run: async () => {
-          const cropper = await this.loadCropper();
-          if (!cropper) return;
-          return new RegionRepresenter(this.store, {
-            imageEmbedder: prov.imageEmbedder!,
-            blobStore: this.blobs,
-            cropper,
-            axProvider: new StoredAxProvider(this.store).provide,
-          }).represent(sessionId);
-        },
-      });
-    }
+    // Regions run under EVERY image configuration, including none. Proposal is
+    // geometry + the AX tree; only the crops need a model. Gating the whole stage
+    // on `imageEmbedder` meant the late-interaction (patch) path wrote no region
+    // rows at all — and `Anchor.visual` in the trace graph is built from those
+    // rows, so choosing ColSmol silently cost the executor its middle anchor rung.
+    stages.push({
+      name: prov.imageEmbedder ? "Regions" : "Regions (proposal only)",
+      run: async () => {
+        const cropper = prov.imageEmbedder ? await this.loadCropper() : undefined;
+        return new RegionRepresenter(this.store, {
+          // Without a cropper there is nothing to embed, so drop back to
+          // proposal rather than skipping the stage.
+          ...(prov.imageEmbedder && cropper
+            ? { imageEmbedder: prov.imageEmbedder, blobStore: this.blobs, cropper }
+            : {}),
+          axProvider: new StoredAxProvider(this.store).provide,
+        }).represent(sessionId);
+      },
+    });
     if (hasAudio && this.settings.view().providers.whisper.modelPath) {
       stages.push({
         name: "Transcribing",

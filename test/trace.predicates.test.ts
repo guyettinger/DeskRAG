@@ -50,7 +50,40 @@ describe("extractPredicates", () => {
     ]);
     const ax = ps.filter((p) => p.kind === "ax_exists");
     expect(ax).toHaveLength(1);
-    expect(ax[0]!.args).toEqual({ role: "AXButton", label: "Send" });
+    // Canonicalized: args carry the unprefixed role whichever spelling arrived.
+    expect(ax[0]!.args).toEqual({ role: "Button", label: "Send" });
+  });
+
+  // The Swift sidecar strips the "AX" prefix (`ax-dump.swift`: rawRole.dropFirst(2)),
+  // so every role in real capture data arrives unprefixed. Matching prefixed
+  // literals meant real recordings produced ZERO ax predicates — every boundary
+  // looked like the same state and the whole graph collapsed to one node.
+  it("emits ax_exists for the unprefixed roles the real sidecar actually returns", () => {
+    const ps = extractPredicates([
+      el("Button", "Send", 0),
+      el("StaticText", "9:41", 1),
+      el("Group", undefined, 2),
+    ]);
+    const ax = ps.filter((p) => p.kind === "ax_exists");
+    expect(ax).toHaveLength(1);
+    expect(ax[0]!.args).toEqual({ role: "Button", label: "Send" });
+  });
+
+  it("emits ax_focused for an unprefixed focused role", () => {
+    const ps = extractPredicates([el("TextField", "To", 0, { focused: true })]);
+    expect(ps).toContainEqual({
+      kind: "ax_focused",
+      args: { role: "TextField", label: "To" },
+      reach: "achievable",
+    });
+  });
+
+  // Both spellings must key identically, or a change of AX source would silently
+  // stop merging instead of failing loudly.
+  it("canonicalizes the role so prefixed and unprefixed inputs are one predicate", () => {
+    const prefixed = extractPredicates([el("AXButton", "Send", 0)]);
+    const bare = extractPredicates([el("Button", "Send", 0)]);
+    expect(samePredicateSet(prefixed, bare)).toBe(true);
   });
 
   it("emits ax_focused for the focused element", () => {
@@ -60,7 +93,7 @@ describe("extractPredicates", () => {
     ]);
     expect(ps).toContainEqual({
       kind: "ax_focused",
-      args: { role: "AXTextField", label: "To" },
+      args: { role: "TextField", label: "To" },
       reach: "achievable",
     });
   });

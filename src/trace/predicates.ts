@@ -29,25 +29,38 @@ export const DEFAULT_MAX_AX_PREDICATES = 32;
  * Roles whose presence says something durable about which screen you are on.
  * Containers and decorative text are excluded: they are ubiquitous, so they add
  * no discriminating power while inflating every set.
+ *
+ * Stored WITHOUT the "AX" prefix, because that is the shape real data has: the
+ * Swift sidecar strips it (`ax-dump.swift`, `rawRole.dropFirst(2)`). Matching the
+ * prefixed spelling meant no recording ever produced an ax predicate, so every
+ * boundary in an app looked like one state and the graph could not merge —
+ * `axFilter` already learned this and normalizes for the same reason.
  */
 const STABLE_ROLES: ReadonlySet<string> = new Set([
-  "AXWindow",
-  "AXSheet",
-  "AXDialog",
-  "AXButton",
-  "AXPopUpButton",
-  "AXCheckBox",
-  "AXRadioButton",
-  "AXTextField",
-  "AXTextArea",
-  "AXSecureTextField",
-  "AXComboBox",
-  "AXMenuItem",
-  "AXMenuButton",
-  "AXTabGroup",
-  "AXToolbar",
-  "AXSearchField",
+  "Window",
+  "Sheet",
+  "Dialog",
+  "Button",
+  "PopUpButton",
+  "CheckBox",
+  "RadioButton",
+  "TextField",
+  "TextArea",
+  "SecureTextField",
+  "ComboBox",
+  "MenuItem",
+  "MenuButton",
+  "TabGroup",
+  "Toolbar",
+  "SearchField",
 ]);
+
+/**
+ * Canonical role: unprefixed. Applied to the predicate ARGS too, not just the
+ * match, so the two spellings key identically — a change of AX source must not
+ * silently stop merging.
+ */
+export const canonicalRole = (role: string): string => role.replace(/^AX/, "");
 
 const VOLATILE_PATTERNS: readonly RegExp[] = [
   /\d{1,2}:\d{2}/, //           a clock, or a duration
@@ -102,7 +115,7 @@ export function extractPredicates(
   if (ax.length > 0) {
     const nested = nestAxElements(ax);
     const focused = nested.find((e) => e.focused === true);
-    if (focused !== undefined && STABLE_ROLES.has(focused.role)) {
+    if (focused !== undefined && STABLE_ROLES.has(canonicalRole(focused.role))) {
       add("ax_focused", labelArgs(focused));
     }
 
@@ -110,12 +123,12 @@ export function extractPredicates(
     // role, then label. Two captures of the same screen must yield the same
     // truncation, or the cap itself becomes a source of false mismatches.
     const candidates = nested
-      .filter((e) => STABLE_ROLES.has(e.role))
+      .filter((e) => STABLE_ROLES.has(canonicalRole(e.role)))
       .filter((e) => e.label !== undefined && e.label.length > 0 && !isVolatileLabel(e.label))
       .sort(
         (a, b) =>
           (a.depth ?? 0) - (b.depth ?? 0) ||
-          a.role.localeCompare(b.role) ||
+          canonicalRole(a.role).localeCompare(canonicalRole(b.role)) ||
           (a.label ?? "").localeCompare(b.label ?? ""),
       );
 
@@ -135,5 +148,5 @@ export function extractPredicates(
 }
 
 function labelArgs(e: UIElement): { role: string; label: string } {
-  return { role: e.role, label: e.label ?? "" };
+  return { role: canonicalRole(e.role), label: e.label ?? "" };
 }

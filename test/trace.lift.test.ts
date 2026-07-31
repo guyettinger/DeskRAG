@@ -36,6 +36,57 @@ const axAt = (tMono: number): AxSnapshot =>
     ? { elements: composeTree, frameId: "f_compose", framePhash: "1111" }
     : { elements: sentTree, frameId: "f_sent", framePhash: "2222" };
 
+// Two thirds of real AX snapshots are boundary-triggered (`focus_change`,
+// `dwell_resume`) and carry NO frame — that is the whole point of capturing AX at
+// boundaries, since a settled screen emits no keyframe. Sourcing the visual
+// anchor's pHash from the snapshot therefore dropped the layer on 31 of 32 real
+// actions, even though regions were resolved and handed to `buildAnchor`. The
+// regions and the pHash must describe the SAME frame, so they travel together.
+describe("visual anchor at a boundary snapshot", () => {
+  const boundaryEvents: TraceEvent[] = [
+    ev(0, "focus_change", undefined, undefined, { app: "Mail", title: "New Message" }),
+    ev(100, "mouse_down", 720, 30, { button: 1 }),
+    ev(140, "mouse_up", 720, 30, { button: 1 }),
+  ];
+
+  it("keeps the visual layer when the AX snapshot has no frame of its own", () => {
+    const t = liftTrace({
+      sessionId: "s_boundary",
+      events: boundaryEvents,
+      endTMono: 1000,
+      // A boundary snapshot: elements, but no frameId and no framePhash.
+      axAt: () => ({ elements: composeTree }),
+      regionsAt: () => ({
+        frameId: "f_near",
+        framePhash: "beef",
+        regions: [{ id: "r_send", x: 700, y: 20, w: 80, h: 32 }],
+      }),
+      displayIdAt: () => "D1",
+    });
+
+    const click = t.edges.flatMap((e) => e.actions).find((a) => a.kind === "click");
+    expect(click).toBeDefined();
+    const anchor = (click as { anchor: { visual?: { regionId: string; framePhash: string } } }).anchor;
+    expect(anchor.visual).toEqual({
+      regionId: "r_send",
+      framePhash: "beef",
+      bbox: { x: 700, y: 20, w: 80, h: 32 },
+    });
+  });
+
+  it("gives a boundary node a visual signature from the nearest frame", () => {
+    const t = liftTrace({
+      sessionId: "s_boundary",
+      events: boundaryEvents,
+      endTMono: 1000,
+      axAt: () => ({ elements: composeTree }),
+      regionsAt: () => ({ frameId: "f_near", framePhash: "beef", regions: [] }),
+      displayIdAt: () => "D1",
+    });
+    expect(t.nodes[0]!.visual).toEqual({ frameBlobId: "f_near", phash: "beef" });
+  });
+});
+
 describe("slotNameFor", () => {
   it("derives a stable name from the focused role and label", () => {
     expect(
@@ -67,7 +118,11 @@ describe("liftTrace", () => {
       events,
       endTMono: 2000,
       axAt,
-      regionsAt: () => [{ id: "r_send", x: 700, y: 20, w: 80, h: 32 }],
+      regionsAt: () => ({
+        frameId: "f_compose",
+        framePhash: "1111",
+        regions: [{ id: "r_send", x: 700, y: 20, w: 80, h: 32 }],
+      }),
       displayIdAt: () => "D1",
     });
 
@@ -108,7 +163,7 @@ describe("liftTrace", () => {
     expect(first).toContainEqual({ kind: "app", args: { app: "Mail" }, reach: "achievable" });
     expect(first).toContainEqual({
       kind: "ax_focused",
-      args: { role: "AXTextField", label: "To" },
+      args: { role: "TextField", label: "To" },
       reach: "achievable",
     });
   });

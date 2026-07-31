@@ -128,8 +128,16 @@ export interface RegionInsert {
   role?: string;
   label?: string;
   priority: number;
-  /** The region image vector, co-written after the SQLite commit. */
-  vector: VectorInsert;
+  /**
+   * The region image vector, co-written after the SQLite commit.
+   *
+   * Optional, because proposal and embedding are separable: a region's geometry
+   * and AX label are useful on their own (they are what `Anchor.visual` needs),
+   * while only the crop needs an image model. A row without a vector is the same
+   * state a crash between the commit and the Lance add leaves behind, and
+   * `reconcile()` reports it as missing so it can be embedded later.
+   */
+  vector?: VectorInsert;
 }
 
 /** A vector destined for one namespaced Lance table. */
