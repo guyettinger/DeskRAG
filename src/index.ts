@@ -295,7 +295,14 @@ export {
   type Gesture,
   type GestureOptions,
 } from "./trace/gestures.js";
-export { liftTrace, resolveKeys, slotNameFor, type LiftInput, type AxSnapshot } from "./trace/lift.js";
+export {
+  liftTrace,
+  resolveKeys,
+  slotNameFor,
+  type LiftInput,
+  type AxSnapshot,
+  type RegionsAtFrame,
+} from "./trace/lift.js";
 export { mergeTrace, edgeSignature, actionSignature, discoveredVariables } from "./trace/merge.js";
 export {
   printGraph,
@@ -346,3 +353,39 @@ export {
 } from "./capture/producers/sampling.js";
 export { KeymapProducer, type KeymapProducerOptions } from "./capture/producers/keymap-producer.js";
 export { BoundaryAxTrigger, type BoundaryAxTriggerOptions } from "./capture/ax/boundary.js";
+
+// --- replay/ (the executor) ------------------------------------------------
+// Spawns a subprocess but loads no native module, so it belongs in the barrel:
+// importing it loads nothing until it runs.
+export {
+  agreement,
+  LAYER_CEILING,
+  pathCeiling,
+  pathDepth,
+  ceilingFor,
+  BRITTLENESS_FLOOR,
+  DEFAULT_MIN_CONFIDENCE,
+  type Actuator,
+  type AxDescriptor,
+  type Blocker,
+  type EdgeBrittleness,
+  type ExecOutcome,
+  type Locate,
+  type Plan,
+  type PlannedAction,
+  type ReplayInput,
+  type Resolution,
+  type ResolvedLayer,
+} from "./replay/types.js";
+export { resolveAnchor, type ResolveOptions } from "./replay/resolve.js";
+export {
+  verifyNode,
+  blockersOf,
+  repairableOf,
+  type VerifyResult,
+  type Violation,
+} from "./replay/verify.js";
+export { reverseKeymap, strokesFor, type KeyStroke } from "./replay/typing.js";
+export { buildPlan, findPath, edgeCost, type BuildPlanInput } from "./replay/plan.js";
+export { canArm, executePlan, type ExecuteOptions } from "./replay/execute.js";
+export { AxExecSidecar, type SidecarOptions } from "./replay/sidecar.js";

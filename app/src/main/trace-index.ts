@@ -20,12 +20,12 @@ import {
   displayIdAt,
   liftTrace,
   mergeTrace,
-  type AnchorRegion,
   type AxSnapshot,
   type DisplayInfo,
   type DualStore,
   type Graph,
   type Keymap,
+  type RegionsAtFrame,
   type TraceEvent,
 } from "deskrag";
 
@@ -144,16 +144,24 @@ export async function indexTrace(
       };
     },
 
-    regionsAt: (tMono): readonly AnchorRegion[] => {
+    // Regions AND the pHash of the frame they came from, as one value. Most AX
+    // snapshots are boundary-triggered and carry no frame, so taking the pHash
+    // from the snapshot instead left the visual anchor layer absent almost
+    // everywhere despite regions being available right here.
+    regionsAt: (tMono): RegionsAtFrame | undefined => {
       const frame = frameAt(tMono);
-      if (frame === undefined) return [];
-      return store.getRegionsByFrame(frame.id).map((r) => ({
-        id: r.id,
-        x: r.x,
-        y: r.y,
-        w: r.w,
-        h: r.h,
-      }));
+      if (frame === undefined) return undefined;
+      return {
+        frameId: frame.id,
+        framePhash: frame.phash.toString(16),
+        regions: store.getRegionsByFrame(frame.id).map((r) => ({
+          id: r.id,
+          x: r.x,
+          y: r.y,
+          w: r.w,
+          h: r.h,
+        })),
+      };
     },
 
     keymapAt: (tMono) => latestAt(keymaps, tMono),
