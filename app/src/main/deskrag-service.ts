@@ -527,19 +527,25 @@ export class DeskRagService {
     stages.push({
       name: "Trace",
       run: async () => {
-        const result = await indexTrace(this.store, sessionId);
-        if (result === undefined) return;
-        if (result.missingKeymap) {
-          // Without a layout event nothing can resolve characters, so every text
-          // gesture was dropped and no slot was filled. Silent otherwise.
+        const r = await indexTrace(this.store, sessionId);
+        if (r === undefined) return;
+        // The stage name is the only surface a trace has until the executor
+        // exists, so it carries the counts rather than a bare "Trace". The
+        // missing-keymap case is the one a user has to be told about: it means
+        // every keystroke was discarded, and nothing else would say so.
+        const summary = r.missingKeymap
+          ? `Trace — ${r.actions} actions (no keyboard layout: typed text not captured)`
+          : `Trace — ${r.actions} actions, graph ${r.nodes}/${r.edges}` +
+            (r.variables > 0 ? `, ${r.variables} variables` : "");
+        // Trace is always the last stage, so its index is stages.length - 1.
+        // (`total` below is declared after this closure; referencing it here
+        // would work only by virtue of when the closure runs.)
+        this.emitIndexing({ stage: summary, done: stages.length - 1, total: stages.length });
+        if (r.missingKeymap) {
           console.warn(
             "[deskrag] no keymap captured for this session — typed text was not lifted",
           );
         }
-        console.info(
-          `[deskrag] trace: +${result.actions} actions -> graph ${result.nodes} nodes, ` +
-            `${result.edges} edges, ${result.variables} variables`,
-        );
       },
     });
 
