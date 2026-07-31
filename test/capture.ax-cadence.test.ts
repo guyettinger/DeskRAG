@@ -19,6 +19,42 @@ afterEach(() => {
 });
 
 describe("BoundaryAxTrigger", () => {
+  // The walk lands AFTER the boundary (settle delay + walk budget), so the
+  // snapshot's own t_mono can never identify the boundary it was taken for.
+  // Carrying the boundary's t_mono through is what lets lift match exactly
+  // instead of looking backwards and finding the previous state's tree.
+  it("reports the t_mono of the boundary that armed it", async () => {
+    vi.useFakeTimers();
+    const fired: { reason: string; boundaryTMono: number }[] = [];
+    const t = new BoundaryAxTrigger(
+      async (reason, boundaryTMono) => void fired.push({ reason, boundaryTMono: boundaryTMono! }),
+      { settleMs: 200 },
+    );
+
+    t.onEvent("focus_change", 6692);
+    await flushTimers(250);
+    expect(fired).toEqual([{ reason: "focus_change", boundaryTMono: 6692 }]);
+    t.stop();
+  });
+
+  it("keeps the FIRST boundary's t_mono when a burst coalesces", async () => {
+    vi.useFakeTimers();
+    const fired: { reason: string; boundaryTMono: number }[] = [];
+    const t = new BoundaryAxTrigger(
+      async (reason, boundaryTMono) => void fired.push({ reason, boundaryTMono: boundaryTMono! }),
+      { settleMs: 200 },
+    );
+
+    // The first reason in a burst wins; its t_mono must win with it, or the
+    // stamp would name a boundary the walk was not actually armed by.
+    t.onEvent("focus_change", 1000);
+    t.onEvent("focus_change", 1010);
+    t.onEvent("focus_change", 1020);
+    await flushTimers(250);
+    expect(fired).toEqual([{ reason: "focus_change", boundaryTMono: 1000 }]);
+    t.stop();
+  });
+
   it("fires after the settle delay, not at the instant of the trigger", async () => {
     vi.useFakeTimers();
     const fired: AxSnapshotReason[] = [];

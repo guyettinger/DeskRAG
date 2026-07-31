@@ -33,6 +33,16 @@ export interface AxSnapshotRow {
   reason: AxSnapshotReason;
   walkMs: number;
   elements: UIElement[];
+  /**
+   * The `t_mono` of the boundary this walk was taken FOR, when there was one.
+   *
+   * Write-only on this row: it is stored in `ax_snapshot_boundary` and read back
+   * via `getAxForBoundary`. It exists because `tMono` above is the walk's own
+   * start, which is ALWAYS later than the boundary (settle delay + walk budget),
+   * so a "latest at-or-before the boundary" lookup returns the previous state's
+   * tree — which paired every focus_change node with the outgoing app's UI.
+   */
+  boundaryTMono?: number;
 }
 
 export interface TraceGraphSummary {
@@ -392,6 +402,10 @@ export interface Store {
    * so callers cannot each re-implement it differently.
    */
   getAxAt(sessionId: string, tMono: number): AxSnapshotRow | undefined;
+  /** The snapshot captured FOR this boundary. Prefer it over `getAxAt` at a
+   *  boundary: the walk lands after the boundary, so `getAxAt` returns the
+   *  previous state. Undefined for snapshots recorded before stamping existed. */
+  getAxForBoundary(sessionId: string, tMono: number): AxSnapshotRow | undefined;
   /** Read back a keyframe's stored AX snapshot (what `StoredAxProvider` serves). */
   getFrameAx(frameId: string): UIElement[];
 

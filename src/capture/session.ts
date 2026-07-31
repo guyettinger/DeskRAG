@@ -105,8 +105,10 @@ export class CaptureSession {
     this.boundaryAx =
       this.axCapturer !== undefined
         ? new BoundaryAxTrigger(
-            async (reason) => {
-              await this.axCapturer!.capture(reason);
+            async (reason, boundaryTMono) => {
+              // A boundary walk has no frame (the screen is settled, so the
+              // keyframe gate emitted nothing); it is keyed by its boundary.
+              await this.axCapturer!.capture(reason, undefined, boundaryTMono);
             },
             {
               ...(this.opts.axSettleMs !== undefined ? { settleMs: this.opts.axSettleMs } : {}),

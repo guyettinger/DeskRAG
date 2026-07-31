@@ -161,6 +161,20 @@ export class DualStore implements Store {
       selectAxByFrame: db.prepare(
         "SELECT elements FROM ax_snapshot WHERE frame_id = ? ORDER BY t_mono DESC LIMIT 1",
       ),
+      insertAxBoundary: db.prepare(
+        `INSERT INTO ax_snapshot_boundary(snapshot_id, session_id, t_mono)
+         VALUES (@snapshotId, @sessionId, @tMono)
+         ON CONFLICT(snapshot_id) DO UPDATE SET t_mono = excluded.t_mono`,
+      ),
+      // Exact match on the boundary's own t_mono. A boundary snapshot is written
+      // later than the boundary it describes, so a timing lookup finds the
+      // PREVIOUS state's tree instead.
+      selectAxForBoundary: db.prepare(
+        `SELECT s.* FROM ax_snapshot s
+           JOIN ax_snapshot_boundary b ON b.snapshot_id = s.id
+          WHERE b.session_id = ? AND b.t_mono = ?
+          ORDER BY s.t_mono ASC LIMIT 1`,
+      ),
       insertRegion: db.prepare(
         `INSERT INTO region(id, frame_id, segment_id, session_id, x, y, w, h, source, role, label, priority)
          VALUES (@id, @frameId, @segmentId, @sessionId, @x, @y, @w, @h, @source, @role, @label, @priority)`,
@@ -580,11 +594,29 @@ export class DualStore implements Store {
         walkMs: row.walkMs,
         elements: JSON.stringify(row.elements),
       });
+      // Stamp which boundary this walk was taken FOR, so lift can match exactly
+      // instead of inferring from a timestamp that is always later.
+      if (row.boundaryTMono !== undefined) {
+        this.stmts.insertAxBoundary.run({
+          snapshotId: row.id,
+          sessionId: row.sessionId,
+          tMono: row.boundaryTMono,
+        });
+      }
     });
   }
 
+  /** The snapshot captured FOR this boundary, or undefined if none was stamped. */
+  getAxForBoundary(sessionId: string, tMono: number): AxSnapshotRow | undefined {
+    return this.hydrateAxSnapshot(this.stmts.selectAxForBoundary.get(sessionId, tMono));
+  }
+
   getAxAt(sessionId: string, tMono: number): AxSnapshotRow | undefined {
-    const r = this.stmts.selectAxAt.get(sessionId, tMono) as
+    return this.hydrateAxSnapshot(this.stmts.selectAxAt.get(sessionId, tMono));
+  }
+
+  private hydrateAxSnapshot(row: unknown): AxSnapshotRow | undefined {
+    const r = row as
       | {
           id: string;
           session_id: string;
