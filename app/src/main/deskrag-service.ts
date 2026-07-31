@@ -23,6 +23,9 @@ import {
   FfmpegScreenProducer,
   FfmpegAudioProducer,
   SwiftAxSource,
+  SwiftDisplaySource,
+  SwiftKeymapSource,
+  KeymapProducer,
   Segmenter,
   Representer,
   FrameRepresenter,
@@ -359,12 +362,20 @@ export class DeskRagService {
       if (p) {
         session.addProducer(p);
         active.push("input");
+        // Keystrokes are stored as raw keycodes; characters are resolved at lift
+        // time against the layout in force. Without this producer there is no
+        // layout, so every text gesture is dropped and no slot is ever filled.
+        session.addProducer(new KeymapProducer(new SwiftKeymapSource()));
       }
     }
     if (sig.activeWin.enabled) {
+      // The window producer owns display topology too: the re-query signal is a
+      // focused window lying outside every known display, and it is the only
+      // producer that sees bounds.
       const p = await this.loadNativeProducer(
         "deskrag/capture/producers/active-window",
         "ActiveWindowProducer",
+        { displaySource: new SwiftDisplaySource() },
       );
       if (p) {
         session.addProducer(p);
@@ -393,14 +404,15 @@ export class DeskRagService {
   private async loadNativeProducer(
     modulePath: string,
     exportName: string,
+    opts?: unknown,
   ): Promise<Producer | null> {
     try {
       const mod = (await import(/* @vite-ignore */ libUrl(modulePath))) as Record<
         string,
-        new () => Producer
+        new (opts?: unknown) => Producer
       >;
       const Ctor = mod[exportName];
-      return Ctor ? new Ctor() : null;
+      return Ctor ? new Ctor(opts) : null;
     } catch (err) {
       console.error(`[deskrag] native producer ${exportName} unavailable:`, err);
       return null;
