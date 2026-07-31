@@ -13,6 +13,8 @@
  */
 
 import { computeBoundaries } from "../segment/boundaries.js";
+import { resolveChar } from "../capture/env/keymap.js";
+import type { Keymap } from "../capture/env/types.js";
 import { buildAnchor } from "./anchors.js";
 import { groupGestures, type Gesture, type GestureOptions } from "./gestures.js";
 import { fitPath } from "./paths.js";
@@ -34,8 +36,9 @@ import type {
 
 export interface AxSnapshot {
   elements: readonly UIElement[];
-  frameId: string;
-  framePhash: string;
+  /** Absent for a boundary-triggered snapshot, which has no keyframe. */
+  frameId?: string;
+  framePhash?: string;
 }
 
 export interface LiftInput {
@@ -47,6 +50,8 @@ export interface LiftInput {
   regionsAt?(tMono: number): readonly AnchorRegion[];
   displayIdAt?(p: Vec2): string;
   windowBoundsAt?(tMono: number): Rect | undefined;
+  /** The keyboard layout in force at `tMono`, for character resolution. */
+  keymapAt?(tMono: number): Keymap | undefined;
   dwellGapMs?: number;
   gestures?: GestureOptions;
   /** Defaults to `sessionId`. Ids are `${prefix}:n0`, `${prefix}:e0`, ... */
@@ -67,9 +72,41 @@ export function slotNameFor(anchor: Anchor | undefined, index: number): string {
   return clean.length > 0 ? clean : `text_${index}`;
 }
 
+/**
+ * Fill in `data.char` on key events from the layout in force at each event's
+ * t_mono, so `groupGestures` — which is pure and unchanged — can read it.
+ *
+ * The consume-and-strip rule in `resolveChar` is what keeps a capital letter
+ * text rather than a chord: `groupGestures` treats any surviving modifier as
+ * chord-forming, so shift has to be gone by the time it looks.
+ */
+export function resolveKeys(
+  events: readonly TraceEvent[],
+  keymapAt: (tMono: number) => Keymap | undefined,
+): TraceEvent[] {
+  return events.map((e) => {
+    if (e.kind !== "key_down" && e.kind !== "key_up") return e;
+    const km = keymapAt(e.tMono);
+    if (km === undefined) return e;
+    const d =
+      e.data !== null && typeof e.data === "object" ? (e.data as Record<string, unknown>) : {};
+    const keycode = typeof d.keycode === "number" ? d.keycode : undefined;
+    if (keycode === undefined) return e;
+    const mods = Array.isArray(d.modifiers)
+      ? d.modifiers.filter((m): m is string => typeof m === "string")
+      : [];
+    const { char, modifiers } = resolveChar(km, keycode, mods);
+    return {
+      ...e,
+      data: { ...d, modifiers, ...(char !== undefined ? { char } : {}) },
+    };
+  });
+}
+
 export function liftTrace(input: LiftInput): Trace {
   const prefix = input.idPrefix ?? input.sessionId;
-  const events = [...input.events].sort((a, b) => a.tMono - b.tMono);
+  const sorted = [...input.events].sort((a, b) => a.tMono - b.tMono);
+  const events = input.keymapAt !== undefined ? resolveKeys(sorted, input.keymapAt) : sorted;
   const boundaries = computeBoundaries(events, input.endTMono, input.dwellGapMs);
 
   const nodes: TraceNode[] = boundaries.map((b, i) =>
@@ -155,7 +192,11 @@ function buildNode(id: string, tMono: number, events: readonly TraceEvent[], inp
   return {
     id,
     predicates,
-    ...(snap !== undefined ? { visual: { frameBlobId: snap.frameId, phash: snap.framePhash } } : {}),
+    // A boundary snapshot has no frame, so no visual layer. Node identity is
+    // predicate-primary; visual only corroborates, so this degrades gracefully.
+    ...(snap?.frameId !== undefined && snap.framePhash !== undefined
+      ? { visual: { frameBlobId: snap.frameId, phash: snap.framePhash } }
+      : {}),
     intervene: "select",
     observations: 1,
   };
@@ -183,7 +224,12 @@ function anchorFor(point: Vec2, tMono: number, input: LiftInput): Anchor {
     point,
     displayId: input.displayIdAt?.(point) ?? "D0",
     ...(bounds !== undefined ? { windowBounds: bounds } : {}),
-    ...(snap !== undefined ? { ax: snap.elements, framePhash: snap.framePhash } : {}),
+    ...(snap !== undefined
+      ? {
+          ax: snap.elements,
+          ...(snap.framePhash !== undefined ? { framePhash: snap.framePhash } : {}),
+        }
+      : {}),
     ...(input.regionsAt !== undefined ? { regions: input.regionsAt(tMono) } : {}),
   });
 }

@@ -295,7 +295,7 @@ export {
   type Gesture,
   type GestureOptions,
 } from "./trace/gestures.js";
-export { liftTrace, slotNameFor, type LiftInput, type AxSnapshot } from "./trace/lift.js";
+export { liftTrace, resolveKeys, slotNameFor, type LiftInput, type AxSnapshot } from "./trace/lift.js";
 export { mergeTrace, edgeSignature, actionSignature, discoveredVariables } from "./trace/merge.js";
 export {
   printGraph,
@@ -303,3 +303,40 @@ export {
   printInterventionRequest,
   parseInterventionResponse,
 } from "./trace/language.js";
+
+/**
+ * capture/env/ — display topology and keyboard layout. Both are facts that can
+ * change mid-session and both fail SILENTLY when they do (a coordinate
+ * attributed to the wrong display, text resolved against the wrong layout), so
+ * both are captured as `t_mono`-stamped events and resolved at lift time by
+ * "latest at-or-before".
+ *
+ * Only the PURE helpers, types and fakes are here. `SwiftDisplaySource` and
+ * `SwiftKeymapSource` spawn a subprocess and are therefore deliberately NOT
+ * re-exported — import them from `./capture/env/swift-displays.js` and
+ * `./capture/env/swift-keymap.js`, the same rule as `SwiftAxSource`.
+ */
+export type {
+  DisplayInfo,
+  DisplaySource,
+  Keymap,
+  KeymapSource,
+} from "./capture/env/types.js";
+export { coerceDisplays, coerceKeymap } from "./capture/env/parse.js";
+export {
+  displayIdAt,
+  outsideKnownDisplays,
+  type Bounds,
+  type Point2,
+} from "./capture/env/displays.js";
+export { macKeycodeFor, resolveChar } from "./capture/env/keymap.js";
+export { FakeDisplaySource, FakeKeymapSource } from "./capture/env/fake.js";
+export {
+  shouldSampleMove,
+  modifiersOf,
+  DEFAULT_SAMPLE_OPTIONS,
+  type SampleOptions,
+  type SampleState,
+} from "./capture/producers/sampling.js";
+export { KeymapProducer, type KeymapProducerOptions } from "./capture/producers/keymap-producer.js";
+export { BoundaryAxTrigger, type BoundaryAxTriggerOptions } from "./capture/ax/boundary.js";

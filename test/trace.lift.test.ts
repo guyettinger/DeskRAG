@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { liftTrace, slotNameFor } from "../src/trace/lift.js";
+import { liftTrace, resolveKeys, slotNameFor } from "../src/trace/lift.js";
+import type { Keymap } from "../src/capture/env/types.js";
 import type { AxSnapshot } from "../src/trace/lift.js";
 import type { TraceEvent } from "../src/trace/types.js";
 import type { UIElement } from "../src/embed/types.js";
@@ -11,6 +12,11 @@ const ev = (tMono: number, kind: string, x?: number, y?: number, data?: unknown)
   y: y ?? null,
   data: data ?? null,
 });
+
+const us: Keymap = {
+  layoutId: "com.apple.keylayout.US",
+  entries: { 0: ["a", "A", "\u00e5", "\u00c5"], 1: ["s", "S", "\u00df", "\u00cd"] },
+};
 
 const composeTree: UIElement[] = [
   { role: "AXWindow", label: "New Message", x: 0, y: 0, w: 800, h: 600 },
@@ -209,5 +215,119 @@ describe("liftTrace", () => {
     const t = liftTrace({ sessionId: "s6", events: [], endTMono: 1000 });
     expect(t.nodes.length).toBeGreaterThanOrEqual(1);
     expect(t.edges.every((e) => e.actions.length === 0)).toBe(true);
+  });
+});
+
+describe("resolveKeys", () => {
+  it("fills char on key events from the layout in force", () => {
+    const out = resolveKeys(
+      [ev(100, "key_down", undefined, undefined, { keycode: 30, modifiers: [] })],
+      () => us,
+    );
+    expect(out[0]!.data).toEqual({ keycode: 30, modifiers: [], char: "a" });
+  });
+
+  it("CONSUMES shift, so a capital lifts as text and not a chord", () => {
+    const out = resolveKeys(
+      [ev(100, "key_down", undefined, undefined, { keycode: 30, modifiers: ["shift"] })],
+      () => us,
+    );
+    expect(out[0]!.data).toEqual({ keycode: 30, modifiers: [], char: "A" });
+  });
+
+  it("keeps modifiers on a command chord and names the key from the plain column", () => {
+    // A command consumes nothing: the char identifies the key (cmd+S is the S
+    // key), and the surviving modifier is what makes groupGestures call it a
+    // chord rather than text.
+    const out = resolveKeys(
+      [ev(100, "key_down", undefined, undefined, { keycode: 31, modifiers: ["cmd"] })],
+      () => us,
+    );
+    expect(out[0]!.data).toEqual({ keycode: 31, modifiers: ["cmd"], char: "s" });
+  });
+
+  it("leaves non-key events untouched", () => {
+    const move = ev(100, "mouse_move", 5, 6);
+    expect(resolveKeys([move], () => us)[0]).toEqual(move);
+  });
+
+  it("leaves key events untouched when no keymap covers that t_mono", () => {
+    const k = ev(100, "key_down", undefined, undefined, { keycode: 30, modifiers: [] });
+    expect(resolveKeys([k], () => undefined)[0]).toEqual(k);
+  });
+
+  it("applies the layout in force at each event's t_mono", () => {
+    const dvorak: Keymap = { layoutId: "dv", entries: { 1: ["o", "O", "ø", "Ø"] } };
+    const out = resolveKeys(
+      [
+        ev(100, "key_down", undefined, undefined, { keycode: 31, modifiers: [] }),
+        ev(9000, "key_down", undefined, undefined, { keycode: 31, modifiers: [] }),
+      ],
+      (t) => (t < 5000 ? us : dvorak),
+    );
+    expect((out[0]!.data as { char?: string }).char).toBe("s");
+    expect((out[1]!.data as { char?: string }).char).toBe("o");
+  });
+});
+
+describe("liftTrace — typed text end to end", () => {
+  it("REGRESSION: a capital letter lifts as text, not a chord", () => {
+    const t = liftTrace({
+      sessionId: "cap",
+      endTMono: 1000,
+      keymapAt: () => us,
+      events: [
+        ev(100, "key_down", undefined, undefined, { keycode: 30, modifiers: ["shift"] }),
+        ev(110, "key_up", undefined, undefined, { keycode: 30, modifiers: ["shift"] }),
+      ],
+    });
+    const actions = t.edges.flatMap((e) => e.actions);
+    expect(actions.map((a) => a.kind)).toEqual(["type"]);
+    const typed = actions[0];
+    if (typed?.kind !== "type") throw new Error("expected type");
+    expect(typed.recorded).toBe("A");
+  });
+
+  it("still lifts a real chord as a chord", () => {
+    const t = liftTrace({
+      sessionId: "chord",
+      endTMono: 1000,
+      keymapAt: () => us,
+      events: [
+        ev(100, "key_down", undefined, undefined, { keycode: 31, modifiers: ["cmd"] }),
+        ev(110, "key_up", undefined, undefined, { keycode: 31, modifiers: ["cmd"] }),
+      ],
+    });
+    const actions = t.edges.flatMap((e) => e.actions);
+    expect(actions).toEqual([{ kind: "chord", keys: ["cmd", "s"] }]);
+  });
+
+  it("drops text with no keymap, exactly as before", () => {
+    const t = liftTrace({
+      sessionId: "nokm",
+      endTMono: 1000,
+      events: [
+        ev(100, "key_down", undefined, undefined, { keycode: 30, modifiers: [] }),
+        ev(110, "key_up", undefined, undefined, { keycode: 30, modifiers: [] }),
+      ],
+    });
+    expect(t.edges.flatMap((e) => e.actions)).toHaveLength(0);
+    expect(t.edges.some((e) => (e.liftWarnings ?? []).some((w) => /char/.test(w)))).toBe(true);
+  });
+
+  it("populates a slot with the resolved text — the point of the whole chain", () => {
+    const t = liftTrace({
+      sessionId: "slot",
+      endTMono: 1000,
+      keymapAt: () => us,
+      events: [
+        ev(100, "key_down", undefined, undefined, { keycode: 30, modifiers: ["shift"] }),
+        ev(110, "key_up", undefined, undefined, { keycode: 30, modifiers: ["shift"] }),
+        ev(200, "key_down", undefined, undefined, { keycode: 31, modifiers: [] }),
+        ev(210, "key_up", undefined, undefined, { keycode: 31, modifiers: [] }),
+      ],
+    });
+    expect(t.slots).toHaveLength(1);
+    expect(t.slots[0]!.samples).toEqual(["As"]);
   });
 });

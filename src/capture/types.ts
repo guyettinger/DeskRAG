@@ -19,6 +19,8 @@ export type EventKind =
   | "key_down"
   | "key_up"
   | "focus_change" // active-window/app changed
+  | "display_change" // display topology in force at/after this t_mono
+  | "keymap_change" // keyboard layout in force at/after this t_mono
   | "bookmark"; // explicit user hotkey marker
 
 /** What a producer emits; the session fills in id/sessionId and stamps t_mono. */

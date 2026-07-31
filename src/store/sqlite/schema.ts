@@ -162,6 +162,26 @@ CREATE TABLE IF NOT EXISTS trace_edge (
 CREATE INDEX IF NOT EXISTS idx_trace_edge_graph ON trace_edge(graph_id, ord);
 CREATE INDEX IF NOT EXISTS idx_trace_edge_from ON trace_edge(graph_id, from_node);
 
+-- AX snapshots. Supersedes frame_ax, which stays readable for sessions recorded
+-- before this table existed (there is no migration mechanism: every table is
+-- CREATE TABLE IF NOT EXISTS, so an existing table's shape can never change).
+--
+-- Cascades from SESSION, not frame: a boundary-triggered snapshot has no frame
+-- and so cannot inherit frame_ax's delete path. An empty elements array is a
+-- real row - "captured nothing" must stay distinguishable from "never captured",
+-- which is what reason exists to measure.
+CREATE TABLE IF NOT EXISTS ax_snapshot (
+  id          TEXT PRIMARY KEY,
+  session_id  TEXT NOT NULL REFERENCES session(id) ON DELETE CASCADE,
+  t_mono      REAL NOT NULL,
+  frame_id    TEXT REFERENCES frame(id) ON DELETE CASCADE,  -- NULL for boundary captures
+  reason      TEXT NOT NULL,        -- keyframe | focus_change | bookmark | dwell_resume
+  walk_ms     REAL NOT NULL,
+  elements    TEXT NOT NULL         -- JSON-encoded UIElement[]
+);
+CREATE INDEX IF NOT EXISTS idx_ax_snapshot_session ON ax_snapshot(session_id, t_mono);
+CREATE INDEX IF NOT EXISTS idx_ax_snapshot_frame ON ax_snapshot(frame_id);
+
 CREATE TABLE IF NOT EXISTS trace_slot (
   graph_id  TEXT NOT NULL REFERENCES trace_graph(id) ON DELETE CASCADE,
   name      TEXT NOT NULL,

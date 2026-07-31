@@ -2,8 +2,13 @@
 //
 // Walks the focused window's AXUIElement tree of the target app (frontmost by
 // default, or `--pid <n>`) and prints a FLAT JSON array of UI elements to stdout:
-//   [{ "role": String, "label"?: String, "x": Double, "y": Double,
-//      "w": Double, "h": Double, "focused"?: Bool, "parent"?: Int }, ...]
+//   [{ "role": String, "label"?: String, "identifier"?: String, "x": Double,
+//      "y": Double, "w": Double, "h": Double, "focused"?: Bool,
+//      "parent"?: Int }, ...]
+//
+// It also serves two permission-free environment modes, both of which exit before
+// the Accessibility gate: `--displays` (screen topology, flipped to top-left
+// origin) and `--keymap` (the active layout's UCKeyTranslate table).
 //
 // The array is flat but not structureless: `parent` is a back-reference to an
 // earlier index (the walk is pre-order, so a parent always precedes its children)
@@ -27,10 +32,14 @@ import Foundation
 import Dispatch
 import ApplicationServices
 import AppKit
+import Carbon
 
 struct AXElem: Codable {
     let role: String
     let label: String?
+    /// App-assigned stable id (AXIdentifier). A far better anchor than a
+    /// positional path, which shifts when the UI gains or loses a sibling.
+    let identifier: String?
     let x: Double
     let y: Double
     let w: Double
@@ -118,9 +127,10 @@ final class AXReader {
             let role = rawRole.hasPrefix("AX") ? String(rawRole.dropFirst(2)) : rawRole
             let label = str(el, kAXTitleAttribute as String)
                 ?? str(el, kAXDescriptionAttribute as String)
+            let identifier = str(el, kAXIdentifierAttribute as String)
             childParent = elements.count
             elements.append(AXElem(
-                role: role, label: label,
+                role: role, label: label, identifier: identifier,
                 x: Double(pos.x), y: Double(pos.y),
                 w: Double(size.width), h: Double(size.height),
                 focused: flag(el, kAXFocusedAttribute as String),
@@ -140,13 +150,163 @@ func emit(_ elements: [AXElem]) {
 
 let args = CommandLine.arguments
 
+func emitJSON<T: Encodable>(_ value: T) {
+    guard let data = try? JSONEncoder().encode(value),
+          let s = String(data: data, encoding: .utf8) else {
+        print("[]")
+        return
+    }
+    print(s)
+}
+
+// MARK: - Display topology (--displays)
+//
+// NSScreen.frame is BOTTOM-left origin; AX bboxes and uiohook mouse coordinates
+// are TOP-left. Without the flip every secondary display's y is wrong and points
+// get misattributed. The flip is against the PRIMARY screen's height, because
+// that is what defines the global coordinate space.
+//
+// Needs no Accessibility permission, so it sits above the AXIsProcessTrusted
+// gate — and above the AX --self-test block, so `--displays --self-test` is not
+// swallowed by it.
+
+struct DisplayOut: Codable {
+    let id: String
+    let x: Double
+    let y: Double
+    let w: Double
+    let h: Double
+    let scale: Double
+    let primary: Bool
+}
+
+if args.contains("--displays") {
+    if args.contains("--self-test") {
+        emitJSON([
+            DisplayOut(id: "1", x: 0, y: 0, w: 2560, h: 1440, scale: 2, primary: true),
+            DisplayOut(id: "2", x: 2560, y: 0, w: 1920, h: 1080, scale: 1, primary: false),
+        ])
+        exit(0)
+    }
+    let screens = NSScreen.screens
+    guard let primary = screens.first else {
+        print("[]")
+        exit(0)
+    }
+    let flipH = primary.frame.height
+    var displaysOut: [DisplayOut] = []
+    for s in screens {
+        let f = s.frame
+        let num = s.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+        displaysOut.append(DisplayOut(
+            id: num.map { String($0.uint32Value) } ?? "unknown",
+            x: f.origin.x,
+            y: flipH - f.origin.y - f.height,
+            w: f.width,
+            h: f.height,
+            scale: s.backingScaleFactor,
+            primary: s == primary
+        ))
+    }
+    emitJSON(displaysOut)
+    exit(0)
+}
+
+// MARK: - Keyboard layout (--keymap)
+//
+// UCKeyTranslate needs the current layout's UCKeyboardLayout data. Its
+// modifierKeyState argument is the Carbon modifier mask shifted RIGHT by 8:
+// plain = 0, shift = 0x02, option = 0x08, shift+option = 0x0A.
+//
+// This is the layout-DEPENDENT half of character resolution. The
+// scancode -> virtual-keycode half is layout-independent and lives in TypeScript.
+//
+// Needs no Accessibility permission, so like --displays it sits above the
+// AXIsProcessTrusted gate and above the AX --self-test block.
+
+struct KeymapOut: Codable {
+    let layoutId: String
+    let entries: [String: [String]]
+}
+
+if args.contains("--keymap") {
+    if args.contains("--self-test") {
+        emitJSON(KeymapOut(
+            layoutId: "com.apple.keylayout.SelfTest",
+            entries: ["0": ["a", "A", "å", "Å"], "49": [" ", " ", " ", " "]]
+        ))
+        exit(0)
+    }
+
+    guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
+          let layoutPtr = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData) else {
+        print("null")
+        exit(0)
+    }
+    let layoutData = Unmanaged<CFData>.fromOpaque(layoutPtr).takeUnretainedValue() as Data
+    let layoutId: String = {
+        guard let p = TISGetInputSourceProperty(source, kTISPropertyInputSourceID) else {
+            return "unknown"
+        }
+        return Unmanaged<CFString>.fromOpaque(p).takeUnretainedValue() as String
+    }()
+
+    let kbdType = UInt32(LMGetKbdType())
+    var keymapEntries: [String: [String]] = [:]
+
+    layoutData.withUnsafeBytes { (rawBuf: UnsafeRawBufferPointer) in
+        guard let base = rawBuf.baseAddress else { return }
+        let layout = base.assumingMemoryBound(to: UCKeyboardLayout.self)
+
+        // UCKeyTranslate happily maps COMMAND keys to control characters: Escape
+        // -> U+001B, the arrows -> U+001E/001F, the F-keys -> U+0010. Those are
+        // not text, and letting them through would make groupGestures coalesce a
+        // press of Escape INTO a text run — an ESC byte inside recorded typing.
+        //
+        // \r and \n survive because a newline in a text area genuinely is
+        // content. Tab does not: it is field navigation, and the focus_change
+        // poller runs at 500ms, far too late to split the text run it belongs to.
+        func isTextBearing(_ s: String) -> Bool {
+            guard let scalar = s.unicodeScalars.first, s.unicodeScalars.count == 1 else {
+                return !s.isEmpty // multi-scalar output is real text
+            }
+            if scalar == "\r" || scalar == "\n" { return true }
+            return scalar.value >= 0x20 && scalar.value != 0x7F
+        }
+
+        func translate(_ vk: UInt16, _ modState: UInt32) -> String {
+            var dead: UInt32 = 0
+            var chars = [UniChar](repeating: 0, count: 8)
+            var length = 0
+            let status = UCKeyTranslate(
+                layout, vk, UInt16(kUCKeyActionDown), modState, kbdType,
+                OptionBits(kUCKeyTranslateNoDeadKeysBit), &dead, chars.count, &length, &chars
+            )
+            guard status == noErr, length > 0 else { return "" }
+            let s = String(utf16CodeUnits: chars, count: length)
+            return isTextBearing(s) ? s : ""
+        }
+
+        for vk in UInt16(0)...UInt16(127) {
+            let cols = [translate(vk, 0), translate(vk, 0x02), translate(vk, 0x08), translate(vk, 0x0A)]
+            // Skip keys that produce nothing under every modifier state — arrows,
+            // function keys, modifiers themselves. Those are chords, not text.
+            if cols.allSatisfy({ $0.isEmpty }) { continue }
+            keymapEntries[String(vk)] = cols
+        }
+    }
+
+    emitJSON(KeymapOut(layoutId: layoutId, entries: keymapEntries))
+    exit(0)
+}
+
 // Deterministic contract self-check (no AX access) — used by the test suite to
 // verify the JSON encoding + sidecar wiring regardless of permission state. Two
 // elements, so the parent back-reference is part of the checked contract.
 if args.contains("--self-test") {
     emit([
-        AXElem(role: "Window", label: nil, x: 0, y: 0, w: 1000, h: 1000, focused: nil, parent: nil),
-        AXElem(role: "Button", label: "Save", x: 100, y: 200, w: 80, h: 30, focused: true, parent: 0),
+        AXElem(role: "Window", label: nil, identifier: nil, x: 0, y: 0, w: 1000, h: 1000, focused: nil, parent: nil),
+        AXElem(role: "Button", label: "Save", identifier: "save-btn", x: 100, y: 200, w: 80, h: 30, focused: true, parent: 0),
     ])
     exit(0)
 }

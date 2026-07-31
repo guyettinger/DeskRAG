@@ -129,6 +129,12 @@ export interface Point {
 export interface UIElement {
   role: string;
   label?: string;
+  /**
+   * App-assigned stable id (AXIdentifier). Where present, a far better anchor
+   * than a positional path, which shifts whenever the UI gains or loses a
+   * sibling. Absent for the many apps that never set one.
+   */
+  identifier?: string;
   x: number;
   y: number;
   w: number;

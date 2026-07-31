@@ -109,3 +109,20 @@ describe("anchorKey", () => {
     expect(anchorKey(a)).not.toBe(anchorKey(far));
   });
 });
+
+describe("buildAnchor — identifier", () => {
+  const withId: UIElement[] = [
+    { role: "AXWindow", x: 0, y: 0, w: 800, h: 600 },
+    { role: "AXButton", label: "Send", identifier: "send-btn", x: 700, y: 20, w: 80, h: 32, parent: 0 },
+  ];
+
+  it("records the AX identifier when the hit element has one", () => {
+    const a = buildAnchor({ point: { x: 720, y: 30 }, displayId: "D1", ax: withId });
+    expect(a.ax).toMatchObject({ role: "AXButton", label: "Send", identifier: "send-btn" });
+  });
+
+  it("omits identifier when the element has none", () => {
+    const a = buildAnchor({ point: { x: 720, y: 30 }, displayId: "D1", ax: tree });
+    expect("identifier" in (a.ax ?? {})).toBe(false);
+  });
+});
