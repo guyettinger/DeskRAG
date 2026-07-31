@@ -18,6 +18,23 @@ import type { Graph as TraceGraph } from "../trace/types.js";
 
 export type { TraceGraph };
 
+export type AxSnapshotReason = "keyframe" | "focus_change" | "bookmark" | "dwell_resume";
+
+/**
+ * One AX tree snapshot. `frameId` is null for boundary-triggered captures, which
+ * have no keyframe to attach to. `walkMs` makes staleness measurable rather than
+ * assumed.
+ */
+export interface AxSnapshotRow {
+  id: string;
+  sessionId: string;
+  tMono: number;
+  frameId: string | null;
+  reason: AxSnapshotReason;
+  walkMs: number;
+  elements: UIElement[];
+}
+
 export interface TraceGraphSummary {
   id: string;
   nodes: number;
@@ -355,6 +372,18 @@ export interface Store {
 
   /** Store the AX snapshot taken with a keyframe. Captured live — the UI moves on. */
   putFrameAx(frameId: string, elements: UIElement[]): Promise<void>;
+  /**
+   * Persist one AX snapshot, keyframe- or boundary-triggered. An empty
+   * `elements` array is still written — the distinction between "captured
+   * nothing" and "never captured" is what `reason` exists to record.
+   */
+  putAxSnapshot(row: AxSnapshotRow): Promise<void>;
+  /**
+   * The snapshot nearest at-or-before `tMono`, or undefined if none precedes it.
+   * Backs `liftTrace`'s `axAt` callback; the nearest-at-or-before rule lives here
+   * so callers cannot each re-implement it differently.
+   */
+  getAxAt(sessionId: string, tMono: number): AxSnapshotRow | undefined;
   /** Read back a keyframe's stored AX snapshot (what `StoredAxProvider` serves). */
   getFrameAx(frameId: string): UIElement[];
 

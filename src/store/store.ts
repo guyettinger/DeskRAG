@@ -36,6 +36,8 @@ import type {
   SegmentInsert,
   SegmentPatch,
   SegmentRow,
+  AxSnapshotReason,
+  AxSnapshotRow,
   SegmentVectorInsert,
   SessionInsert,
   TraceGraph,
@@ -45,6 +47,11 @@ import type {
   Store,
   VectorSpaceInsert,
 } from "./types.js";
+
+function parseElements(json: string): UIElement[] {
+  const parsed = JSON.parse(json) as unknown;
+  return Array.isArray(parsed) ? (parsed as UIElement[]) : [];
+}
 
 function jsonOrNull(v: unknown): string | null {
   return v === undefined ? null : JSON.stringify(v);
@@ -142,6 +149,18 @@ export class DualStore implements Store {
          ON CONFLICT(frame_id) DO UPDATE SET elements = excluded.elements`,
       ),
       selectFrameAx: db.prepare("SELECT elements FROM frame_ax WHERE frame_id = ?"),
+      insertAxSnapshot: db.prepare(
+        `INSERT INTO ax_snapshot(id, session_id, t_mono, frame_id, reason, walk_ms, elements)
+         VALUES (@id, @sessionId, @tMono, @frameId, @reason, @walkMs, @elements)`,
+      ),
+      selectAxAt: db.prepare(
+        `SELECT * FROM ax_snapshot
+          WHERE session_id = ? AND t_mono <= ?
+          ORDER BY t_mono DESC LIMIT 1`,
+      ),
+      selectAxByFrame: db.prepare(
+        "SELECT elements FROM ax_snapshot WHERE frame_id = ? ORDER BY t_mono DESC LIMIT 1",
+      ),
       insertRegion: db.prepare(
         `INSERT INTO region(id, frame_id, segment_id, session_id, x, y, w, h, source, role, label, priority)
          VALUES (@id, @frameId, @segmentId, @sessionId, @x, @y, @w, @h, @source, @role, @label, @priority)`,
@@ -538,10 +557,50 @@ export class DualStore implements Store {
   }
 
   getFrameAx(frameId: string): UIElement[] {
-    const r = this.stmts.selectFrameAx.get(frameId) as { elements: string } | undefined;
-    if (!r) return [];
-    const parsed = JSON.parse(r.elements) as unknown;
-    return Array.isArray(parsed) ? (parsed as UIElement[]) : [];
+    // ax_snapshot supersedes frame_ax; the legacy table is read only for
+    // sessions recorded before it existed.
+    const fresh = this.stmts.selectAxByFrame.get(frameId) as { elements: string } | undefined;
+    if (fresh !== undefined) return parseElements(fresh.elements);
+    const legacy = this.stmts.selectFrameAx.get(frameId) as { elements: string } | undefined;
+    return legacy === undefined ? [] : parseElements(legacy.elements);
+  }
+
+  async putAxSnapshot(row: AxSnapshotRow): Promise<void> {
+    await this.mutex.run(async () => {
+      this.stmts.insertAxSnapshot.run({
+        id: row.id,
+        sessionId: row.sessionId,
+        tMono: row.tMono,
+        frameId: row.frameId,
+        reason: row.reason,
+        walkMs: row.walkMs,
+        elements: JSON.stringify(row.elements),
+      });
+    });
+  }
+
+  getAxAt(sessionId: string, tMono: number): AxSnapshotRow | undefined {
+    const r = this.stmts.selectAxAt.get(sessionId, tMono) as
+      | {
+          id: string;
+          session_id: string;
+          t_mono: number;
+          frame_id: string | null;
+          reason: string;
+          walk_ms: number;
+          elements: string;
+        }
+      | undefined;
+    if (r === undefined) return undefined;
+    return {
+      id: r.id,
+      sessionId: r.session_id,
+      tMono: r.t_mono,
+      frameId: r.frame_id,
+      reason: r.reason as AxSnapshotReason,
+      walkMs: r.walk_ms,
+      elements: parseElements(r.elements),
+    };
   }
 
   async putFrameVectors(rows: FrameVectorInsert[]): Promise<void> {
