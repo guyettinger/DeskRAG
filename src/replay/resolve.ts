@@ -1,5 +1,9 @@
 /**
- * The anchor ladder: `identifier -> label -> path -> visual -> point`.
+ * The anchor ladder. `identifier` is always first and `point` always last; the
+ * middle is ORDERED BY TRUST rather than fixed, because a path's reliability
+ * depends on its depth and the applications measured disagree about whether a
+ * label or a path is the better anchor — they disagree because their depths
+ * differ. See `pathCeiling`.
  *
  * Each rung is tried against the AX tree AS IT IS NOW, and a rung that resolves
  * to a box wildly unlike the recorded one is rejected rather than trusted —
@@ -15,8 +19,10 @@
 import type { Anchor, Rect, Vec2 } from "../trace/types.js";
 import {
   agreement,
+  ceilingFor,
   DEFAULT_MIN_CONFIDENCE,
   LAYER_CEILING,
+  pathDepth,
   type AxDescriptor,
   type Locate,
   type Resolution,
@@ -28,7 +34,7 @@ export interface ResolveOptions {
   minConfidence?: number;
 }
 
-/** The AX rungs, in order, with the descriptor each one keys on. */
+/** The AX rungs and the descriptor each one keys on. Order is computed below. */
 const AX_RUNGS: {
   layer: ResolvedLayer;
   descriptor: (ax: NonNullable<Anchor["ax"]>) => AxDescriptor | undefined;
@@ -47,14 +53,30 @@ const AX_RUNGS: {
         ? { label: ax.label, role: ax.role }
         : undefined,
   },
-  // Path is LAST: it is the only rung always available, but a positional ordinal
-  // chain 11-17 levels deep (measured in web content) breaks on any sibling
-  // insertion anywhere along it. It is the fallback, not the preference.
   {
     layer: "path",
     descriptor: (ax) => (ax.path.length > 0 ? { path: ax.path, role: ax.role } : undefined),
   },
 ];
+
+/**
+ * The rungs this anchor actually carries, most-trusted first. Sorting by ceiling
+ * is what makes the order depth-sensitive: a shallow path outranks a label, a
+ * deep one falls behind it. Ties keep the declared order, so the ranking is
+ * deterministic — two resolutions of one anchor must try rungs identically.
+ */
+function rungsFor(
+  ax: NonNullable<Anchor["ax"]>,
+): { layer: ResolvedLayer; descriptor: AxDescriptor; ceiling: number }[] {
+  const depth = pathDepth(ax.path);
+  return AX_RUNGS.flatMap((rung, declared) => {
+    const descriptor = rung.descriptor(ax);
+    if (descriptor === undefined) return []; // not recorded — not a rung
+    return [{ layer: rung.layer, descriptor, ceiling: ceilingFor(rung.layer, depth), declared }];
+  })
+    .sort((a, b) => b.ceiling - a.ceiling || a.declared - b.declared)
+    .map(({ layer, descriptor, ceiling }) => ({ layer, descriptor, ceiling }));
+}
 
 /**
  * Keep the recorded point's OFFSET within its box, so a moved element is still
@@ -82,20 +104,18 @@ export async function resolveAnchor(
   const recordedBox = anchor.visual?.bbox;
 
   if (anchor.ax !== undefined) {
-    const ax = anchor.ax;
-    for (const rung of AX_RUNGS) {
-      const descriptor = rung.descriptor(ax);
-      if (descriptor === undefined) continue; // not recorded — not an attempt
-      const hit = await locate(descriptor);
+    for (const rung of rungsFor(anchor.ax)) {
+      const hit = await locate(rung.descriptor);
       if (hit === null) {
         attempts.push({ layer: rung.layer, rejected: "not found in the live AX tree" });
         continue;
       }
-      const ceiling = LAYER_CEILING[rung.layer];
       // With no recorded box there is nothing to disagree with, so the rung
       // keeps its ceiling: absence of evidence is not evidence of mismatch.
       const confidence =
-        recordedBox !== undefined ? ceiling * agreement(recordedBox, hit.bounds) : ceiling;
+        recordedBox !== undefined
+          ? rung.ceiling * agreement(recordedBox, hit.bounds)
+          : rung.ceiling;
       if (confidence < minConfidence) {
         attempts.push({
           layer: rung.layer,

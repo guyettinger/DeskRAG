@@ -100,9 +100,9 @@ describe("buildPlan", () => {
       locate: found,
     });
     expect(plan.steps).toHaveLength(1);
-    // The fixture anchor has a label and a path but no identifier, so the label
-    // rung wins — it now sits above path.
-    expect(plan.steps[0]!.resolution!.layer).toBe("label");
+    // The fixture anchor has a label and a shallow path (depth 2) but no
+    // identifier. A shallow path outranks a label, so the path rung wins.
+    expect(plan.steps[0]!.resolution!.layer).toBe("path");
     expect(plan.blockers).toEqual([]);
   });
 

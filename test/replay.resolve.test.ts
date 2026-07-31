@@ -33,20 +33,35 @@ describe("resolveAnchor", () => {
     expect(r.attempts).toEqual([]);
   });
 
-  it("falls to label when the identifier is gone, recording the rejection", async () => {
+  it("falls to the next rung when the identifier is gone, recording the rejection", async () => {
     const r = await resolveAnchor(anchor, locateFor([{ key: "label", bounds: recorded }]));
     expect(r.layer).toBe("label");
-    expect(r.attempts.map((a) => a.layer)).toEqual(["identifier"]);
+    expect(r.attempts[0]).toMatchObject({ layer: "identifier" });
     expect(r.attempts[0]!.rejected).toMatch(/not found/i);
   });
 
-  // Path is LAST of the AX rungs: measured web-content paths run 11-17 levels
-  // deep, and a positional ordinal chain that long breaks on any sibling
-  // insertion anywhere along it.
-  it("falls to path only when identifier and label are both gone", async () => {
-    const r = await resolveAnchor(anchor, locateFor([{ key: "path", bounds: recorded }]));
-    expect(r.layer).toBe("path");
+  /**
+   * The rungs are ordered by how much each is trusted for THIS anchor, and a
+   * path's trust depends on its depth. AppKit paths (mean depth 4) are steadier
+   * than a content-dependent label; Chromium paths (mean 11.4, max 17) are an
+   * ordinal chain long enough that a sibling inserted anywhere breaks it. A
+   * fixed order cannot serve both, which is why the order is computed.
+   */
+  it("tries a SHALLOW path before the label — the native case", async () => {
+    // anchor.ax.path is "Window[0]>Button[1]": depth 2.
+    const r = await resolveAnchor(anchor, locateFor([{ key: "label", bounds: recorded }]));
+    expect(r.attempts.map((a) => a.layer)).toEqual(["identifier", "path"]);
+    expect(r.layer).toBe("label");
+  });
+
+  it("tries the label before a DEEP path — the web case", async () => {
+    const deep: Anchor = {
+      ...anchor,
+      ax: { ...anchor.ax!, path: Array.from({ length: 13 }, (_, i) => `Group[${i}]`).join(">") },
+    };
+    const r = await resolveAnchor(deep, locateFor([{ key: "path", bounds: recorded }]));
     expect(r.attempts.map((a) => a.layer)).toEqual(["identifier", "label"]);
+    expect(r.layer).toBe("path");
   });
 
   it("rejects a rung that resolves to a wildly different box and falls through", async () => {
@@ -80,7 +95,8 @@ describe("resolveAnchor", () => {
     expect(r.layer).toBe("point");
     expect(r.confidence).toBe(0.3);
     expect(r.point).toEqual({ x: 740, y: 36 });
-    expect(r.attempts.map((a) => a.layer)).toEqual(["identifier", "label", "path", "visual"]);
+    // Shallow path (depth 2) outranks the label, so it is tried first.
+    expect(r.attempts.map((a) => a.layer)).toEqual(["identifier", "path", "label", "visual"]);
   });
 
   it("skips rungs the anchor never recorded, without inventing them", async () => {

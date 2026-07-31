@@ -360,6 +360,9 @@ export { BoundaryAxTrigger, type BoundaryAxTriggerOptions } from "./capture/ax/b
 export {
   agreement,
   LAYER_CEILING,
+  pathCeiling,
+  pathDepth,
+  ceilingFor,
   BRITTLENESS_FLOOR,
   DEFAULT_MIN_CONFIDENCE,
   type Actuator,

@@ -29,29 +29,55 @@ export type ResolvedLayer = "identifier" | "path" | "label" | "visual" | "point"
 /**
  * The confidence a layer can reach before geometric disagreement reduces it.
  *
- * Ranked by RELIABILITY, not availability — availability turned out to be an
- * app-specific measurement and a bad guide. Across real recordings AXIdentifier
- * appears on 50-80% of AX anchors in TextEdit but only 9% in Chrome, where a
- * label is four times more common; ranking by "whichever we saw most" would have
- * encoded one app's AX implementation as a general rule.
+ * Ranked by RELIABILITY, not availability — availability turned out to be a
+ * property of the application's AX implementation rather than of the descriptor.
+ * Measured across three implementations: AXIdentifier appears on 67% of AX
+ * anchors in TextEdit (AppKit), 9% in Chrome (Chromium), and 20% in System
+ * Settings (SwiftUI), which has no usable labels at all. Ranking by "whichever
+ * we saw most" would have encoded one app as a general rule.
  *
- * Identifier is first because it is app-assigned and survives sibling insertion.
- * **Label outranks path** because a positional path's reliability collapses with
- * depth: measured web-content paths run 11-17 levels deep (a Chrome TextField
- * averages 13) against 1-4 for native controls, and any sibling insertion at any
- * one of those levels shifts the ordinal. The accepted cost is native precision,
- * where a depth-3 path is likely steadier than a content-dependent label.
- *
- * `point` sits lowest because a coordinate click carries no evidence at all that
- * the thing under the cursor is the thing recorded.
+ * `path` is deliberately ABSENT from this table: its trust is not a constant.
+ * See `pathCeiling`.
  */
-export const LAYER_CEILING: Readonly<Record<ResolvedLayer, number>> = {
+export const LAYER_CEILING: Readonly<Record<Exclude<ResolvedLayer, "path">, number>> = {
   identifier: 1.0,
   label: 0.8,
-  path: 0.6,
   visual: 0.5,
   point: 0.3,
 };
+
+/** Steps in an ancestor chain: `Window[0]>Group[0]>Button[1]` is 3. */
+export const pathDepth = (path: string): number => (path.length === 0 ? 0 : path.split(">").length);
+
+const PATH_CEILING_MAX = 0.95;
+const PATH_DEPTH_DECAY = 0.035;
+/** Kept above `visual` so the path rung is always tried before it. */
+const PATH_CEILING_MIN = 0.55;
+
+/**
+ * How much a positional path is trusted, given its depth.
+ *
+ * A path is the only descriptor always present, but its reliability collapses as
+ * it lengthens: every step is an ordinal among same-role siblings, so a sibling
+ * inserted at ANY level shifts it. Depth is therefore the honest measure of how
+ * brittle a particular path is.
+ *
+ * This is a function rather than a constant because the three AX implementations
+ * measured disagree about whether to prefer label or path, and they disagree
+ * *because their depths differ* — AppKit averages 4, Chromium 11.4 (max 17),
+ * SwiftUI 7.4. A fixed order helps one and hurts another; ranking by decayed
+ * trust serves all three with one rule. The crossover sits just above depth 5,
+ * so native paths outrank a label and web paths fall behind it.
+ */
+export function pathCeiling(depth: number): number {
+  const decayed = PATH_CEILING_MAX - PATH_DEPTH_DECAY * Math.max(0, depth - 1);
+  return Math.min(1, Math.max(PATH_CEILING_MIN, decayed));
+}
+
+/** The ceiling for any layer, given the anchor's path depth where relevant. */
+export function ceilingFor(layer: ResolvedLayer, depth = 0): number {
+  return layer === "path" ? pathCeiling(depth) : LAYER_CEILING[layer];
+}
 
 /** Below this, a layer is rejected and the ladder falls through. */
 export const DEFAULT_MIN_CONFIDENCE = 0.25;

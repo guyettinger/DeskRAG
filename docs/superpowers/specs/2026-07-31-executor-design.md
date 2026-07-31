@@ -87,42 +87,51 @@ The anchor ladder, per resolved target (33 total):
 | point only | 15 (45%) |
 
 Descriptor availability *within* the anchors carrying an AX layer, measured
-across three sessions in two applications:
+across four sessions in three AX implementations:
 
-| Descriptor | TextEdit (2 sessions) | Chrome (1 session) |
-| --- | --- | --- |
-| `identifier` (AXIdentifier) | 50%, 80% | **9%** (1 of 11) |
-| `label` | 25%, 30% | **36%** |
-| `path` | 100% | 100% |
-
-**Availability is app-specific, and it is the wrong thing to rank by.** An
-earlier reading of the TextEdit sessions alone put AXIdentifier at 71% against
-29% for labels, and concluded the ladder should be ordered by what appears most.
-Chrome inverts that: a label is four times more common than an identifier there.
-Ranking by observed frequency would have encoded one app's AX implementation as a
-general rule.
-
-Path depth is the finding that actually orders the ladder:
-
-| Role | Mean depth | Max | Source |
+| | TextEdit (AppKit) | Chrome (Chromium) | System Settings (SwiftUI) |
 | --- | --- | --- | --- |
-| `Window` | 1.0 | 1 | native |
-| `TextArea` | 3.0 | 3 | native |
-| `PopUpButton` | 4.0 | 4 | native |
-| `Group` | 8.0 | 10 | web |
-| `Button` | 8.8 | 11 | mixed |
-| `StaticText` | 11.0 | 13 | web |
-| `TextField` | **13.0** | **17** | web |
+| AX anchors | 18 | 11 | 5 |
+| `identifier` | 67% | **9%** | 20% |
+| `label` | 28% | **36%** | **0%** |
+| `path` | 100% | 100% | 100% |
+| path depth mean / max | **4.0 / 11** | **11.4 / 17** | 7.4 / 9 |
 
-A depth-17 positional path is an ordinal chain through seventeen levels, and a
-sibling inserted at any one of them shifts it. That is what puts `label` above
-`path`, at an accepted cost in native apps where a depth-3 path is likely
-steadier than a content-dependent label.
+**Availability is app-specific, and it is the wrong thing to rank by.** An early
+reading of the TextEdit sessions alone put AXIdentifier at 71% against 29% for
+labels and concluded the ladder should follow what appears most. Chrome inverts
+that; SwiftUI has no usable labels at all. Ranking by observed frequency encodes
+one application's AX implementation as a general rule.
 
-These tables are from two applications, so they remain indicative rather than
-authoritative — but they already falsified one ladder ordering, which is the
-argument for measuring a third AX implementation (SwiftUI, Electron) before
-treating the current order as settled.
+**Path depth is what actually orders the ladder, and it is why the order cannot
+be fixed.** A path is the only descriptor always present, but every step is an
+ordinal among same-role siblings, so a sibling inserted at any level shifts it —
+reliability collapses with length. The three implementations then *disagree*
+about whether label or path is better, and they disagree precisely because their
+depths differ. Of the 34 AX anchors measured, only 9 carry both descriptors, and
+those 9 split:
+
+| Role | Depth | `pathCeiling` | Rung tried first |
+| --- | --- | --- | --- |
+| `Window` ×3 | 1 | 0.950 | **path** |
+| `Group` ×2 | 7 | 0.740 | label |
+| `TextField` | 9 | 0.670 | label |
+| `Button` ×3 | 11 | 0.600 | label |
+
+Either fixed order is wrong for one group: path-first mis-serves the six deep
+anchors, label-first mis-serves the three shallow ones. `pathCeiling(depth)`
+decays a path's trust from 0.95 at depth 1, crossing below a label's 0.8 just
+past depth 5 and flooring at 0.55 (kept above `visual`, so a path is always
+tried before it). Sorting the available rungs by trust then serves all three
+implementations with one rule.
+
+**Sample-size caveat, stated plainly:** 34 AX anchors across four sessions, and
+only 9 where the label/path order has any effect at all. The decay constants are
+fitted to those 9. This is a directional signal, not a measurement, and the
+argument for the *shape* (trust decays with depth) is stronger than the argument
+for any particular constant. Two fixed orders were already falsified by adding
+one application each time, so more implementations — Electron, Qt, Java/Swing —
+would be the way to firm this up.
 
 ### The known coverage constraint
 
@@ -177,9 +186,11 @@ is the component that gets to answer it.
   opaque handle that stays valid in-process. TypeScript decides which layer to
   try, what counts as confident, and when to give up. The ladder stays
   exhaustively testable where the anchor types already live.
-- **Resolution order is `identifier → label → path → visual → point`**, ranked by
-  reliability. Availability was tried as the criterion and abandoned: it is a
-  property of the application's AX implementation, not of the descriptor.
+- **The resolution order is computed, not fixed.** `identifier` is always first
+  and `point` always last; between them the rungs are tried in order of how much
+  each is trusted *for that anchor*, which makes the label/path order depend on
+  the path's depth. Two earlier fixed orders were tried and both were wrong for
+  one application or another — see below.
 - **Verification is subset, not set equality** — see Semantics. This deliberately
   differs from node identity.
 - **Brittleness gates.** The executor records the winning layer per action and

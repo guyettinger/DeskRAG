@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agreement, LAYER_CEILING } from "../src/replay/types.js";
+import { agreement, LAYER_CEILING, pathCeiling, pathDepth } from "../src/replay/types.js";
 
 describe("agreement", () => {
   const box = { x: 100, y: 100, w: 80, h: 40 };
@@ -42,14 +42,57 @@ describe("agreement", () => {
 });
 
 describe("LAYER_CEILING", () => {
-  // Label outranks path because a positional path's reliability collapses with
-  // depth: measured web-content paths run 11-17 levels deep (a Chrome TextField
-  // averages 13) against 1-4 for native controls, and any sibling insertion at
-  // any level shifts the ordinal. A label is content-dependent but flat.
-  it("ranks identifier > label > path > visual > point", () => {
+  it("ranks the fixed rungs identifier > label > visual > point", () => {
     expect(LAYER_CEILING.identifier).toBeGreaterThan(LAYER_CEILING.label);
-    expect(LAYER_CEILING.label).toBeGreaterThan(LAYER_CEILING.path);
-    expect(LAYER_CEILING.path).toBeGreaterThan(LAYER_CEILING.visual);
+    expect(LAYER_CEILING.label).toBeGreaterThan(LAYER_CEILING.visual);
     expect(LAYER_CEILING.visual).toBeGreaterThan(LAYER_CEILING.point);
+  });
+});
+
+describe("pathDepth", () => {
+  it("counts the steps in an ancestor chain", () => {
+    expect(pathDepth("Window[0]")).toBe(1);
+    expect(pathDepth("Window[0]>Group[0]>Button[1]")).toBe(3);
+  });
+
+  it("treats an empty path as depth 0", () => {
+    expect(pathDepth("")).toBe(0);
+  });
+});
+
+/**
+ * A path's reliability is not a constant — it collapses with depth, and the
+ * three AX implementations measured disagree about which of label/path to
+ * prefer precisely because their depths differ. A fixed order cannot satisfy
+ * both AppKit (mean depth 4) and Chromium (mean 11.4, max 17).
+ */
+describe("pathCeiling", () => {
+  it("puts a shallow native path above a label", () => {
+    // TextEdit measured mean depth 4.0.
+    expect(pathCeiling(1)).toBeGreaterThan(LAYER_CEILING.label);
+    expect(pathCeiling(4)).toBeGreaterThan(LAYER_CEILING.label);
+  });
+
+  it("puts a deep web path below a label", () => {
+    // Chrome measured mean 11.4, max 17.
+    expect(pathCeiling(11)).toBeLessThan(LAYER_CEILING.label);
+    expect(pathCeiling(17)).toBeLessThan(LAYER_CEILING.label);
+  });
+
+  it("never decays below the visual rung, so path is always tried first", () => {
+    expect(pathCeiling(50)).toBeGreaterThan(LAYER_CEILING.visual);
+  });
+
+  it("is monotonically non-increasing in depth", () => {
+    for (let d = 1; d < 30; d++) {
+      expect(pathCeiling(d + 1)).toBeLessThanOrEqual(pathCeiling(d));
+    }
+  });
+
+  it("stays within [0,1]", () => {
+    for (const d of [0, 1, 5, 20, 100]) {
+      expect(pathCeiling(d)).toBeGreaterThanOrEqual(0);
+      expect(pathCeiling(d)).toBeLessThanOrEqual(1);
+    }
   });
 });
