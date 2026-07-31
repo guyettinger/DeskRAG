@@ -132,7 +132,12 @@ export async function indexTrace(
     endTMono,
 
     axAt: (tMono): AxSnapshot | undefined => {
-      const snap = store.getAxAt(sessionId, tMono);
+      // Prefer the walk taken FOR this boundary. A boundary walk is written
+      // after its boundary (settle delay + walk budget), so the "latest
+      // at-or-before" fallback returns whatever was on screen BEFORE the
+      // boundary — which paired every focus_change node with the outgoing app's
+      // AX tree while its app/window predicates named the incoming one.
+      const snap = store.getAxForBoundary(sessionId, tMono) ?? store.getAxAt(sessionId, tMono);
       if (snap === undefined) return undefined;
       // A boundary snapshot has no frame, so no pHash to corroborate with. The
       // node still carries its predicates, which are what identity keys on.

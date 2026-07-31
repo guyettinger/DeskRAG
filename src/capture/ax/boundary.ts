@@ -42,6 +42,8 @@ const INPUT_KINDS: ReadonlySet<string> = new Set([
 export class BoundaryAxTrigger {
   private timer: NodeJS.Timeout | undefined;
   private pending: AxSnapshotReason | undefined;
+  /** The t_mono of the boundary that armed `pending` — stamped onto the walk. */
+  private pendingTMono: number | undefined;
   private inFlight = false;
   private lastInputTMono: number | undefined;
   private stopped = false;
@@ -49,7 +51,16 @@ export class BoundaryAxTrigger {
   private readonly dwellGapMs: number;
 
   constructor(
-    private readonly capture: (reason: AxSnapshotReason) => Promise<void>,
+    /**
+     * `boundaryTMono` is the t_mono of the boundary this walk is FOR, which is
+     * always earlier than the walk itself — the settle delay guarantees it.
+     * Without it a snapshot cannot be matched back to its boundary, and lift's
+     * backwards lookup silently returns the previous state's tree.
+     */
+    private readonly capture: (
+      reason: AxSnapshotReason,
+      boundaryTMono: number,
+    ) => Promise<void>,
     opts: BoundaryAxTriggerOptions = {},
   ) {
     this.settleMs = opts.settleMs ?? 250;
@@ -63,21 +74,24 @@ export class BoundaryAxTrigger {
       const last = this.lastInputTMono;
       this.lastInputTMono = tMono;
       if (last !== undefined && tMono - last >= this.dwellGapMs) {
-        this.arm("dwell_resume");
+        this.arm("dwell_resume", tMono);
       }
       return;
     }
 
     if (BOUNDARY_KINDS.has(kind)) {
-      this.arm(kind === "bookmark" ? "bookmark" : "focus_change");
+      this.arm(kind === "bookmark" ? "bookmark" : "focus_change", tMono);
     }
   }
 
-  private arm(reason: AxSnapshotReason): void {
+  private arm(reason: AxSnapshotReason, tMono: number): void {
     // Coalesce: the first reason in a burst wins, and the timer is NOT restarted,
-    // so a stream of triggers cannot postpone the walk indefinitely.
+    // so a stream of triggers cannot postpone the walk indefinitely. Its t_mono
+    // wins with it — stamping a later one would name a boundary this walk was
+    // never armed by.
     if (this.pending !== undefined) return;
     this.pending = reason;
+    this.pendingTMono = tMono;
     if (this.timer !== undefined) return;
     this.timer = setTimeout(() => void this.fire(), this.settleMs);
     this.timer.unref?.();
@@ -86,12 +100,14 @@ export class BoundaryAxTrigger {
   private async fire(): Promise<void> {
     this.timer = undefined;
     const reason = this.pending;
+    const boundaryTMono = this.pendingTMono;
     this.pending = undefined;
-    if (reason === undefined || this.stopped) return;
+    this.pendingTMono = undefined;
+    if (reason === undefined || boundaryTMono === undefined || this.stopped) return;
     if (this.inFlight) return; // a walk is already running; this trigger folds into it
     this.inFlight = true;
     try {
-      await this.capture(reason);
+      await this.capture(reason, boundaryTMono);
     } catch {
       // best-effort: a failed walk must never sink the recording
     } finally {

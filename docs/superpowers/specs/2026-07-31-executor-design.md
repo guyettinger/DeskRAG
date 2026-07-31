@@ -133,6 +133,38 @@ for any particular constant. Two fixed orders were already falsified by adding
 one application each time, so more implementations — Electron, Qt, Java/Swing —
 would be the way to firm this up.
 
+### Correction: node identity was unreliable in every graph measured here
+
+Every figure above was computed against graphs built while a capture defect was
+present, and the correction matters for reading the rest of this document.
+
+`BoundaryAxTrigger` waits out a settle delay before walking the AX tree, so a
+boundary snapshot's own `t_mono` is **always later than the boundary it
+describes** — measured at 250–252ms across every stamp in a verification
+recording. Lift resolved AX with "latest at-or-before", which therefore could
+never find that walk and returned the *previous* state's tree instead. Each node
+ended up carrying the incoming application's `app`/`window` predicates alongside
+the outgoing application's entire UI:
+
+```
+app(app="WebStorm")  window(title="DeskRAG – package.json")
+ax_exists(role="PopUpButton", label="typeface")     <- TextEdit's format bar
+ax_exists(role="PopUpButton", label="line spacing")
+```
+
+Measured across the recorded sessions: **19 of 35 nodes (54%) carried a window
+predicate that disagreed with their own AX tree**, each one lagging exactly one
+state behind. After stamping the boundary's `t_mono` onto the snapshot
+(`ax_snapshot_boundary`, resolved by `getAxForBoundary`): **0 of 5**.
+
+**What this does and does not invalidate.** The anchor ladder measurements stand:
+anchors are built at *gesture* time from `regionsAt`/`axAt`, and gestures are not
+boundaries, so they were never fed a mismatched tree. What does not stand is any
+claim about **node identity** — predicate sets, node merging, and the
+identification step in planning were all operating on incoherent nodes. Graphs
+recorded before stamping cannot be repaired by re-lifting, because the stamp was
+never captured; they have to be re-recorded.
+
 ### The known coverage constraint
 
 All 154 region rows have `source: "ax"`. `fuse.ts` budgets `maxRegions = 14` and

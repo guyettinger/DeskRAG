@@ -182,6 +182,25 @@ CREATE TABLE IF NOT EXISTS ax_snapshot (
 CREATE INDEX IF NOT EXISTS idx_ax_snapshot_session ON ax_snapshot(session_id, t_mono);
 CREATE INDEX IF NOT EXISTS idx_ax_snapshot_frame ON ax_snapshot(frame_id);
 
+-- Which boundary a snapshot was captured FOR.
+--
+-- A boundary snapshot is always written LATER than the boundary it describes:
+-- BoundaryAxTrigger waits out a settle delay and the walk is budgeted at 800ms.
+-- So "latest at-or-before the boundary" systematically returns the PREVIOUS
+-- state's tree — measured on a real recording, every focus_change boundary node
+-- carried the new app's name alongside the old app's entire AX tree.
+--
+-- A separate table rather than a column on ax_snapshot, because the schema is
+-- CREATE TABLE IF NOT EXISTS with no migration step: a new column would never
+-- reach an existing install, whereas a new table is simply created empty and
+-- older snapshots fall back to the timing lookup.
+CREATE TABLE IF NOT EXISTS ax_snapshot_boundary (
+  snapshot_id  TEXT PRIMARY KEY REFERENCES ax_snapshot(id) ON DELETE CASCADE,
+  session_id   TEXT NOT NULL REFERENCES session(id) ON DELETE CASCADE,
+  t_mono       REAL NOT NULL   -- the boundary's own t_mono, not the walk's
+);
+CREATE INDEX IF NOT EXISTS idx_ax_snapshot_boundary ON ax_snapshot_boundary(session_id, t_mono);
+
 CREATE TABLE IF NOT EXISTS trace_slot (
   graph_id  TEXT NOT NULL REFERENCES trace_graph(id) ON DELETE CASCADE,
   name      TEXT NOT NULL,

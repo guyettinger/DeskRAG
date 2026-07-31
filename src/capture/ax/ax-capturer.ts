@@ -21,8 +21,20 @@ export class AxCapturer {
     private readonly now: () => number,
   ) {}
 
-  /** Snapshot the tree and store it. Returns the element count. */
-  async capture(reason: AxSnapshotReason, frameId?: string): Promise<number> {
+  /**
+   * Snapshot the tree and store it. Returns the element count.
+   *
+   * `boundaryTMono` is the boundary this walk was taken FOR. It is NOT the same
+   * as `tMono` below and cannot be derived from it: the walk starts after the
+   * trigger's settle delay, so the snapshot always post-dates its own boundary.
+   * Recording it is what lets lift match a boundary to its tree exactly rather
+   * than looking backwards and finding the state that was on screen before.
+   */
+  async capture(
+    reason: AxSnapshotReason,
+    frameId?: string,
+    boundaryTMono?: number,
+  ): Promise<number> {
     // Stamp at the START of the walk: that is the moment closest to the settled
     // state the snapshot claims to describe.
     const tMono = this.now();
@@ -36,6 +48,7 @@ export class AxCapturer {
       reason,
       walkMs: Date.now() - started,
       elements,
+      ...(boundaryTMono !== undefined ? { boundaryTMono } : {}),
     });
     return elements.length;
   }
