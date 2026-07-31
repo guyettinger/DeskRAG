@@ -58,10 +58,17 @@ describe("capture/env barrel exports", () => {
     }
   });
 
-  it("keeps the subprocess-backed sources OUT of the barrel", () => {
-    // Same rule as SwiftAxSource: importing the package must never force-load a
-    // subprocess adapter.
-    for (const name of ["SwiftDisplaySource", "SwiftKeymapSource"]) {
+  it("exports the Swift-backed sources, like SwiftAxSource", () => {
+    // The barrel rule bars adapters that load a NATIVE MODULE at import time.
+    // These only execFile a binary, so importing them loads nothing — which is
+    // exactly why SwiftAxSource has always been exported.
+    for (const name of ["SwiftDisplaySource", "SwiftKeymapSource", "SwiftAxSource"]) {
+      expect(deskrag, name).toHaveProperty(name);
+    }
+  });
+
+  it("still keeps the genuinely native adapters out", () => {
+    for (const name of ["OnnxImageEmbedding", "UiohookInputProducer", "SharpRegionCropper"]) {
       expect(deskrag, name).not.toHaveProperty(name);
     }
   });

@@ -311,10 +311,11 @@ export {
  * both are captured as `t_mono`-stamped events and resolved at lift time by
  * "latest at-or-before".
  *
- * Only the PURE helpers, types and fakes are here. `SwiftDisplaySource` and
- * `SwiftKeymapSource` spawn a subprocess and are therefore deliberately NOT
- * re-exported — import them from `./capture/env/swift-displays.js` and
- * `./capture/env/swift-keymap.js`, the same rule as `SwiftAxSource`.
+ * The Swift-backed sources ARE exported, alongside `SwiftAxSource`. The barrel
+ * rule bars adapters that load a NATIVE MODULE at import time; these three only
+ * `execFile` a binary, so importing them loads nothing and costs nothing. The
+ * genuinely native adapters (`onnxruntime-node`, `uiohook-napi`, `active-win`,
+ * `sharp`) remain out.
  */
 export type {
   DisplayInfo,
@@ -331,6 +332,11 @@ export {
 } from "./capture/env/displays.js";
 export { macKeycodeFor, resolveChar } from "./capture/env/keymap.js";
 export { FakeDisplaySource, FakeKeymapSource } from "./capture/env/fake.js";
+export {
+  SwiftDisplaySource,
+  type SwiftDisplaySourceOptions,
+} from "./capture/env/swift-displays.js";
+export { SwiftKeymapSource, type SwiftKeymapSourceOptions } from "./capture/env/swift-keymap.js";
 export {
   shouldSampleMove,
   modifiersOf,
