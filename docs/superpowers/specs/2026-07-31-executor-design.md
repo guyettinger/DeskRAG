@@ -125,6 +125,26 @@ past depth 5 and flooring at 0.55 (kept above `visual`, so a path is always
 tried before it). Sorting the available rungs by trust then serves all three
 implementations with one rule.
 
+### Correction: the capture-time ladder figures overstate `point`
+
+The anchor-layer shares above were computed with geometric agreement judged in
+ABSOLUTE screen coordinates. Running the executor live showed that vetoes a
+correctly-identified element whenever its window has moved: TextEdit's text view
+resolved by identifier to bounds of exactly the recorded size, 2310px right of
+where it was recorded, and scored `agreement = 0.0000`. The rung was rejected and
+the ladder fell to `point` — clicking a coordinate where the element demonstrably
+is not, which is strictly worse than the rung it rejected.
+
+Comparison is now WINDOW-RELATIVE, using the `windowRelative` offset the anchor
+already records for exactly this purpose (the recorded window origin is derivable
+as `point - windowRelative`). The same measurement then scores `1.0000`, and on a
+live re-run the first target moved from `point@0.30` to `identifier@1.00`.
+
+**So an unknown share of the `point`-only figures above were never point-only** —
+they were successful AX resolutions vetoed by geometry. The graphs those numbers
+came from have since been deleted, so the shares cannot be recomputed; treat them
+as an upper bound on `point` rather than a measurement of it.
+
 **Sample-size caveat, stated plainly:** 34 AX anchors across four sessions, and
 only 9 where the label/path order has any effect at all. The decay constants are
 fitted to those 9. This is a directional signal, not a measurement, and the

@@ -17,7 +17,7 @@
  */
 
 import { extractPredicates } from "../trace/predicates.js";
-import type { Actuator, Predicate } from "./types.js";
+import type { Actuator, AxObservation, Predicate, Vec2 } from "./types.js";
 
 /** Dump the live state and express it as predicates. */
 export async function observe(actuator: Actuator): Promise<Predicate[]> {
@@ -28,4 +28,14 @@ export async function observe(actuator: Actuator): Promise<Predicate[]> {
       ? { windowTitle: o.windowTitle }
       : {}),
   });
+}
+
+/**
+ * Origin of the window the live tree belongs to — the top-left of its root
+ * `Window` element. Resolution needs it to compare geometry in WINDOW space, so
+ * a window that merely moved does not veto a correctly-identified element.
+ */
+export function windowOriginOf(o: AxObservation): Vec2 | undefined {
+  const win = o.elements.find((e) => e.role === "Window") ?? o.elements[0];
+  return win === undefined ? undefined : { x: win.x, y: win.y };
 }
