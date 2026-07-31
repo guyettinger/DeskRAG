@@ -18,6 +18,8 @@ out/
 # compiled Swift AX sidecar (build with: npm run build:ax)
 native/ax-dump
 native/ax-dump.dSYM/
+native/ax-exec
+native/ax-exec.dSYM/
 
 # python bytecode from scripts/*.py (maintainer export tooling)
 __pycache__/
