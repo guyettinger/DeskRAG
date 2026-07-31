@@ -12,7 +12,8 @@
  */
 
 import { projectPath } from "../trace/paths.js";
-import { extractPredicates, predicateKey } from "../trace/predicates.js";
+import { predicateKey } from "../trace/predicates.js";
+import { observe } from "./observe.js";
 import { strokesFor } from "./typing.js";
 import type {
   ExecOutcome,
@@ -160,7 +161,10 @@ async function runStep(step: PlannedAction, input: ReplayInput, pollMs: number):
       const deadline = Date.now() + action.timeoutMs;
       const want = predicateKey(action.until);
       for (;;) {
-        const observed = extractPredicates(await actuator.dump(), {});
+        // Through `observe`, so a wait can be satisfied by an app or window
+        // predicate too — waiting for an app to come to the front is exactly the
+        // kind of state a cold start makes slow.
+        const observed = await observe(actuator);
         if (observed.some((p) => predicateKey(p) === want)) return;
         if (Date.now() >= deadline) {
           throw new Error(`timed out waiting for ${want}`);

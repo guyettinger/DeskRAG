@@ -103,12 +103,31 @@ export interface AxDescriptor {
 export type Locate = (d: AxDescriptor) => Promise<{ handle: number; bounds: Rect } | null>;
 
 /**
+ * One observation of the live desktop: the tree PLUS the facts that are not in
+ * it. `app` and `window` predicates are sourced from `PredicateContext`, which
+ * at lift time comes from `focus_change` events — at replay there is no event
+ * stream, so without these a live tree yields only `ax_exists` and no node
+ * carrying an `app` predicate can ever verify.
+ *
+ * They travel with the tree in ONE call deliberately. Sourcing two halves of a
+ * single fact separately is what made boundary snapshots describe the previous
+ * application; an app name fetched a moment after the tree has the same hazard.
+ */
+export interface AxObservation {
+  elements: UIElement[];
+  /** Frontmost application's display name, matching what capture recorded. */
+  app?: string;
+  /** Focused window title. */
+  windowTitle?: string;
+}
+
+/**
  * Everything that touches the desktop. `execute.ts` depends only on this, which
  * is what makes the suite structurally incapable of posting a real event.
  */
 export interface Actuator {
-  /** Live AX tree of the frontmost app, for verification and resolution. */
-  dump(): Promise<UIElement[]>;
+  /** Live AX tree of the frontmost app, plus app/window, for verification. */
+  dump(): Promise<AxObservation>;
   locate(d: AxDescriptor): Promise<{ handle: number; bounds: Rect } | null>;
   moveTo(p: Vec2): Promise<void>;
   click(p: Vec2, button: number, count: number): Promise<void>;
