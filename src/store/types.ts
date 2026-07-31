@@ -412,6 +412,8 @@ export interface Store {
   getFrame(frameId: string): FrameRow | undefined;
   /** One region row, or undefined if the id is unknown. */
   getRegion(regionId: string): RegionRow | undefined;
+  /** A frame's regions, highest priority first. Backs `liftTrace`'s `regionsAt`. */
+  getRegionsByFrame(frameId: string): RegionRow[];
   /** Where a blob's bytes are, or undefined if the id is unknown. */
   getBlob(blobId: string): BlobRow | undefined;
   /** Every blob recorded for a session — keyframes, audio chunks, screen video. */

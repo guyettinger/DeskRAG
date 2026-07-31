@@ -5,10 +5,14 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ulid } from "ulid";
 import { DualStore } from "../src/store/store.js";
 import type { UIElement } from "../src/embed/types.js";
+import { FakeEmbeddingProvider, namespaceFor } from "../src/index.js";
 
 let dir: string;
 let store: DualStore;
 let sessionId: string;
+
+const provider = new FakeEmbeddingProvider({ id: "fake", model: "m", dimensions: 4 });
+const ns = namespaceFor("region_image", provider);
 
 const els = (role: string): UIElement[] => [{ role, x: 0, y: 0, w: 10, h: 10 }];
 
@@ -17,6 +21,10 @@ beforeEach(async () => {
   store = await DualStore.open(join(dir, "meta.sqlite"), join(dir, "lance"));
   sessionId = ulid();
   await store.putSession({ id: sessionId, startedAt: Date.now(), epochMono: 0 });
+  await store.registerVectorSpace({
+    namespace: ns, view: "region_image", providerId: provider.id,
+    model: provider.model, dimensions: provider.dimensions, sharedTextSpace: false,
+  });
 });
 
 afterEach(() => {
@@ -130,5 +138,33 @@ describe("ax_snapshot", () => {
       reason: "bookmark", walkMs: 1, elements: els("AXWindow"),
     });
     expect(store.listVectorSpaces()).toEqual(before);
+  });
+});
+
+describe("getRegionsByFrame", () => {
+  it("returns a frame's regions in priority order", async () => {
+    const frameId = ulid();
+    const segmentId = ulid();
+    await frame(frameId);
+    await store.putSegments([
+      { id: segmentId, sessionId, granularity: "action", tMonoStart: 0, tMonoEnd: 100 },
+    ]);
+    const mk = (id: string, priority: number, x: number) => ({
+      id, frameId, segmentId, sessionId, x, y: 0, w: 10, h: 10,
+      source: "ax", priority,
+      vector: { namespace: ns, vector: new Float32Array([1, 0, 0, 0]) },
+    });
+    await store.putRegions([mk("r_lo", 0.1, 0), mk("r_hi", 0.9, 20)]);
+
+    const got = store.getRegionsByFrame(frameId);
+    expect(got.map((r) => r.id)).toEqual(["r_hi", "r_lo"]);
+    expect(got[0]).toMatchObject({ x: 20, w: 10 });
+  });
+
+  it("returns [] for a frame with no regions and for an unknown frame", async () => {
+    const frameId = ulid();
+    await frame(frameId);
+    expect(store.getRegionsByFrame(frameId)).toEqual([]);
+    expect(store.getRegionsByFrame("nope")).toEqual([]);
   });
 });

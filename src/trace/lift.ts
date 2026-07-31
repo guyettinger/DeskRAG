@@ -48,7 +48,13 @@ export interface LiftInput {
   /** The stored AX snapshot nearest at/just before `tMono`. */
   axAt?(tMono: number): AxSnapshot | undefined;
   regionsAt?(tMono: number): readonly AnchorRegion[];
-  displayIdAt?(p: Vec2): string;
+  /**
+   * The display a point belongs to, at that t_mono. The t_mono is required
+   * because topology CHANGES mid-session (a monitor plugged in), and resolving a
+   * coordinate against the wrong topology is a silent misattribution — the exact
+   * failure `display_change` events exist to prevent.
+   */
+  displayIdAt?(p: Vec2, tMono: number): string;
   windowBoundsAt?(tMono: number): Rect | undefined;
   /** The keyboard layout in force at `tMono`, for character resolution. */
   keymapAt?(tMono: number): Keymap | undefined;
@@ -222,7 +228,7 @@ function anchorFor(point: Vec2, tMono: number, input: LiftInput): Anchor {
   const bounds = input.windowBoundsAt?.(tMono);
   return buildAnchor({
     point,
-    displayId: input.displayIdAt?.(point) ?? "D0",
+    displayId: input.displayIdAt?.(point, tMono) ?? "D0",
     ...(bounds !== undefined ? { windowBounds: bounds } : {}),
     ...(snap !== undefined
       ? {

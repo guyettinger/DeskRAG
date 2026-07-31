@@ -235,6 +235,9 @@ export class DualStore implements Store {
         "SELECT id FROM segment WHERE transcript IS NOT NULL",
       ),
       selectRegionById: db.prepare("SELECT * FROM region WHERE id = ?"),
+      selectRegionsByFrame: db.prepare(
+        "SELECT * FROM region WHERE frame_id = ? ORDER BY priority DESC, id ASC",
+      ),
       selectFrameById,
       selectFramesBySession,
       selectFramesBySegment,
@@ -756,6 +759,11 @@ export class DualStore implements Store {
       | Record<string, unknown>
       | undefined;
     return r ? this.hydrateRegion(r) : undefined;
+  }
+
+  getRegionsByFrame(frameId: string): RegionRow[] {
+    const rows = this.stmts.selectRegionsByFrame.all(frameId) as Record<string, unknown>[];
+    return rows.map((r) => this.hydrateRegion(r));
   }
 
   getBlob(blobId: string): BlobRow | undefined {
