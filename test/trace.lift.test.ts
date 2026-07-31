@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { liftTrace, resolveKeys, slotNameFor } from "../src/trace/lift.js";
 import type { Keymap } from "../src/capture/env/types.js";
+import { displayIdAt } from "../src/capture/env/displays.js";
 import type { AxSnapshot } from "../src/trace/lift.js";
 import type { TraceEvent } from "../src/trace/types.js";
 import type { UIElement } from "../src/embed/types.js";
@@ -329,5 +330,85 @@ describe("liftTrace — typed text end to end", () => {
     });
     expect(t.slots).toHaveLength(1);
     expect(t.slots[0]!.samples).toEqual(["As"]);
+  });
+});
+
+describe("liftTrace — time-varying display topology", () => {
+  const left = { id: "L", x: 0, y: 0, w: 1000, h: 1000, scale: 1, primary: true };
+  const right = { id: "R", x: 1000, y: 0, w: 1000, h: 1000, scale: 1, primary: false };
+
+  it("resolves a point against the topology in force at that t_mono", () => {
+    // A monitor is plugged in mid-session: the same coordinate belongs to no
+    // display before, and to R after. Without a t_mono the callback cannot
+    // express that, which is what the capture spec requires.
+    const t = liftTrace({
+      sessionId: "topo",
+      endTMono: 10_000,
+      displayIdAt: (p, tMono) => {
+        const displays = tMono < 5000 ? [left] : [left, right];
+        return displayIdAt(displays, p);
+      },
+      events: [
+        ev(100, "mouse_down", 1500, 100, { button: 1 }),
+        ev(140, "mouse_up", 1500, 100, { button: 1 }),
+        ev(9000, "mouse_down", 1500, 100, { button: 1 }),
+        ev(9040, "mouse_up", 1500, 100, { button: 1 }),
+      ],
+    });
+    const clicks = t.edges.flatMap((e) => e.actions).filter((a) => a.kind === "click");
+    expect(clicks).toHaveLength(2);
+    if (clicks[0]?.kind !== "click" || clicks[1]?.kind !== "click") throw new Error("expected clicks");
+    // Before: off every known display, so it falls back to the primary.
+    expect(clicks[0].anchor.point.displayId).toBe("L");
+    // After: the new monitor owns it.
+    expect(clicks[1].anchor.point.displayId).toBe("R");
+  });
+
+  it("still defaults to D0 with no callback", () => {
+    const t = liftTrace({
+      sessionId: "nodisp",
+      endTMono: 500,
+      events: [ev(100, "mouse_down", 10, 10, { button: 1 }), ev(140, "mouse_up", 10, 10, { button: 1 })],
+    });
+    const click = t.edges.flatMap((e) => e.actions).find((a) => a.kind === "click");
+    if (click?.kind !== "click") throw new Error("expected click");
+    expect(click.anchor.point.displayId).toBe("D0");
+  });
+});
+
+describe("liftTrace — the final span is inclusive", () => {
+  it("keeps an event landing exactly on session_end", () => {
+    // Spans are [b_i, b_i+1), so without special-casing the last one, an event
+    // at session_end falls outside EVERY span. session_end sits at the last
+    // event by construction, so that silently drops the end of every recording
+    // — here the mouse_up, leaving a broken gesture and no click at all.
+    const t = liftTrace({
+      sessionId: "edge",
+      endTMono: 140,
+      events: [
+        ev(100, "mouse_down", 10, 10, { button: 1 }),
+        ev(140, "mouse_up", 10, 10, { button: 1 }),
+      ],
+    });
+    const kinds = t.edges.flatMap((e) => e.actions).map((a) => a.kind);
+    expect(kinds).toEqual(["click"]);
+    expect(t.edges.flatMap((e) => e.liftWarnings ?? [])).toEqual([]);
+  });
+
+  it("does not double-count an event on an interior boundary", () => {
+    // Interior boundaries stay half-open, or the event would land in both spans.
+    const t = liftTrace({
+      sessionId: "interior",
+      endTMono: 20_000,
+      events: [
+        ev(0, "mouse_down", 10, 10, { button: 1 }),
+        ev(40, "mouse_up", 10, 10, { button: 1 }),
+        ev(9000, "focus_change", undefined, undefined, { app: "Mail" }),
+        ev(9000, "mouse_down", 20, 20, { button: 1 }),
+        ev(9040, "mouse_up", 20, 20, { button: 1 }),
+      ],
+    });
+    const clicks = t.edges.flatMap((e) => e.actions).filter((a) => a.kind === "click");
+    expect(clicks).toHaveLength(2);
   });
 });

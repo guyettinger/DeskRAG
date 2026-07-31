@@ -48,7 +48,13 @@ export interface LiftInput {
   /** The stored AX snapshot nearest at/just before `tMono`. */
   axAt?(tMono: number): AxSnapshot | undefined;
   regionsAt?(tMono: number): readonly AnchorRegion[];
-  displayIdAt?(p: Vec2): string;
+  /**
+   * The display a point belongs to, at that t_mono. The t_mono is required
+   * because topology CHANGES mid-session (a monitor plugged in), and resolving a
+   * coordinate against the wrong topology is a silent misattribution — the exact
+   * failure `display_change` events exist to prevent.
+   */
+  displayIdAt?(p: Vec2, tMono: number): string;
   windowBoundsAt?(tMono: number): Rect | undefined;
   /** The keyboard layout in force at `tMono`, for character resolution. */
   keymapAt?(tMono: number): Keymap | undefined;
@@ -120,7 +126,14 @@ export function liftTrace(input: LiftInput): Trace {
   for (let i = 0; i < boundaries.length - 1; i++) {
     const start = boundaries[i]!.tMono;
     const end = boundaries[i + 1]!.tMono;
-    const span = events.filter((e) => e.tMono >= start && e.tMono < end);
+    // Half-open [start, end), EXCEPT for the final span. `session_end` sits at
+    // the last event by construction, so a half-open last span would put that
+    // event outside every span — silently dropping the end of every recording
+    // (typically a mouse_up, which then reads as a broken gesture).
+    const isLast = i === boundaries.length - 2;
+    const span = events.filter(
+      (e) => e.tMono >= start && (isLast ? e.tMono <= end : e.tMono < end),
+    );
     const { gestures, warnings } = groupGestures(span, input.gestures);
 
     const actions: Action[] = [];
@@ -222,7 +235,7 @@ function anchorFor(point: Vec2, tMono: number, input: LiftInput): Anchor {
   const bounds = input.windowBoundsAt?.(tMono);
   return buildAnchor({
     point,
-    displayId: input.displayIdAt?.(point) ?? "D0",
+    displayId: input.displayIdAt?.(point, tMono) ?? "D0",
     ...(bounds !== undefined ? { windowBounds: bounds } : {}),
     ...(snap !== undefined
       ? {

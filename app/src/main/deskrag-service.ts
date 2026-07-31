@@ -23,6 +23,9 @@ import {
   FfmpegScreenProducer,
   FfmpegAudioProducer,
   SwiftAxSource,
+  SwiftDisplaySource,
+  SwiftKeymapSource,
+  KeymapProducer,
   Segmenter,
   Representer,
   FrameRepresenter,
@@ -49,6 +52,7 @@ import {
 import type { SettingsStore } from "./settings.js";
 import { MODELS } from "./models.js";
 import { libUrl } from "./lib-resolve.js";
+import { indexTrace } from "./trace-index.js";
 import { ModelStore, type ModelDownloadProgress } from "./model-store.js";
 import { OnnxHost } from "./onnx-host.js";
 import { spawnOnnxWorker } from "./onnx-spawn.js";
@@ -359,12 +363,20 @@ export class DeskRagService {
       if (p) {
         session.addProducer(p);
         active.push("input");
+        // Keystrokes are stored as raw keycodes; characters are resolved at lift
+        // time against the layout in force. Without this producer there is no
+        // layout, so every text gesture is dropped and no slot is ever filled.
+        session.addProducer(new KeymapProducer(new SwiftKeymapSource()));
       }
     }
     if (sig.activeWin.enabled) {
+      // The window producer owns display topology too: the re-query signal is a
+      // focused window lying outside every known display, and it is the only
+      // producer that sees bounds.
       const p = await this.loadNativeProducer(
         "deskrag/capture/producers/active-window",
         "ActiveWindowProducer",
+        { displaySource: new SwiftDisplaySource() },
       );
       if (p) {
         session.addProducer(p);
@@ -393,14 +405,15 @@ export class DeskRagService {
   private async loadNativeProducer(
     modulePath: string,
     exportName: string,
+    opts?: unknown,
   ): Promise<Producer | null> {
     try {
       const mod = (await import(/* @vite-ignore */ libUrl(modulePath))) as Record<
         string,
-        new () => Producer
+        new (opts?: unknown) => Producer
       >;
       const Ctor = mod[exportName];
-      return Ctor ? new Ctor() : null;
+      return Ctor ? new Ctor(opts) : null;
     } catch (err) {
       console.error(`[deskrag] native producer ${exportName} unavailable:`, err);
       return null;
@@ -508,6 +521,33 @@ export class DeskRagService {
           }).represent(sessionId),
       });
     }
+
+    // Last: the trace graph. It runs after Regions because `regionsAt` reads what
+    // that stage wrote, and after Segmenting because boundaries define the nodes.
+    stages.push({
+      name: "Trace",
+      run: async () => {
+        const r = await indexTrace(this.store, sessionId);
+        if (r === undefined) return;
+        // The stage name is the only surface a trace has until the executor
+        // exists, so it carries the counts rather than a bare "Trace". The
+        // missing-keymap case is the one a user has to be told about: it means
+        // every keystroke was discarded, and nothing else would say so.
+        const summary = r.missingKeymap
+          ? `Trace — ${r.actions} actions (no keyboard layout: typed text not captured)`
+          : `Trace — ${r.actions} actions, graph ${r.nodes}/${r.edges}` +
+            (r.variables > 0 ? `, ${r.variables} variables` : "");
+        // Trace is always the last stage, so its index is stages.length - 1.
+        // (`total` below is declared after this closure; referencing it here
+        // would work only by virtue of when the closure runs.)
+        this.emitIndexing({ stage: summary, done: stages.length - 1, total: stages.length });
+        if (r.missingKeymap) {
+          console.warn(
+            "[deskrag] no keymap captured for this session — typed text was not lifted",
+          );
+        }
+      },
+    });
 
     const total = stages.length;
     for (let i = 0; i < stages.length; i++) {
