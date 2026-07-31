@@ -27,6 +27,7 @@ import Foundation
 import Dispatch
 import ApplicationServices
 import AppKit
+import Carbon
 
 struct AXElem: Codable {
     let role: String
@@ -199,6 +200,94 @@ if args.contains("--displays") {
         ))
     }
     emitJSON(displaysOut)
+    exit(0)
+}
+
+// MARK: - Keyboard layout (--keymap)
+//
+// UCKeyTranslate needs the current layout's UCKeyboardLayout data. Its
+// modifierKeyState argument is the Carbon modifier mask shifted RIGHT by 8:
+// plain = 0, shift = 0x02, option = 0x08, shift+option = 0x0A.
+//
+// This is the layout-DEPENDENT half of character resolution. The
+// scancode -> virtual-keycode half is layout-independent and lives in TypeScript.
+//
+// Needs no Accessibility permission, so like --displays it sits above the
+// AXIsProcessTrusted gate and above the AX --self-test block.
+
+struct KeymapOut: Codable {
+    let layoutId: String
+    let entries: [String: [String]]
+}
+
+if args.contains("--keymap") {
+    if args.contains("--self-test") {
+        emitJSON(KeymapOut(
+            layoutId: "com.apple.keylayout.SelfTest",
+            entries: ["0": ["a", "A", "å", "Å"], "49": [" ", " ", " ", " "]]
+        ))
+        exit(0)
+    }
+
+    guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
+          let layoutPtr = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData) else {
+        print("null")
+        exit(0)
+    }
+    let layoutData = Unmanaged<CFData>.fromOpaque(layoutPtr).takeUnretainedValue() as Data
+    let layoutId: String = {
+        guard let p = TISGetInputSourceProperty(source, kTISPropertyInputSourceID) else {
+            return "unknown"
+        }
+        return Unmanaged<CFString>.fromOpaque(p).takeUnretainedValue() as String
+    }()
+
+    let kbdType = UInt32(LMGetKbdType())
+    var keymapEntries: [String: [String]] = [:]
+
+    layoutData.withUnsafeBytes { (rawBuf: UnsafeRawBufferPointer) in
+        guard let base = rawBuf.baseAddress else { return }
+        let layout = base.assumingMemoryBound(to: UCKeyboardLayout.self)
+
+        // UCKeyTranslate happily maps COMMAND keys to control characters: Escape
+        // -> U+001B, the arrows -> U+001E/001F, the F-keys -> U+0010. Those are
+        // not text, and letting them through would make groupGestures coalesce a
+        // press of Escape INTO a text run — an ESC byte inside recorded typing.
+        //
+        // \r and \n survive because a newline in a text area genuinely is
+        // content. Tab does not: it is field navigation, and the focus_change
+        // poller runs at 500ms, far too late to split the text run it belongs to.
+        func isTextBearing(_ s: String) -> Bool {
+            guard let scalar = s.unicodeScalars.first, s.unicodeScalars.count == 1 else {
+                return !s.isEmpty // multi-scalar output is real text
+            }
+            if scalar == "\r" || scalar == "\n" { return true }
+            return scalar.value >= 0x20 && scalar.value != 0x7F
+        }
+
+        func translate(_ vk: UInt16, _ modState: UInt32) -> String {
+            var dead: UInt32 = 0
+            var chars = [UniChar](repeating: 0, count: 8)
+            var length = 0
+            let status = UCKeyTranslate(
+                layout, vk, UInt16(kUCKeyActionDown), modState, kbdType,
+                OptionBits(kUCKeyTranslateNoDeadKeysBit), &dead, chars.count, &length, &chars
+            )
+            guard status == noErr, length > 0 else { return "" }
+            let s = String(utf16CodeUnits: chars, count: length)
+            return isTextBearing(s) ? s : ""
+        }
+
+        for vk in UInt16(0)...UInt16(127) {
+            let cols = [translate(vk, 0), translate(vk, 0x02), translate(vk, 0x08), translate(vk, 0x0A)]
+            // Skip keys that produce nothing under every modifier state — arrows,
+            // function keys, modifiers themselves. Those are chords, not text.
+            if cols.allSatisfy({ $0.isEmpty }) { continue }
+            keymapEntries[String(vk)] = cols
+        }
+    }
+
+    emitJSON(KeymapOut(layoutId: layoutId, entries: keymapEntries))
     exit(0)
 }
 

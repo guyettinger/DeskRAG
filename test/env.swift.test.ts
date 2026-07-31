@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { SwiftDisplaySource } from "../src/capture/env/swift-displays.js";
+import { SwiftKeymapSource } from "../src/capture/env/swift-keymap.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const swiftSrc = join(here, "..", "native", "ax-dump.swift");
@@ -60,5 +61,59 @@ describe.skipIf(!hasSwiftc)("ax-dump --displays", () => {
     }).query();
     expect(got).toEqual([]);
     expect(errs.length).toBeGreaterThan(0);
+  });
+
+  it("emits the exact keymap contract (deterministic --self-test)", async () => {
+    const km = await new SwiftKeymapSource({
+      binaryPath: bin,
+      args: ["--keymap", "--self-test"],
+    }).query();
+    expect(km).toEqual({
+      layoutId: "com.apple.keylayout.SelfTest",
+      entries: { 0: ["a", "A", "å", "Å"], 49: [" ", " ", " ", " "] },
+    });
+  });
+
+  it("dumps the machine's real layout with plausible entries", async () => {
+    const km = await new SwiftKeymapSource({ binaryPath: bin, args: ["--keymap"] }).query();
+    expect(km).toBeDefined();
+    expect(km!.layoutId.length).toBeGreaterThan(0);
+    // Space (vk 49) is a space on every Latin layout; asserting more would bind
+    // the test to the developer's keyboard.
+    expect(km!.entries[49]?.[0]).toBe(" ");
+    for (const cols of Object.values(km!.entries)) {
+      expect(cols).toHaveLength(4);
+    }
+  });
+
+  it("resolves to undefined for a missing binary rather than throwing", async () => {
+    const km = await new SwiftKeymapSource({
+      binaryPath: join(dir, "does-not-exist"),
+      onError: () => {},
+    }).query();
+    expect(km).toBeUndefined();
+  });
+
+  it("EXCLUDES command keys, which UCKeyTranslate maps to control characters", async () => {
+    const km = await new SwiftKeymapSource({ binaryPath: bin, args: ["--keymap"] }).query();
+    expect(km).toBeDefined();
+    // Escape (53), Tab (48) and the arrows (123-126) translate to U+001B, U+0009
+    // and U+001E/001F. Letting those through would make groupGestures coalesce a
+    // press of Escape INTO a text run.
+    for (const vk of [48, 53, 123, 124, 125, 126]) {
+      expect(km!.entries[vk], `vk ${vk} should not be text-bearing`).toBeUndefined();
+    }
+    // No control character survives anywhere in the table, except the newline
+    // pair, which is genuine content in a text area.
+    for (const [vk, cols] of Object.entries(km!.entries)) {
+      for (const c of cols) {
+        if (c.length !== 1) continue;
+        const code = c.codePointAt(0)!;
+        if (c === "\r" || c === "\n") continue;
+        expect(code >= 0x20 && code !== 0x7f, `vk ${vk} yielded U+${code.toString(16)}`).toBe(true);
+      }
+    }
+    // Return survives: a newline in a text area is content, not a command.
+    expect(km!.entries[36]?.[0]).toBe("\r");
   });
 });

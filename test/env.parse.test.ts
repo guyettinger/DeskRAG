@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { coerceDisplays } from "../src/capture/env/parse.js";
+import { coerceDisplays, coerceKeymap } from "../src/capture/env/parse.js";
 
 describe("coerceDisplays", () => {
   it("accepts a well-formed payload", () => {
@@ -35,5 +35,33 @@ describe("coerceDisplays", () => {
     expect(coerceDisplays([{ id: "1", x: 0, y: 0, w: 10, h: 10, scale: 1 }])).toEqual([
       { id: "1", x: 0, y: 0, w: 10, h: 10, scale: 1, primary: false },
     ]);
+  });
+});
+
+describe("coerceKeymap", () => {
+  it("accepts a well-formed payload", () => {
+    expect(
+      coerceKeymap({ layoutId: "com.apple.keylayout.US", entries: { "0": ["a", "A", "å", "Å"] } }),
+    ).toEqual({ layoutId: "com.apple.keylayout.US", entries: { 0: ["a", "A", "å", "Å"] } });
+  });
+
+  it("returns undefined — not an empty map — for an unusable payload", () => {
+    // An absent keymap must be distinguishable from a layout that resolved
+    // nothing, because the first warns and the second is a real answer.
+    for (const junk of [null, undefined, [], "nope", {}, { entries: {} }]) {
+      expect(coerceKeymap(junk)).toBeUndefined();
+    }
+  });
+
+  it("keeps a valid layoutId with zero usable entries", () => {
+    expect(coerceKeymap({ layoutId: "x", entries: {} })).toEqual({ layoutId: "x", entries: {} });
+  });
+
+  it("drops malformed entries but keeps the rest", () => {
+    const km = coerceKeymap({
+      layoutId: "x",
+      entries: { "0": ["a", "A", "å", "Å"], "1": ["s", "S"], bad: ["a", "b", "c", "d"], "2": [1, 2, 3, 4] },
+    });
+    expect(km?.entries).toEqual({ 0: ["a", "A", "å", "Å"] });
   });
 });
