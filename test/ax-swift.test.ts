@@ -40,7 +40,7 @@ describe.skipIf(!hasSwiftc)("ax-dump Swift sidecar", () => {
     // derived from the link by coerceAxElements rather than read off the wire.
     expect(els).toEqual([
       { role: "Window", x: 0, y: 0, w: 1000, h: 1000 },
-      { role: "Button", label: "Save", x: 100, y: 200, w: 80, h: 30, focused: true, parent: 0, depth: 1 },
+      { role: "Button", label: "Save", identifier: "save-btn", x: 100, y: 200, w: 80, h: 30, focused: true, parent: 0, depth: 1 },
     ]);
   });
 

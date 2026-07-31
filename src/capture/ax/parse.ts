@@ -44,6 +44,7 @@ export function coerceAxElements(data: unknown): UIElement[] {
     }
     const el: UIElement = { role, x, y, w, h };
     if (typeof o.label === "string" && o.label.length > 0) el.label = o.label;
+    if (typeof o.identifier === "string" && o.identifier.length > 0) el.identifier = o.identifier;
     if (o.focused === true) el.focused = true;
     // A parent must be an EARLIER element — that rejects forward references and
     // self-links, so the result cannot contain a cycle. A parent that was itself

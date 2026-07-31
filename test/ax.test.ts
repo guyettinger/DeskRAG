@@ -244,3 +244,23 @@ describe("CaptureSession AX wiring", () => {
     expect(store.getFrameAx(frames[0]!.id)).toEqual([saveButton]);
   });
 });
+
+describe("coerceAxElements — identifier", () => {
+  it("carries a non-empty identifier through", () => {
+    expect(
+      coerceAxElements([{ role: "AXButton", x: 0, y: 0, w: 1, h: 1, identifier: "send-btn" }]),
+    ).toEqual([{ role: "AXButton", x: 0, y: 0, w: 1, h: 1, identifier: "send-btn" }]);
+  });
+
+  it("omits the key entirely when absent or empty", () => {
+    const [a] = coerceAxElements([{ role: "AXButton", x: 0, y: 0, w: 1, h: 1 }]);
+    expect("identifier" in a!).toBe(false);
+    const [b] = coerceAxElements([{ role: "AXButton", x: 0, y: 0, w: 1, h: 1, identifier: "" }]);
+    expect("identifier" in b!).toBe(false);
+  });
+
+  it("ignores a non-string identifier", () => {
+    const [a] = coerceAxElements([{ role: "AXButton", x: 0, y: 0, w: 1, h: 1, identifier: 42 }]);
+    expect("identifier" in a!).toBe(false);
+  });
+});

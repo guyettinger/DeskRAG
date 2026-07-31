@@ -37,8 +37,12 @@ export interface Rect {
  * `point` is required: it is always recordable, so an anchor is never empty.
  */
 export interface Anchor {
-  /** `path` is the ancestor chain — role+label alone is not unique in a window. */
-  ax?: { role: string; label?: string; path: string };
+  /**
+   * `path` is the ancestor chain — role+label alone is not unique in a window.
+   * `identifier` is the app-assigned AXIdentifier where one exists: a stronger
+   * anchor than the path, which shifts when the UI gains or loses a sibling.
+   */
+  ax?: { role: string; label?: string; identifier?: string; path: string };
   /** `framePhash` is the pHash of the frame this region was proposed from. */
   visual?: { regionId: string; framePhash: string; bbox: Rect };
   point: { x: number; y: number; displayId: string; windowRelative?: Vec2 };

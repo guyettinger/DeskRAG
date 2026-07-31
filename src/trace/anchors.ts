@@ -105,6 +105,9 @@ export function buildAnchor(input: AnchorInput): Anchor {
       anchor.ax = {
         role: el.role,
         ...(el.label !== undefined && el.label.length > 0 ? { label: el.label } : {}),
+        ...(el.identifier !== undefined && el.identifier.length > 0
+          ? { identifier: el.identifier }
+          : {}),
         path: axPathOf(input.ax, hit),
       };
     }

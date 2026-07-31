@@ -2,8 +2,13 @@
 //
 // Walks the focused window's AXUIElement tree of the target app (frontmost by
 // default, or `--pid <n>`) and prints a FLAT JSON array of UI elements to stdout:
-//   [{ "role": String, "label"?: String, "x": Double, "y": Double,
-//      "w": Double, "h": Double, "focused"?: Bool, "parent"?: Int }, ...]
+//   [{ "role": String, "label"?: String, "identifier"?: String, "x": Double,
+//      "y": Double, "w": Double, "h": Double, "focused"?: Bool,
+//      "parent"?: Int }, ...]
+//
+// It also serves two permission-free environment modes, both of which exit before
+// the Accessibility gate: `--displays` (screen topology, flipped to top-left
+// origin) and `--keymap` (the active layout's UCKeyTranslate table).
 //
 // The array is flat but not structureless: `parent` is a back-reference to an
 // earlier index (the walk is pre-order, so a parent always precedes its children)
@@ -32,6 +37,9 @@ import Carbon
 struct AXElem: Codable {
     let role: String
     let label: String?
+    /// App-assigned stable id (AXIdentifier). A far better anchor than a
+    /// positional path, which shifts when the UI gains or loses a sibling.
+    let identifier: String?
     let x: Double
     let y: Double
     let w: Double
@@ -119,9 +127,10 @@ final class AXReader {
             let role = rawRole.hasPrefix("AX") ? String(rawRole.dropFirst(2)) : rawRole
             let label = str(el, kAXTitleAttribute as String)
                 ?? str(el, kAXDescriptionAttribute as String)
+            let identifier = str(el, kAXIdentifierAttribute as String)
             childParent = elements.count
             elements.append(AXElem(
-                role: role, label: label,
+                role: role, label: label, identifier: identifier,
                 x: Double(pos.x), y: Double(pos.y),
                 w: Double(size.width), h: Double(size.height),
                 focused: flag(el, kAXFocusedAttribute as String),
@@ -296,8 +305,8 @@ if args.contains("--keymap") {
 // elements, so the parent back-reference is part of the checked contract.
 if args.contains("--self-test") {
     emit([
-        AXElem(role: "Window", label: nil, x: 0, y: 0, w: 1000, h: 1000, focused: nil, parent: nil),
-        AXElem(role: "Button", label: "Save", x: 100, y: 200, w: 80, h: 30, focused: true, parent: 0),
+        AXElem(role: "Window", label: nil, identifier: nil, x: 0, y: 0, w: 1000, h: 1000, focused: nil, parent: nil),
+        AXElem(role: "Button", label: "Save", identifier: "save-btn", x: 100, y: 200, w: 80, h: 30, focused: true, parent: 0),
     ])
     exit(0)
 }
