@@ -52,6 +52,7 @@ import {
 import type { SettingsStore } from "./settings.js";
 import { MODELS } from "./models.js";
 import { libUrl } from "./lib-resolve.js";
+import { indexTrace } from "./trace-index.js";
 import { ModelStore, type ModelDownloadProgress } from "./model-store.js";
 import { OnnxHost } from "./onnx-host.js";
 import { spawnOnnxWorker } from "./onnx-spawn.js";
@@ -520,6 +521,27 @@ export class DeskRagService {
           }).represent(sessionId),
       });
     }
+
+    // Last: the trace graph. It runs after Regions because `regionsAt` reads what
+    // that stage wrote, and after Segmenting because boundaries define the nodes.
+    stages.push({
+      name: "Trace",
+      run: async () => {
+        const result = await indexTrace(this.store, sessionId);
+        if (result === undefined) return;
+        if (result.missingKeymap) {
+          // Without a layout event nothing can resolve characters, so every text
+          // gesture was dropped and no slot was filled. Silent otherwise.
+          console.warn(
+            "[deskrag] no keymap captured for this session — typed text was not lifted",
+          );
+        }
+        console.info(
+          `[deskrag] trace: +${result.actions} actions -> graph ${result.nodes} nodes, ` +
+            `${result.edges} edges, ${result.variables} variables`,
+        );
+      },
+    });
 
     const total = stages.length;
     for (let i = 0; i < stages.length; i++) {

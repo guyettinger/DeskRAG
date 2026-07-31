@@ -375,3 +375,40 @@ describe("liftTrace — time-varying display topology", () => {
     expect(click.anchor.point.displayId).toBe("D0");
   });
 });
+
+describe("liftTrace — the final span is inclusive", () => {
+  it("keeps an event landing exactly on session_end", () => {
+    // Spans are [b_i, b_i+1), so without special-casing the last one, an event
+    // at session_end falls outside EVERY span. session_end sits at the last
+    // event by construction, so that silently drops the end of every recording
+    // — here the mouse_up, leaving a broken gesture and no click at all.
+    const t = liftTrace({
+      sessionId: "edge",
+      endTMono: 140,
+      events: [
+        ev(100, "mouse_down", 10, 10, { button: 1 }),
+        ev(140, "mouse_up", 10, 10, { button: 1 }),
+      ],
+    });
+    const kinds = t.edges.flatMap((e) => e.actions).map((a) => a.kind);
+    expect(kinds).toEqual(["click"]);
+    expect(t.edges.flatMap((e) => e.liftWarnings ?? [])).toEqual([]);
+  });
+
+  it("does not double-count an event on an interior boundary", () => {
+    // Interior boundaries stay half-open, or the event would land in both spans.
+    const t = liftTrace({
+      sessionId: "interior",
+      endTMono: 20_000,
+      events: [
+        ev(0, "mouse_down", 10, 10, { button: 1 }),
+        ev(40, "mouse_up", 10, 10, { button: 1 }),
+        ev(9000, "focus_change", undefined, undefined, { app: "Mail" }),
+        ev(9000, "mouse_down", 20, 20, { button: 1 }),
+        ev(9040, "mouse_up", 20, 20, { button: 1 }),
+      ],
+    });
+    const clicks = t.edges.flatMap((e) => e.actions).filter((a) => a.kind === "click");
+    expect(clicks).toHaveLength(2);
+  });
+});

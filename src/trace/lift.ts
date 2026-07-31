@@ -126,7 +126,14 @@ export function liftTrace(input: LiftInput): Trace {
   for (let i = 0; i < boundaries.length - 1; i++) {
     const start = boundaries[i]!.tMono;
     const end = boundaries[i + 1]!.tMono;
-    const span = events.filter((e) => e.tMono >= start && e.tMono < end);
+    // Half-open [start, end), EXCEPT for the final span. `session_end` sits at
+    // the last event by construction, so a half-open last span would put that
+    // event outside every span — silently dropping the end of every recording
+    // (typically a mouse_up, which then reads as a broken gesture).
+    const isLast = i === boundaries.length - 2;
+    const span = events.filter(
+      (e) => e.tMono >= start && (isLast ? e.tMono <= end : e.tMono < end),
+    );
     const { gestures, warnings } = groupGestures(span, input.gestures);
 
     const actions: Action[] = [];
