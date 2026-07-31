@@ -86,18 +86,43 @@ The anchor ladder, per resolved target (33 total):
 | `visual` | 2 (6%) |
 | point only | 15 (45%) |
 
-And within the 17 anchors carrying an AX layer:
+Descriptor availability *within* the anchors carrying an AX layer, measured
+across three sessions in two applications:
 
-| Descriptor | Share |
-| --- | --- |
-| `identifier` (AXIdentifier) | **12 (71%)** |
-| `label` | 5 (29%) |
-| `path` | 17 (100%), mean depth 3.8, max 11 |
+| Descriptor | TextEdit (2 sessions) | Chrome (1 session) |
+| --- | --- | --- |
+| `identifier` (AXIdentifier) | 50%, 80% | **9%** (1 of 11) |
+| `label` | 25%, 30% | **36%** |
+| `path` | 100% | 100% |
 
-These two tables are the empirical basis for the resolution order below. They are
-from one app and two recordings, so they are indicative rather than
-authoritative — but they are real, and they contradict the assumption a
-label-first or path-first ladder would encode.
+**Availability is app-specific, and it is the wrong thing to rank by.** An
+earlier reading of the TextEdit sessions alone put AXIdentifier at 71% against
+29% for labels, and concluded the ladder should be ordered by what appears most.
+Chrome inverts that: a label is four times more common than an identifier there.
+Ranking by observed frequency would have encoded one app's AX implementation as a
+general rule.
+
+Path depth is the finding that actually orders the ladder:
+
+| Role | Mean depth | Max | Source |
+| --- | --- | --- | --- |
+| `Window` | 1.0 | 1 | native |
+| `TextArea` | 3.0 | 3 | native |
+| `PopUpButton` | 4.0 | 4 | native |
+| `Group` | 8.0 | 10 | web |
+| `Button` | 8.8 | 11 | mixed |
+| `StaticText` | 11.0 | 13 | web |
+| `TextField` | **13.0** | **17** | web |
+
+A depth-17 positional path is an ordinal chain through seventeen levels, and a
+sibling inserted at any one of them shifts it. That is what puts `label` above
+`path`, at an accepted cost in native apps where a depth-3 path is likely
+steadier than a content-dependent label.
+
+These tables are from two applications, so they remain indicative rather than
+authoritative — but they already falsified one ladder ordering, which is the
+argument for measuring a third AX implementation (SwiftUI, Electron) before
+treating the current order as settled.
 
 ### The known coverage constraint
 
@@ -106,19 +131,26 @@ sorts by priority; AX regions score 2–5, hotspots ~1–2, grid **0.5**. A real
 offers dozens of labeled controls, so the top 14 are always AX and grid coverage
 never survives the budget cut.
 
-The consequence is an inversion that the executor must be designed around rather
-than assume away:
+The consequence is that the visual layer's coverage is inherited from the AX
+tree's, so it is thinnest where AX is thin — the opposite of what a fallback rung
+is for. **How badly that bites is app-specific**, and the second application
+changed the picture materially:
 
-> **The visual anchor layer only exists where the AX layer already worked.** Its
-> coverage derives from AX-labeled controls, so it is empty in exactly the
-> AX-blind case it was meant to rescue.
+| | TextEdit | Chrome |
+| --- | --- | --- |
+| targets with a `visual` layer | 5%, 8% | **40%** |
 
-Measured: AX regions span y 36–1416 while clicks span y 5–2113. Menu bar,
-unlabeled chrome, and lower-screen clicks fall outside every region. This is
-recorded here as a **derived requirement on `represent/`** (final section), not
-fixed opportunistically — whether a grid tile is even a useful visual anchor is a
-resolution-strategy question, and the executor is the component that gets to
-answer it.
+In TextEdit, AX regions span y 36–1416 while clicks span y 5–2113: the menu bar,
+unlabeled chrome, and lower-screen clicks fall outside every region. In Chrome
+the web content itself produces AX regions over exactly the area people click, so
+the rung is genuinely useful there.
+
+So the earlier framing — that the visual layer is empty precisely where it is
+needed — holds for *native* applications specifically, not as a general rule. The
+grid-coverage question is still recorded as a **derived requirement on
+`represent/`** (final section) rather than fixed opportunistically: whether a grid
+tile is a useful visual anchor is a resolution-strategy question, and the executor
+is the component that gets to answer it.
 
 ## Decisions taken during design
 
@@ -145,8 +177,9 @@ answer it.
   opaque handle that stays valid in-process. TypeScript decides which layer to
   try, what counts as confident, and when to give up. The ladder stays
   exhaustively testable where the anchor types already live.
-- **Resolution order is `identifier → path → label → visual → point`**, ranked by
-  measured availability rather than by assumption.
+- **Resolution order is `identifier → label → path → visual → point`**, ranked by
+  reliability. Availability was tried as the criterion and abandoned: it is a
+  property of the application's AX implementation, not of the descriptor.
 - **Verification is subset, not set equality** — see Semantics. This deliberately
   differs from node identity.
 - **Brittleness gates.** The executor records the winning layer per action and

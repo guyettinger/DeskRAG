@@ -1,5 +1,5 @@
 /**
- * The anchor ladder: `identifier -> path -> label -> visual -> point`.
+ * The anchor ladder: `identifier -> label -> path -> visual -> point`.
  *
  * Each rung is tried against the AX tree AS IT IS NOW, and a rung that resolves
  * to a box wildly unlike the recorded one is rejected rather than trusted —
@@ -41,15 +41,18 @@ const AX_RUNGS: {
         : undefined,
   },
   {
-    layer: "path",
-    descriptor: (ax) => (ax.path.length > 0 ? { path: ax.path, role: ax.role } : undefined),
-  },
-  {
     layer: "label",
     descriptor: (ax) =>
       ax.label !== undefined && ax.label.length > 0
         ? { label: ax.label, role: ax.role }
         : undefined,
+  },
+  // Path is LAST: it is the only rung always available, but a positional ordinal
+  // chain 11-17 levels deep (measured in web content) breaks on any sibling
+  // insertion anywhere along it. It is the fallback, not the preference.
+  {
+    layer: "path",
+    descriptor: (ax) => (ax.path.length > 0 ? { path: ax.path, role: ax.role } : undefined),
   },
 ];
 

@@ -42,10 +42,14 @@ describe("agreement", () => {
 });
 
 describe("LAYER_CEILING", () => {
-  it("ranks the ladder by measured availability, identifier highest", () => {
-    expect(LAYER_CEILING.identifier).toBeGreaterThan(LAYER_CEILING.path);
-    expect(LAYER_CEILING.path).toBeGreaterThan(LAYER_CEILING.label);
-    expect(LAYER_CEILING.label).toBeGreaterThan(LAYER_CEILING.visual);
+  // Label outranks path because a positional path's reliability collapses with
+  // depth: measured web-content paths run 11-17 levels deep (a Chrome TextField
+  // averages 13) against 1-4 for native controls, and any sibling insertion at
+  // any level shifts the ordinal. A label is content-dependent but flat.
+  it("ranks identifier > label > path > visual > point", () => {
+    expect(LAYER_CEILING.identifier).toBeGreaterThan(LAYER_CEILING.label);
+    expect(LAYER_CEILING.label).toBeGreaterThan(LAYER_CEILING.path);
+    expect(LAYER_CEILING.path).toBeGreaterThan(LAYER_CEILING.visual);
     expect(LAYER_CEILING.visual).toBeGreaterThan(LAYER_CEILING.point);
   });
 });

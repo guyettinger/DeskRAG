@@ -33,17 +33,20 @@ describe("resolveAnchor", () => {
     expect(r.attempts).toEqual([]);
   });
 
-  it("falls to path when the identifier is gone, recording the rejection", async () => {
-    const r = await resolveAnchor(anchor, locateFor([{ key: "path", bounds: recorded }]));
-    expect(r.layer).toBe("path");
+  it("falls to label when the identifier is gone, recording the rejection", async () => {
+    const r = await resolveAnchor(anchor, locateFor([{ key: "label", bounds: recorded }]));
+    expect(r.layer).toBe("label");
     expect(r.attempts.map((a) => a.layer)).toEqual(["identifier"]);
     expect(r.attempts[0]!.rejected).toMatch(/not found/i);
   });
 
-  it("falls to label when identifier and path are both gone", async () => {
-    const r = await resolveAnchor(anchor, locateFor([{ key: "label", bounds: recorded }]));
-    expect(r.layer).toBe("label");
-    expect(r.attempts.map((a) => a.layer)).toEqual(["identifier", "path"]);
+  // Path is LAST of the AX rungs: measured web-content paths run 11-17 levels
+  // deep, and a positional ordinal chain that long breaks on any sibling
+  // insertion anywhere along it.
+  it("falls to path only when identifier and label are both gone", async () => {
+    const r = await resolveAnchor(anchor, locateFor([{ key: "path", bounds: recorded }]));
+    expect(r.layer).toBe("path");
+    expect(r.attempts.map((a) => a.layer)).toEqual(["identifier", "label"]);
   });
 
   it("rejects a rung that resolves to a wildly different box and falls through", async () => {
@@ -51,11 +54,11 @@ describe("resolveAnchor", () => {
     const locate: Locate = async (d) =>
       d.identifier !== undefined
         ? { handle: 1, bounds: { x: 0, y: 900, w: 1200, h: 400 } }
-        : d.path !== undefined
+        : d.label !== undefined
           ? { handle: 2, bounds: recorded }
           : null;
     const r = await resolveAnchor(anchor, locate);
-    expect(r.layer).toBe("path");
+    expect(r.layer).toBe("label");
     expect(r.attempts[0]).toMatchObject({ layer: "identifier" });
     expect(r.attempts[0]!.rejected).toMatch(/confidence/i);
   });
@@ -77,7 +80,7 @@ describe("resolveAnchor", () => {
     expect(r.layer).toBe("point");
     expect(r.confidence).toBe(0.3);
     expect(r.point).toEqual({ x: 740, y: 36 });
-    expect(r.attempts.map((a) => a.layer)).toEqual(["identifier", "path", "label", "visual"]);
+    expect(r.attempts.map((a) => a.layer)).toEqual(["identifier", "label", "path", "visual"]);
   });
 
   it("skips rungs the anchor never recorded, without inventing them", async () => {

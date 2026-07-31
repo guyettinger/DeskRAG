@@ -100,7 +100,9 @@ describe("buildPlan", () => {
       locate: found,
     });
     expect(plan.steps).toHaveLength(1);
-    expect(plan.steps[0]!.resolution!.layer).toBe("path");
+    // The fixture anchor has a label and a path but no identifier, so the label
+    // rung wins — it now sits above path.
+    expect(plan.steps[0]!.resolution!.layer).toBe("label");
     expect(plan.blockers).toEqual([]);
   });
 

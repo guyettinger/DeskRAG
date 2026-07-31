@@ -29,16 +29,26 @@ export type ResolvedLayer = "identifier" | "path" | "label" | "visual" | "point"
 /**
  * The confidence a layer can reach before geometric disagreement reduces it.
  *
- * Ranked by MEASURED availability, not intuition: across real recordings, 71% of
- * AX anchors carry an AXIdentifier while only 29% carry a label, and the
- * positional path (always present, mean depth 3.8) shifts whenever the UI gains
- * or loses a sibling. `point` sits lowest because a coordinate click carries no
- * evidence at all that the thing under the cursor is the thing recorded.
+ * Ranked by RELIABILITY, not availability — availability turned out to be an
+ * app-specific measurement and a bad guide. Across real recordings AXIdentifier
+ * appears on 50-80% of AX anchors in TextEdit but only 9% in Chrome, where a
+ * label is four times more common; ranking by "whichever we saw most" would have
+ * encoded one app's AX implementation as a general rule.
+ *
+ * Identifier is first because it is app-assigned and survives sibling insertion.
+ * **Label outranks path** because a positional path's reliability collapses with
+ * depth: measured web-content paths run 11-17 levels deep (a Chrome TextField
+ * averages 13) against 1-4 for native controls, and any sibling insertion at any
+ * one of those levels shifts the ordinal. The accepted cost is native precision,
+ * where a depth-3 path is likely steadier than a content-dependent label.
+ *
+ * `point` sits lowest because a coordinate click carries no evidence at all that
+ * the thing under the cursor is the thing recorded.
  */
 export const LAYER_CEILING: Readonly<Record<ResolvedLayer, number>> = {
   identifier: 1.0,
-  path: 0.8,
-  label: 0.6,
+  label: 0.8,
+  path: 0.6,
   visual: 0.5,
   point: 0.3,
 };
