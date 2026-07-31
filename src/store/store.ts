@@ -38,6 +38,8 @@ import type {
   SegmentRow,
   SegmentVectorInsert,
   SessionInsert,
+  TraceGraph,
+  TraceGraphSummary,
   SessionRow,
   SessionSummaryRow,
   Store,
@@ -225,6 +227,39 @@ export class DualStore implements Store {
       selectSegmentIdsByFrame: db.prepare(
         "SELECT segment_id FROM frame_segment WHERE frame_id = ?",
       ),
+      // experience trace graphs (SQLite only — no Lance side)
+      upsertTraceGraph: db.prepare(
+        `INSERT INTO trace_graph(id, entry_node, created_at) VALUES (@id, @entryNode, @createdAt)
+         ON CONFLICT(id) DO UPDATE SET entry_node = excluded.entry_node`,
+      ),
+      deleteTraceGraph: db.prepare("DELETE FROM trace_graph WHERE id = ?"),
+      deleteTraceNodes: db.prepare("DELETE FROM trace_node WHERE graph_id = ?"),
+      deleteTraceEdges: db.prepare("DELETE FROM trace_edge WHERE graph_id = ?"),
+      deleteTraceSlots: db.prepare("DELETE FROM trace_slot WHERE graph_id = ?"),
+      insertTraceNode: db.prepare(
+        `INSERT INTO trace_node(id, graph_id, predicates, visual, intervene, observations, ord)
+         VALUES (@id, @graphId, @predicates, @visual, @intervene, @observations, @ord)`,
+      ),
+      insertTraceEdge: db.prepare(
+        `INSERT INTO trace_edge(id, graph_id, from_node, to_node, actions, guard, provenance,
+                                observations, attempts, successes, lift_warnings, ord)
+         VALUES (@id, @graphId, @fromNode, @toNode, @actions, @guard, @provenance,
+                 @observations, @attempts, @successes, @liftWarnings, @ord)`,
+      ),
+      insertTraceSlot: db.prepare(
+        `INSERT INTO trace_slot(graph_id, name, samples, ord)
+         VALUES (@graphId, @name, @samples, @ord)`,
+      ),
+      selectTraceGraph: db.prepare("SELECT id, entry_node FROM trace_graph WHERE id = ?"),
+      selectTraceGraphs: db.prepare(
+        `SELECT g.id, g.created_at,
+                (SELECT COUNT(*) FROM trace_node n WHERE n.graph_id = g.id) AS nodes,
+                (SELECT COUNT(*) FROM trace_edge e WHERE e.graph_id = g.id) AS edges
+           FROM trace_graph g ORDER BY g.created_at DESC, g.id ASC`,
+      ),
+      selectTraceNodes: db.prepare("SELECT * FROM trace_node WHERE graph_id = ? ORDER BY ord ASC"),
+      selectTraceEdges: db.prepare("SELECT * FROM trace_edge WHERE graph_id = ? ORDER BY ord ASC"),
+      selectTraceSlots: db.prepare("SELECT * FROM trace_slot WHERE graph_id = ? ORDER BY ord ASC"),
     };
   }
 
@@ -1017,8 +1052,159 @@ export class DualStore implements Store {
     };
   }
 
+  // --- experience trace graphs (src/trace/) --------------------------------
+  //
+  // SQLite only. Visual corroboration reuses the region/frame vectors already in
+  // Lance by id, so a graph registers no vector space and these writes have no
+  // SQLite->Lance ordering hazard — the rule the rest of this class exists to
+  // enforce simply does not apply here.
+
+  async putGraph(graph: TraceGraph): Promise<void> {
+    await this.mutex.run(async () => {
+      const tx = this.db.transaction((g: TraceGraph) => {
+        this.stmts.upsertTraceGraph.run({
+          id: g.id,
+          entryNode: g.entry,
+          createdAt: Date.now(),
+        });
+        // Delete-then-insert, so the write is idempotent AND a graph that lost a
+        // node actually loses it. A pure upsert would leave orphans behind.
+        this.stmts.deleteTraceNodes.run(g.id);
+        this.stmts.deleteTraceEdges.run(g.id);
+        this.stmts.deleteTraceSlots.run(g.id);
+
+        g.nodes.forEach((n, ord) => {
+          this.stmts.insertTraceNode.run({
+            id: n.id,
+            graphId: g.id,
+            predicates: JSON.stringify(n.predicates),
+            visual: n.visual === undefined ? null : JSON.stringify(n.visual),
+            intervene: n.intervene,
+            observations: n.observations,
+            ord,
+          });
+        });
+        g.edges.forEach((e, ord) => {
+          this.stmts.insertTraceEdge.run({
+            id: e.id,
+            graphId: g.id,
+            fromNode: e.from,
+            toNode: e.to,
+            actions: JSON.stringify(e.actions),
+            guard: e.guard === undefined ? null : JSON.stringify(e.guard),
+            provenance: e.provenance,
+            observations: e.observations,
+            attempts: e.outcomes.attempts,
+            successes: e.outcomes.successes,
+            liftWarnings: e.liftWarnings === undefined ? null : JSON.stringify(e.liftWarnings),
+            ord,
+          });
+        });
+        g.slots.forEach((s, ord) => {
+          this.stmts.insertTraceSlot.run({
+            graphId: g.id,
+            name: s.name,
+            samples: JSON.stringify(s.samples),
+            ord,
+          });
+        });
+      });
+      tx(graph);
+    });
+  }
+
+  getGraph(id: string): TraceGraph | undefined {
+    const head = this.stmts.selectTraceGraph.get(id) as
+      | { id: string; entry_node: string }
+      | undefined;
+    if (head === undefined) return undefined;
+
+    const nodes = (this.stmts.selectTraceNodes.all(id) as TraceNodeRow[]).map((r) => ({
+      id: r.id,
+      predicates: JSON.parse(r.predicates) as TraceGraph["nodes"][number]["predicates"],
+      // Absent stays absent: `exactOptionalPropertyTypes` means a materialized
+      // `visual: undefined` is a different shape from no key at all.
+      ...(r.visual !== null
+        ? { visual: JSON.parse(r.visual) as NonNullable<TraceGraph["nodes"][number]["visual"]> }
+        : {}),
+      intervene: r.intervene as TraceGraph["nodes"][number]["intervene"],
+      observations: r.observations,
+    }));
+
+    const edges = (this.stmts.selectTraceEdges.all(id) as TraceEdgeRow[]).map((r) => ({
+      id: r.id,
+      from: r.from_node,
+      to: r.to_node,
+      actions: JSON.parse(r.actions) as TraceGraph["edges"][number]["actions"],
+      ...(r.guard !== null
+        ? { guard: JSON.parse(r.guard) as NonNullable<TraceGraph["edges"][number]["guard"]> }
+        : {}),
+      provenance: r.provenance as TraceGraph["edges"][number]["provenance"],
+      observations: r.observations,
+      outcomes: { attempts: r.attempts, successes: r.successes },
+      ...(r.lift_warnings !== null ? { liftWarnings: JSON.parse(r.lift_warnings) as string[] } : {}),
+    }));
+
+    const slots = (this.stmts.selectTraceSlots.all(id) as TraceSlotRow[]).map((r) => ({
+      name: r.name,
+      samples: JSON.parse(r.samples) as string[],
+      secret: false as const,
+    }));
+
+    return { id: head.id, entry: head.entry_node, nodes, edges, slots };
+  }
+
+  listGraphs(): TraceGraphSummary[] {
+    return (this.stmts.selectTraceGraphs.all() as TraceGraphSummaryRow[]).map((r) => ({
+      id: r.id,
+      nodes: r.nodes,
+      edges: r.edges,
+      createdAt: r.created_at,
+    }));
+  }
+
+  async deleteGraph(id: string): Promise<void> {
+    await this.mutex.run(async () => {
+      // ON DELETE CASCADE clears node/edge/slot rows (PRAGMA foreign_keys = ON).
+      this.stmts.deleteTraceGraph.run(id);
+    });
+  }
+
   close(): void {
     this.db.close();
     void this.lance.close();
   }
+}
+
+interface TraceNodeRow {
+  id: string;
+  predicates: string;
+  visual: string | null;
+  intervene: string;
+  observations: number;
+}
+
+interface TraceEdgeRow {
+  id: string;
+  from_node: string;
+  to_node: string;
+  actions: string;
+  guard: string | null;
+  provenance: string;
+  observations: number;
+  attempts: number;
+  successes: number;
+  lift_warnings: string | null;
+}
+
+interface TraceSlotRow {
+  name: string;
+  samples: string;
+}
+
+interface TraceGraphSummaryRow {
+  id: string;
+  nodes: number;
+  edges: number;
+  created_at: number;
 }
