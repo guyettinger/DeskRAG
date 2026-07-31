@@ -260,3 +260,46 @@ export type {
   RetrievalResult,
   Tier1Options,
 } from "./retrieve/types.js";
+
+/**
+ * trace/ — the experience trace IR. A recorded session lifts into a linear
+ * `Trace`; merging traces at equivalent states accretes a `Graph` whose nodes are
+ * verified states and whose edges are action sequences. Variation therefore comes
+ * from recording a task more than once, not from a model inventing alternatives.
+ *
+ * Pure TypeScript — no native modules, no subprocesses — which is why, unlike the
+ * executor, it belongs in this barrel. Everything it needs from the store arrives
+ * through injected callbacks (`VisualMatcher`, `LiftInput.axAt`).
+ */
+export * from "./trace/types.js";
+export { fitPath, projectPath, VELOCITY_SAMPLES, type PathSample } from "./trace/paths.js";
+export {
+  extractPredicates,
+  predicateKey,
+  samePredicateSet,
+  isVolatileLabel,
+  DEFAULT_MAX_AX_PREDICATES,
+  type PredicateContext,
+} from "./trace/predicates.js";
+export { buildAnchor, axPathOf, hitTest, anchorKey, type AnchorInput } from "./trace/anchors.js";
+export {
+  matchNode,
+  DEFAULT_VISUAL_THRESHOLD,
+  DEFAULT_VISUAL_MARGIN,
+  type MatchOptions,
+  type MatchResult,
+} from "./trace/identity.js";
+export {
+  groupGestures,
+  DEFAULT_GESTURE_OPTIONS,
+  type Gesture,
+  type GestureOptions,
+} from "./trace/gestures.js";
+export { liftTrace, slotNameFor, type LiftInput, type AxSnapshot } from "./trace/lift.js";
+export { mergeTrace, edgeSignature, actionSignature, discoveredVariables } from "./trace/merge.js";
+export {
+  printGraph,
+  parseGraph,
+  printInterventionRequest,
+  parseInterventionResponse,
+} from "./trace/language.js";
