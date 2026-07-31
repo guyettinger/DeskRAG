@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { canArm, executePlan } from "../src/replay/execute.js";
-import type { Actuator, Plan, ReplayInput, UIElement } from "../src/replay/types.js";
+import type { Actuator, AxObservation, Plan, ReplayInput, UIElement } from "../src/replay/types.js";
 import type { Action, Graph, Vec2 } from "../src/trace/types.js";
 import type { Keymap } from "../src/capture/env/types.js";
 
@@ -13,7 +13,11 @@ const us: Keymap = {
 class FakeActuator implements Actuator {
   calls: string[] = [];
   tree: UIElement[] = [];
-  dump = async (): Promise<UIElement[]> => this.tree;
+  app: string | undefined;
+  dump = async (): Promise<AxObservation> => ({
+    elements: this.tree,
+    ...(this.app !== undefined ? { app: this.app } : {}),
+  });
   locate = async (): Promise<{ handle: number; bounds: { x: number; y: number; w: number; h: number } }> => ({
     handle: 1,
     bounds: { x: 0, y: 0, w: 10, h: 10 },
@@ -149,7 +153,9 @@ describe("executePlan", () => {
     let polls = 0;
     a.dump = async () => {
       polls++;
-      return polls >= 2 ? [{ role: "Button", label: "Send", x: 0, y: 0, w: 10, h: 10 }] : [];
+      return {
+        elements: polls >= 2 ? [{ role: "Button", label: "Send", x: 0, y: 0, w: 10, h: 10 }] : [],
+      };
     };
     const step: Plan["steps"][number] = {
       edgeId: "e0",

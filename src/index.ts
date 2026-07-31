@@ -367,6 +367,7 @@ export {
   DEFAULT_MIN_CONFIDENCE,
   type Actuator,
   type AxDescriptor,
+  type AxObservation,
   type Blocker,
   type EdgeBrittleness,
   type ExecOutcome,
@@ -377,6 +378,7 @@ export {
   type Resolution,
   type ResolvedLayer,
 } from "./replay/types.js";
+export { observe } from "./replay/observe.js";
 export { resolveAnchor, type ResolveOptions } from "./replay/resolve.js";
 export {
   verifyNode,

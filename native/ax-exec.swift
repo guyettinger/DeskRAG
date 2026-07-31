@@ -270,11 +270,30 @@ while let line = readLine(strippingNewline: true) {
         exit(0)
 
     case "dump":
-        var payload: [[String: Any]] = []
+        // The tree AND the two facts that are not in it. `app` and `window`
+        // predicates come from focus_change events at lift time; at replay there
+        // is no event stream, so without these a live tree yields only
+        // ax_exists and no node carrying an app predicate can ever verify.
+        //
+        // Returned from ONE command so they describe the same instant: fetching
+        // the app name a moment after the tree has the same hazard that made
+        // boundary snapshots describe the previous application.
+        var elements: [[String: Any]] = []
+        var windowTitle: String?
         if trusted, let root = rootElement() {
-            payload = walk(root).elements.map { $0.json }
+            let walked = walk(root)
+            elements = walked.elements.map { $0.json }
+            // The focused window's title, from the root of the walk.
+            windowTitle = walked.elements.first(where: { $0.role == "Window" })?.label
+                ?? walked.elements.first?.label
         }
-        emit(req.id, ok: true, result: payload)
+        // localizedName is the display name — the same string active-win records
+        // as `owner.name`, so a recorded `app` predicate can match verbatim.
+        let appName = NSWorkspace.shared.frontmostApplication?.localizedName
+        var result: [String: Any] = ["elements": elements]
+        if let a = appName { result["app"] = a }
+        if let w = windowTitle { result["windowTitle"] = w }
+        emit(req.id, ok: true, result: result)
 
     case "locate":
         guard trusted, let root = rootElement() else {

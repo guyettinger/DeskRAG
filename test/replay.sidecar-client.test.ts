@@ -26,11 +26,13 @@ describe("AxExecSidecar", () => {
   it("correlates a response to its request id", async () => {
     const { dir, path } = stubBinary(`
       if (req.cmd === "quit") { console.log(JSON.stringify({ id: req.id, ok: true })); process.exit(0); }
-      console.log(JSON.stringify({ id: req.id, ok: true, result: [{ role: "Button", label: "Go", x: 1, y: 2, w: 3, h: 4 }] }));
+      console.log(JSON.stringify({ id: req.id, ok: true, result: { elements: [{ role: "Button", label: "Go", x: 1, y: 2, w: 3, h: 4 }], app: "TextEdit", windowTitle: "Untitled" } }));
     `);
     const s = AxExecSidecar.spawn({ planId: "p1", binaryPath: "node", args: [path] });
-    const tree = await s.dump();
-    expect(tree).toEqual([{ role: "Button", label: "Go", x: 1, y: 2, w: 3, h: 4 }]);
+    const obs = await s.dump();
+    expect(obs.elements).toEqual([{ role: "Button", label: "Go", x: 1, y: 2, w: 3, h: 4 }]);
+    expect(obs.app).toBe("TextEdit");
+    expect(obs.windowTitle).toBe("Untitled");
     s.close();
     rmSync(dir, { recursive: true, force: true });
   }, 15_000);

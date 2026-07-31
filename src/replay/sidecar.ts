@@ -10,7 +10,7 @@
  */
 
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import type { Actuator, AxDescriptor, Rect, UIElement, Vec2 } from "./types.js";
+import type { Actuator, AxDescriptor, AxObservation, Rect, UIElement, Vec2 } from "./types.js";
 
 export interface SidecarOptions {
   /** Passed as `--plan`; the binary refuses to start without it. */
@@ -101,8 +101,16 @@ export class AxExecSidecar implements Actuator {
     });
   }
 
-  async dump(): Promise<UIElement[]> {
-    return (await this.send<UIElement[]>("dump")) ?? [];
+  async dump(): Promise<AxObservation> {
+    const r = await this.send<AxObservation | UIElement[] | null>("dump");
+    // Tolerate the older bare-array shape so a stale binary degrades to
+    // AX-only observation rather than throwing mid-plan.
+    if (Array.isArray(r)) return { elements: r };
+    return {
+      elements: r?.elements ?? [],
+      ...(r?.app !== undefined ? { app: r.app } : {}),
+      ...(r?.windowTitle !== undefined ? { windowTitle: r.windowTitle } : {}),
+    };
   }
 
   async locate(d: AxDescriptor): Promise<{ handle: number; bounds: Rect } | null> {
