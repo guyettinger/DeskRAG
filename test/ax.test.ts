@@ -109,14 +109,43 @@ describe("frame_ax store + AxCapturer", () => {
   });
 
   it("AxCapturer stores from a real source and no-ops for NoopAxSource", async () => {
-    const { frameId } = await seedFrame();
-    const count = await new AxCapturer(store, fakeSource([saveButton])).capture(frameId);
+    const { sessionId, frameId } = await seedFrame();
+    const count = await new AxCapturer(
+      store,
+      fakeSource([saveButton]),
+      sessionId,
+      () => 1,
+    ).capture("keyframe", frameId);
     expect(count).toBe(1);
     expect(store.getFrameAx(frameId)).toEqual([saveButton]);
 
-    const { frameId: f2 } = await seedFrame();
-    expect(await new AxCapturer(store, new NoopAxSource()).capture(f2)).toBe(0);
+    const { sessionId: s2, frameId: f2 } = await seedFrame();
+    expect(
+      await new AxCapturer(store, new NoopAxSource(), s2, () => 1).capture("keyframe", f2),
+    ).toBe(0);
     expect(store.getFrameAx(f2)).toEqual([]);
+  });
+
+  it("writes a row even for an empty result, tagged with its reason", async () => {
+    // The old `if (elements.length > 0)` made an AX-blind app indistinguishable
+    // from a capture that never ran. `reason` exists to tell them apart and
+    // cannot unless the empty row lands.
+    const { sessionId } = await seedFrame();
+    await new AxCapturer(store, new NoopAxSource(), sessionId, () => 42).capture("focus_change");
+    const snap = store.getAxAt(sessionId, 42);
+    expect(snap).toBeDefined();
+    expect(snap!.elements).toEqual([]);
+    expect(snap!.reason).toBe("focus_change");
+    expect(snap!.frameId).toBeNull();
+  });
+
+  it("stamps a boundary capture with no frame", async () => {
+    const { sessionId } = await seedFrame();
+    await new AxCapturer(store, fakeSource([saveButton]), sessionId, () => 900).capture("bookmark");
+    const snap = store.getAxAt(sessionId, 900)!;
+    expect(snap.frameId).toBeNull();
+    expect(snap.tMono).toBe(900);
+    expect(snap.elements).toEqual([saveButton]);
   });
 });
 

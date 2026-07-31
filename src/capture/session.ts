@@ -16,6 +16,7 @@ import { EventBatcher, type BatcherOptions } from "./batcher.js";
 import { FrameIngestor } from "./frame-ingest.js";
 import { KeyframeGate } from "./keyframe.js";
 import { AxCapturer } from "./ax/ax-capturer.js";
+import { BoundaryAxTrigger } from "./ax/boundary.js";
 import type { AxSource } from "./ax/types.js";
 import type { BlobStore } from "../store/blob-store.js";
 import type { CaptureContext, Producer } from "./types.js";
@@ -30,8 +31,17 @@ export interface CaptureSessionOptions extends BatcherOptions {
   keyframeGate?: KeyframeGate;
   /** Blob store for persisting keyframe images (frame producers with images). */
   blobStore?: BlobStore;
-  /** Accessibility source; when set, the AX tree is captured per kept keyframe. */
+  /**
+   * Accessibility source. When set, the AX tree is captured per kept keyframe
+   * AND at boundaries (focus change, bookmark, dwell resume) — pHash gating means
+   * a settled screen yields no keyframes, and settled is exactly when a boundary
+   * fires, so keyframe-only AX has nothing to offer where it matters most.
+   */
   axSource?: AxSource;
+  /** Settle delay before a boundary-triggered AX walk (default 250ms). */
+  axSettleMs?: number;
+  /** Input-idle gap that counts as a dwell for AX triggering (default 3000ms). */
+  axDwellGapMs?: number;
 }
 
 /**
@@ -46,6 +56,7 @@ export class CaptureSession {
   private sessionId: string | undefined;
   private ingestor: FrameIngestor | undefined;
   private axCapturer: AxCapturer | undefined;
+  private boundaryAx: BoundaryAxTrigger | undefined;
   private running = false;
   /** Paths + media for blobs reserved by producers, pending commit. */
   private readonly reserved = new Map<string, { path: string; media: Media; codec: string }>();
@@ -89,8 +100,22 @@ export class CaptureSession {
       this.opts.blobStore,
     );
     this.axCapturer = this.opts.axSource
-      ? new AxCapturer(this.store, this.opts.axSource)
+      ? new AxCapturer(this.store, this.opts.axSource, this.sessionId, () => this.clock.now())
       : undefined;
+    this.boundaryAx =
+      this.axCapturer !== undefined
+        ? new BoundaryAxTrigger(
+            async (reason) => {
+              await this.axCapturer!.capture(reason);
+            },
+            {
+              ...(this.opts.axSettleMs !== undefined ? { settleMs: this.opts.axSettleMs } : {}),
+              ...(this.opts.axDwellGapMs !== undefined
+                ? { dwellGapMs: this.opts.axDwellGapMs }
+                : {}),
+            },
+          )
+        : undefined;
 
     const ctx: CaptureContext = {
       sessionId: this.sessionId,
@@ -99,7 +124,7 @@ export class CaptureSession {
       ingestFrame: async (frame) => {
         const res = await this.ingestor!.ingest(frame);
         if (res.kept && res.frameId && this.axCapturer) {
-          await this.axCapturer.capture(res.frameId);
+          await this.axCapturer.capture("keyframe", res.frameId);
         }
         return res;
       },
@@ -165,6 +190,9 @@ export class CaptureSession {
           ...(ev.data !== undefined ? { data: ev.data } : {}),
         };
         this.batcher.add(row);
+        // The session is the only component that sees EVERY producer's events, so
+        // cross-signal triggering belongs here — producers stay store-free.
+        this.boundaryAx?.onEvent(row.kind, row.tMono);
       },
     };
     for (const p of this.producers) await p.start(ctx);
@@ -177,6 +205,9 @@ export class CaptureSession {
     for (let i = this.producers.length - 1; i >= 0; i--) {
       await this.producers[i]!.stop();
     }
+    // Run any pending boundary walk before tearing the source down.
+    await this.boundaryAx?.flush();
+    this.boundaryAx?.stop();
     await this.batcher.stop();
     this.axCapturer?.close();
     await this.store.endSession(this.id, this.clock.wallAt(this.clock.now()));
