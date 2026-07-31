@@ -107,10 +107,19 @@ if trusted {
 var handles: [Int: AXUIElement] = [:]
 var nextHandle = 1
 
+/// An EMPTY attribute is absent, not present-and-blank.
+///
+/// This must match `ax-dump`'s `str()` exactly. It did not, and the one-line
+/// difference was enough to break node verification: AXTitle on the font-size
+/// stepper returns "", so ax-dump fell through to AXDescription and recorded
+/// `label: "font size"`, while ax-exec kept "" and the recorded
+/// `ax_exists(label="font size", role="Button")` predicate could never match.
+/// The two binaries agreed on all 48 elements except that one.
 func str(_ el: AXUIElement, _ attr: String) -> String? {
     var value: CFTypeRef?
     guard AXUIElementCopyAttributeValue(el, attr as CFString, &value) == .success else { return nil }
-    return value as? String
+    if let s = value as? String, !s.isEmpty { return s }
+    return nil
 }
 
 func boolFlag(_ el: AXUIElement, _ attr: String) -> Bool? {
