@@ -140,6 +140,68 @@ func emit(_ elements: [AXElem]) {
 
 let args = CommandLine.arguments
 
+func emitJSON<T: Encodable>(_ value: T) {
+    guard let data = try? JSONEncoder().encode(value),
+          let s = String(data: data, encoding: .utf8) else {
+        print("[]")
+        return
+    }
+    print(s)
+}
+
+// MARK: - Display topology (--displays)
+//
+// NSScreen.frame is BOTTOM-left origin; AX bboxes and uiohook mouse coordinates
+// are TOP-left. Without the flip every secondary display's y is wrong and points
+// get misattributed. The flip is against the PRIMARY screen's height, because
+// that is what defines the global coordinate space.
+//
+// Needs no Accessibility permission, so it sits above the AXIsProcessTrusted
+// gate — and above the AX --self-test block, so `--displays --self-test` is not
+// swallowed by it.
+
+struct DisplayOut: Codable {
+    let id: String
+    let x: Double
+    let y: Double
+    let w: Double
+    let h: Double
+    let scale: Double
+    let primary: Bool
+}
+
+if args.contains("--displays") {
+    if args.contains("--self-test") {
+        emitJSON([
+            DisplayOut(id: "1", x: 0, y: 0, w: 2560, h: 1440, scale: 2, primary: true),
+            DisplayOut(id: "2", x: 2560, y: 0, w: 1920, h: 1080, scale: 1, primary: false),
+        ])
+        exit(0)
+    }
+    let screens = NSScreen.screens
+    guard let primary = screens.first else {
+        print("[]")
+        exit(0)
+    }
+    let flipH = primary.frame.height
+    var displaysOut: [DisplayOut] = []
+    for s in screens {
+        let f = s.frame
+        let num = s.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+        displaysOut.append(DisplayOut(
+            id: num.map { String($0.uint32Value) } ?? "unknown",
+            x: f.origin.x,
+            y: flipH - f.origin.y - f.height,
+            w: f.width,
+            h: f.height,
+            scale: s.backingScaleFactor,
+            primary: s == primary
+        ))
+    }
+    emitJSON(displaysOut)
+    exit(0)
+}
+
 // Deterministic contract self-check (no AX access) — used by the test suite to
 // verify the JSON encoding + sidecar wiring regardless of permission state. Two
 // elements, so the parent back-reference is part of the checked contract.
