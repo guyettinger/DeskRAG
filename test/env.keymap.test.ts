@@ -77,17 +77,24 @@ describe("resolveChar", () => {
     expect(resolveChar(us, 30, ["alt", "shift"])).toEqual({ char: "Å", modifiers: [] });
   });
 
-  it("produces NO character and keeps every modifier when cmd is held", () => {
-    expect(resolveChar(us, 31, ["cmd"])).toEqual({ modifiers: ["cmd"] });
-    expect(resolveChar(us, 31, ["cmd", "shift"])).toEqual({ modifiers: ["cmd", "shift"] });
+  it("keeps every modifier when cmd is held, and names the key from the PLAIN column", () => {
+    // A command consumes nothing, so the character identifies the key rather
+    // than being text: cmd+shift+S is the S key, not "S" typed. gestures.ts
+    // reads char BEFORE it checks modifiers, so withholding it would drop the
+    // chord entirely.
+    expect(resolveChar(us, 31, ["cmd"])).toEqual({ char: "s", modifiers: ["cmd"] });
+    expect(resolveChar(us, 31, ["cmd", "shift"])).toEqual({
+      char: "s",
+      modifiers: ["cmd", "shift"],
+    });
   });
 
-  it("keeps alt alongside cmd — alt was never consumed", () => {
-    expect(resolveChar(us, 31, ["alt", "cmd"])).toEqual({ modifiers: ["alt", "cmd"] });
+  it("keeps alt alongside cmd — a command consumes nothing", () => {
+    expect(resolveChar(us, 31, ["alt", "cmd"])).toEqual({ char: "s", modifiers: ["alt", "cmd"] });
   });
 
   it("treats ctrl like cmd", () => {
-    expect(resolveChar(us, 30, ["ctrl"])).toEqual({ modifiers: ["ctrl"] });
+    expect(resolveChar(us, 30, ["ctrl"])).toEqual({ char: "a", modifiers: ["ctrl"] });
   });
 
   it("returns modifiers sorted, so a chord keys identically however it arrived", () => {

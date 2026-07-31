@@ -45,16 +45,22 @@ function columnFor(shift: boolean, alt: boolean): 0 | 1 | 2 | 3 {
 }
 
 /**
- * Resolve a keystroke to a character, or to a chord.
+ * Resolve a keystroke to the character it denotes, plus the modifiers that
+ * survive it. One rule: **a command consumes nothing.**
  *
- * cmd or ctrl present -> a command: no character, every modifier kept.
- * Otherwise -> resolve the character, CONSUMING shift/alt into the column choice
- * and stripping them from the returned modifiers.
+ * cmd or ctrl present -> a command. Nothing is consumed, so the character comes
+ * from the plain column and every modifier stays. `⌘S` is still the S key: the
+ * character NAMES the key, it is not text that was typed.
  *
- * The consume-and-strip half is load-bearing. `gestures.ts` treats any surviving
- * modifier as chord-forming, so leaving shift on a capital letter would lift
- * "A" as the chord shift+A instead of the text "A" — every capital, every
- * shifted symbol.
+ * Otherwise -> shift/alt are CONSUMED selecting the column, and stripped from
+ * the returned modifiers.
+ *
+ * Consume-and-strip is load-bearing, and so is its absence for commands.
+ * `gestures.ts` reads `char` first and treats any surviving modifier as
+ * chord-forming, so:
+ *   - leaving shift on a capital would lift "A" as the chord shift+A;
+ *   - withholding the character from a command would drop ⌘S entirely, since
+ *     the no-char branch is checked before the chord branch.
  */
 export function resolveChar(
   km: Keymap,
@@ -63,7 +69,6 @@ export function resolveChar(
 ): { char?: string; modifiers: string[] } {
   const sorted = [...mods].sort();
   const isCommand = sorted.includes("cmd") || sorted.includes("ctrl");
-  if (isCommand) return { modifiers: sorted };
 
   const vk = macKeycodeFor(uiohookKeycode);
   if (vk === undefined) return { modifiers: sorted };
@@ -71,10 +76,11 @@ export function resolveChar(
   const entry = km.entries[vk];
   if (entry === undefined) return { modifiers: sorted };
 
-  const char = entry[columnFor(sorted.includes("shift"), sorted.includes("alt"))];
+  // A command consumes neither shift nor alt — ⌘⇧S keeps both.
+  const shift = !isCommand && sorted.includes("shift");
+  const alt = !isCommand && sorted.includes("alt");
+  const char = entry[columnFor(shift, alt)];
   if (char === undefined || char.length === 0) return { modifiers: sorted };
 
-  // shift/alt were consumed selecting the column; nothing else can be here,
-  // because cmd/ctrl already returned above.
-  return { char, modifiers: [] };
+  return { char, modifiers: isCommand ? sorted : [] };
 }
