@@ -14,7 +14,7 @@
 import { projectPath } from "../trace/paths.js";
 import { predicateKey } from "../trace/predicates.js";
 import { observe } from "./observe.js";
-import { isRepairStep } from "./types.js";
+import { isRepairStep, isSupersededStep } from "./types.js";
 import { strokesFor } from "./typing.js";
 import type {
   ExecOutcome,
@@ -78,7 +78,7 @@ export async function executePlan(
 
   for (let i = 0; i < plan.steps.length; i++) {
     const step = plan.steps[i]!;
-    if (!isRepairStep(step) && step.resolution !== undefined) {
+    if (!isRepairStep(step) && !isSupersededStep(step) && step.resolution !== undefined) {
       telemetry.push({
         edgeId: step.edgeId,
         layer: step.resolution.layer,
@@ -87,7 +87,8 @@ export async function executePlan(
     }
     try {
       if (isRepairStep(step)) await runRepair(step, input, pollMs, activateTimeoutMs);
-      else await runStep(step, input, pollMs);
+      // A superseded step exists to be REVIEWED, not run: the repair replaces it.
+      else if (!isSupersededStep(step)) await runStep(step, input, pollMs);
     } catch (err) {
       return {
         planId: plan.id,

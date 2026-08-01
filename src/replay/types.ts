@@ -179,6 +179,12 @@ export interface PlannedAction {
  */
 export interface RepairStep {
   repair: "activate";
+  /**
+   * The edge this repair belongs to. Execution finds a node boundary by asking
+   * which edge a step ends, and a repair is the LAST step of a cross-app edge —
+   * without this it would be the one step kind that cannot answer.
+   */
+  edgeId: string;
   app: string;
   /**
    * Whether execution may LAUNCH the app rather than only raise it. Decided at
@@ -191,15 +197,37 @@ export interface RepairStep {
   reason: string;
 }
 
-/** A plan step is either a recorded action or a synthesized repair. */
-export type PlanStep = PlannedAction | RepairStep;
+/**
+ * An action the plan will NOT post, kept visible so the review explains itself.
+ * A repair that replaces a recorded app switch must be disclosed, never silent —
+ * the same rule that makes activation a visible step rather than an implicit one.
+ */
+export interface SupersededStep {
+  superseded: "activate";
+  edgeId: string;
+  action: Action;
+  /** Why it is not being posted, in the reviewer's words. */
+  reason: string;
+}
 
+/** A recorded action, a synthesized repair, or an action the repair replaces. */
+export type PlanStep = PlannedAction | RepairStep | SupersededStep;
+
+// Both guards key on a field unique to their variant, so `PlannedAction` stays
+// the fall-through case — a caller that only knows about actions keeps working.
 export const isRepairStep = (s: PlanStep): s is RepairStep => "repair" in s;
+export const isSupersededStep = (s: PlanStep): s is SupersededStep => "superseded" in s;
 
 /** An `assertable` predicate that does not hold, or an unusable `type` action. */
 export interface Blocker {
   predicate?: Predicate;
   reason: string;
+  /**
+   * Blockers span the WHOLE run. `assertable` means no UI action can produce the
+   * predicate, so checking a remainder node against the present observation is
+   * valid — an unreachable goal is knowable before anything is posted.
+   */
+  scope: "segment" | "remainder";
 }
 
 export interface EdgeBrittleness {
@@ -207,6 +235,43 @@ export interface EdgeBrittleness {
   /** Share of this edge's targets that resolved to an AX rung. */
   axRate: number;
   belowFloor: boolean;
+  /**
+   * `measured` — resolved against the live tree. `upper` — a remainder edge,
+   * where the rate is a deductive CEILING rather than an observation: an anchor
+   * with no `ax` layer can never reach an AX rung, at any time, by any
+   * mechanism. That is arithmetic over the recording, not a forecast.
+   */
+  bound: "measured" | "upper";
+}
+
+/** Where greedy resolution stopped, and why. */
+export interface SegmentCut {
+  /** Node to re-observe and re-plan from — the `from` of the first unplanned edge. */
+  resumeAt: string;
+  edgeId: string;
+  /** `resolveAnchor`'s own record of which rungs were tried and how each failed. */
+  attempts: { layer: ResolvedLayer; rejected: string }[];
+}
+
+/**
+ * What a remainder action discloses. Descriptor presence is a fact about the
+ * RECORDING, not a forecast of what the anchor will resolve to — the plan does
+ * not claim to know where an unresolved action will land.
+ */
+export interface RemainderAction {
+  kind: Action["kind"];
+  descriptors?: ("identifier" | "label" | "path" | "visual")[];
+  /** Where it was recorded. Provenance, never presented as a target. */
+  recordedPoint?: Vec2;
+  slot?: string;
+}
+
+export interface RemainderEdge {
+  edgeId: string;
+  toNodeId: string;
+  actions: RemainderAction[];
+  /** Repairs this edge would need, from the same inert `runningApps` read. */
+  repairs: RepairStep[];
 }
 
 export interface Plan {
@@ -220,6 +285,15 @@ export interface Plan {
   /** Non-empty means the plan cannot be armed. */
   blockers: Blocker[];
   brittleness: EdgeBrittleness[];
+  /**
+   * Absent when the plan reaches the goal in one segment — today's behaviour,
+   * and the shape the 2026-07-31 single-click run produces.
+   */
+  cut?: SegmentCut;
+  /** Edges beyond the cut: disclosed, deliberately unresolved. */
+  remainder: RemainderEdge[];
+  /** Set when the previous segment did not land where it said it would. */
+  drift?: { expected: string; observed: string };
 }
 
 export interface ReplayInput {
@@ -234,6 +308,45 @@ export interface ReplayInput {
   keymap: Keymap;
   /** Optional visual corroboration for the `visual` rung. */
   visualMatcher?: VisualMatcher;
+}
+
+/** What `locateNode` concluded. `candidates` is reported whatever the outcome. */
+export interface NodeLocation {
+  nodeId?: string;
+  candidates: number;
+  ambiguous: boolean;
+}
+
+export interface RunInput extends ReplayInput {
+  goalNodeId: string;
+  /**
+   * The review gate. `replay/` never decides to act; the caller does. Injected
+   * for the same reason `Actuator` is — it keeps the decision outside this
+   * package, so an AI-in-the-loop caller can supply it later without `replay/`
+   * growing a policy of its own.
+   */
+  arm: (plan: Plan) => Promise<boolean>;
+  slotBindings?: Record<string, string>;
+  allowLaunch?: boolean;
+  override?: boolean;
+  /** Runaway guard. Default 8. */
+  maxSegments?: number;
+  pollMs?: number;
+}
+
+export type RunStop =
+  | "declined"
+  | "not-located"
+  | "no-path"
+  | "no-progress"
+  | "max-segments"
+  | "failed";
+
+export interface RunOutcome {
+  goalNodeId: string;
+  reached: boolean;
+  segments: { plan: Plan; outcome: ExecOutcome }[];
+  stopped?: RunStop;
 }
 
 export interface ExecOutcome {

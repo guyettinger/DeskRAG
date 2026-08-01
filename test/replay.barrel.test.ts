@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as barrel from "../src/index.js";
 
@@ -19,6 +19,7 @@ describe("replay barrel", () => {
       "executePlan",
       "agreement",
       "isRepairStep",
+      "isSupersededStep",
       "AxExecSidecar",
       "LAYER_CEILING",
       "BRITTLENESS_FLOOR",
@@ -34,23 +35,27 @@ describe("replay barrel", () => {
   });
 });
 
+const REPLAY_DIR = join(process.cwd(), "src/replay");
+/**
+ * EVERY file in replay/, read from disk rather than listed here. The guard below
+ * is the whole safety story, and a guard that has to be remembered when a file
+ * is added is a guard that will eventually be forgotten.
+ */
+const replayFiles = (): string[] => readdirSync(REPLAY_DIR).filter((f) => f.endsWith(".ts"));
+const read = (f: string): string => readFileSync(join(REPLAY_DIR, f), "utf8");
+
 describe("executor inertness", () => {
   // The suite must be structurally incapable of moving the mouse: everything
   // that reaches the desktop goes through the injected Actuator, and only
   // sidecar.ts may spawn.
   it("only sidecar.ts spawns a process anywhere in replay/", () => {
-    const dir = join(process.cwd(), "src/replay");
-    for (const file of [
-      "types.ts",
-      "resolve.ts",
-      "verify.ts",
-      "typing.ts",
-      "plan.ts",
-      "execute.ts",
-    ]) {
-      const src = readFileSync(join(dir, file), "utf8");
-      expect(src, `${file} must not spawn`).not.toMatch(/child_process|execFile|\bspawn\(/);
+    for (const file of replayFiles()) {
+      if (file === "sidecar.ts") continue;
+      expect(read(file), `${file} must not spawn`).not.toMatch(/child_process|execFile|\bspawn\(/);
     }
+    // The exemption has to stay real: if sidecar.ts stopped spawning, this guard
+    // would be silently exempting a file that no longer needs exempting.
+    expect(read("sidecar.ts")).toMatch(/\bspawn\(/);
   });
 
   // Planning must stay inert: calling `activate` to discover whether an app is
@@ -61,18 +66,10 @@ describe("executor inertness", () => {
   });
 
   it("replay/ never imports store, represent, or retrieve", () => {
-    const dir = join(process.cwd(), "src/replay");
-    for (const file of [
-      "types.ts",
-      "resolve.ts",
-      "verify.ts",
-      "typing.ts",
-      "plan.ts",
-      "execute.ts",
-      "sidecar.ts",
-    ]) {
-      const src = readFileSync(join(dir, file), "utf8");
-      expect(src, `${file} must stay a leaf`).not.toMatch(/from "\.\.\/(store|represent|retrieve)\//);
+    for (const file of replayFiles()) {
+      expect(read(file), `${file} must stay a leaf`).not.toMatch(
+        /from "\.\.\/(store|represent|retrieve)\//,
+      );
     }
   });
 });

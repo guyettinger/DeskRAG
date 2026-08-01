@@ -5,6 +5,7 @@ import type { Action } from "../src/trace/types.js";
 
 const repair: RepairStep = {
   repair: "activate",
+  edgeId: "e0",
   app: "TextEdit",
   launch: false,
   reason: 'app(app="TextEdit") does not hold',

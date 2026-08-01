@@ -143,7 +143,11 @@ export async function buildPlan(input: BuildPlanInput): Promise<Plan> {
     const to = nodesById.get(edge.to);
     if (to !== undefined) {
       for (const v of blockersOf(verifyNode(to.predicates, input.observed).violations)) {
-        blockers.push({ predicate: v.predicate, reason: "assertable predicate does not hold" });
+        blockers.push({
+          predicate: v.predicate,
+          reason: "assertable predicate does not hold",
+          scope: "segment",
+        });
       }
     }
 
@@ -157,10 +161,11 @@ export async function buildPlan(input: BuildPlanInput): Promise<Plan> {
         const running = input.runningApps.includes(wanted);
         const mayLaunch = input.allowLaunch === true;
         if (!running && !mayLaunch) {
-          blockers.push({ reason: `${wanted} is not running` });
+          blockers.push({ reason: `${wanted} is not running`, scope: "segment" });
         } else {
           const repair: RepairStep = {
             repair: "activate",
+            edgeId: edge.id,
             app: wanted,
             launch: !running && mayLaunch,
             reason: `app(app="${wanted}") does not hold`,
@@ -192,10 +197,14 @@ export async function buildPlan(input: BuildPlanInput): Promise<Plan> {
         const value = bound ?? action.recorded;
         if (bound !== undefined) step.slotBinding = { name: action.slot, value: bound };
         if (input.keymap === undefined) {
-          blockers.push({ reason: `no keymap supplied: cannot type "${value}"` });
+          blockers.push({
+            reason: `no keymap supplied: cannot type "${value}"`,
+            scope: "segment",
+          });
         } else if (strokesFor(value, input.keymap) === null) {
           blockers.push({
             reason: `"${value}" cannot be typed with layout ${input.keymap.layoutId}`,
+            scope: "segment",
           });
         }
       }
@@ -204,7 +213,12 @@ export async function buildPlan(input: BuildPlanInput): Promise<Plan> {
     }
 
     const axRate = targets > 0 ? axTargets / targets : 1;
-    brittleness.push({ edgeId: edge.id, axRate, belowFloor: axRate < BRITTLENESS_FLOOR });
+    brittleness.push({
+      edgeId: edge.id,
+      axRate,
+      belowFloor: axRate < BRITTLENESS_FLOOR,
+      bound: "measured",
+    });
   }
 
   return {
@@ -215,5 +229,6 @@ export async function buildPlan(input: BuildPlanInput): Promise<Plan> {
     steps,
     blockers,
     brittleness,
+    remainder: [],
   };
 }
