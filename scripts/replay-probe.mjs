@@ -525,6 +525,99 @@ async function dryRun(graph, goalId, keymap) {
   }
 }
 
+/**
+ * THE ONLY MODE THAT POSTS REAL EVENTS.
+ *
+ * Deliberately separate from `dryRun`, and deliberately NOT wrapped in the
+ * read-only proxy — which is the one thing making every other mode structurally
+ * incapable of touching the desktop. Everything here is real: real CGEvents,
+ * a real keyboard, a real application switch, and no rollback of any kind.
+ *
+ * Each segment is printed and then counted down before it is armed, so there is
+ * always a visible window to ctrl-C. The countdown is the only gate this script
+ * has; `executeRun`'s own gates (blockers, brittleness) still apply underneath.
+ */
+async function liveRun(graph, goalId, keymap, countdownSec) {
+  const sidecar = AxExecSidecar.spawn({ planId: `live-${Date.now()}` });
+  try {
+    const goal = graph.nodes.find((n) => n.id === goalId || n.id.endsWith(`:${goalId}`));
+    if (goal === undefined) {
+      console.log(`no such goal node: ${goalId}`);
+      return;
+    }
+    console.log(`\n${"!".repeat(72)}`);
+    console.log(`LIVE RUN — this WILL post real clicks and keystrokes to this desktop.`);
+    console.log(`There is no undo. ctrl-C during any countdown to stop.`);
+    console.log(`${"!".repeat(72)}`);
+
+    if (!(await waitForApp(sidecar))) return;
+
+    let segment = 0;
+    const out = await executeRun({
+      graph,
+      actuator: sidecar,
+      keymap,
+      goalNodeId: goal.id,
+      arm: async (plan) => {
+        segment++;
+        console.log(`\n=== SEGMENT ${segment} — ${plan.steps.length} steps ===`);
+        for (const st of plan.steps) {
+          if (st.repair !== undefined) {
+            console.log(`  activate  ${st.app}${st.launch ? " (launching)" : ""}`);
+          } else if (st.superseded !== undefined) {
+            console.log(`  SUPERSEDED ${st.action.kind} — not posted`);
+          } else if (st.resolution !== undefined) {
+            const r = st.resolution;
+            console.log(
+              `  ${st.action.kind.padEnd(6)} -> ${r.layer}@${r.confidence.toFixed(2)}` +
+                `  at (${r.point.x.toFixed(0)}, ${r.point.y.toFixed(0)})`,
+            );
+          } else if (st.action.kind === "type") {
+            const v = st.slotBinding?.value ?? st.action.recorded;
+            console.log(`  type    ${JSON.stringify(v)}   << REPLACES ANY SELECTION`);
+          } else if (st.action.kind === "chord") {
+            console.log(`  chord   ${st.action.keys.join("+")}`);
+          } else {
+            console.log(`  ${st.action.kind}`);
+          }
+        }
+        console.log(
+          `  cut: ${plan.cut ? plan.cut.edgeId.split(":").pop() : "none"}` +
+            `   remainder: ${plan.remainder.map((r) => r.edgeId.split(":").pop()).join(",") || "none"}` +
+            `   blockers: ${plan.blockers.length}`,
+        );
+        if (plan.drift !== undefined) {
+          console.log(
+            `  DRIFT: expected ${plan.drift.expected.split(":").pop()}, observed ${plan.drift.observed.split(":").pop()}`,
+          );
+        }
+        for (let i = countdownSec; i > 0; i--) {
+          process.stdout.write(`\r  ARMING IN ${i}s — ctrl-C to abort   `);
+          await new Promise((r) => setTimeout(r, 1000));
+        }
+        console.log(`\r  ARMED — posting now.                `);
+        return true;
+      },
+    });
+
+    console.log(`\n=== RESULT ===`);
+    console.log(`  reached : ${out.reached}`);
+    console.log(`  stopped : ${out.stopped ?? "(goal reached)"}`);
+    console.log(`  segments: ${out.segments.length}`);
+    out.segments.forEach((seg, i) => {
+      console.log(
+        `    ${i + 1}: ${seg.outcome.stepsRun} steps run, completed=${seg.outcome.completed}` +
+          (seg.outcome.failure ? `  FAILURE: ${seg.outcome.failure.reason}` : ""),
+      );
+      for (const t of seg.outcome.telemetry) {
+        console.log(`       ${t.edgeId.split(":").pop()} ${t.layer}@${t.confidence.toFixed(2)}`);
+      }
+    });
+  } finally {
+    sidecar.close();
+  }
+}
+
 // --- diagnostic: does a long-lived sidecar track the frontmost app? ---------
 
 /**
@@ -603,7 +696,9 @@ try {
     process.exit(1);
   }
 
-  if (has("--dry-run")) await dryRun(graph, val("--goal"), sessionKeymap(store));
+  if (has("--live")) {
+    await liveRun(graph, val("--goal"), sessionKeymap(store), Number(val("--countdown") ?? 6));
+  } else if (has("--dry-run")) await dryRun(graph, val("--goal"), sessionKeymap(store));
   else if (has("--sweep")) await sweep(graph);
   else if (has("--diagnose-frontmost")) await diagnoseFrontmost(Number(val("--diagnose-frontmost") ?? 20));
   else if (has("--list") || has("--offline")) offline(graph);

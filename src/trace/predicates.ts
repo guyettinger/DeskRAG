@@ -72,7 +72,9 @@ const STABLE_ROLES: ReadonlySet<string> = new Set([
   "ComboBox",
   "MenuItem",
   "MenuButton",
-  "TabGroup",
+  // "TabGroup" is deliberately ABSENT. A browser labels one with the NAME OF A
+  // COLLAPSED TAB GROUP, which is session state — measured on a real recording
+  // as 7 of one node's 61 predicates, alongside the 20 tabs below.
   "Toolbar",
   "SearchField",
 ]);
@@ -124,6 +126,32 @@ export function samePredicateSet(a: readonly Predicate[], b: readonly Predicate[
   return b.every((p) => left.has(predicateKey(p)));
 }
 
+/**
+ * Is this element part of a browser's tab strip?
+ *
+ * A browser exposes every open tab as a `RadioButton` labelled with the page
+ * title, nested under the tab strip's `TabGroup`. That is SESSION state, not
+ * application state — the same class as a clock or a badge count, one level up.
+ * Measured on a real recording: 27 of one Chrome node's 61 predicates were tabs
+ * and tab groups, so the node could only ever verify with the same 20 pages
+ * open. The first live multi-segment replay stopped there.
+ *
+ * Keyed on the TabGroup ANCESTOR rather than on the role or the label, because
+ * that is structural: measured 27/27 of the tabs sit under one, while a radio
+ * button in a preferences pane does not. Guessing from label shape would be a
+ * heuristic tuned on one application, which is how the anchor ladder was
+ * falsified twice.
+ */
+function inTabStrip(el: UIElement, all: readonly UIElement[]): boolean {
+  let cur: UIElement | undefined = el;
+  // Bounded: a malformed parent chain must not spin.
+  for (let guard = 0; guard < 64 && cur?.parent !== undefined; guard++) {
+    cur = all[cur.parent];
+    if (cur !== undefined && canonicalRole(cur.role) === "TabGroup") return true;
+  }
+  return false;
+}
+
 export function extractPredicates(
   ax: readonly UIElement[],
   ctx: PredicateContext = {},
@@ -146,7 +174,11 @@ export function extractPredicates(
   if (ax.length > 0) {
     const nested = nestAxElements(ax);
     const focused = nested.find((e) => e.focused === true);
-    if (focused !== undefined && STABLE_ROLES.has(canonicalRole(focused.role))) {
+    if (
+      focused !== undefined &&
+      STABLE_ROLES.has(canonicalRole(focused.role)) &&
+      !inTabStrip(focused, nested)
+    ) {
       add("ax_focused", labelArgs(focused));
     }
 
@@ -155,6 +187,7 @@ export function extractPredicates(
     // truncation, or the cap itself becomes a source of false mismatches.
     const candidates = nested
       .filter((e) => STABLE_ROLES.has(canonicalRole(e.role)))
+      .filter((e) => !inTabStrip(e, nested))
       .filter((e) => e.label !== undefined && e.label.length > 0 && !isVolatileLabel(e.label))
       .sort(
         (a, b) =>

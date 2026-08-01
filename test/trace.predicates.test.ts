@@ -56,6 +56,40 @@ describe("extractPredicates", () => {
     expect(ps.some((p) => p.args.role === "Window")).toBe(false);
   });
 
+  /**
+   * A browser's tab strip is SESSION state, not application state. Chrome
+   * exposes every open tab as a RadioButton labelled with the page title, and a
+   * collapsed tab group as a TabGroup labelled with the group name — measured on
+   * a real recording as 27 of one node's 61 predicates, which made that node
+   * unverifiable unless the same 20 tabs happened to be open. Same class as a
+   * clock or a badge count, one level up.
+   *
+   * Measured 27/27 of the tabs sit under a TabGroup ancestor, so the rule is
+   * structural rather than a guess about labels.
+   */
+  it("drops a browser's tabs and tab groups, keeping the page beneath them", () => {
+    const ps = extractPredicates([
+      el("AXTabGroup", "group Reading - 3 Other Tabs", 0),
+      { ...el("AXRadioButton", "Some Page Title - Google Chrome", 1), parent: 0 },
+      { ...el("AXTabGroup", "group Projects - 2 Other Tabs", 2), parent: 0 },
+      el("AXButton", "Reload", 3),
+    ]);
+    const labels = ps.map((p) => p.args.label);
+    expect(labels).not.toContain("Some Page Title - Google Chrome");
+    expect(labels).not.toContain("group Reading - 3 Other Tabs");
+    expect(labels).not.toContain("group Projects - 2 Other Tabs");
+    expect(labels).toContain("Reload");
+  });
+
+  /** A RadioButton that is NOT in a tab strip is an ordinary form control. */
+  it("keeps a radio button that is not part of a tab strip", () => {
+    const ps = extractPredicates([
+      el("AXWindow", "Prefs", 0),
+      { ...el("AXRadioButton", "Weekly", 1), parent: 0 },
+    ]);
+    expect(ps.map((p) => p.args.label)).toContain("Weekly");
+  });
+
   /** The unsaved-changes indicator: present while dirty, gone once saved. */
   it("drops the document-dirty indicator but keeps labels that merely start with it", () => {
     const ps = extractPredicates([
