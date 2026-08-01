@@ -23,6 +23,7 @@ import { resolveAnchor } from "../dist/replay/resolve.js";
 import { verifyNode } from "../dist/replay/verify.js";
 import { findPath } from "../dist/replay/plan.js";
 import { observe, windowOriginOf } from "../dist/replay/observe.js";
+import { executeRun } from "../dist/replay/run.js";
 
 const DATA = process.env.DESKRAG_DATA
   ?? join(homedir(), "Library/Application Support/deskrag-app/DeskRAG");
@@ -435,6 +436,95 @@ async function sweep(graph) {
   }
 }
 
+/**
+ * Drive the REAL loop with an arming gate that always REFUSES.
+ *
+ * Exercises observe -> locate -> pathfind -> buildPlan -> arm end to end against
+ * a live desktop and prints the segment it would have run, without posting
+ * anything. The read-only proxy makes that structural rather than a promise: it
+ * could not post even if `arm` were wrong.
+ */
+/**
+ * The layout the session was RECORDED with, from its own `keymap_change` event.
+ * Passing a placeholder makes every `type` action a blocker — correctly, since
+ * `type` has no fallback layout — which would make a dry run look unarmable for
+ * a reason that has nothing to do with resolution.
+ */
+function sessionKeymap(store) {
+  for (const s of store.listSessions()) {
+    for (const e of store.getEventsBySession(s.id)) {
+      if (e.kind === "keymap_change" && e.data?.entries !== undefined) return e.data;
+    }
+  }
+  return undefined;
+}
+
+async function dryRun(graph, goalId, keymap) {
+  const sidecar = AxExecSidecar.spawn({ planId: `probe-run-${Date.now()}` });
+  const actuator = readOnly(sidecar);
+  try {
+    if (!(await waitForApp(actuator))) return;
+    const goal = graph.nodes.find((n) => n.id === goalId || n.id.endsWith(`:${goalId}`));
+    if (goal === undefined) {
+      console.log(`no such goal node: ${goalId}`);
+      return;
+    }
+
+    let segment = 0;
+    const out = await executeRun({
+      graph,
+      actuator,
+      keymap: keymap ?? { layoutId: "none", entries: {} },
+      goalNodeId: goal.id,
+      arm: async (plan) => {
+        segment++;
+        console.log(`\n=== SEGMENT ${segment} — ${plan.steps.length} steps ===`);
+        for (const s of plan.steps) {
+          if (s.repair !== undefined) {
+            console.log(`  activate  ${s.app}${s.launch ? " (launching)" : ""}`);
+          } else if (s.superseded !== undefined) {
+            console.log(`  SUPERSEDED ${s.action.kind} — ${s.reason}`);
+          } else if (s.resolution !== undefined) {
+            const r = s.resolution;
+            console.log(`  ${s.action.kind.padEnd(6)} -> ${r.layer}@${r.confidence.toFixed(2)}`);
+          } else {
+            // chord / type / wait have no spatial target to resolve.
+            const detail =
+              s.action.kind === "type"
+                ? `  slot=${s.action.slot} ${JSON.stringify(s.slotBinding?.value ?? s.action.recorded)}`
+                : s.action.kind === "chord"
+                  ? `  ${s.action.keys.join("+")}`
+                  : "";
+            console.log(`  ${s.action.kind.padEnd(6)}${detail}`);
+          }
+        }
+        console.log(
+          `  cut       : ${plan.cut ? `${plan.cut.edgeId.split(":").pop()} (resume ${plan.cut.resumeAt.split(":").pop()})` : "none"}`,
+        );
+        console.log(
+          `  remainder : ${plan.remainder.map((r) => r.edgeId.split(":").pop()).join(", ") || "none"}`,
+        );
+        console.log(
+          `  blockers  : ${plan.blockers.map((b) => `${b.reason} [${b.scope}]`).join("; ") || "none"}`,
+        );
+        console.log(
+          `  brittle   : ${plan.brittleness.map((b) => `${b.edgeId.split(":").pop()}@${(b.axRate * 100).toFixed(0)}%${b.bound === "upper" ? " (upper)" : ""}`).join(", ")}`,
+        );
+        if (plan.drift !== undefined) {
+          console.log(
+            `  DRIFT     : expected ${plan.drift.expected.split(":").pop()}, observed ${plan.drift.observed.split(":").pop()}`,
+          );
+        }
+        console.log(`  -> refusing to arm; this probe never posts`);
+        return false;
+      },
+    });
+    console.log(`\nstopped: ${out.stopped}   reached: ${out.reached}   segments run: ${out.segments.length}`);
+  } finally {
+    sidecar.close();
+  }
+}
+
 // --- diagnostic: does a long-lived sidecar track the frontmost app? ---------
 
 /**
@@ -513,7 +603,8 @@ try {
     process.exit(1);
   }
 
-  if (has("--sweep")) await sweep(graph);
+  if (has("--dry-run")) await dryRun(graph, val("--goal"), sessionKeymap(store));
+  else if (has("--sweep")) await sweep(graph);
   else if (has("--diagnose-frontmost")) await diagnoseFrontmost(Number(val("--diagnose-frontmost") ?? 20));
   else if (has("--list") || has("--offline")) offline(graph);
   else await live(graph, val("--goal"));

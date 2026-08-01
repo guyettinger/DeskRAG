@@ -726,6 +726,45 @@ correct decline for an app absent from the graph — and then immediately found 
 frozen-frontmost defect above, which had to be fixed before any of the remaining
 rows could be measured at all.
 
+### Implemented, and driven against a real desktop (2026-08-01)
+
+`executeRun` was driven end to end against the live desktop with `arm` always
+refusing, through the probe's read-only proxy — so the whole loop ran and nothing
+was posted. Every prediction in this spec held:
+
+```
+=== SEGMENT 1 — 7 steps ===
+  click  -> identifier@1.00
+  SUPERSEDED wait   — activating Google Chrome replaces this
+  chord   cmd+a
+  type    slot=textarea "this is a new line"
+  SUPERSEDED wait   — activating Google Chrome replaces this
+  SUPERSEDED click  — activating Google Chrome replaces this
+  activate  Google Chrome
+  cut       : e3 (resume n3)
+  remainder : e3
+  brittle   : e2@100%, e3@100% (upper)
+stopped: declined
+```
+
+- The **repair is the last step**, after the source app's click, chord and
+  typing — the correction that had been reasoned about now observed.
+- **Both mid-edge app waits and the Dock click are superseded**, which is the
+  `e2`/`e5` shape that falsified the first supersession rule.
+- **`e2@100%`** live, against the 50% this edge measured before supersession.
+- The cut and remainder match the offline prediction exactly.
+
+**One artifact, recorded because it is a real property of the system.** The first
+dry run reported a blocker — `"this is a new line" cannot be typed with layout
+probe` — because the probe passed a placeholder keymap. That is `type` has no
+fallback layout behaving exactly as specified, and it means a plan cannot arm
+without the layout its session was recorded with. The probe now loads the
+keymap from the session's own `keymap_change` event.
+
+**Still never exercised: a multi-segment run that actually posts events.** Every
+figure above is a dry run. The single real CGEvent this project has posted
+remains the 2026-07-31 click.
+
 Remaining findings are written back into this spec before implementation is
 called done, in the style of the executor spec's "Correction:" sections.
 
