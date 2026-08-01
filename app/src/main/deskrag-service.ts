@@ -48,11 +48,12 @@ import {
   type BlobRow,
   type Reranker,
   type ViewSearcher,
+  type Graph,
 } from "deskrag";
 import type { SettingsStore } from "./settings.js";
 import { MODELS } from "./models.js";
 import { libUrl } from "./lib-resolve.js";
-import { indexTrace, rebuildGraph } from "./trace-index.js";
+import { DEFAULT_GRAPH_ID, indexTrace, rebuildGraph } from "./trace-index.js";
 import { ModelStore, type ModelDownloadProgress } from "./model-store.js";
 import { OnnxHost } from "./onnx-host.js";
 import { spawnOnnxWorker } from "./onnx-spawn.js";
@@ -844,5 +845,10 @@ export class DeskRagService {
   }
   async readBlob(blob: BlobRow): Promise<Uint8Array> {
     return this.blobs.read(blob);
+  }
+
+  /** The accreting trace graph every session merges into, or undefined before any. */
+  traceGraph(): Graph | undefined {
+    return this.store.getGraph(DEFAULT_GRAPH_ID);
   }
 }
