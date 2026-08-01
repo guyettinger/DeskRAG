@@ -359,12 +359,14 @@ export { BoundaryAxTrigger, type BoundaryAxTriggerOptions } from "./capture/ax/b
 // importing it loads nothing until it runs.
 export {
   agreement,
+  isRepairStep,
   LAYER_CEILING,
   pathCeiling,
   pathDepth,
   ceilingFor,
   BRITTLENESS_FLOOR,
   DEFAULT_MIN_CONFIDENCE,
+  type ActivateOutcome,
   type Actuator,
   type AxDescriptor,
   type AxObservation,
@@ -374,6 +376,8 @@ export {
   type Locate,
   type Plan,
   type PlannedAction,
+  type PlanStep,
+  type RepairStep,
   type ReplayInput,
   type Resolution,
   type ResolvedLayer,

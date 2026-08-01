@@ -10,7 +10,15 @@
  */
 
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import type { Actuator, AxDescriptor, AxObservation, Rect, UIElement, Vec2 } from "./types.js";
+import type {
+  ActivateOutcome,
+  Actuator,
+  AxDescriptor,
+  AxObservation,
+  Rect,
+  UIElement,
+  Vec2,
+} from "./types.js";
 
 export interface SidecarOptions {
   /** Passed as `--plan`; the binary refuses to start without it. */
@@ -111,6 +119,18 @@ export class AxExecSidecar implements Actuator {
       ...(r?.app !== undefined ? { app: r.app } : {}),
       ...(r?.windowTitle !== undefined ? { windowTitle: r.windowTitle } : {}),
     };
+  }
+
+  async runningApps(): Promise<string[]> {
+    const r = await this.send<{ apps?: string[] } | null>("runningApps");
+    return r?.apps ?? [];
+  }
+
+  async activate(app: string, launch: boolean): Promise<ActivateOutcome> {
+    const r = await this.send<{ outcome?: string } | null>("activate", { app, launch });
+    // An unrecognised outcome means the app was not raised; saying so is safer
+    // than throwing mid-plan or claiming success.
+    return r?.outcome === "activated" || r?.outcome === "launched" ? r.outcome : "not-running";
   }
 
   async locate(d: AxDescriptor): Promise<{ handle: number; bounds: Rect } | null> {

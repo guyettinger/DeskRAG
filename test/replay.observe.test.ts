@@ -15,13 +15,19 @@
 
 import { describe, expect, it } from "vitest";
 import { observe } from "../src/replay/observe.js";
-import type { Actuator, AxObservation, Rect, Vec2 } from "../src/replay/types.js";
+import type { ActivateOutcome, Actuator, AxObservation, Rect, Vec2 } from "../src/replay/types.js";
 import { predicateKey } from "../src/trace/predicates.js";
 
 class StubActuator implements Actuator {
   constructor(private readonly observation: AxObservation) {}
   async dump(): Promise<AxObservation> {
     return this.observation;
+  }
+  async runningApps(): Promise<string[]> {
+    return [];
+  }
+  async activate(_app: string, _launch: boolean): Promise<ActivateOutcome> {
+    return "not-running";
   }
   async locate(): Promise<{ handle: number; bounds: Rect } | null> {
     return null;
