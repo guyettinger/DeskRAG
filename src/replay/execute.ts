@@ -39,14 +39,19 @@ export function canArm(plan: Plan, override = false): { ok: boolean; reason?: st
   if (plan.blockers.length > 0) {
     // Blockers are assertable: no UI action produces them, so an override would
     // only mean failing later and less clearly.
-    return { ok: false, reason: plan.blockers.map((b) => b.reason).join("; ") };
+    // Scoped, so a reviewer can tell a blocker in the segment they are about to
+    // run from one several edges ahead that makes the goal unreachable.
+    return {
+      ok: false,
+      reason: plan.blockers.map((b) => `${b.reason} (${b.scope})`).join("; "),
+    };
   }
   const brittle = plan.brittleness.filter((b) => b.belowFloor);
   if (brittle.length > 0 && !override) {
     return {
       ok: false,
       reason: `brittle edges (majority of targets resolve to coordinates only): ${brittle
-        .map((b) => `${b.edgeId} @ ${(b.axRate * 100).toFixed(0)}%`)
+        .map((b) => `${b.edgeId} @ ${(b.axRate * 100).toFixed(0)}% ${b.bound}`)
         .join(", ")}`,
     };
   }

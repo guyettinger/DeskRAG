@@ -26,7 +26,10 @@ import {
   type PlannedAction,
   type PlanStep,
   type Predicate,
+  type RemainderAction,
+  type RemainderEdge,
   type RepairStep,
+  type SegmentCut,
   type Vec2,
 } from "./types.js";
 import { blockersOf, verifyNode } from "./verify.js";
@@ -127,6 +130,45 @@ function supersededBy(actions: readonly Action[], app: string): Set<number> {
   return out;
 }
 
+/**
+ * The descriptors the RECORDING carries. A fact about the anchor, never a
+ * forecast of what it will resolve to — the remainder does not claim to know
+ * where an unresolved action would land.
+ */
+function descriptorsOf(anchor: Anchor | undefined): RemainderAction["descriptors"] {
+  if (anchor === undefined) return undefined;
+  const d: NonNullable<RemainderAction["descriptors"]> = [];
+  if (anchor.ax?.identifier !== undefined && anchor.ax.identifier.length > 0) d.push("identifier");
+  if (anchor.ax?.label !== undefined && anchor.ax.label.length > 0) d.push("label");
+  if (anchor.ax?.path !== undefined && anchor.ax.path.length > 0) d.push("path");
+  if (anchor.visual !== undefined) d.push("visual");
+  return d.length > 0 ? d : undefined;
+}
+
+/**
+ * The deductive CEILING on an edge's AX rate. An anchor with no `ax` layer can
+ * never resolve to an AX rung — at any time, by any mechanism — so this is
+ * arithmetic over what the recording contains, not a prediction. It is what
+ * stops a reviewer arming segment 1, changing the world, and only then finding
+ * that a later edge could never arm at all.
+ */
+function axCeiling(actions: readonly Action[]): number {
+  const spatial = actions.filter(isSpatial);
+  if (spatial.length === 0) return 1; // matches the measured branch: no targets, no doubt
+  return spatial.filter((a) => anchorOf(a)?.ax !== undefined).length / spatial.length;
+}
+
+function remainderActionOf(action: Action): RemainderAction {
+  const anchor = anchorOf(action);
+  const descriptors = descriptorsOf(anchor);
+  return {
+    kind: action.kind,
+    ...(descriptors !== undefined ? { descriptors } : {}),
+    ...(anchor !== undefined ? { recordedPoint: { x: anchor.point.x, y: anchor.point.y } } : {}),
+    ...(action.kind === "type" ? { slot: action.slot } : {}),
+  };
+}
+
 export interface BuildPlanInput {
   graph: Graph;
   fromNodeId: string;
@@ -169,6 +211,9 @@ export async function buildPlan(input: BuildPlanInput): Promise<Plan> {
   const steps: PlanStep[] = [];
   const blockers: Blocker[] = [];
   const brittleness: EdgeBrittleness[] = [];
+  const remainder: RemainderEdge[] = [];
+  /** Set once resolution stops working; every later edge is disclosed, not planned. */
+  let cut: SegmentCut | undefined;
   // The app we believe is frontmost as the plan progresses — starts from what
   // is observed and advances as repairs are inserted, so a multi-hop path
   // through one application repairs it once.
@@ -178,11 +223,15 @@ export async function buildPlan(input: BuildPlanInput): Promise<Plan> {
     let targets = 0;
     let axTargets = 0;
 
-    // Assertable predicates on the node this edge arrives at gate the plan.
+    // Assertable predicates gate the WHOLE run, segment or remainder alike: no
+    // UI action can produce them, so the present observation is decisive even
+    // for a node several edges away. Collected first and scoped below, once it
+    // is known whether this edge survived the cut.
+    const edgeBlockers: Blocker[] = [];
     const to = nodesById.get(edge.to);
     if (to !== undefined) {
       for (const v of blockersOf(verifyNode(to.predicates, input.observed).violations)) {
-        blockers.push({
+        edgeBlockers.push({
           predicate: v.predicate,
           reason: "assertable predicate does not hold",
           scope: "segment",
@@ -205,7 +254,7 @@ export async function buildPlan(input: BuildPlanInput): Promise<Plan> {
         const running = input.runningApps.includes(wanted);
         const mayLaunch = input.allowLaunch === true;
         if (!running && !mayLaunch) {
-          blockers.push({ reason: `${wanted} is not running`, scope: "segment" });
+          edgeBlockers.push({ reason: `${wanted} is not running`, scope: "segment" });
         } else {
           repair = {
             repair: "activate",
@@ -222,13 +271,44 @@ export async function buildPlan(input: BuildPlanInput): Promise<Plan> {
 
     const superseded =
       repair === undefined ? new Set<number>() : supersededBy(edge.actions, repair.app);
+    /** What would actually be posted, once the repair's replacements are removed. */
+    const kept = edge.actions.filter((_, i) => !superseded.has(i));
+
+    /** Disclose an edge instead of planning it, and bound its brittleness. */
+    const disclose = (): void => {
+      remainder.push({
+        edgeId: edge.id,
+        toNodeId: edge.to,
+        actions: kept.map(remainderActionOf),
+        repairs: repair === undefined ? [] : [repair],
+      });
+      const ceiling = axCeiling(kept);
+      brittleness.push({
+        edgeId: edge.id,
+        axRate: ceiling,
+        belowFloor: ceiling < BRITTLENESS_FLOOR,
+        bound: "upper",
+      });
+    };
+
+    if (cut !== undefined) {
+      disclose();
+      for (const b of edgeBlockers) blockers.push({ ...b, scope: "remainder" });
+      continue;
+    }
+
+    // Planned into a BUFFER: if any anchor cuts, the whole edge is discarded and
+    // disclosed instead. The cut is at an edge boundary because a node boundary
+    // is the only place the world can be re-observed.
+    const buffer: PlanStep[] = [];
+    let edgeCut: SegmentCut | undefined;
 
     for (const [i, action] of edge.actions.entries()) {
       if (superseded.has(i)) {
         // Visible, never silent: the review has to be able to say what will NOT
         // be posted and why. Skipping here also keeps it out of the AX rate,
         // which is what makes a cross-app edge armable at all.
-        steps.push({
+        buffer.push({
           superseded: "activate",
           edgeId: edge.id,
           action,
@@ -239,15 +319,19 @@ export async function buildPlan(input: BuildPlanInput): Promise<Plan> {
 
       const step: PlannedAction = { edgeId: edge.id, action };
 
-      if (action.kind === "click" || action.kind === "hover" || action.kind === "scroll") {
-        const r = await resolveAnchor(action.anchor, input.locate, resolveOpts);
-        step.resolution = r;
-        targets++;
-        if (r.layer !== "point") axTargets++;
-      } else if (action.kind === "drag") {
-        // The `from` endpoint is what the plan previews; `to` is resolved at
-        // execution time against the same ladder.
-        const r = await resolveAnchor(action.from, input.locate, resolveOpts);
+      const anchor = anchorOf(action);
+      if (anchor !== undefined) {
+        // For a drag this is the `from` endpoint; `to` resolves at execution
+        // time against the same ladder.
+        const r = await resolveAnchor(anchor, input.locate, resolveOpts);
+        // THE CUT: the anchor carries AX descriptors and still reached no AX
+        // rung. That is the executor measuring that it is describing a state
+        // which does not exist yet — as opposed to a point-only anchor, which is
+        // already at its permanent best and cannot be improved by waiting.
+        if (r.layer === "point" && anchor.ax !== undefined) {
+          edgeCut = { resumeAt: edge.from, edgeId: edge.id, attempts: r.attempts };
+          break;
+        }
         step.resolution = r;
         targets++;
         if (r.layer !== "point") axTargets++;
@@ -256,22 +340,30 @@ export async function buildPlan(input: BuildPlanInput): Promise<Plan> {
         const value = bound ?? action.recorded;
         if (bound !== undefined) step.slotBinding = { name: action.slot, value: bound };
         if (input.keymap === undefined) {
-          blockers.push({
+          edgeBlockers.push({
             reason: `no keymap supplied: cannot type "${value}"`,
             scope: "segment",
           });
         } else if (strokesFor(value, input.keymap) === null) {
-          blockers.push({
+          edgeBlockers.push({
             reason: `"${value}" cannot be typed with layout ${input.keymap.layoutId}`,
             scope: "segment",
           });
         }
       }
 
-      steps.push(step);
+      buffer.push(step);
     }
 
-    if (repair !== undefined) steps.push(repair);
+    if (edgeCut !== undefined) {
+      cut = edgeCut;
+      disclose();
+      for (const b of edgeBlockers) blockers.push({ ...b, scope: "remainder" });
+      continue;
+    }
+
+    steps.push(...buffer, ...(repair === undefined ? [] : [repair]));
+    for (const b of edgeBlockers) blockers.push(b);
 
     const axRate = targets > 0 ? axTargets / targets : 1;
     brittleness.push({
@@ -290,6 +382,7 @@ export async function buildPlan(input: BuildPlanInput): Promise<Plan> {
     steps,
     blockers,
     brittleness,
-    remainder: [],
+    ...(cut !== undefined ? { cut } : {}),
+    remainder,
   };
 }
