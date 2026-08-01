@@ -32,7 +32,39 @@ import {
 export interface ResolveOptions {
   /** Below this a rung is rejected and the ladder falls through. */
   minConfidence?: number;
+  /**
+   * Origin of the window the live element sits in. Supplying it makes geometric
+   * agreement WINDOW-RELATIVE instead of absolute, which is what stops a moved
+   * window from vetoing a correctly-identified element.
+   *
+   * Measured live: TextEdit's text view resolved by identifier to bounds of
+   * exactly the recorded size, 2310px right of where it was recorded because the
+   * window had moved. Compared absolutely, agreement was 0.0000 and the rung was
+   * rejected — dropping the ladder to `point`, which clicks where the element is
+   * NOT. The fallback was strictly worse than the rung it rejected. In window
+   * space the same measurement is 1.0000.
+   */
+  windowOrigin?: Vec2;
 }
+
+/**
+ * The window origin at RECORD time, derived from the anchor: the point is
+ * global and `windowRelative` is its offset within the window, so their
+ * difference is where the window was. Undefined when the anchor recorded no
+ * window-relative offset, in which case comparison stays absolute.
+ */
+function recordedWindowOrigin(anchor: Anchor): Vec2 | undefined {
+  const wr = anchor.point.windowRelative;
+  if (wr === undefined) return undefined;
+  return { x: anchor.point.x - wr.x, y: anchor.point.y - wr.y };
+}
+
+const relativeTo = (r: Rect, origin: Vec2): Rect => ({
+  x: r.x - origin.x,
+  y: r.y - origin.y,
+  w: r.w,
+  h: r.h,
+});
 
 /** The AX rungs and the descriptor each one keys on. Order is computed below. */
 const AX_RUNGS: {
@@ -103,6 +135,18 @@ export async function resolveAnchor(
   // The recorded box, used to judge agreement. Only the visual layer records one.
   const recordedBox = anchor.visual?.bbox;
 
+  // Compare in window space when BOTH origins are known — a window that merely
+  // moved then agrees perfectly, and only a real layout change reduces trust.
+  const recOrigin = recordedWindowOrigin(anchor);
+  const liveOrigin = opts.windowOrigin;
+  const relative = recOrigin !== undefined && liveOrigin !== undefined;
+  const judge = (live: Rect): number | undefined => {
+    if (recordedBox === undefined) return undefined; // nothing to disagree with
+    return relative
+      ? agreement(relativeTo(recordedBox, recOrigin), relativeTo(live, liveOrigin))
+      : agreement(recordedBox, live);
+  };
+
   if (anchor.ax !== undefined) {
     for (const rung of rungsFor(anchor.ax)) {
       const hit = await locate(rung.descriptor);
@@ -112,10 +156,8 @@ export async function resolveAnchor(
       }
       // With no recorded box there is nothing to disagree with, so the rung
       // keeps its ceiling: absence of evidence is not evidence of mismatch.
-      const confidence =
-        recordedBox !== undefined
-          ? rung.ceiling * agreement(recordedBox, hit.bounds)
-          : rung.ceiling;
+      const agreed = judge(hit.bounds);
+      const confidence = agreed !== undefined ? rung.ceiling * agreed : rung.ceiling;
       if (confidence < minConfidence) {
         attempts.push({
           layer: rung.layer,

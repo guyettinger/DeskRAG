@@ -25,6 +25,7 @@ import {
   type Plan,
   type PlannedAction,
   type Predicate,
+  type Vec2,
 } from "./types.js";
 import { blockersOf, verifyNode } from "./verify.js";
 
@@ -96,6 +97,12 @@ export interface BuildPlanInput {
   keymap?: Keymap;
   slotBindings?: Record<string, string>;
   planId?: string;
+  /**
+   * Live window origin, so anchor geometry is judged in window space. Without
+   * it a window that moved since recording vetoes every AX rung and every
+   * target falls back to a stale coordinate.
+   */
+  windowOrigin?: Vec2;
 }
 
 export async function buildPlan(input: BuildPlanInput): Promise<Plan> {
@@ -104,6 +111,7 @@ export async function buildPlan(input: BuildPlanInput): Promise<Plan> {
     throw new Error(`no path from ${input.fromNodeId} to ${input.toNodeId}`);
   }
 
+  const resolveOpts = input.windowOrigin !== undefined ? { windowOrigin: input.windowOrigin } : {};
   const nodesById = new Map(input.graph.nodes.map((n) => [n.id, n]));
   const steps: PlannedAction[] = [];
   const blockers: Blocker[] = [];
@@ -125,14 +133,14 @@ export async function buildPlan(input: BuildPlanInput): Promise<Plan> {
       const step: PlannedAction = { edgeId: edge.id, action };
 
       if (action.kind === "click" || action.kind === "hover" || action.kind === "scroll") {
-        const r = await resolveAnchor(action.anchor, input.locate);
+        const r = await resolveAnchor(action.anchor, input.locate, resolveOpts);
         step.resolution = r;
         targets++;
         if (r.layer !== "point") axTargets++;
       } else if (action.kind === "drag") {
         // The `from` endpoint is what the plan previews; `to` is resolved at
         // execution time against the same ladder.
-        const r = await resolveAnchor(action.from, input.locate);
+        const r = await resolveAnchor(action.from, input.locate, resolveOpts);
         step.resolution = r;
         targets++;
         if (r.layer !== "point") axTargets++;
