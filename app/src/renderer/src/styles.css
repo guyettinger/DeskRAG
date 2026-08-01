@@ -1527,3 +1527,9 @@ select {
 .review__brittle .is-low { color: var(--amber); }
 .review__override { display: block; margin: 12px 0; font-size: 12px; }
 .review__actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+.review__nearest h3 { font-size: 12px; margin: 14px 0 4px; }
+.nearby { margin: 8px 0; padding-left: 8px; border-left: 2px solid var(--hairline); }
+.nearby__head { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; }
+.nearby__score { font-variant-numeric: tabular-nums; color: var(--amber); }
+.nearby ul { margin: 2px 0 0; padding-left: 16px; font-size: 11px; color: var(--muted); }
+.nearby li { font-family: var(--font-mono); word-break: break-word; }

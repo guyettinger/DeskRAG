@@ -334,11 +334,32 @@ export interface GraphDTO {
   slots: { name: string; samples: string[] }[];
 }
 
+/**
+ * How close a recorded node came to holding, when none did.
+ *
+ * `locateNode` answers only yes/no/ambiguous, which turns a failure into a dead
+ * end. Locating is a SUBSET check — every one of a node's predicates must hold —
+ * so "how many held, and which did not" is the whole diagnosis, and it is
+ * computed with the locator's own `verifyNode` rather than a lookalike.
+ */
+export interface NearestNodeDTO {
+  nodeId: string;
+  label: string;
+  held: number;
+  total: number;
+  /** Predicates that did not hold, already human-readable. Truncated. */
+  missing: string[];
+  /** How many more beyond `missing`. */
+  more: number;
+}
+
 /** Where the live desktop is, as far as the locator can tell. */
 export interface LocationDTO {
   nodeId?: string;
   candidates: number;
   ambiguous: boolean;
+  /** Best near-misses, most-held first. Only when nothing located. */
+  nearest?: NearestNodeDTO[];
   app?: string;
   /** From AxObservation.windowTitle — the one place a title is legitimate. */
   window?: string;

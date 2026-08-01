@@ -156,7 +156,7 @@ export function toGraphDTO(graph: Graph, resolveFrameBlob?: ResolveFrameBlob): G
   };
 }
 
-const describePredicate = (p: Predicate): string => {
+export const describePredicate = (p: Predicate): string => {
   const args = Object.entries(p.args)
     .map(([k, v]) => `${k}=${String(v)}`)
     .join(", ");

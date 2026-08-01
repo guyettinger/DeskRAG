@@ -14,19 +14,29 @@
  * to start without --plan, and nothing posts outside executePlan.
  */
 
-import { AxExecSidecar, executeRun, locateNode, predicatesOf, SwiftKeymapSource } from "deskrag";
-import type { AxObservation, Graph, Plan, RunOutcome } from "deskrag";
+import {
+  AxExecSidecar,
+  executeRun,
+  locateNode,
+  predicatesOf,
+  SwiftKeymapSource,
+  verifyNode,
+} from "deskrag";
+import type { AxObservation, Graph, Plan, Predicate, RunOutcome } from "deskrag";
 import type {
   GraphDTO,
   LocationDTO,
+  NearestNodeDTO,
   ReplayArmInput,
   ReplayStartInput,
   ReplayStopReason,
   RunEventDTO,
 } from "@shared/types";
-import { toGraphDTO, toPlanDTO } from "./plan-view.js";
+import { describePredicate, labelNode, toGraphDTO, toPlanDTO } from "./plan-view.js";
 
 const POLL_MS = 2000;
+const MAX_NEAREST = 3;
+const MAX_MISSING_SHOWN = 6;
 
 /**
  * How DeskRAG names itself to the AX layer. `AxObservation.app` is the
@@ -168,16 +178,48 @@ export class ReplayService {
     this.emit(location);
   }
 
+  /**
+   * The near-misses, when nothing located. Uses `verifyNode` — the same
+   * function `locateNode` itself calls — so the diagnosis cannot disagree with
+   * the verdict it is explaining.
+   */
+  private nearest(graph: Graph, observed: readonly Predicate[]): NearestNodeDTO[] {
+    const scored = graph.nodes
+      .filter((n) => n.predicates.length > 0)
+      .map((n) => {
+        const { violations } = verifyNode(n.predicates, observed);
+        const missing = violations.map((v) => describePredicate(v.predicate));
+        return {
+          nodeId: n.id,
+          label: labelNode(n).label,
+          held: n.predicates.length - violations.length,
+          total: n.predicates.length,
+          missing: missing.slice(0, MAX_MISSING_SHOWN),
+          more: Math.max(0, missing.length - MAX_MISSING_SHOWN),
+        };
+      });
+    // Most held first, then fewest outstanding — a node that holds 30 of 33 is
+    // a better clue than one that holds 1 of 1.
+    scored.sort((a, b) => b.held - a.held || a.total - a.held - (b.total - b.held));
+    return scored.slice(0, MAX_NEAREST);
+  }
+
   private locate(observation: AxObservation): LocationDTO {
     const graph = this.getGraph();
+    const observed = predicatesOf(observation);
     const located =
       graph === undefined
         ? { nodeId: undefined, candidates: 0, ambiguous: false }
-        : locateNode(predicatesOf(observation), graph.nodes);
+        : locateNode(observed, graph.nodes);
+    const nearest =
+      graph !== undefined && located.nodeId === undefined
+        ? this.nearest(graph, observed)
+        : undefined;
     return {
       ...(located.nodeId !== undefined ? { nodeId: located.nodeId } : {}),
       candidates: located.candidates,
       ambiguous: located.ambiguous,
+      ...(nearest !== undefined && nearest.length > 0 ? { nearest } : {}),
       ...(observation.app !== undefined ? { app: observation.app } : {}),
       ...(observation.windowTitle !== undefined ? { window: observation.windowTitle } : {}),
     };

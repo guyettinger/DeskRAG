@@ -8,7 +8,12 @@
  */
 
 import React, { useState } from "react";
-import { shortId, type PlanDTO, type ReplayStopReason } from "@shared/types";
+import {
+  shortId,
+  type NearestNodeDTO,
+  type PlanDTO,
+  type ReplayStopReason,
+} from "@shared/types";
 
 export function stopMessage(reason: ReplayStopReason, detail?: string): string {
   switch (reason) {
@@ -37,11 +42,19 @@ interface Props {
   plan: PlanDTO | null;
   status: string | null;
   busy: boolean;
+  nearest?: NearestNodeDTO[] | undefined;
   onArm: (override: boolean) => void;
   onCancel: () => void;
 }
 
-export function PlanReview({ plan, status, busy, onArm, onCancel }: Props): React.JSX.Element {
+export function PlanReview({
+  plan,
+  status,
+  busy,
+  nearest,
+  onArm,
+  onCancel,
+}: Props): React.JSX.Element {
   const [override, setOverride] = useState(false);
 
   if (plan === null) {
@@ -49,6 +62,30 @@ export function PlanReview({ plan, status, busy, onArm, onCancel }: Props): Reac
       <aside className="review review--empty">
         <h2 className="review__title">Plan</h2>
         <p className="muted">{status ?? "Pick a goal on the graph, then run."}</p>
+        {nearest !== undefined && nearest.length > 0 && (
+          <section className="review__nearest">
+            <h3>Nothing located · nearest recorded states</h3>
+            <p className="muted">
+              Locating is a subset check: every predicate a node claims must hold.
+            </p>
+            {nearest.map((n) => (
+              <div key={n.nodeId} className="nearby">
+                <div className="nearby__head">
+                  <span title={n.nodeId}>{n.label}</span>
+                  <span className="nearby__score">
+                    {n.held}/{n.total}
+                  </span>
+                </div>
+                <ul>
+                  {n.missing.map((m, i) => (
+                    <li key={i}>{m}</li>
+                  ))}
+                  {n.more > 0 && <li className="muted">+{n.more} more</li>}
+                </ul>
+              </div>
+            ))}
+          </section>
+        )}
       </aside>
     );
   }

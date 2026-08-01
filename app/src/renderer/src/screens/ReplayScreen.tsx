@@ -135,6 +135,7 @@ export function ReplayScreen(): React.JSX.Element {
           plan={plan}
           status={status}
           busy={busy}
+          nearest={location?.nearest}
           onArm={(override) => {
             setBusy(true);
             void api.replay.arm({ segment: plan?.segment ?? 1, approve: true, override });
