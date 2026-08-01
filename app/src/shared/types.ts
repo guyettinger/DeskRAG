@@ -308,6 +308,13 @@ export interface GraphNodeDTO {
    * no `window` predicate and `STABLE_ROLES` omits `Window`.
    */
   hint?: string;
+  /**
+   * The short id to print on the card. Usually just the suffix (`n3`), but
+   * widened with a slice of the session ULID when two nodes in the graph share
+   * a suffix — which a merged graph produces as soon as a second session is
+   * recorded, and which is otherwise indistinguishable on screen.
+   */
+  chip: string;
   /** From TraceNode.visual — served via deskrag://frame/<blobId>. */
   frameBlobId?: string;
   observations: number;

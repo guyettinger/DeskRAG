@@ -5,7 +5,7 @@
  */
 
 import React, { useMemo, useRef, useState } from "react";
-import { shortId, type GraphDTO } from "@shared/types";
+import type { GraphDTO } from "@shared/types";
 
 const CARD_W = 180;
 const CARD_H = 132;
@@ -147,7 +147,7 @@ export function GraphCanvas({
               )}
               <div className="gnode__label">{node.label}</div>
               <div className="gnode__meta">
-                <span className="gnode__id">{shortId(node.id)}</span>
+                <span className="gnode__id">{node.chip}</span>
                 {node.id === graph.entry && <span className="gnode__tag">entry</span>}
                 {here && <span className="gnode__tag is-here">you are here</span>}
                 {goal && <span className="gnode__tag is-goal">goal</span>}

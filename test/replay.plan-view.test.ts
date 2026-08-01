@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { labelNode, rankNodes, toGraphDTO, toPlanDTO } from "../app/src/main/plan-view.js";
+import { chipIds, labelNode, rankNodes, toGraphDTO, toPlanDTO } from "../app/src/main/plan-view.js";
 import type { Graph, Predicate, TraceEdge, TraceNode } from "../src/trace/types.js";
 import type { Anchor, Plan } from "../src/replay/types.js";
 
@@ -89,6 +89,27 @@ describe("labelNode", () => {
       { kind: "window", args: { title: "report.rtf" }, reach: "achievable" },
     ]);
     expect(labelNode(n).label).toBe("TextEdit");
+  });
+});
+
+describe("chipIds", () => {
+  it("uses the bare suffix when it is unambiguous", () => {
+    expect([...chipIds(["01AAAAAAAAAAAAAAAAAAAAAAAA:n0", "01AAAAAAAAAAAAAAAAAAAAAAAA:n1"])]).toEqual([
+      ["01AAAAAAAAAAAAAAAAAAAAAAAA:n0", "n0"],
+      ["01AAAAAAAAAAAAAAAAAAAAAAAA:n1", "n1"],
+    ]);
+  });
+
+  it("widens both sides of a cross-session collision", () => {
+    // Exactly what a second recording produces: the real graph showed three
+    // "TextEdit" cards chipped n2, n2, n3.
+    const chips = chipIds(["01AAAAAAAAAAAAAAAAAAAABBBB:n2", "01AAAAAAAAAAAAAAAAAAAACCCC:n2"]);
+    expect(chips.get("01AAAAAAAAAAAAAAAAAAAABBBB:n2")).toBe("BBBB:n2");
+    expect(chips.get("01AAAAAAAAAAAAAAAAAAAACCCC:n2")).toBe("CCCC:n2");
+  });
+
+  it("leaves an id with no session prefix alone", () => {
+    expect(chipIds(["n0"]).get("n0")).toBe("n0");
   });
 });
 

@@ -115,8 +115,43 @@ export function rankNodes(graph: Graph): Map<string, number> {
  */
 export type ResolveFrameBlob = (frameId: string) => string | undefined;
 
+/**
+ * The id to print on each card: the bare suffix where that is unambiguous, and
+ * widened with a slice of the session ULID where it is not.
+ *
+ * A graph accretes across sessions, so a second recording immediately produces
+ * two nodes whose ids end `:n2`. Measured on the real graph: three cards
+ * labelled "TextEdit" with chips `n2`, `n2`, `n3`. Since the label deliberately
+ * does not distinguish same-app states, the chip was the only thing left that
+ * could — so it has to.
+ */
+export function chipIds(ids: readonly string[]): Map<string, string> {
+  const bySuffix = new Map<string, string[]>();
+  for (const id of ids) {
+    const s = shortId(id);
+    const list = bySuffix.get(s);
+    if (list === undefined) bySuffix.set(s, [id]);
+    else list.push(id);
+  }
+  const out = new Map<string, string>();
+  for (const [suffix, group] of bySuffix) {
+    for (const id of group) {
+      if (group.length === 1) {
+        out.set(id, suffix);
+        continue;
+      }
+      // The ULID's tail is its most-varying part, so a short slice separates
+      // sessions recorded close together.
+      const prefix = id.slice(0, Math.max(0, id.length - suffix.length - 1));
+      out.set(id, prefix.length > 0 ? `${prefix.slice(-4)}:${suffix}` : suffix);
+    }
+  }
+  return out;
+}
+
 export function toGraphDTO(graph: Graph, resolveFrameBlob?: ResolveFrameBlob): GraphDTO {
   const ranks = rankNodes(graph);
+  const chips = chipIds(graph.nodes.map((n) => n.id));
 
   const nodes: GraphNodeDTO[] = graph.nodes.map((n) => {
     const named = labelNode(n);
@@ -129,6 +164,7 @@ export function toGraphDTO(graph: Graph, resolveFrameBlob?: ResolveFrameBlob): G
     return {
       id: n.id,
       label: named.label,
+      chip: chips.get(n.id) ?? shortId(n.id),
       ...(named.app !== undefined ? { app: named.app } : {}),
       ...(named.hint !== undefined ? { hint: named.hint } : {}),
       ...(blobId !== undefined ? { frameBlobId: blobId } : {}),
