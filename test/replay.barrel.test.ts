@@ -21,6 +21,7 @@ describe("replay barrel", () => {
       "isRepairStep",
       "isSupersededStep",
       "locateNode",
+      "executeRun",
       "AxExecSidecar",
       "LAYER_CEILING",
       "BRITTLENESS_FLOOR",

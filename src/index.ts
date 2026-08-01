@@ -392,7 +392,8 @@ export {
   type SupersededStep,
 } from "./replay/types.js";
 export { locateNode } from "./replay/locate.js";
-export { observe, windowOriginOf } from "./replay/observe.js";
+export { executeRun } from "./replay/run.js";
+export { observe, predicatesOf, windowOriginOf } from "./replay/observe.js";
 export { resolveAnchor, type ResolveOptions } from "./replay/resolve.js";
 export {
   verifyNode,

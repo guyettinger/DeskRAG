@@ -19,15 +19,25 @@
 import { extractPredicates } from "../trace/predicates.js";
 import type { Actuator, AxObservation, Predicate, Vec2 } from "./types.js";
 
-/** Dump the live state and express it as predicates. */
-export async function observe(actuator: Actuator): Promise<Predicate[]> {
-  const o = await actuator.dump();
+/**
+ * Express ONE observation as predicates — the dump-free half of `observe`.
+ *
+ * Exposed because the run loop needs the predicates AND the window origin from
+ * the same instant: dumping twice to get both is the split-fact hazard that made
+ * boundary snapshots describe the previous application.
+ */
+export function predicatesOf(o: AxObservation): Predicate[] {
   return extractPredicates(o.elements, {
     ...(o.app !== undefined && o.app.length > 0 ? { app: o.app } : {}),
     ...(o.windowTitle !== undefined && o.windowTitle.length > 0
       ? { windowTitle: o.windowTitle }
       : {}),
   });
+}
+
+/** Dump the live state and express it as predicates. */
+export async function observe(actuator: Actuator): Promise<Predicate[]> {
+  return predicatesOf(await actuator.dump());
 }
 
 /**
