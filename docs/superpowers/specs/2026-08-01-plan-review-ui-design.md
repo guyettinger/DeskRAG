@@ -439,11 +439,54 @@ trusted, per the repo's standing rule. Nothing was armed and nothing was posted.
 - **3 of 7 edges are back edges**, so loops are common in a merged graph and the
   bowed rendering is load-bearing rather than decorative.
 
-**Still unvalidated, and the reason this section is not the whole story:** the
-app has been launched and the Replay screen has not been driven. No plan has been
-built against a live tree from this surface, and **nothing has been armed**. The
-focus handoff — the hazard this spec exists to address — is verified by running
-it, and it has not been run.
+## The first armed run from this surface (2026-08-01)
+
+A plan was reviewed and armed in the app, and it posted real CGEvents. **The
+focus handoff held: every click landed in TextEdit, none in DeskRAG.** That is
+the hazard this spec exists to address, and it is the only way it could have been
+checked.
+
+The armed segment, as rendered:
+
+```
+Segment 1 · TextEdit → Google Chrome
+1. hide DeskRAG, return focus to TextEdit
+2. 3× click   TextArea #First Text View     identifier 1.00
+3. wait until app(app=Google Chrome)        superseded — the repair replaces it
+4. press cmd+a
+5. type       slot textarea
+6. wait until app(app=Google Chrome)        superseded
+7. click                                    superseded
+8. activate Google Chrome                   app(...) does not hold · will not launch it
+
+Resolution stopped at e3 — path not found in the live AX tree; resumes from n3.
+Beyond the cut · 1 edge:  e3 → n4, click, recorded: path, recorded at (223, 146)
+Anchor quality: e2 100% AX rung · e3 100% AX rung (upper bound)
+```
+
+**What ran live for the first time.** The 2026-07-31 run was one click, one app,
+target already frontmost. This added: a **chord** (`cmd+a`), **`type`**, the
+**activation repair**, **supersession**, and a **cut** plan with a disclosed
+remainder — none of which had ever been posted.
+
+**Three design decisions were confirmed by execution rather than by argument.**
+
+1. **The repair belongs at the edge's END.** Steps 2–5 posted into TextEdit and
+   Chrome was activated at step 8. Had the repair gone first, one app's clicks
+   and keystrokes would have been posted into another — which is what the
+   shipped code did before `…-app-activation-repair-design.md` moved it.
+2. **Supersession is what makes a cross-app edge armable.** Three of eight steps
+   were suppressed, and all three were the recorded app switch in its two forms.
+   They are visible in the review, struck through with a reason, never dropped.
+3. **AppKit was the right app to try first.** `identifier 1.00` is the top rung,
+   and the anchor ladder predicts exactly that for AppKit (67% identifiers
+   against Chromium's 9%). The one anchor that failed was a **path**, in the edge
+   that crosses into Chrome.
+
+**Still open.** Whether the segment loop continues past the cut — a second
+review for `e3 → n4` — is not established by this run and is recorded as unknown
+rather than assumed. The remainder's single edge is point-and-path only, so it
+is also the case that its anchor cannot improve.
 
 ## Out of scope
 
