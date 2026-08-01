@@ -18,6 +18,7 @@ describe("replay barrel", () => {
       "canArm",
       "executePlan",
       "agreement",
+      "isRepairStep",
       "AxExecSidecar",
       "LAYER_CEILING",
       "BRITTLENESS_FLOOR",
@@ -50,6 +51,13 @@ describe("executor inertness", () => {
       const src = readFileSync(join(dir, file), "utf8");
       expect(src, `${file} must not spawn`).not.toMatch(/child_process|execFile|\bspawn\(/);
     }
+  });
+
+  // Planning must stay inert: calling `activate` to discover whether an app is
+  // running would activate it, changing the world the plan is describing.
+  it("plan.ts never calls activate", () => {
+    const src = readFileSync(join(process.cwd(), "src/replay/plan.ts"), "utf8");
+    expect(src).not.toMatch(/\.activate\(/);
   });
 
   it("replay/ never imports store, represent, or retrieve", () => {
