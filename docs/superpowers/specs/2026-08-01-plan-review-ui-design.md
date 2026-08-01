@@ -169,10 +169,28 @@ is tested rather than eyeballed. The root `vitest.config.ts` gains a `@shared`
 alias so `test/replay.plan-view.test.ts` can import it. That is the only
 build-config change in this spec.
 
-Labelling rules:
-- A node's label is its `app` predicate's name, then its `window` predicate's
-  title. A node with neither (the entry node, `n0`) is labelled by its id and
-  says so.
+Labelling rules. **There is no `window` predicate to label from** — checked
+against `extractPredicates` rather than assumed from `PredicateKind`, which lists
+one. Window titles are deliberately never emitted (a title is document identity,
+not state; keeping it meant a node recorded in one document could never be
+located in another), and `Window` is deliberately absent from `STABLE_ROLES` for
+the same reason. So a node label is built from what nodes actually carry:
+
+1. the `app` predicate's `app` arg;
+2. one distinguishing hint after it — a `Sheet` or `Dialog` `ax_exists` label
+   first, because those name a state ("Open", "Save") rather than a document and
+   are kept in `STABLE_ROLES` for exactly that reason; failing that, the
+   `ax_focused` label;
+3. nothing else. Two nodes in one app with no sheet and no focused element are
+   labelled identically, and the id chip on the card is what tells them apart.
+   Inventing a difference would be worse than showing there isn't one.
+
+A node with no predicates at all — the entry node, `n0` — is labelled by its id
+and says it describes no state.
+
+The live location is different and may show a window title: `AxObservation`
+carries `windowTitle`, so "last seen: TextEdit — Untitled" is sourced from the
+observation, never from a predicate.
 - An action's target is described from the anchor's **recorded** descriptors —
   identifier, then label, then role plus path depth. Never from the resolution,
   which is where it landed, not what was asked for.
@@ -193,9 +211,10 @@ target description from raw predicates.
 ```ts
 interface GraphNodeDTO {
   id: string;
-  label: string;          // "TextEdit — Untitled", or the id when unlabellable
+  label: string;          // "TextEdit — Save", or the id when unlabellable
   app?: string;
-  window?: string;
+  /** A Sheet/Dialog or focused-element label. NOT a window title — see above. */
+  hint?: string;
   frameBlobId?: string;   // from TraceNode.visual
   observations: number;
   intervene: "none" | "select" | "synthesize";
@@ -224,6 +243,8 @@ interface LocationDTO {
   candidates: number;
   ambiguous: boolean;
   app?: string;
+  /** From AxObservation.windowTitle — the one place a title is legitimate. */
+  window?: string;
   /** Age of the last FOREIGN observation. Set while DeskRAG is frontmost. */
   staleMs?: number;
 }
@@ -365,10 +386,15 @@ the first place the executor's own measurements are visible without a script.
 ## Testing
 
 - **`test/replay.plan-view.test.ts`** — the projection. Node labelling from
-  predicates, including the unlabellable entry node; BFS ranks with a loop
-  present; back-edge classification; and that blockers, superseded steps and the
-  remainder all survive into the DTO. A plan whose blockers vanish in projection
-  is the failure mode that matters, so it is asserted directly.
+  predicates, including the unlabellable entry node and two same-app nodes that
+  are *allowed* to collide; BFS ranks with a loop present; back-edge
+  classification; and that blockers, superseded steps and the remainder all
+  survive into the DTO. A plan whose blockers vanish in projection is the failure
+  mode that matters, so it is asserted directly.
+
+  The labelling tests use predicates in the shape real data has: roles with **no
+  `AX` prefix**, since the sidecar strips it and matching the prefixed spelling
+  is the bug that has already shipped once in this repo.
 - **`npm --prefix app run typecheck`** — the app's gate, renderer and node.
 - **`npm test`** — unchanged and still offline; the alias addition is the only
   config change.
