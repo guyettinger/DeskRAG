@@ -812,11 +812,36 @@ a within-session comparison cannot reveal predicates stable within a session and
 volatile across sessions. Raising the cap 32 → 64 to fix the node collision is
 precisely what pulled the tab strip into identity.
 
-**A second run confirmed the fix**: no tab predicates in the failure, and the
-remaining 18 were genuine PR-page controls (`Edit title`, `assign yourself`,
-`Reviewers`) against a browser that was on a different page. 15 of 33 held. That
-is node identity working correctly — unlike a document name, a trace recorded on
-one pull request legitimately requires that pull request.
+**A second and third run confirmed the fix**: no tab predicates in either
+failure. The remaining 18 were genuine page controls (`Edit title`,
+`assign yourself`, `Reviewers`); 15 of 33 held.
+
+**Why they still failed is a separate finding, and not the one first assumed.**
+The browser *was* on the recorded pull request — confirmed by window title — but
+that window exposed **~128 AX elements live against 363 when it was recorded**.
+The 18 missing predicates are page content that simply was not in the live tree.
+So verification was correct and the diagnosis was honest; the precondition it
+reports is about how much of the page the browser is exposing, not about which
+page is open.
+
+**A wrong turn, recorded because the error is the point.** An intermediate
+measurement appeared to show the two sidecars disagreeing — `ax-dump` returning
+1181 elements where `ax-exec` returned 128 — which would have been a serious
+drift defect. It was an artefact: the two figures came from two different Chrome
+windows at two different moments. Measured properly, back-to-back with each
+binary reporting the window it saw, they agree (1335/1217, 1335/307, 129/126 on
+identical windows). **Nothing was changed on the strength of it.**
+
+That is the third instance in this validation of one error: comparing two
+measurements taken against a moving target and attributing the difference to the
+wrong variable. The first was a page diffed against itself; the second a
+within-session comparison in which session state cancelled out. Any future
+measurement here should pin *when* and *what* it observed, not only the number.
+
+**Chrome's focused window was also observed moving between queries** (three
+different windows across a few minutes), which makes a multi-window browser a
+poor verification target regardless. Whether that was user-driven or not was not
+established, so no conclusion is drawn from it.
 
 **Still never exercised: a run that completes more than one segment.** Segment 2
 has never armed. Drags and `wait` actions have still never posted.
