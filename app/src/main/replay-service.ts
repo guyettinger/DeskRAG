@@ -74,6 +74,15 @@ export class ReplayService {
   /** Distinguishes the two things executeRun reports as "declined". */
   private stopReason: ReplayStopReason | null = null;
   private stopDetail: string | undefined;
+  /**
+   * Per segment: 1 when its DTO prepended a handoff step, else 0.
+   *
+   * `execute.ts` indexes `plan.steps`, but the reviewer counts the list on
+   * screen, which has the handoff at position 1. Without this the panel names a
+   * step one above the one that actually failed — measured: it said "step 7"
+   * for the activate at position 8.
+   */
+  private handoffOffsets: number[] = [];
 
   constructor(
     private readonly getGraph: () => Graph | undefined,
@@ -245,6 +254,7 @@ export class ReplayService {
     this.running = true;
     this.stopReason = null;
     this.stopDetail = undefined;
+    this.handoffOffsets = [];
     // The poller must not compete with the run for the sidecar's turn-taking.
     this.pausePolling();
 
@@ -360,6 +370,7 @@ export class ReplayService {
   ): Promise<boolean> {
     const handoffApp = appPredicateOf(graph, plan.from);
     const dto = toPlanDTO(plan, graph, segment, handoffApp);
+    this.handoffOffsets[segment - 1] = handoffApp !== undefined ? 1 : 0;
     if (
       noKeymap &&
       plan.steps.some((s) => !("repair" in s) && !("superseded" in s) && s.action.kind === "type")
@@ -465,10 +476,15 @@ export class ReplayService {
     // whole diagnosis — a boundary verification names the predicates that did
     // not hold — and it arrives on the segment, not on the stop. Carrying it
     // here is what stops the generic sentence from overwriting the specific one.
-    const failed = outcome.segments.find((s) => !s.outcome.completed)?.outcome.failure;
+    const failedAt = outcome.segments.findIndex((s) => !s.outcome.completed);
+    const failed = failedAt >= 0 ? outcome.segments[failedAt]?.outcome.failure : undefined;
+    // `canArm` reports step -1: a refusal to start, not a step that ran.
+    const stepLabel =
+      failed === undefined || failed.step < 0
+        ? undefined
+        : `step ${failed.step + 1 + (this.handoffOffsets[failedAt] ?? 0)}: `;
     const detail =
-      this.stopDetail ??
-      (failed !== undefined ? `step ${failed.step + 1}: ${failed.reason}` : undefined);
+      this.stopDetail ?? (failed !== undefined ? `${stepLabel ?? ""}${failed.reason}` : undefined);
 
     this.emitEvent({
       type: "stopped",

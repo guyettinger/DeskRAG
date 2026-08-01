@@ -483,18 +483,52 @@ remainder — none of which had ever been posted.
    against Chromium's 9%). The one anchor that failed was a **path**, in the edge
    that crosses into Chrome.
 
-**The loop did NOT continue past the cut.** The run stopped after segment 1; no
-second review for `e3 → n4` appeared. The cut promised the run would resume from
-`n3` after re-observing, and it did not.
+### Why the loop stopped: a node absorbed a web page
 
-The leading explanation is not the executor but the graph: `n3` is a Chrome node
-carrying **33 `ax_exists` predicates**, and re-locating is the same subset check
-that fails at start for the same reason — every one must hold. If so, the
-segment loop is correct and **progressive resolution is gated on node
-specificity**, which is a finding about lift-time predicate extraction rather
-than about replay. The stop reason distinguishes this (`not-located`) from a real
-loop defect (`failed`, `no-path`, `no-progress`) and has not yet been read back,
-so this stays a hypothesis.
+The run stopped after segment 1 with `failed`, and the boundary verification said
+exactly why:
+
+```
+node …:n3 did not verify after edge …:e2:
+  ax_exists(label="Create new…",role="PopUpButton")
+  ax_exists(label="Search or jump to…",role="Button")
+  ax_exists(label="Open user navigation menu",role="PopUpButton")
+  ax_exists(label="Copy head branch name to clipboard",role="Button")
+  ax_exists(label="Edit title",role="Button")
+  ax_exists(label="assign yourself",role="Button")
+  ax_exists(label="Labels",role="PopUpButton")   … 18 in total
+```
+
+Those are the contents of **one GitHub pull-request page**. `n3`'s identity
+absorbed the whole document, so that state can only ever be re-entered with that
+exact PR open in that exact tab.
+
+**The executor is not at fault and behaved exactly as specified.** It posted
+every action, brought Chrome forward via the repair, then checked whether it had
+arrived where the plan claimed and reported honestly that it had not. Boundary
+verification is doing its job; what it verified against was unusable.
+
+**This is the `Window`-in-`STABLE_ROLES` bug one level deeper.** That exclusion
+exists because "a node recorded in one document could never be located in
+another, even though the UI is identical and the recorded task is
+document-independent" — and it was measured the same way, a node missing by
+exactly its document-identity predicates while the rest held. Web page content
+is the same category: `Copy head branch name to clipboard` identifies *this PR*,
+not a state the recorded task depends on.
+
+**It is not, however, the same fix.** `Window` could be dropped by role because
+its label is always a title. Chromium exposes page content with the *same* roles
+as application chrome — `Button`, `PopUpButton` — so nothing in the role
+distinguishes GitHub's sidebar from Chrome's own toolbar. Plausible
+discriminators (all unverified): position relative to the `WebArea` subtree, or
+depth, since Chromium paths average 11.4 against AppKit's 4.0. Choosing one is
+`src/trace/predicates.ts` design work with its own measurement, and it is a
+**derived requirement from this spec, not part of it.**
+
+**What this makes conditional.** Continuation past a cut is untested rather than
+broken: the loop never got the chance, because the segment before it could not
+verify. The same specificity would have blocked re-location on the next turn for
+the same reason, so both remain open until predicate extraction is addressed.
 
 Two things follow either way:
 
