@@ -460,11 +460,21 @@ export class ReplayService {
         : outcome.stopped === undefined
           ? undefined
           : outcome.stopped;
+
+    // `failed` on its own says nothing. The reason `executePlan` recorded is the
+    // whole diagnosis — a boundary verification names the predicates that did
+    // not hold — and it arrives on the segment, not on the stop. Carrying it
+    // here is what stops the generic sentence from overwriting the specific one.
+    const failed = outcome.segments.find((s) => !s.outcome.completed)?.outcome.failure;
+    const detail =
+      this.stopDetail ??
+      (failed !== undefined ? `step ${failed.step + 1}: ${failed.reason}` : undefined);
+
     this.emitEvent({
       type: "stopped",
       reached: outcome.reached,
       ...(reason !== undefined ? { reason } : {}),
-      ...(this.stopDetail !== undefined ? { detail: this.stopDetail } : {}),
+      ...(detail !== undefined ? { detail } : {}),
     });
   }
 

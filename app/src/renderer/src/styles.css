@@ -1533,3 +1533,6 @@ select {
 .nearby__score { font-variant-numeric: tabular-nums; color: var(--amber); }
 .nearby ul { margin: 2px 0 0; padding-left: 16px; font-size: 11px; color: var(--muted); }
 .nearby li { font-family: var(--font-mono); word-break: break-word; }
+/* A boundary-verification failure names every predicate that did not hold, so
+   this line can be long and must wrap rather than widen the column. */
+.review--empty p.muted { overflow-wrap: anywhere; }
