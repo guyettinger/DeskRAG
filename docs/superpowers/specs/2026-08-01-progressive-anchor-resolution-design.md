@@ -1,7 +1,8 @@
 # Progressive anchor resolution — segmenting a plan at the resolution frontier
 
 **Date:** 2026-08-01
-**Status:** Design approved, pending spec review and the validation gate below
+**Status:** Design approved. Offline validation complete — three corrections
+folded in below. The live half of the gate is outstanding.
 
 ## Context
 
@@ -65,6 +66,103 @@ Recorded here rather than assumed, because three of these changed the design.
    actions, including the point-only Dock click. A cross-app edge would activate
    Chrome *and* post a stale Dock coordinate. It is also the action dominating
    that edge's AX rate, so it decides whether cross-app runs can arm at all.
+
+### What the recorded graph established
+
+Measured with `scripts/replay-probe.mjs --offline` against the graph on disk,
+before any of this was implemented. The graph turned out to be richer than the
+gate assumed — it already spans **Electron → TextEdit → Google Chrome**, so the
+cross-app case was already recorded rather than needing a new session.
+
+5 nodes, 7 edges, **4 of them crossing applications**.
+
+| Node | App | Window |
+| --- | --- | --- |
+| n0 | — | — (zero predicates) |
+| n1 | Electron | DeskRAG |
+| n2 | TextEdit | Untitled.rtf |
+| n3 / n4 | Google Chrome | a PR page / the repo page |
+
+**Descriptor availability across the 8 spatial actions:** `identifier` 25%,
+`label` 13%, `path` 50%, `visual` 25%, **no AX layer at all 50%**.
+
+That last figure is the finding. **Every point-only anchor in this graph is an
+app switch** — all 4 of them, all Dock clicks (y = 1006, 1017, 1035, matching the
+activation spec's measurements). Remove them and every remaining spatial anchor
+carries an AX layer.
+
+**The effect of supersession on arming, which is what this design turns on:**
+
+| Edge | Transition | `axUpperBound` before | after | arms? |
+| --- | --- | --- | --- | --- |
+| e1 | Electron → TextEdit | 0% | 100% | no → **yes** |
+| e2 | TextEdit → Google Chrome | 50% | 100% | yes → yes |
+| e4 | Google Chrome → TextEdit | 0% | 100% | no → **yes** |
+| e5 | TextEdit → Electron | 50% | 100% | yes → yes |
+
+**Cross-app edges below `BRITTLENESS_FLOOR`: 2/4 → 0/4.** Supersession is not a
+tidiness fix; it is the difference between a cross-app plan that refuses to arm
+and one that arms cleanly.
+
+### Correction: the supersession rule as first written is falsified
+
+The rule was anchored on the edge's `wait { until: app(X) }`. Real data
+contradicts it in two ways.
+
+**It fires on only half the cross-app edges.** `e1` and `e4` are a *bare single
+Dock click* with no `wait` at all:
+
+```
+e1  Electron -> TextEdit
+    [0] click (523,295)  [NONE]  <<< LAST
+```
+
+A wait-anchored rule never fires there, leaving the stray click in place on
+exactly the two edges that could not arm without it.
+
+**Where waits do exist, they are on the wrong side.** In `e2` and `e5` the app
+waits sit at indices [1,4] and [1,3] — *before* the switching click, which is
+last:
+
+```
+e5  TextEdit -> Electron
+    [0] click (529,352)  [identifier,path(d=3)]
+    [1] wait   until=app("Electron")
+    [2] type   slot=textarea "!"
+    [3] wait   until=app("Electron")
+    [4] click (1268,1006) [NONE]  <<< LAST
+```
+
+"The contiguous tail ending at the wait" therefore *excludes* the very action it
+exists to suppress. The direction was simply backwards.
+
+**What the data does support is simpler and structurally guaranteed:** the
+switching action is the edge's **final** action, in **4 of 4** cross-app edges.
+That is not a coincidence to be re-measured per app — `computeBoundaries` cuts a
+boundary at the focus change, so the action causing the switch is by construction
+the last one before it. The revised rule is in Semantics.
+
+### Correction: the activation repair is inserted at the wrong position
+
+`plan.ts:162` pushes the `RepairStep` **before** the edge's actions. The `app`
+predicate it repairs lives on the **destination** node, so it must hold at the
+edge's *end*; the edge's own actions run in the *source* app.
+
+`e2` makes the consequence concrete — a TextEdit click, ⌘A, typing "this is a new
+line", then the Dock click. Activating Chrome first would post all of that into
+Chrome. The shipped activation repair has this latent, and it has never been
+observed only because the brittleness gate stops cross-app plans from arming at
+all.
+
+Supersession fixes it as a side effect: the repair **replaces the edge's final
+action** rather than preceding its first.
+
+### Correction: a zero-predicate node verifies against everything
+
+`n0` carries no predicates. Under the subset rule an empty predicate set is
+vacuously satisfied by every observation, so `n0` verifies against any desktop
+whatsoever. The locator must exclude empty-predicate nodes outright rather than
+rank them last.
 
 ## The decision this spec turns on
 
@@ -159,9 +257,10 @@ the validation gate.
 ### Explicit decision: chord-based app switching is out
 
 The supersession rule below covers point-only spatial switches, which is what
-every recording measured so far contains (Dock clicks at y≈1017, 1035, 1006 on a
-1080-tall screen). A ⌘-Tab switch is a `chord` with no anchor and would not be
-suppressed, so it would be posted after activation and switch to a third app.
+every recording measured so far contains — 4 of 4 cross-app edges, all Dock
+clicks at y = 1006, 1017 and 1035 on a 1080-tall screen. A ⌘-Tab switch is a
+`chord` with no anchor and would not be suppressed, so it would be posted after
+activation and switch to a third app.
 
 That is not designed for, because no recording has contained one. The anchor
 ladder has already been falsified twice by generalizing from unmeasured cases,
@@ -176,11 +275,29 @@ Two new files, four changed, plus the test guard. No new dependency, no change t
 | --- | --- |
 | `src/replay/locate.ts` | **New.** `locateNode` — the subset locator. |
 | `src/replay/run.ts` | **New.** `executeRun` — the observe/plan/arm/execute loop. |
-| `src/replay/plan.ts` | Greedy cut, remainder disclosure, supersession. |
+| `src/replay/plan.ts` | Greedy cut, remainder disclosure, supersession, **repair moved to the edge's end**. |
 | `src/replay/execute.ts` | Node-boundary verification; drag `to` resolution. |
 | `src/replay/types.ts` | `SegmentCut`, `RemainderEdge`, run types, field additions. |
 | `src/index.ts` | Export `locateNode`, `executeRun` and the new types. |
 | `test/replay.barrel.test.ts` | Glob `src/replay/*.ts` instead of listing files. |
+| `scripts/replay-probe.mjs` | **New, already written.** The validation harness. |
+
+### The validation harness
+
+`scripts/replay-probe.mjs` measures the gate below against a real graph and a
+real desktop. It is **structurally read-only**: the `Actuator` is wrapped in a
+proxy that throws on `activate`, `moveTo`, `click`, `dragPath`, `scroll` and
+`key`, so it cannot post an event even by mistake — the same principle as the
+barrel inertness guard, and the reason it is safe to run against a live desktop.
+
+```
+node scripts/replay-probe.mjs --offline                       # graph only, no permissions
+node scripts/replay-probe.mjs --wait-for TextEdit --goal n4   # live probe
+```
+
+`--wait-for` polls until the named app is frontmost, which exists because the
+probe cannot be started without focusing a terminal — which would otherwise be
+the app it then measures.
 
 ### The run loop
 
@@ -332,29 +449,42 @@ without a separate test for it.
 
 ### Supersession
 
-> On an edge where a `RepairStep` for app X was inserted, suppress the contiguous
-> **tail** of actions ending at that edge's `wait { until: app(X) }` — the wait
-> itself, plus immediately-preceding spatial actions whose anchors carry **no
-> `ax` layer**. Everything else is posted as recorded.
+> On an edge where a `RepairStep` for app X was inserted:
+>
+> 1. Suppress the edge's **final** action when it is spatial and its anchor
+>    carries **no `ax` layer** — that is the recorded switch.
+> 2. Suppress any `wait { until: app(X) }` anywhere on the edge.
+> 3. Place the `RepairStep` where the suppressed final action was — at the edge's
+>    **end**, not its start.
+>
+> Everything else is posted as recorded.
 
-Each clause is load-bearing:
+Each clause is load-bearing, and each is measured rather than argued:
 
-- **The `wait` anchors it.** Without one there is no evidence in the IR that the
-  click caused the app change, so nothing is suppressed and the click posts as
-  recorded. The conservative default is today's behaviour, so absence of
-  evidence never produces a silent change.
-- **The wait is independently safe to drop** — `runRepair` already polls that
-  exact predicate before returning, so removing it is a no-op rather than a
-  skipped check.
-- **No `ax` layer is structural, not heuristic.** The switch target sits outside
-  the focused window's AX tree by definition — that is *why* the Dock click is
-  point-only. An action targeting an element in the app's own tree therefore
-  cannot have been the switch.
-- **Tail-contiguity** stops the rule reaching backwards past a real in-app
-  action.
+- **"Final action" is structurally guaranteed, not a heuristic.**
+  `computeBoundaries` cuts a boundary at the focus change, so the action that
+  causes the switch is by construction the last one before it. Holds in **4 of 4**
+  cross-app edges measured.
+- **No `ax` layer is equally structural.** The switch target sits outside the
+  focused window's AX tree by definition — that is *why* the Dock click is
+  point-only. An action targeting an element in the app's own tree cannot have
+  been the switch. Also 4 of 4.
+- **Both conditions are required**, so a final action that *does* carry an AX
+  layer is posted as recorded. The conservative default is today's behaviour, and
+  absence of evidence never produces a silent change.
+- **The waits are independently safe to drop** — `runRepair` already polls that
+  exact predicate before returning, so removing one is a no-op rather than a
+  skipped check. They are dropped wherever they appear, because measurement put
+  them mid-edge rather than adjacent to the switch.
+- **Position 3 is a correction to shipped behaviour**, not a new feature. See the
+  correction above: the `app` predicate is on the destination node, so the repair
+  belongs at the edge's end.
 
 A suppressed action becomes a `SupersededStep`, visible in the review: *"the
 recorded Dock click will not be posted; activating Google Chrome replaces it."*
+
+**Measured effect:** every cross-app edge's `axUpperBound` goes to 100%, and
+cross-app edges below the brittleness floor go from 2/4 to 0/4.
 
 ### Locating
 
@@ -365,10 +495,16 @@ export function locateNode(
 ): { nodeId?: string; candidates: number; ambiguous: boolean };
 ```
 
-Candidates are nodes with no `verifyNode` violations against `observed`. The
-candidate with the most predicates wins; a tie for the most declines with
-`ambiguous: true`. `candidates` is reported whatever the outcome, so a failure to
-locate is debuggable rather than opaque.
+Candidates are nodes that carry **at least one predicate** and have no
+`verifyNode` violations against `observed`. The candidate with the most
+predicates wins; a tie for the most declines with `ambiguous: true`. `candidates`
+is reported whatever the outcome, so a failure to locate is debuggable rather
+than opaque.
+
+**The non-empty test is not a guard against a hypothetical.** `n0` in the
+recorded graph has zero predicates, and an empty set is vacuously a subset of
+every observation — it would verify against any desktop at all. Ranking it last
+is not enough, because it would still be returned when it is the only candidate.
 
 ### Arming
 
@@ -435,20 +571,34 @@ it.** Both of this repo's worst bugs were invisible to `npm test` and obvious
 within minutes of a real session, and every number in the executor spec came
 from a recording rather than an argument.
 
-Record a real TextEdit → Chrome session, lift it, and drive greedy resolution
-against the live desktop. The recording must answer:
+The graph already on disk spans Electron → TextEdit → Google Chrome, so the
+offline half needed no new recording. Its findings are recorded above as
+corrections; the live half is outstanding.
+
+**Answered — offline, `--offline`:**
+
+| Measurement | Result | What it decided |
+| --- | --- | --- |
+| The repaired edge's actual actions, and its AX rate with and without the recorded switch | 0%→100%, 50%→100%, 0%→100%, 50%→100%; below-floor 2/4 → 0/4 | Supersession is load-bearing, not tidiness. |
+| Whether the recorded switch is accompanied by a `wait { until: app(X) }` | **2 of 4 edges have no wait at all**; where present the waits precede the switch | Falsified the wait-anchored rule; replaced with "final action". |
+| Where the switch sits in the edge | Final action, **4 of 4**, always point-only | The revised rule, and the repair's corrected position. |
+| Descriptor availability across spatial actions | identifier 25%, label 13%, path 50%, visual 25%, **none 50%** | Every point-only anchor in the graph is an app switch. |
+
+**Outstanding — live, `--wait-for <app> --goal <node>`:**
 
 | Measurement | The decision it feeds |
 | --- | --- |
 | Segments per cross-app plan | Whether the approval cost is tolerable. Six approvals for one task invalidates the chosen shape. |
-| Anchors in the not-yet-frontmost app that carry any `ax` layer | Whether cutting helps at all, or those edges are point-only regardless of timing. |
-| Whether any anchor **falsely** resolves in the wrong state | The real risk in greedy resolution. A `Save` identifier present in both apps would be swallowed into segment 1 and clicked wrongly. Nothing but a recording settles this. |
+| Whether any anchor **falsely** resolves in the wrong state | The real risk in greedy resolution. An identifier present in both apps would be swallowed into segment 1 and clicked wrongly. Nothing but a live probe settles this; the harness flags any anchor that resolves to an AX rung while its own app is not frontmost. |
 | How many recorded nodes verify against one live observation, and whether they nest | Whether the locator's tie-break stays predicate-count or becomes strict superset-nesting. |
-| The repaired edge's actual actions, and its AX rate with and without the recorded switch action | Confirms the supersession rule fires on real data and measures what it buys. |
-| Whether the recorded switch is accompanied by a `wait { until: app(X) }` | If it is not, supersession never fires and the rule needs its anchor reconsidered. |
+| Whether a node locates at all against a re-created state | The `window` predicate carries a literal title (`Untitled.rtf`), so location may be more fragile than the subset rule implies. The harness reports near misses with the violated predicates. |
 
-Findings are written back into this spec before implementation is called done,
-in the style of the executor spec's "Correction:" sections.
+An early live run confirmed the sidecar path end to end: 384 elements, 35
+predicates, `windowOrigin` resolved, and **0 candidates against WebStorm** — a
+correct decline for an app absent from the graph.
+
+Remaining findings are written back into this spec before implementation is
+called done, in the style of the executor spec's "Correction:" sections.
 
 ## Testing
 
@@ -458,16 +608,23 @@ directory rather than by list.
 
 - **`locate.ts`** — exact hit; a node that is a strict subset loses to a more
   specific one; a tie for most-specific declines; no candidate returns
-  `nodeId: undefined` with `candidates: 0`.
+  `nodeId: undefined` with `candidates: 0`; **a zero-predicate node is never a
+  candidate**, even when it is the only one that verifies.
 - **Segmentation** — a fully-resolvable path produces no cut, an empty remainder
   and a plan byte-identical to today's (this is the regression test for the
   2026-07-31 run); an anchor with an `ax` layer that does not resolve cuts at its
   **edge** boundary, not mid-edge; a point-only anchor does not cut.
 - **Remainder** — descriptors reflect the recorded anchor; repairs appear;
   `bound: "upper"` is computed from anchors lacking an `ax` layer.
-- **Supersession** — fires with a `wait { until: app(X) }` present; does **not**
-  fire without one; does not reach past an AX-anchored action; the suppressed
-  action appears as a `SupersededStep` and posts nothing.
+- **Supersession** — fires on a cross-app edge whose final action is spatial and
+  point-only; does **not** fire when the final action carries an AX layer; fires
+  on an edge with **no** `wait` at all (the `e1`/`e4` shape, which the first rule
+  missed); drops app waits wherever they sit, including mid-edge (the `e2`/`e5`
+  shape); the suppressed action appears as a `SupersededStep` and posts nothing.
+- **Repair placement** — on a cross-app edge, the `RepairStep` is emitted
+  **after** the edge's other actions, so the source app's clicks and keystrokes
+  are posted before the switch. This is a regression test for the correction
+  above, and it fails against today's `plan.ts`.
 - **Arming** — a remainder blocker refuses; a remainder upper-bound below the
   floor refuses and is overridable.
 - **The run loop** — reaches a goal across two segments; `declined` stops
@@ -487,9 +644,12 @@ directory rather than by list.
 - **A checked-in AX fixture captured from the real sidecar.** Still absent, still
   the reason the role-prefix bug survived, and now also the thing that would let
   the locator be tested against real predicate sets.
-- **A committed driver script.** The 2026-07-31 run was ad hoc; `executeRun`
-  plus `locateNode` make a small `scripts/` driver possible, and the validation
-  gate needs one anyway.
+- **A zero-predicate node in the graph at all.** `n0` is the session's first
+  boundary and carries nothing. It is inert here because the locator excludes it,
+  but a node that describes no state is a lift-time defect worth its own look.
+- **The `window` predicate is a literal title.** `Untitled.rtf` will not match a
+  freshly created document, so node location may be more brittle than the subset
+  rule suggests. Measured by the outstanding live probe.
 - **The app's review UI.** Nothing in `app/` calls `buildPlan` yet. The segment
   and remainder shapes are designed to be rendered, but the surface is out of
   scope here.
