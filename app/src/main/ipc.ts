@@ -41,6 +41,7 @@ export function registerIpc(
   ipcMain.handle(IPC.sessionsList, () => service.listSessions());
   ipcMain.handle(IPC.sessionsDetail, (_e, sessionId: string) => service.sessionDetail(sessionId));
   ipcMain.handle(IPC.sessionsRemove, (_e, sessionId: string) => service.removeSession(sessionId));
+  ipcMain.handle(IPC.sessionsReindex, () => service.reindexTraces());
   /**
    * Vision-capable models resident on this machine. Sourced from Ollama's
    * /api/tags rather than a hardcoded list: its library now includes

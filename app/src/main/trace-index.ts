@@ -26,6 +26,7 @@ import {
   type Graph,
   type Keymap,
   type RegionsAtFrame,
+  type Trace,
   type TraceEvent,
 } from "deskrag";
 
@@ -99,16 +100,23 @@ export interface TraceIndexResult {
   missingKeymap: boolean;
 }
 
+/** One session lifted, before anything is merged or written. */
+export interface LiftedSession {
+  trace: Trace;
+  /** No `keymap_change` event, so every keystroke was discarded. */
+  missingKeymap: boolean;
+}
+
 /**
- * Lift one session and merge it into the install's graph.
+ * Lift one session into a `Trace`, touching no graph and writing nothing.
+ *
+ * Split out from `indexTrace` so a rebuild can merge many sessions into a fresh
+ * graph without each one reading back the partially-rebuilt result.
  *
  * Returns undefined when the session produced no events at all — an empty
  * recording should not create a node.
  */
-export async function indexTrace(
-  store: DualStore,
-  sessionId: string,
-): Promise<TraceIndexResult | undefined> {
+export function liftSession(store: DualStore, sessionId: string): LiftedSession | undefined {
   const events = store.getEventsBySession(sessionId) as unknown as TraceEvent[];
   if (events.length === 0) return undefined;
 
@@ -174,19 +182,109 @@ export async function indexTrace(
     displayIdAt: (p, tMono) => displayIdAt(latestAt(displays, tMono) ?? [], p),
   });
 
-  const existing = store.getGraph(DEFAULT_GRAPH_ID);
-  const merged = await mergeTrace(existing, trace);
-  // mergeTrace seeds a new graph's id from the session; pin it so every session
-  // accretes into the same graph rather than one graph per recording.
-  const graph: Graph = { ...merged, id: DEFAULT_GRAPH_ID };
-  await store.putGraph(graph);
+  return { trace, missingKeymap: keymaps.length === 0 };
+}
 
-  const actions = trace.edges.reduce((n, e) => n + e.actions.length, 0);
-  return {
-    nodes: graph.nodes.length,
-    edges: graph.edges.length,
-    variables: graph.slots.filter((s) => s.samples.length > 1).length,
-    actions,
-    missingKeymap: keymaps.length === 0,
-  };
+const actionsIn = (trace: Trace): number => trace.edges.reduce((n, e) => n + e.actions.length, 0);
+
+/**
+ * mergeTrace seeds a NEW graph's id from the session it was lifted from; pin it
+ * so every session accretes into the one install graph rather than producing one
+ * graph per recording.
+ */
+async function mergeInto(existing: Graph | undefined, trace: Trace): Promise<Graph> {
+  const merged = await mergeTrace(existing, trace);
+  return { ...merged, id: DEFAULT_GRAPH_ID };
+}
+
+const summarize = (graph: Graph, actions: number, missingKeymap: boolean): TraceIndexResult => ({
+  nodes: graph.nodes.length,
+  edges: graph.edges.length,
+  variables: graph.slots.filter((s) => s.samples.length > 1).length,
+  actions,
+  missingKeymap,
+});
+
+/**
+ * Lift one session and merge it into the install's graph. The incremental path,
+ * run as the last stage of indexing a fresh recording.
+ */
+export async function indexTrace(
+  store: DualStore,
+  sessionId: string,
+): Promise<TraceIndexResult | undefined> {
+  const lifted = liftSession(store, sessionId);
+  if (lifted === undefined) return undefined;
+  const graph = await mergeInto(store.getGraph(DEFAULT_GRAPH_ID), lifted.trace);
+  await store.putGraph(graph);
+  return summarize(graph, actionsIn(lifted.trace), lifted.missingKeymap);
+}
+
+export interface RebuildResult extends TraceIndexResult {
+  /** Sessions that produced a trace and were merged. */
+  sessions: number;
+  /** Sessions with no events, which correctly produce no node. */
+  skipped: number;
+}
+
+/**
+ * Rebuild the whole graph by re-lifting every session, oldest first.
+ *
+ * **This is a rebuild rather than a per-session re-lift, and that is forced.**
+ * A graph accretes: `mergeTrace` folds a session into what is already there,
+ * incrementing `observations` and appending slot samples. Re-lifting one session
+ * into a graph that already contains it would count it twice — inflating the
+ * evidence behind every edge it touches and corrupting exactly the counts
+ * `edgeCost` uses to choose a path. So the only correct re-index discards the
+ * graph and replays every session in its original order.
+ *
+ * Nothing is re-recorded: lifting reads `ax_snapshot` and the event stream,
+ * which are already on disk. That is what makes a corrected predicate filter or
+ * lift rule applicable to recordings already taken.
+ *
+ * One `putGraph` at the end, never per session. It is delete-then-insert, so a
+ * partial rebuild would leave the store holding a graph that describes fewer
+ * sessions than it claims; writing once means a failure mid-rebuild leaves the
+ * previous graph intact.
+ */
+export async function rebuildGraph(
+  store: DualStore,
+  onProgress?: (done: number, total: number, sessionId: string) => void,
+): Promise<RebuildResult> {
+  // Oldest first, so the rebuilt graph accretes in the same order the
+  // incremental path produced it. Merge order decides which node a revisited
+  // state collapses into, so replaying out of order would not reproduce it.
+  const sessions = [...store.listSessions()].sort((a, b) => a.startedAt - b.startedAt);
+
+  let graph: Graph | undefined;
+  let actions = 0;
+  let merged = 0;
+  let skipped = 0;
+  let missingKeymap = false;
+
+  for (let i = 0; i < sessions.length; i++) {
+    const session = sessions[i]!;
+    onProgress?.(i, sessions.length, session.id);
+    const lifted = liftSession(store, session.id);
+    if (lifted === undefined) {
+      skipped++;
+      continue;
+    }
+    actions += actionsIn(lifted.trace);
+    missingKeymap = missingKeymap || lifted.missingKeymap;
+    graph = await mergeInto(graph, lifted.trace);
+    merged++;
+  }
+
+  onProgress?.(sessions.length, sessions.length, "");
+
+  // Every session was empty. Writing an empty graph would be a destructive act
+  // dressed as a no-op, so leave whatever is on disk alone and say nothing was
+  // rebuilt — the caller reports `sessions: 0`.
+  if (graph === undefined) {
+    return { nodes: 0, edges: 0, variables: 0, actions: 0, missingKeymap, sessions: 0, skipped };
+  }
+
+  await store.putGraph(graph);
+  return { ...summarize(graph, actions, missingKeymap), sessions: merged, skipped };
 }

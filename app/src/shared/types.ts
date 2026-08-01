@@ -306,6 +306,11 @@ export interface DeskRagApi {
     list(): Promise<SessionSummaryDTO[]>;
     detail(sessionId: string): Promise<SessionDetailDTO | null>;
     remove(sessionId: string): Promise<void>;
+    /**
+     * Re-lift every recording into a fresh trace graph. Progress arrives on the
+     * existing indexing channel, so `onIndexing` covers this too.
+     */
+    reindex(): Promise<ReindexResultDTO>;
   };
   models: {
     /** Fires while weights download; may start from a search, not just indexing. */
@@ -322,6 +327,27 @@ export interface DeskRagApi {
   system: {
     env(): Promise<EnvInfo>;
   };
+}
+
+/**
+ * The outcome of re-lifting every recording into a fresh graph.
+ *
+ * It is a REBUILD, not a per-session re-lift: a graph accretes, so folding one
+ * session into a graph that already contains it would count it twice and inflate
+ * the `observations`/`outcomes` evidence that edge cost uses to pick a path.
+ */
+export interface ReindexResultDTO {
+  /** Sessions that produced a trace and were merged. */
+  sessions: number;
+  /** Sessions with no events — correctly contributing no node. */
+  skipped: number;
+  nodes: number;
+  edges: number;
+  /** Slots with more than one recorded sample. */
+  variables: number;
+  actions: number;
+  /** At least one session had no keyboard layout, so its typed text was lost. */
+  missingKeymap: boolean;
 }
 
 /** IPC channel names — one place so main + preload can't drift. */
@@ -342,6 +368,7 @@ export const IPC = {
   sessionsList: "sessions:list",
   sessionsDetail: "sessions:detail",
   sessionsRemove: "sessions:remove",
+  sessionsReindex: "sessions:reindex",
   modelDownloadEvent: "models:download-event",
   ollamaVisionModels: "ollama:vision-models",
   systemEnv: "system:env",
