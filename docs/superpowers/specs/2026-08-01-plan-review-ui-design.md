@@ -408,6 +408,43 @@ observe that the reviewer's window was over the target when a click was posted;
 `replay.barrel.test.ts` guarantees the suite cannot post at all, which is the
 point. The handoff is verified by running it.
 
+## What the real graph showed (read-only, 2026-08-01)
+
+The projection was run over the recorded graph on disk before the UI was
+trusted, per the repo's standing rule. Nothing was armed and nothing was posted.
+
+**5 nodes, 7 edges, 1 slot, max rank 4, 3 back edges.**
+
+- **Every id is `<26-char ULID>:<suffix>`** — `01KYX6DDK2PFXFDAX0XB3PH1DM:n3`, 30
+  characters, and a node card is 180px wide. This spec had ids rendered raw.
+  Fixed by `shortId` in `shared/types.ts`, with the full id kept in every
+  tooltip. No fixture would have caught it: hand-written ones say `n0`.
+- **Labels collide, exactly as designed and now confirmed:** 4 distinct labels
+  across 5 nodes, the pair being two Google Chrome nodes. The decision to show
+  the collision rather than invent a difference survives contact with real data.
+- **The hint rule is weaker than hoped: 1 node of 5 got one.** Chrome's two nodes
+  carry 32 and 33 `ax_exists` predicates and **no `ax_focused`**, and no
+  Sheet/Dialog — so nothing qualifies as a hint. This is what makes the id chip
+  load-bearing, and therefore what made the id length a real defect rather than a
+  cosmetic one.
+- **Keyframes on 3 of 5 nodes.** The thumbnail canvas is partial by nature, which
+  is why the text-card degradation is not an edge case.
+- **The zero-predicate entry node is present** (`n0`, 0 predicates), as the
+  progressive-resolution spec recorded. It labels as "n0 — no state" and
+  `locateNode` already excludes it.
+- **`n1` is DeskRAG itself** — "Electron — Stop recording", captured because the
+  recorder was frontmost when recording started. Since `SELF_NAMES` discards
+  observations of the reviewer, that node can never be the located one. Correct,
+  but it means a recording's first boundary is often unreachable as a goal.
+- **3 of 7 edges are back edges**, so loops are common in a merged graph and the
+  bowed rendering is load-bearing rather than decorative.
+
+**Still unvalidated, and the reason this section is not the whole story:** the
+app has been launched and the Replay screen has not been driven. No plan has been
+built against a live tree from this surface, and **nothing has been armed**. The
+focus handoff — the hazard this spec exists to address — is verified by running
+it, and it has not been run.
+
 ## Out of scope
 
 - **AI-in-the-loop.** `arm` stays human. `parseInterventionResponse` is the
