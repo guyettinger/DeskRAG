@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildPlan, edgeCost, findPath } from "../src/replay/plan.js";
-import { isRepairStep } from "../src/replay/types.js";
+import { isRepairStep, isSupersededStep } from "../src/replay/types.js";
 import type { Locate, PlanStep, PlannedAction } from "../src/replay/types.js";
 import type { Action, Graph, Predicate, TraceEdge, TraceNode } from "../src/trace/types.js";
 import type { Keymap } from "../src/capture/env/types.js";
@@ -8,6 +8,7 @@ import type { Keymap } from "../src/capture/env/types.js";
 /** Narrow a plan step to the recorded-action kind these tests operate on. */
 const asAction = (s: PlanStep): PlannedAction => {
   if (isRepairStep(s)) throw new Error("expected a PlannedAction, got a repair step");
+  if (isSupersededStep(s)) throw new Error("expected a PlannedAction, got a superseded step");
   return s;
 };
 
@@ -113,7 +114,16 @@ describe("buildPlan", () => {
     expect(plan.blockers).toEqual([]);
   });
 
-  it("computes an AX rate per edge and flags one below the floor", async () => {
+  /**
+   * CORRECTED. This fixture's anchor CARRIES an AX layer, so failing to resolve
+   * is no longer "a brittle point target" — it is the executor measuring that it
+   * is describing a state which does not exist yet, and the plan CUTS.
+   *
+   * The old expectation (a point resolution at 0% AX) was the behaviour this
+   * design exists to remove: the plan displayed a specific stale pixel the
+   * executor genuinely would have clicked.
+   */
+  it("cuts rather than planning a stale point target for an ax-carrying anchor", async () => {
     const plan = await buildPlan({
       graph: g,
       fromNodeId: "n0",
@@ -121,9 +131,41 @@ describe("buildPlan", () => {
       observed: [],
       locate: missing,
     });
+    expect(plan.steps).toHaveLength(0);
+    expect(plan.cut?.edgeId).toBe("e0");
+    expect(plan.cut?.resumeAt).toBe("n0");
+    expect(plan.remainder.map((r) => r.edgeId)).toEqual(["e0"]);
+    // Unresolved is not the same as unresolvable: the anchor carries an AX
+    // layer, so its ceiling is 100%.
+    expect(plan.brittleness[0]!.bound).toBe("upper");
+    expect(plan.brittleness[0]!.axRate).toBe(1);
+  });
+
+  /**
+   * The other half of the same rule: an anchor with NO ax layer is already at
+   * its permanent best, so it does not cut and it DOES make the edge brittle.
+   */
+  it("still flags a genuinely point-only edge below the floor", async () => {
+    const pointOnly = graph(
+      [node("n0"), node("n1")],
+      [
+        edge("e0", "n0", "n1", [
+          { kind: "click", anchor: { point: { x: 1, y: 2, displayId: "5" } }, button: 1, count: 1 },
+        ]),
+      ],
+    );
+    const plan = await buildPlan({
+      graph: pointOnly,
+      fromNodeId: "n0",
+      toNodeId: "n1",
+      observed: [],
+      locate: missing,
+    });
+    expect(plan.cut).toBeUndefined();
     expect(asAction(plan.steps[0]!).resolution!.layer).toBe("point");
     expect(plan.brittleness[0]!.axRate).toBe(0);
     expect(plan.brittleness[0]!.belowFloor).toBe(true);
+    expect(plan.brittleness[0]!.bound).toBe("measured");
   });
 
   it("does not flag an edge whose targets all resolve by AX", async () => {

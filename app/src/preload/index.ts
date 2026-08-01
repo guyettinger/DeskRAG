@@ -48,6 +48,7 @@ const api: DeskRagApi = {
     list: () => ipcRenderer.invoke(IPC.sessionsList),
     detail: (sessionId: string) => ipcRenderer.invoke(IPC.sessionsDetail, sessionId),
     remove: (sessionId: string) => ipcRenderer.invoke(IPC.sessionsRemove, sessionId),
+    reindex: () => ipcRenderer.invoke(IPC.sessionsReindex),
   },
   models: {
     onDownload: (cb: (p: ModelDownloadProgress) => void) =>

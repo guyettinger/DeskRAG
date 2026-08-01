@@ -161,8 +161,44 @@ func roleOf(_ el: AXUIElement) -> String {
     return raw.hasPrefix("AX") ? String(raw.dropFirst(2)) : raw
 }
 
+/// Process queued run-loop sources, so every `NSWorkspace` read below is current.
+///
+/// `NSWorkspace.shared.frontmostApplication` and `.runningApplications` are
+/// backed by workspace notifications delivered to the main run loop. `ax-exec`
+/// blocks in `readLine()` and spins no run loop, so WITHOUT this drain those
+/// values are PINNED at whatever was true when the process started — measured as
+/// 14 disagreements in 20 one-second samples against a freshly spawned process,
+/// which cannot have the problem. An isolated probe confirmed it: reading
+/// without the drain never changed across 20 samples while the desktop moved.
+///
+/// `ax-dump` never hit this, being a fresh process per invocation. Only the
+/// long-lived sidecar is exposed, and the executor's one successful run
+/// (2026-07-31) missed it by being single-app with the target already frontmost —
+/// exactly the case where a pinned value is the correct value.
+///
+/// The blast radius is the whole sidecar, not just the app name: `rootElement()`
+/// takes its pid from the same call, so a pinned value means every `dump` and
+/// `locate` after an app change reads the WRONG application's UI. That makes
+/// `runRepair`'s confirmation poll and every `wait { until: app(X) }` incapable
+/// of ever succeeding.
+///
+/// Called once per command rather than at each read site, so a command added
+/// later cannot forget it.
+func drainRunLoop() {
+    while CFRunLoopRunInMode(.defaultMode, 0, true) == .handledSource {}
+}
+
+/// The frontmost application. `drainRunLoop()` must already have run this command.
+func frontmostApp() -> NSRunningApplication? {
+    NSWorkspace.shared.frontmostApplication
+}
+
 func rootElement() -> AXUIElement? {
-    guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier else { return nil }
+    guard let pid = frontmostApp()?.processIdentifier else { return nil }
+    return rootElement(pid: pid)
+}
+
+func rootElement(pid: pid_t) -> AXUIElement? {
     let app = AXUIElementCreateApplication(pid)
     var win: CFTypeRef?
     if AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &win) == .success,
@@ -275,6 +311,10 @@ while let line = readLine(strippingNewline: true) {
           let req = try? JSONDecoder().decode(Request.self, from: data)
     else { continue }
 
+    // Every command reads the world, and this process spins no run loop of its
+    // own. See `drainRunLoop`.
+    drainRunLoop()
+
     switch req.cmd {
     case "quit":
         emit(req.id, ok: true)
@@ -289,9 +329,14 @@ while let line = readLine(strippingNewline: true) {
         // Returned from ONE command so they describe the same instant: fetching
         // the app name a moment after the tree has the same hazard that made
         // boundary snapshots describe the previous application.
+        // ONE frontmost lookup serving both the tree's pid and the app name, so
+        // they cannot describe two different applications. Reading it twice is
+        // the same hazard that made boundary snapshots describe the previous
+        // app, in miniature: the desktop can change between two calls.
+        let front = frontmostApp()
         var elements: [[String: Any]] = []
         var windowTitle: String?
-        if trusted, let root = rootElement() {
+        if trusted, let pid = front?.processIdentifier, let root = rootElement(pid: pid) {
             let walked = walk(root)
             elements = walked.elements.map { $0.json }
             // The focused window's title, from the root of the walk.
@@ -300,7 +345,7 @@ while let line = readLine(strippingNewline: true) {
         }
         // localizedName is the display name — the same string active-win records
         // as `owner.name`, so a recorded `app` predicate can match verbatim.
-        let appName = NSWorkspace.shared.frontmostApplication?.localizedName
+        let appName = front?.localizedName
         var result: [String: Any] = ["elements": elements]
         if let a = appName { result["app"] = a }
         if let w = windowTitle { result["windowTitle"] = w }

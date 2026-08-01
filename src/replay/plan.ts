@@ -13,7 +13,7 @@
  */
 
 import { ulid } from "ulid";
-import type { Graph, TraceEdge } from "../trace/types.js";
+import type { Action, Anchor, Graph, TraceEdge } from "../trace/types.js";
 import { resolveAnchor } from "./resolve.js";
 import { strokesFor } from "./typing.js";
 import {
@@ -26,7 +26,10 @@ import {
   type PlannedAction,
   type PlanStep,
   type Predicate,
+  type RemainderAction,
+  type RemainderEdge,
   type RepairStep,
+  type SegmentCut,
   type Vec2,
 } from "./types.js";
 import { blockersOf, verifyNode } from "./verify.js";
@@ -88,6 +91,84 @@ export function findPath(graph: Graph, from: string, to: string): TraceEdge[] | 
   return path.reverse();
 }
 
+/** Actions with a spatial target; the only kinds an anchor belongs to. */
+const isSpatial = (
+  a: Action,
+): a is Extract<Action, { kind: "click" | "hover" | "scroll" | "drag" }> =>
+  a.kind === "click" || a.kind === "hover" || a.kind === "scroll" || a.kind === "drag";
+
+/** The anchor an action aims at — `from` for a drag, `anchor` for the rest. */
+const anchorOf = (a: Action): Anchor | undefined =>
+  a.kind === "drag" ? a.from : isSpatial(a) ? a.anchor : undefined;
+
+/**
+ * Indices of the actions a repair for `app` REPLACES.
+ *
+ * The final action when it is spatial and carries no `ax` layer — both
+ * conditions required. `computeBoundaries` cuts a boundary at the focus change,
+ * so the action causing the switch is by construction the last one before it
+ * (4 of 4 cross-app edges measured), and the switch target sits outside the
+ * focused window's AX tree by definition, which is exactly why the recorded Dock
+ * click is point-only. An action aimed at an element in the app's own tree
+ * cannot have been the switch, so it is posted as recorded.
+ *
+ * Plus every `wait { until: app(X) }`, wherever it sits: `runRepair` already
+ * polls that predicate before returning, so dropping one is a no-op rather than
+ * a skipped check. Measurement put them mid-edge, not beside the switch — an
+ * earlier rule anchored on the wait fired on only half the real cross-app edges.
+ */
+function supersededBy(actions: readonly Action[], app: string): Set<number> {
+  const out = new Set<number>();
+  const lastIndex = actions.length - 1;
+  const last = actions[lastIndex];
+  if (last !== undefined && isSpatial(last) && anchorOf(last)?.ax === undefined) {
+    out.add(lastIndex);
+  }
+  actions.forEach((a, i) => {
+    if (a.kind === "wait" && a.until.kind === "app" && a.until.args.app === app) out.add(i);
+  });
+  return out;
+}
+
+/**
+ * The descriptors the RECORDING carries. A fact about the anchor, never a
+ * forecast of what it will resolve to — the remainder does not claim to know
+ * where an unresolved action would land.
+ */
+function descriptorsOf(anchor: Anchor | undefined): RemainderAction["descriptors"] {
+  if (anchor === undefined) return undefined;
+  const d: NonNullable<RemainderAction["descriptors"]> = [];
+  if (anchor.ax?.identifier !== undefined && anchor.ax.identifier.length > 0) d.push("identifier");
+  if (anchor.ax?.label !== undefined && anchor.ax.label.length > 0) d.push("label");
+  if (anchor.ax?.path !== undefined && anchor.ax.path.length > 0) d.push("path");
+  if (anchor.visual !== undefined) d.push("visual");
+  return d.length > 0 ? d : undefined;
+}
+
+/**
+ * The deductive CEILING on an edge's AX rate. An anchor with no `ax` layer can
+ * never resolve to an AX rung — at any time, by any mechanism — so this is
+ * arithmetic over what the recording contains, not a prediction. It is what
+ * stops a reviewer arming segment 1, changing the world, and only then finding
+ * that a later edge could never arm at all.
+ */
+function axCeiling(actions: readonly Action[]): number {
+  const spatial = actions.filter(isSpatial);
+  if (spatial.length === 0) return 1; // matches the measured branch: no targets, no doubt
+  return spatial.filter((a) => anchorOf(a)?.ax !== undefined).length / spatial.length;
+}
+
+function remainderActionOf(action: Action): RemainderAction {
+  const anchor = anchorOf(action);
+  const descriptors = descriptorsOf(anchor);
+  return {
+    kind: action.kind,
+    ...(descriptors !== undefined ? { descriptors } : {}),
+    ...(anchor !== undefined ? { recordedPoint: { x: anchor.point.x, y: anchor.point.y } } : {}),
+    ...(action.kind === "type" ? { slot: action.slot } : {}),
+  };
+}
+
 export interface BuildPlanInput {
   graph: Graph;
   fromNodeId: string;
@@ -130,6 +211,9 @@ export async function buildPlan(input: BuildPlanInput): Promise<Plan> {
   const steps: PlanStep[] = [];
   const blockers: Blocker[] = [];
   const brittleness: EdgeBrittleness[] = [];
+  const remainder: RemainderEdge[] = [];
+  /** Set once resolution stops working; every later edge is disclosed, not planned. */
+  let cut: SegmentCut | undefined;
   // The app we believe is frontmost as the plan progresses — starts from what
   // is observed and advances as repairs are inserted, so a multi-hop path
   // through one application repairs it once.
@@ -139,11 +223,19 @@ export async function buildPlan(input: BuildPlanInput): Promise<Plan> {
     let targets = 0;
     let axTargets = 0;
 
-    // Assertable predicates on the node this edge arrives at gate the plan.
+    // Assertable predicates gate the WHOLE run, segment or remainder alike: no
+    // UI action can produce them, so the present observation is decisive even
+    // for a node several edges away. Collected first and scoped below, once it
+    // is known whether this edge survived the cut.
+    const edgeBlockers: Blocker[] = [];
     const to = nodesById.get(edge.to);
     if (to !== undefined) {
       for (const v of blockersOf(verifyNode(to.predicates, input.observed).violations)) {
-        blockers.push({ predicate: v.predicate, reason: "assertable predicate does not hold" });
+        edgeBlockers.push({
+          predicate: v.predicate,
+          reason: "assertable predicate does not hold",
+          scope: "segment",
+        });
       }
     }
 
@@ -151,39 +243,95 @@ export async function buildPlan(input: BuildPlanInput): Promise<Plan> {
     // tagged achievable, which promises exactly this; replaying the recorded
     // Dock click instead is a coordinate on a surface whose contents move, and
     // it fails silently because a click always "succeeds".
+    // Built, NOT pushed: it belongs at the edge's END. The `app` predicate is on
+    // the DESTINATION node, so it must hold when the edge finishes; the edge's
+    // own actions run in the SOURCE app, and activating first posts them into
+    // the wrong application.
+    let repair: RepairStep | undefined;
     if (to !== undefined && input.runningApps !== undefined) {
       const wanted = to.predicates.find((p) => p.kind === "app")?.args.app;
       if (typeof wanted === "string" && wanted.length > 0 && wanted !== frontmost) {
         const running = input.runningApps.includes(wanted);
         const mayLaunch = input.allowLaunch === true;
         if (!running && !mayLaunch) {
-          blockers.push({ reason: `${wanted} is not running` });
+          edgeBlockers.push({ reason: `${wanted} is not running`, scope: "segment" });
         } else {
-          const repair: RepairStep = {
+          repair = {
             repair: "activate",
+            edgeId: edge.id,
             app: wanted,
             launch: !running && mayLaunch,
             reason: `app(app="${wanted}") does not hold`,
           };
-          steps.push(repair);
         }
         // Whatever we decided, the rest of the path is "in" this app now.
         frontmost = wanted;
       }
     }
 
-    for (const action of edge.actions) {
+    const superseded =
+      repair === undefined ? new Set<number>() : supersededBy(edge.actions, repair.app);
+    /** What would actually be posted, once the repair's replacements are removed. */
+    const kept = edge.actions.filter((_, i) => !superseded.has(i));
+
+    /** Disclose an edge instead of planning it, and bound its brittleness. */
+    const disclose = (): void => {
+      remainder.push({
+        edgeId: edge.id,
+        toNodeId: edge.to,
+        actions: kept.map(remainderActionOf),
+        repairs: repair === undefined ? [] : [repair],
+      });
+      const ceiling = axCeiling(kept);
+      brittleness.push({
+        edgeId: edge.id,
+        axRate: ceiling,
+        belowFloor: ceiling < BRITTLENESS_FLOOR,
+        bound: "upper",
+      });
+    };
+
+    if (cut !== undefined) {
+      disclose();
+      for (const b of edgeBlockers) blockers.push({ ...b, scope: "remainder" });
+      continue;
+    }
+
+    // Planned into a BUFFER: if any anchor cuts, the whole edge is discarded and
+    // disclosed instead. The cut is at an edge boundary because a node boundary
+    // is the only place the world can be re-observed.
+    const buffer: PlanStep[] = [];
+    let edgeCut: SegmentCut | undefined;
+
+    for (const [i, action] of edge.actions.entries()) {
+      if (superseded.has(i)) {
+        // Visible, never silent: the review has to be able to say what will NOT
+        // be posted and why. Skipping here also keeps it out of the AX rate,
+        // which is what makes a cross-app edge armable at all.
+        buffer.push({
+          superseded: "activate",
+          edgeId: edge.id,
+          action,
+          reason: `activating ${repair!.app} replaces this`,
+        });
+        continue;
+      }
+
       const step: PlannedAction = { edgeId: edge.id, action };
 
-      if (action.kind === "click" || action.kind === "hover" || action.kind === "scroll") {
-        const r = await resolveAnchor(action.anchor, input.locate, resolveOpts);
-        step.resolution = r;
-        targets++;
-        if (r.layer !== "point") axTargets++;
-      } else if (action.kind === "drag") {
-        // The `from` endpoint is what the plan previews; `to` is resolved at
-        // execution time against the same ladder.
-        const r = await resolveAnchor(action.from, input.locate, resolveOpts);
+      const anchor = anchorOf(action);
+      if (anchor !== undefined) {
+        // For a drag this is the `from` endpoint; `to` resolves at execution
+        // time against the same ladder.
+        const r = await resolveAnchor(anchor, input.locate, resolveOpts);
+        // THE CUT: the anchor carries AX descriptors and still reached no AX
+        // rung. That is the executor measuring that it is describing a state
+        // which does not exist yet — as opposed to a point-only anchor, which is
+        // already at its permanent best and cannot be improved by waiting.
+        if (r.layer === "point" && anchor.ax !== undefined) {
+          edgeCut = { resumeAt: edge.from, edgeId: edge.id, attempts: r.attempts };
+          break;
+        }
         step.resolution = r;
         targets++;
         if (r.layer !== "point") axTargets++;
@@ -192,19 +340,38 @@ export async function buildPlan(input: BuildPlanInput): Promise<Plan> {
         const value = bound ?? action.recorded;
         if (bound !== undefined) step.slotBinding = { name: action.slot, value: bound };
         if (input.keymap === undefined) {
-          blockers.push({ reason: `no keymap supplied: cannot type "${value}"` });
+          edgeBlockers.push({
+            reason: `no keymap supplied: cannot type "${value}"`,
+            scope: "segment",
+          });
         } else if (strokesFor(value, input.keymap) === null) {
-          blockers.push({
+          edgeBlockers.push({
             reason: `"${value}" cannot be typed with layout ${input.keymap.layoutId}`,
+            scope: "segment",
           });
         }
       }
 
-      steps.push(step);
+      buffer.push(step);
     }
 
+    if (edgeCut !== undefined) {
+      cut = edgeCut;
+      disclose();
+      for (const b of edgeBlockers) blockers.push({ ...b, scope: "remainder" });
+      continue;
+    }
+
+    steps.push(...buffer, ...(repair === undefined ? [] : [repair]));
+    for (const b of edgeBlockers) blockers.push(b);
+
     const axRate = targets > 0 ? axTargets / targets : 1;
-    brittleness.push({ edgeId: edge.id, axRate, belowFloor: axRate < BRITTLENESS_FLOOR });
+    brittleness.push({
+      edgeId: edge.id,
+      axRate,
+      belowFloor: axRate < BRITTLENESS_FLOOR,
+      bound: "measured",
+    });
   }
 
   return {
@@ -215,5 +382,7 @@ export async function buildPlan(input: BuildPlanInput): Promise<Plan> {
     steps,
     blockers,
     brittleness,
+    ...(cut !== undefined ? { cut } : {}),
+    remainder,
   };
 }

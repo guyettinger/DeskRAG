@@ -35,10 +35,69 @@ describe("isVolatileLabel", () => {
 });
 
 describe("extractPredicates", () => {
-  it("emits app and window predicates from the context, tagged achievable", () => {
+  it("emits the app predicate from the context, tagged achievable", () => {
     const ps = extractPredicates([], { app: "Mail", windowTitle: "New Message" });
     expect(ps).toContainEqual({ kind: "app", args: { app: "Mail" }, reach: "achievable" });
-    expect(ps).toContainEqual({ kind: "window", args: { title: "New Message" }, reach: "achievable" });
+  });
+
+  /**
+   * A window title is document or page IDENTITY, not state. Emitting it made a
+   * recording unusable outside the exact file it was made against: measured on a
+   * real desktop, the TextEdit node missed by `window(title="Untitled.rtf")` and
+   * `ax_exists(Window,"Untitled.rtf")` while 16 of its 19 predicates held, so it
+   * could not be located in a document with any other name.
+   */
+  it("never emits a window predicate, or a Window ax_exists carrying the title", () => {
+    const ps = extractPredicates([el("AXWindow", "Untitled.rtf", 0)], {
+      app: "TextEdit",
+      windowTitle: "Untitled.rtf",
+    });
+    expect(ps.some((p) => p.kind === "window")).toBe(false);
+    expect(ps.some((p) => p.args.role === "Window")).toBe(false);
+  });
+
+  /**
+   * A browser's tab strip is SESSION state, not application state. Chrome
+   * exposes every open tab as a RadioButton labelled with the page title, and a
+   * collapsed tab group as a TabGroup labelled with the group name — measured on
+   * a real recording as 27 of one node's 61 predicates, which made that node
+   * unverifiable unless the same 20 tabs happened to be open. Same class as a
+   * clock or a badge count, one level up.
+   *
+   * Measured 27/27 of the tabs sit under a TabGroup ancestor, so the rule is
+   * structural rather than a guess about labels.
+   */
+  it("drops a browser's tabs and tab groups, keeping the page beneath them", () => {
+    const ps = extractPredicates([
+      el("AXTabGroup", "group Reading - 3 Other Tabs", 0),
+      { ...el("AXRadioButton", "Some Page Title - Google Chrome", 1), parent: 0 },
+      { ...el("AXTabGroup", "group Projects - 2 Other Tabs", 2), parent: 0 },
+      el("AXButton", "Reload", 3),
+    ]);
+    const labels = ps.map((p) => p.args.label);
+    expect(labels).not.toContain("Some Page Title - Google Chrome");
+    expect(labels).not.toContain("group Reading - 3 Other Tabs");
+    expect(labels).not.toContain("group Projects - 2 Other Tabs");
+    expect(labels).toContain("Reload");
+  });
+
+  /** A RadioButton that is NOT in a tab strip is an ordinary form control. */
+  it("keeps a radio button that is not part of a tab strip", () => {
+    const ps = extractPredicates([
+      el("AXWindow", "Prefs", 0),
+      { ...el("AXRadioButton", "Weekly", 1), parent: 0 },
+    ]);
+    expect(ps.map((p) => p.args.label)).toContain("Weekly");
+  });
+
+  /** The unsaved-changes indicator: present while dirty, gone once saved. */
+  it("drops the document-dirty indicator but keeps labels that merely start with it", () => {
+    const ps = extractPredicates([
+      el("AXMenuButton", "Edited", 0),
+      el("AXButton", "Edited by Sam", 1),
+    ]);
+    expect(ps.some((p) => p.args.label === "Edited")).toBe(false);
+    expect(ps.some((p) => p.args.label === "Edited by Sam")).toBe(true);
   });
 
   it("emits ax_exists only for stable roles with non-volatile labels", () => {

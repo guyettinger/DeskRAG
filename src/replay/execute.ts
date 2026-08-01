@@ -13,13 +13,16 @@
 
 import { projectPath } from "../trace/paths.js";
 import { predicateKey } from "../trace/predicates.js";
-import { observe } from "./observe.js";
-import { isRepairStep } from "./types.js";
+import { observe, windowOriginOf } from "./observe.js";
+import { resolveAnchor } from "./resolve.js";
+import { isRepairStep, isSupersededStep } from "./types.js";
 import { strokesFor } from "./typing.js";
+import { verifyNode } from "./verify.js";
 import type {
   ExecOutcome,
   Plan,
   PlannedAction,
+  PlanStep,
   RepairStep,
   ReplayInput,
   ResolvedLayer,
@@ -39,14 +42,19 @@ export function canArm(plan: Plan, override = false): { ok: boolean; reason?: st
   if (plan.blockers.length > 0) {
     // Blockers are assertable: no UI action produces them, so an override would
     // only mean failing later and less clearly.
-    return { ok: false, reason: plan.blockers.map((b) => b.reason).join("; ") };
+    // Scoped, so a reviewer can tell a blocker in the segment they are about to
+    // run from one several edges ahead that makes the goal unreachable.
+    return {
+      ok: false,
+      reason: plan.blockers.map((b) => `${b.reason} (${b.scope})`).join("; "),
+    };
   }
   const brittle = plan.brittleness.filter((b) => b.belowFloor);
   if (brittle.length > 0 && !override) {
     return {
       ok: false,
       reason: `brittle edges (majority of targets resolve to coordinates only): ${brittle
-        .map((b) => `${b.edgeId} @ ${(b.axRate * 100).toFixed(0)}%`)
+        .map((b) => `${b.edgeId} @ ${(b.axRate * 100).toFixed(0)}% ${b.bound}`)
         .join(", ")}`,
     };
   }
@@ -76,9 +84,36 @@ export async function executePlan(
   const activateTimeoutMs = opts.activateTimeoutMs ?? 5000;
   let stepsRun = 0;
 
+  // The LAST step of an edge is its node boundary. Computed once rather than
+  // rescanned per step; every step kind carries `edgeId`, including a repair,
+  // which is now the final step of a cross-app edge.
+  const lastStepOfEdge = new Map<string, number>();
+  plan.steps.forEach((s, i) => lastStepOfEdge.set(s.edgeId, i));
+  const nodesById = new Map(input.graph.nodes.map((n) => [n.id, n]));
+  const edgesById = new Map(input.graph.edges.map((e) => [e.id, e]));
+
+  /**
+   * At a node boundary, require that every predicate the destination node claims
+   * still holds — SUBSET, so anything the screen gained is not a violation.
+   *
+   * Skipped when the graph does not describe this edge, or the node claims
+   * nothing: there is no state to verify, and inventing one would fail every
+   * plan built against a partial graph.
+   */
+  const verifyBoundary = async (index: number, step: PlanStep): Promise<void> => {
+    if (lastStepOfEdge.get(step.edgeId) !== index) return;
+    const dest = nodesById.get(edgesById.get(step.edgeId)?.to ?? "");
+    if (dest === undefined || dest.predicates.length === 0) return;
+    const { violations } = verifyNode(dest.predicates, await observe(input.actuator));
+    if (violations.length > 0) {
+      const names = violations.map((v) => predicateKey(v.predicate)).join(", ");
+      throw new Error(`node ${dest.id} did not verify after edge ${step.edgeId}: ${names}`);
+    }
+  };
+
   for (let i = 0; i < plan.steps.length; i++) {
     const step = plan.steps[i]!;
-    if (!isRepairStep(step) && step.resolution !== undefined) {
+    if (!isRepairStep(step) && !isSupersededStep(step) && step.resolution !== undefined) {
       telemetry.push({
         edgeId: step.edgeId,
         layer: step.resolution.layer,
@@ -87,7 +122,9 @@ export async function executePlan(
     }
     try {
       if (isRepairStep(step)) await runRepair(step, input, pollMs, activateTimeoutMs);
-      else await runStep(step, input, pollMs);
+      // A superseded step exists to be REVIEWED, not run: the repair replaces it.
+      else if (!isSupersededStep(step)) await runStep(step, input, pollMs);
+      await verifyBoundary(i, step);
     } catch (err) {
       return {
         planId: plan.id,
@@ -130,9 +167,23 @@ async function runStep(step: PlannedAction, input: ReplayInput, pollMs: number):
     }
     case "drag": {
       const from = requirePoint(step);
+      // The `to` endpoint resolves HERE, against the same ladder — closing the
+      // gap between what plan.ts documented and what this actually did. Never a
+      // fallback to the recorded coordinate: a drag that ends somewhere else is
+      // not a recoverable error.
+      const observation = await actuator.dump();
+      const origin = windowOriginOf(observation);
+      const resolvedTo = await resolveAnchor(
+        action.to,
+        (d) => actuator.locate(d),
+        origin !== undefined ? { windowOrigin: origin } : {},
+      );
+      if (resolvedTo.layer === "point" && action.to.ax !== undefined) {
+        throw new Error(`drag target on edge ${step.edgeId} no longer resolves`);
+      }
       // Projecting the unit-space curve onto the endpoints is ONE code path:
       // verbatim and retargeted replay differ only in where the endpoints landed.
-      const to: Vec2 = { x: action.to.point.x, y: action.to.point.y };
+      const to: Vec2 = resolvedTo.point;
       const points = projectPath(action.path, from, to);
       const stepMs = action.path.durationMs / Math.max(1, points.length - 1);
       const samples = points.map((p, i) => ({ p, atMs: Math.round(i * stepMs) }));

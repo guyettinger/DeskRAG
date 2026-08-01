@@ -52,7 +52,7 @@ import {
 import type { SettingsStore } from "./settings.js";
 import { MODELS } from "./models.js";
 import { libUrl } from "./lib-resolve.js";
-import { indexTrace } from "./trace-index.js";
+import { indexTrace, rebuildGraph } from "./trace-index.js";
 import { ModelStore, type ModelDownloadProgress } from "./model-store.js";
 import { OnnxHost } from "./onnx-host.js";
 import { spawnOnnxWorker } from "./onnx-spawn.js";
@@ -60,6 +60,7 @@ import type {
   Capabilities,
   HighlightDTO,
   IndexingProgress,
+  ReindexResultDTO,
   KeyframeMarkerDTO,
   ProviderSettingsView,
   RecordingStatus,
@@ -791,6 +792,49 @@ export class DeskRagService {
     await this.store.deleteSession(sessionId);
     await this.blobs.removeSession(sessionId);
     this.lastHighlights.clear();
+  }
+
+  /**
+   * Re-lift every recording into a fresh trace graph.
+   *
+   * Lifting reads `ax_snapshot` and the event stream, both already on disk, so
+   * nothing is re-recorded — this is how a corrected predicate filter or lift
+   * rule reaches recordings already taken. Indexing otherwise runs only when a
+   * recording stops, which left existing graphs frozen under whatever rules were
+   * in force the day they were made.
+   *
+   * Refused while recording: the session in flight is still writing the events
+   * a lift would read, so it would be lifted half-formed and then merged again
+   * when it stops.
+   */
+  async reindexTraces(): Promise<ReindexResultDTO> {
+    if (this.state.state !== "idle") {
+      throw new Error("Stop the current recording before rebuilding the graph.");
+    }
+    // The existing indexing channel, so the renderer's progress surface covers
+    // this with no second mechanism.
+    this.emitIndexing({ stage: "Rebuilding trace graph", done: 0, total: 1 });
+    try {
+      const r = await rebuildGraph(this.store, (done, total) => {
+        this.emitIndexing({
+          stage: `Re-lifting recordings ${Math.min(done + 1, total)}/${total}`,
+          done,
+          total,
+        });
+      });
+      const summary =
+        r.sessions === 0
+          ? "Nothing to rebuild — no recording produced any events"
+          : `Rebuilt from ${r.sessions} recording${r.sessions === 1 ? "" : "s"} — ` +
+            `graph ${r.nodes}/${r.edges}, ${r.actions} actions` +
+            (r.variables > 0 ? `, ${r.variables} variables` : "") +
+            (r.missingKeymap ? " (a recording had no keyboard layout: typed text not captured)" : "");
+      this.emitIndexing({ stage: summary, done: 1, total: 1 });
+      return r;
+    } catch (err) {
+      this.emitIndexing({ stage: "Rebuild failed — see logs", done: 0, total: 1 });
+      throw err;
+    }
   }
 
   // --- blobs (served over the deskrag:// protocol) --------------------------

@@ -8,7 +8,7 @@ import type {
   ReplayInput,
   UIElement,
 } from "../src/replay/types.js";
-import { isRepairStep } from "../src/replay/types.js";
+import { isRepairStep, isSupersededStep } from "../src/replay/types.js";
 import type { Action, Graph, Vec2 } from "../src/trace/types.js";
 import type { Keymap } from "../src/capture/env/types.js";
 
@@ -62,6 +62,7 @@ class FakeActuator implements Actuator {
 /** Narrow a plan step to the recorded-action kind these tests operate on. */
 const asAction = (s: Plan["steps"][number]) => {
   if (isRepairStep(s)) throw new Error("expected a PlannedAction, got a repair step");
+  if (isSupersededStep(s)) throw new Error("expected a PlannedAction, got a superseded step");
   return s;
 };
 
@@ -83,7 +84,8 @@ const plan = (steps: Plan["steps"], over: Partial<Plan> = {}): Plan => ({
   to: "n1",
   steps,
   blockers: [],
-  brittleness: [{ edgeId: "e0", axRate: 1, belowFloor: false }],
+  remainder: [],
+  brittleness: [{ edgeId: "e0", axRate: 1, belowFloor: false, bound: "measured" }],
   ...over,
 });
 
@@ -106,24 +108,24 @@ describe("canArm", () => {
   });
 
   it("refuses a plan with blockers", () => {
-    const r = canArm(plan([], { blockers: [{ reason: "display missing" }] }));
+    const r = canArm(plan([], { blockers: [{ reason: "display missing", scope: "segment" }] }));
     expect(r.ok).toBe(false);
     expect(r.reason).toMatch(/display missing/);
   });
 
   it("refuses an edge below the brittleness floor", () => {
-    const r = canArm(plan([], { brittleness: [{ edgeId: "e0", axRate: 0.2, belowFloor: true }] }));
+    const r = canArm(plan([], { brittleness: [{ edgeId: "e0", axRate: 0.2, belowFloor: true, bound: "measured" }] }));
     expect(r.ok).toBe(false);
     expect(r.reason).toMatch(/brittle/i);
   });
 
   it("allows a brittle plan with an explicit override", () => {
-    const p = plan([], { brittleness: [{ edgeId: "e0", axRate: 0.2, belowFloor: true }] });
+    const p = plan([], { brittleness: [{ edgeId: "e0", axRate: 0.2, belowFloor: true, bound: "measured" }] });
     expect(canArm(p, true)).toEqual({ ok: true });
   });
 
   it("still refuses blockers even with an override — they have no repair path", () => {
-    const p = plan([], { blockers: [{ reason: "display missing" }] });
+    const p = plan([], { blockers: [{ reason: "display missing", scope: "segment" }] });
     expect(canArm(p, true).ok).toBe(false);
   });
 });
@@ -132,7 +134,7 @@ describe("executePlan", () => {
   it("refuses to run an unarmable plan and posts nothing", async () => {
     const a = new FakeActuator();
     const out = await executePlan(
-      plan([clickStep(10, 20)], { blockers: [{ reason: "nope" }] }),
+      plan([clickStep(10, 20)], { blockers: [{ reason: "nope", scope: "segment" }] }),
       input(a),
     );
     expect(out.completed).toBe(false);

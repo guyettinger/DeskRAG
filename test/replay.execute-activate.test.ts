@@ -71,7 +71,8 @@ const plan = (steps: Plan["steps"]): Plan => ({
   to: "n1",
   steps,
   blockers: [],
-  brittleness: [{ edgeId: "e0", axRate: 1, belowFloor: false }],
+  remainder: [],
+  brittleness: [{ edgeId: "e0", axRate: 1, belowFloor: false, bound: "measured" }],
 });
 
 const clickStep: Plan["steps"][number] = {
@@ -91,7 +92,7 @@ describe("executePlan: activation repair", () => {
   it("activates before running the following action", async () => {
     const a = new AppActuator();
     const out = await executePlan(
-      plan([{ repair: "activate", app: "Google Chrome", launch: false, reason: "r" }, clickStep]),
+      plan([{ repair: "activate", edgeId: "e0", app: "Google Chrome", launch: false, reason: "r" }, clickStep]),
       input(a),
       { pollMs: 1 },
     );
@@ -103,7 +104,7 @@ describe("executePlan: activation repair", () => {
   it("polls the app predicate rather than sleeping", async () => {
     const a = new AppActuator();
     const out = await executePlan(
-      plan([{ repair: "activate", app: "Google Chrome", launch: false, reason: "r" }]),
+      plan([{ repair: "activate", edgeId: "e0", app: "Google Chrome", launch: false, reason: "r" }]),
       input(a),
       { pollMs: 1 },
     );
@@ -116,7 +117,7 @@ describe("executePlan: activation repair", () => {
     const a = new AppActuator();
     a.activationSticks = false; // activate reports ok, but the app never fronts
     const out = await executePlan(
-      plan([{ repair: "activate", app: "Google Chrome", launch: false, reason: "r" }]),
+      plan([{ repair: "activate", edgeId: "e0", app: "Google Chrome", launch: false, reason: "r" }]),
       input(a),
       { pollMs: 1, activateTimeoutMs: 20 },
     );
@@ -128,7 +129,7 @@ describe("executePlan: activation repair", () => {
     const a = new AppActuator();
     a.running = ["TextEdit"]; // Chrome quit between planning and arming
     const out = await executePlan(
-      plan([{ repair: "activate", app: "Google Chrome", launch: false, reason: "r" }]),
+      plan([{ repair: "activate", edgeId: "e0", app: "Google Chrome", launch: false, reason: "r" }]),
       input(a),
       { pollMs: 1, activateTimeoutMs: 20 },
     );
@@ -140,7 +141,7 @@ describe("executePlan: activation repair", () => {
     const a = new AppActuator();
     a.running = ["TextEdit"];
     const out = await executePlan(
-      plan([{ repair: "activate", app: "Google Chrome", launch: true, reason: "r" }]),
+      plan([{ repair: "activate", edgeId: "e0", app: "Google Chrome", launch: true, reason: "r" }]),
       input(a),
       { pollMs: 1 },
     );
@@ -151,7 +152,7 @@ describe("executePlan: activation repair", () => {
   it("records no telemetry for a repair step — it is not a target", async () => {
     const a = new AppActuator();
     const out = await executePlan(
-      plan([{ repair: "activate", app: "Google Chrome", launch: false, reason: "r" }]),
+      plan([{ repair: "activate", edgeId: "e0", app: "Google Chrome", launch: false, reason: "r" }]),
       input(a),
       { pollMs: 1 },
     );

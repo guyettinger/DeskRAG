@@ -47,11 +47,19 @@ describe("observe", () => {
     expect(p.map(predicateKey)).toContain('app(app="TextEdit")');
   });
 
-  it("emits a window predicate from the reported window title", async () => {
+  /**
+   * The title still travels with the observation — it is one of the two facts
+   * that are not in the tree, and `AxObservation` bundles it deliberately — but
+   * it is no longer part of node identity. A title is which document or page you
+   * have open, not which state you are in, and as a predicate it stopped any
+   * node from being located outside the exact file it was recorded against.
+   */
+  it("does NOT turn the reported window title into a predicate", async () => {
     const p = await observe(
       new StubActuator({ elements: tree, app: "TextEdit", windowTitle: "Untitled" }),
     );
-    expect(p.map(predicateKey)).toContain('window(title="Untitled")');
+    expect(p.map(predicateKey)).not.toContain('window(title="Untitled")');
+    expect(p.map(predicateKey)).toContain('app(app="TextEdit")');
   });
 
   it("still yields the AX predicates alongside them", async () => {

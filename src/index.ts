@@ -360,6 +360,7 @@ export { BoundaryAxTrigger, type BoundaryAxTriggerOptions } from "./capture/ax/b
 export {
   agreement,
   isRepairStep,
+  isSupersededStep,
   LAYER_CEILING,
   pathCeiling,
   pathDepth,
@@ -374,15 +375,25 @@ export {
   type EdgeBrittleness,
   type ExecOutcome,
   type Locate,
+  type NodeLocation,
   type Plan,
   type PlannedAction,
   type PlanStep,
+  type RemainderAction,
+  type RemainderEdge,
   type RepairStep,
   type ReplayInput,
   type Resolution,
   type ResolvedLayer,
+  type RunInput,
+  type RunOutcome,
+  type RunStop,
+  type SegmentCut,
+  type SupersededStep,
 } from "./replay/types.js";
-export { observe, windowOriginOf } from "./replay/observe.js";
+export { locateNode } from "./replay/locate.js";
+export { executeRun } from "./replay/run.js";
+export { observe, predicatesOf, windowOriginOf } from "./replay/observe.js";
 export { resolveAnchor, type ResolveOptions } from "./replay/resolve.js";
 export {
   verifyNode,
