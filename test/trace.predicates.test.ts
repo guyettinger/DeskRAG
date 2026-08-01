@@ -35,10 +35,35 @@ describe("isVolatileLabel", () => {
 });
 
 describe("extractPredicates", () => {
-  it("emits app and window predicates from the context, tagged achievable", () => {
+  it("emits the app predicate from the context, tagged achievable", () => {
     const ps = extractPredicates([], { app: "Mail", windowTitle: "New Message" });
     expect(ps).toContainEqual({ kind: "app", args: { app: "Mail" }, reach: "achievable" });
-    expect(ps).toContainEqual({ kind: "window", args: { title: "New Message" }, reach: "achievable" });
+  });
+
+  /**
+   * A window title is document or page IDENTITY, not state. Emitting it made a
+   * recording unusable outside the exact file it was made against: measured on a
+   * real desktop, the TextEdit node missed by `window(title="Untitled.rtf")` and
+   * `ax_exists(Window,"Untitled.rtf")` while 16 of its 19 predicates held, so it
+   * could not be located in a document with any other name.
+   */
+  it("never emits a window predicate, or a Window ax_exists carrying the title", () => {
+    const ps = extractPredicates([el("AXWindow", "Untitled.rtf", 0)], {
+      app: "TextEdit",
+      windowTitle: "Untitled.rtf",
+    });
+    expect(ps.some((p) => p.kind === "window")).toBe(false);
+    expect(ps.some((p) => p.args.role === "Window")).toBe(false);
+  });
+
+  /** The unsaved-changes indicator: present while dirty, gone once saved. */
+  it("drops the document-dirty indicator but keeps labels that merely start with it", () => {
+    const ps = extractPredicates([
+      el("AXMenuButton", "Edited", 0),
+      el("AXButton", "Edited by Sam", 1),
+    ]);
+    expect(ps.some((p) => p.args.label === "Edited")).toBe(false);
+    expect(ps.some((p) => p.args.label === "Edited by Sam")).toBe(true);
   });
 
   it("emits ax_exists only for stable roles with non-volatile labels", () => {

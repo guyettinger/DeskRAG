@@ -23,7 +23,22 @@ export interface PredicateContext {
   maxAxPredicates?: number;
 }
 
-export const DEFAULT_MAX_AX_PREDICATES = 32;
+/**
+ * 32 was too small, measured: two DIFFERENT GitHub pages in Chrome (a pull
+ * request and a repository home) both truncated to the same 32 predicates and
+ * produced IDENTICAL sets — a wrong merge, which is silent corruption rather
+ * than a visible redundant node. Candidates sort shallowest-first, so the budget
+ * went entirely to browser chrome and nothing page-specific survived.
+ *
+ * At 64 the same two pages yield 61 and 62 predicates and differ by 25 of them,
+ * on page-specific controls ("Edit title" vs "Add file") already covered by
+ * STABLE_ROLES. The heaviest tree measured (973 elements) produces 62, so 64 is
+ * above the observed ceiling rather than merely above the observed collision.
+ *
+ * Only web content came close: TextEdit produced 19 predicates and the Electron
+ * app 14, so this raises nothing for native apps.
+ */
+export const DEFAULT_MAX_AX_PREDICATES = 64;
 
 /**
  * Roles whose presence says something durable about which screen you are on.
@@ -37,7 +52,14 @@ export const DEFAULT_MAX_AX_PREDICATES = 32;
  * `axFilter` already learned this and normalizes for the same reason.
  */
 const STABLE_ROLES: ReadonlySet<string> = new Set([
-  "Window",
+  // "Window" is deliberately ABSENT. A window's label is its title, which is
+  // document or page IDENTITY rather than state: TextEdit reported
+  // `Window("Untitled.rtf")` and Chrome the full page title. Keeping it meant a
+  // node recorded in one document could never be located in another, even
+  // though the UI is identical and the recorded task is document-independent.
+  // Measured live: `n2` missed by exactly this plus `window(title=...)` while 16
+  // of its 19 predicates held. `Sheet` and `Dialog` stay — their titles name a
+  // state ("Open", "Save") rather than which file you happen to have open.
   "Sheet",
   "Dialog",
   "Button",
@@ -69,6 +91,12 @@ const VOLATILE_PATTERNS: readonly RegExp[] = [
   /\b\d+\s+(unread|items?|messages?|results?|files?|photos?|selected)\b/i,
   /\b(just now|\d+\s+(seconds?|minutes?|hours?|days?)\s+ago)\b/i,
   /\b\d+\s*(KB|MB|GB|TB)\b/i,
+  // A document's unsaved-changes indicator (TextEdit's "Edited" MenuButton).
+  // Exactly the clock/badge-count class this filter exists for: it appears the
+  // moment you type and vanishes on save, so a node recorded in a dirty document
+  // could never be located in a clean one. Anchored, so "Edited by Sam" — a
+  // label describing content rather than dirty state — is unaffected.
+  /^\s*(Edited|Modified)\s*$/,
 ];
 
 export function isVolatileLabel(label: string): boolean {
@@ -106,9 +134,12 @@ export function extractPredicates(
   };
 
   if (ctx.app !== undefined && ctx.app.length > 0) add("app", { app: ctx.app });
-  if (ctx.windowTitle !== undefined && ctx.windowTitle.length > 0 && !isVolatileLabel(ctx.windowTitle)) {
-    add("window", { title: ctx.windowTitle });
-  }
+  // `ctx.windowTitle` is deliberately NOT emitted as a predicate. A title is
+  // document or page identity, not state — see STABLE_ROLES above — and as a
+  // node predicate it made every recording unusable outside the exact file it
+  // was recorded against. The field stays on the context because callers still
+  // carry the title for display and debugging; this is the one place that
+  // decides it is not part of identity.
   for (const d of ctx.displays ?? []) add("display", { id: d.id, w: d.w, h: d.h });
   for (const f of ctx.files ?? []) add("file", { path: f });
 
