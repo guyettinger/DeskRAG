@@ -123,13 +123,26 @@ describe("toGraphDTO", () => {
   it("marks a back edge, and carries the keyframe id through", () => {
     const withFrame: TraceNode = {
       ...node("n1", [app("TextEdit")]),
-      visual: { frameBlobId: "blob-1", phash: "ff" },
+      visual: { frameBlobId: "frame-1", phash: "ff" },
     };
     const g = graph([node("n0"), withFrame], [edge("e0", "n0", "n1"), edge("e1", "n1", "n0")]);
-    const dto = toGraphDTO(g);
+    // `visual.frameBlobId` holds a FRAME id despite the name, so the blob is
+    // resolved through the injected callback.
+    const dto = toGraphDTO(g, (frameId) => (frameId === "frame-1" ? "blob-1" : undefined));
     expect(dto.edges.map((e) => e.back)).toEqual([false, true]);
     expect(dto.nodes[1]?.frameBlobId).toBe("blob-1");
     expect(dto.nodes[1]?.rank).toBe(1);
+  });
+
+  it("omits the image when the frame has no blob, rather than breaking one", () => {
+    const withFrame: TraceNode = {
+      ...node("n1", [app("TextEdit")]),
+      visual: { frameBlobId: "frame-gone", phash: "ff" },
+    };
+    const g = graph([node("n0"), withFrame], [edge("e0", "n0", "n1")]);
+    expect(toGraphDTO(g, () => undefined).nodes[1]?.frameBlobId).toBeUndefined();
+    // No resolver at all behaves the same way.
+    expect(toGraphDTO(g).nodes[1]?.frameBlobId).toBeUndefined();
   });
 });
 

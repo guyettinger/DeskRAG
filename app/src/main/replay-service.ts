@@ -56,11 +56,15 @@ export class ReplayService {
   private stopReason: ReplayStopReason | null = null;
   private stopDetail: string | undefined;
 
-  constructor(private readonly getGraph: () => Graph | undefined) {}
+  constructor(
+    private readonly getGraph: () => Graph | undefined,
+    /** frame id -> blob id. See `ResolveFrameBlob`: the IR's field is misnamed. */
+    private readonly resolveFrameBlob: (frameId: string) => string | undefined,
+  ) {}
 
   graph(): GraphDTO | null {
     const g = this.getGraph();
-    return g === undefined ? null : toGraphDTO(g);
+    return g === undefined ? null : toGraphDTO(g, this.resolveFrameBlob);
   }
 
   onLocation(cb: (l: LocationDTO) => void): () => void {

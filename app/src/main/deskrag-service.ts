@@ -851,4 +851,14 @@ export class DeskRagService {
   traceGraph(): Graph | undefined {
     return this.store.getGraph(DEFAULT_GRAPH_ID);
   }
+
+  /**
+   * The blob holding a frame's bytes. `TraceNode.visual.frameBlobId` is named
+   * for a blob but holds a FRAME id (`lift.ts` stores `snap.frameId`), and
+   * `deskrag://frame/<id>` resolves against the blob table — so a trace's
+   * keyframe has to be looked up rather than used directly.
+   */
+  frameBlobId(frameId: string): string | undefined {
+    return this.store.getFrame(frameId)?.blobId ?? undefined;
+  }
 }

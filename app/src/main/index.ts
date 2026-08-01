@@ -141,7 +141,10 @@ app.whenReady().then(async () => {
   await service.open();
 
   registerProtocol(service);
-  replay = new ReplayService(() => service.traceGraph());
+  replay = new ReplayService(
+    () => service.traceGraph(),
+    (frameId) => service.frameBlobId(frameId),
+  );
   registerIpc(service, settings, replay, () => win);
   service.onState(() => rebuildTray());
 

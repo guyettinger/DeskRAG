@@ -11,6 +11,8 @@ const CARD_W = 180;
 const CARD_H = 132;
 const GAP_X = 90;
 const GAP_Y = 28;
+/** Pixels of travel before a press becomes a pan rather than a click. */
+const DRAG_THRESHOLD = 4;
 
 interface Props {
   graph: GraphDTO;
@@ -27,7 +29,19 @@ export function GraphCanvas({
 }: Props): React.JSX.Element {
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 24, y: 24 });
-  const drag = useRef<{ x: number; y: number } | null>(null);
+  /**
+   * Pointer capture must NOT start on pointerdown. Capturing redirects every
+   * later pointer event to this div, so the node button never sees its own
+   * pointerup and no click is ever synthesized — the canvas pans and nothing is
+   * ever selectable. Capture only once the pointer has actually travelled.
+   */
+  const drag = useRef<{
+    x: number;
+    y: number;
+    panX: number;
+    panY: number;
+    moved: boolean;
+  } | null>(null);
 
   /** Column per rank, stacked in graph order so layout is stable across polls. */
   const placed = useMemo(() => {
@@ -49,15 +63,27 @@ export function GraphCanvas({
       className="gcanvas"
       onWheel={(e) => setZoom((z) => Math.min(2, Math.max(0.35, z - e.deltaY * 0.001)))}
       onPointerDown={(e) => {
-        drag.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
-        e.currentTarget.setPointerCapture(e.pointerId);
+        drag.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y, moved: false };
       }}
       onPointerMove={(e) => {
-        if (drag.current === null) return;
-        setPan({ x: e.clientX - drag.current.x, y: e.clientY - drag.current.y });
+        const d = drag.current;
+        if (d === null) return;
+        const dx = e.clientX - d.x;
+        const dy = e.clientY - d.y;
+        // Below the threshold this is still a click, so leave the pointer alone.
+        if (!d.moved) {
+          if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+          d.moved = true;
+          e.currentTarget.setPointerCapture(e.pointerId);
+        }
+        setPan({ x: d.panX + dx, y: d.panY + dy });
       }}
       onPointerUp={() => {
         drag.current = null;
+      }}
+      onDoubleClick={() => {
+        setPan({ x: 24, y: 24 });
+        setZoom(1);
       }}
     >
       <div

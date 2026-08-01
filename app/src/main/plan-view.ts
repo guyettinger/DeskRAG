@@ -102,17 +102,36 @@ export function rankNodes(graph: Graph): Map<string, number> {
   return out;
 }
 
-export function toGraphDTO(graph: Graph): GraphDTO {
+/**
+ * Resolve a FRAME id to the blob holding its bytes, or undefined.
+ *
+ * `TraceNode.visual.frameBlobId` is named for a blob but `lift.ts` stores
+ * `snap.frameId` in it — a frame id, which `deskrag://frame/<blobId>` cannot
+ * serve, because the protocol looks the id up in the blob table. Every card
+ * rendered a broken image until this was measured in the running app.
+ *
+ * Injected rather than imported so this module stays pure and testable: the
+ * same reason `trace/` takes its world through callbacks.
+ */
+export type ResolveFrameBlob = (frameId: string) => string | undefined;
+
+export function toGraphDTO(graph: Graph, resolveFrameBlob?: ResolveFrameBlob): GraphDTO {
   const ranks = rankNodes(graph);
 
   const nodes: GraphNodeDTO[] = graph.nodes.map((n) => {
     const named = labelNode(n);
+    // No resolver, or a frame with no blob, means NO image — the card degrades
+    // to its text state, which is strictly better than a broken one.
+    const blobId =
+      n.visual === undefined || resolveFrameBlob === undefined
+        ? undefined
+        : resolveFrameBlob(n.visual.frameBlobId);
     return {
       id: n.id,
       label: named.label,
       ...(named.app !== undefined ? { app: named.app } : {}),
       ...(named.hint !== undefined ? { hint: named.hint } : {}),
-      ...(n.visual !== undefined ? { frameBlobId: n.visual.frameBlobId } : {}),
+      ...(blobId !== undefined ? { frameBlobId: blobId } : {}),
       observations: n.observations,
       intervene: n.intervene,
       rank: ranks.get(n.id) ?? 0,
