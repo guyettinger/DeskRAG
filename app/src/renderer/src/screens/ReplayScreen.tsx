@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import type { GraphDTO, LocationDTO, PlanDTO, RunEventDTO } from "@shared/types";
+import { shortId, type GraphDTO, type LocationDTO, type PlanDTO, type RunEventDTO } from "@shared/types";
 import { api } from "../api.js";
 import { GraphCanvas } from "./GraphCanvas.js";
 import { PlanReview, stopMessage } from "./PlanReview.js";
@@ -82,8 +82,10 @@ export function ReplayScreen(): React.JSX.Element {
         <span className={`chip${location?.nodeId !== undefined ? " live" : ""}`}>
           <span className="dot" /> {here}
         </span>
-        <span className="muted">
-          {goalId === null ? "Pick a goal on the graph" : `Goal: ${goalId}`}
+        <span className="muted" title={goalId ?? undefined}>
+          {goalId === null
+            ? "Pick a goal on the graph"
+            : `Goal: ${graph.nodes.find((n) => n.id === goalId)?.label ?? shortId(goalId)}`}
         </span>
         <label className="replay__launch">
           <input

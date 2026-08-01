@@ -75,6 +75,12 @@ describe("labelNode", () => {
     expect(labelNode(node("n0"))).toEqual({ label: "n0 — no state" });
   });
 
+  it("strips the session ULID, which real ids all carry", () => {
+    // Measured on the real graph: every id is `<26-char ULID>:nN`, 30 chars,
+    // rendered in a 180px card. `n0` there carries no predicates at all.
+    expect(labelNode(node("01KYX6DDK2PFXFDAX0XB3PH1DM:n0")).label).toBe("n0 — no state");
+  });
+
   it("never labels from a window title, which nodes do not carry", () => {
     // Defensive: PredicateKind lists "window" even though extractPredicates
     // never emits one. If that ever changes, it must not become a label.

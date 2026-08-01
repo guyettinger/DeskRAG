@@ -6,7 +6,14 @@
  * click, so it is tested rather than eyeballed.
  */
 
-import type { GraphDTO, GraphEdgeDTO, GraphNodeDTO, PlanDTO, PlanStepDTO } from "@shared/types";
+import {
+  shortId,
+  type GraphDTO,
+  type GraphEdgeDTO,
+  type GraphNodeDTO,
+  type PlanDTO,
+  type PlanStepDTO,
+} from "@shared/types";
 import { isRepairStep, isSupersededStep } from "deskrag";
 import type { Action, Anchor, Graph, Plan, PlanStep, Predicate, TraceNode } from "deskrag";
 
@@ -49,7 +56,9 @@ export function labelNode(node: TraceNode): { label: string; app?: string; hint?
   const hint = str(sheet?.args["label"]) ?? str(focus?.args["label"]);
 
   if (appName === undefined && hint === undefined) {
-    return { label: `${node.id} — no state` };
+    // The full id is a 30-char session-scoped ULID; this label is read in a
+    // 180px card and in the review's route line.
+    return { label: `${shortId(node.id)} — no state` };
   }
   const label =
     appName === undefined ? hint! : hint === undefined ? appName : `${appName} — ${hint}`;

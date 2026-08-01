@@ -8,7 +8,7 @@
  */
 
 import React, { useState } from "react";
-import type { PlanDTO, ReplayStopReason } from "@shared/types";
+import { shortId, type PlanDTO, type ReplayStopReason } from "@shared/types";
 
 export function stopMessage(reason: ReplayStopReason, detail?: string): string {
   switch (reason) {
@@ -66,8 +66,8 @@ export function PlanReview({ plan, status, busy, onArm, onCancel }: Props): Reac
 
       {plan.drift !== undefined && (
         <div className="review__banner is-warn">
-          Last segment expected <code>{plan.drift.expected}</code>, landed on{" "}
-          <code>{plan.drift.observed}</code>.
+          Last segment expected <code title={plan.drift.expected}>{shortId(plan.drift.expected)}</code>, landed on{" "}
+          <code title={plan.drift.observed}>{shortId(plan.drift.observed)}</code>.
         </div>
       )}
 
@@ -136,8 +136,8 @@ export function PlanReview({ plan, status, busy, onArm, onCancel }: Props): Reac
         <section className="review__cut">
           <h3>Resolution stopped</h3>
           <p>
-            at edge <code>{plan.cut.edgeId}</code>; the run resumes from{" "}
-            <code>{plan.cut.resumeAt}</code> after re-observing.
+            at edge <code title={plan.cut.edgeId}>{shortId(plan.cut.edgeId)}</code>; the run resumes from{" "}
+            <code title={plan.cut.resumeAt}>{shortId(plan.cut.resumeAt)}</code> after re-observing.
           </p>
           <ul className="attempts">
             {plan.cut.attempts.map((a, i) => (
@@ -155,7 +155,7 @@ export function PlanReview({ plan, status, busy, onArm, onCancel }: Props): Reac
           <p className="muted">Disclosed, deliberately unresolved.</p>
           {plan.remainder.map((r) => (
             <div key={r.edgeId} className="remainder">
-              <code>{r.edgeId}</code> → <code>{r.toNodeId}</code>
+              <code title={r.edgeId}>{shortId(r.edgeId)}</code> → <code title={r.toNodeId}>{shortId(r.toNodeId)}</code>
               <ul>
                 {r.actions.map((a, i) => (
                   <li key={i}>
@@ -180,7 +180,7 @@ export function PlanReview({ plan, status, busy, onArm, onCancel }: Props): Reac
           <ul>
             {plan.brittleness.map((b) => (
               <li key={b.edgeId} className={b.belowFloor ? "is-low" : ""}>
-                <code>{b.edgeId}</code> — {pct(b.axRate)} resolved to an AX rung
+                <code title={b.edgeId}>{shortId(b.edgeId)}</code> — {pct(b.axRate)} resolved to an AX rung
                 {b.bound === "upper" && <span className="muted"> (upper bound)</span>}
               </li>
             ))}

@@ -282,6 +282,21 @@ export interface SearchInput {
 
 // --- replay (the plan review surface) ---------------------------------------
 
+/**
+ * Trace ids are session-scoped — `01KYX6DDK2PFXFDAX0XB3PH1DM:n3` — so every one
+ * is 30 characters, and a node card is 180px wide. Strip the ULID for display
+ * and keep the full id in a `title` wherever this is used.
+ *
+ * Suffixes CAN repeat across sessions in an accreted graph, so this is a display
+ * aid and never an identifier: position on the canvas and the tooltip are what
+ * actually distinguish two nodes. It lives here because both processes need the
+ * same rule — main labels nodes, the renderer labels edges in the review.
+ */
+export function shortId(id: string): string {
+  const colon = id.lastIndexOf(":");
+  return colon < 0 ? id : id.slice(colon + 1);
+}
+
 export interface GraphNodeDTO {
   id: string;
   /** "TextEdit — Save", or the id when the node describes no state. */

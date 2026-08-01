@@ -5,7 +5,7 @@
  */
 
 import React, { useMemo, useRef, useState } from "react";
-import type { GraphDTO } from "@shared/types";
+import { shortId, type GraphDTO } from "@shared/types";
 
 const CARD_W = 180;
 const CARD_H = 132;
@@ -105,7 +105,7 @@ export function GraphCanvas({
               className={`gnode${here ? " is-here" : ""}${goal ? " is-goal" : ""}`}
               style={{ left: x, top: y, width: CARD_W, height: CARD_H }}
               onClick={() => onPick(node.id)}
-              title={`${node.label} · ${node.observations} observation${
+              title={`${node.id}\n${node.label} · ${node.observations} observation${
                 node.observations === 1 ? "" : "s"
               }`}
             >
@@ -121,7 +121,7 @@ export function GraphCanvas({
               )}
               <div className="gnode__label">{node.label}</div>
               <div className="gnode__meta">
-                <span className="gnode__id">{node.id}</span>
+                <span className="gnode__id">{shortId(node.id)}</span>
                 {node.id === graph.entry && <span className="gnode__tag">entry</span>}
                 {here && <span className="gnode__tag is-here">you are here</span>}
                 {goal && <span className="gnode__tag is-goal">goal</span>}
