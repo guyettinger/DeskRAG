@@ -761,6 +761,27 @@ fallback layout behaving exactly as specified, and it means a plan cannot arm
 without the layout its session was recorded with. The probe now loads the
 keymap from the session's own `keymap_change` event.
 
+**With the recorded layout, the plan is ARMABLE:**
+
+```
+  type    slot=textarea "this is a new line"
+  blockers  : none
+  brittle   : e2@100%, e3@100% (upper)
+stopped: declined
+```
+
+`canArm` would return `ok` — no blockers, every edge far above the 0.5
+brittleness floor. It was refused only because this probe's `arm` always
+refuses. **A cross-app plan can now arm**, which is precisely what the
+app-activation spec said this design was required to make possible:
+
+> Activation removes the **predicate** obstacle. Anchors belonging to steps in
+> the not-yet-frontmost app still cannot resolve at plan time, so those edges
+> still measure 0% and the brittleness gate still refuses.
+
+Both halves are now closed: supersession takes the edge to 100%, and the cut
+stops the plan before the anchors that cannot resolve yet.
+
 **Still never exercised: a multi-segment run that actually posts events.** Every
 figure above is a dry run. The single real CGEvent this project has posted
 remains the 2026-07-31 click.
