@@ -206,40 +206,42 @@ function offline(graph) {
   console.log(`\n  cross-app edges below the floor: ${before}/${crossApp.length} -> ${after}/${crossApp.length} after supersession`);
 }
 
+/**
+ * Poll until `--wait-for` names the frontmost app. Shared by every live mode:
+ * the probe cannot be started without focusing a terminal, which would
+ * otherwise be the app it measures.
+ */
+async function waitForApp(actuator) {
+  const waitFor = val("--wait-for");
+  if (waitFor === undefined) return true;
+  const deadline = Date.now() + 60_000;
+  console.log(`waiting for "${waitFor}" to come forward (ctrl-c to stop)`);
+  let last = null;
+  const seen = new Set();
+  for (;;) {
+    const d = await actuator.dump();
+    const app = d.app ?? "(none)";
+    if (app !== last) {
+      console.log(`   sees: ${JSON.stringify(app)}  window=${JSON.stringify(d.windowTitle ?? null)}`);
+      last = app;
+      seen.add(app);
+    }
+    if (d.app === waitFor) { console.log("   matched.\n"); return true; }
+    if (Date.now() >= deadline) {
+      console.log(`\n  timed out. Apps seen: ${[...seen].map((x) => JSON.stringify(x)).join(", ")}`);
+      return false;
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+}
+
 // --- live: greedy resolution against the real desktop -----------------------
 
 async function live(graph, goalId) {
   const sidecar = AxExecSidecar.spawn({ planId: `probe-${Date.now()}` });
   const actuator = readOnly(sidecar);
   try {
-    // Polling for the app avoids the observer effect: the probe cannot be run
-    // without focusing a terminal, which would be the app it then measures.
-    const waitFor = val("--wait-for");
-    if (waitFor !== undefined) {
-      const deadline = Date.now() + 60_000;
-      // Report what is actually seen, not a dot. A silent poll that times out
-      // cannot distinguish "you never switched" from "dump reports another name".
-      console.log(`waiting for "${waitFor}" to come forward (ctrl-c to stop)`);
-      let last = null;
-      const seen = new Set();
-      for (;;) {
-        const d = await actuator.dump();
-        const app = d.app ?? "(none)";
-        if (app !== last) {
-          console.log(`   sees: ${JSON.stringify(app)}  window=${JSON.stringify(d.windowTitle ?? null)}`);
-          last = app;
-          seen.add(app);
-        }
-        if (d.app === waitFor) { console.log("   matched.\n"); break; }
-        if (Date.now() >= deadline) {
-          console.log(`\n  timed out. Apps seen while waiting: ${[...seen].map((s) => JSON.stringify(s)).join(", ")}`);
-          console.log(`  If one of those IS the app you meant, pass its exact name to --wait-for.`);
-          return;
-        }
-        await new Promise((r) => setTimeout(r, 1000));
-      }
-    }
-
+    if (!(await waitForApp(actuator))) return;
     const dump = await actuator.dump();
     const observed = await observe(actuator);
     const origin = windowOriginOf(dump);
@@ -288,8 +290,26 @@ async function live(graph, goalId) {
       }
     }
 
-    if (loc.nodeId === undefined) {
-      console.log("\n  cannot probe resolution without a located node.");
+    // --from forces the start node so the resolution measurements can be taken
+    // even when location fails. Location brittleness is a finding in its own
+    // right; it should not also block measuring the thing this spec is about.
+    const forced = val("--from");
+    let startId = loc.nodeId;
+    if (forced !== undefined) {
+      const n = graph.nodes.find((x) => x.id === forced || x.id.endsWith(`:${forced}`));
+      if (n === undefined) { console.log(`\n  no such node: ${forced}`); return; }
+      startId = n.id;
+      const v = verifyNode(n.predicates, observed).violations;
+      console.log(`\n  --from OVERRIDE: starting at ${n.id.split(":").pop()}` +
+        ` (${v.length}/${n.predicates.length} of its predicates do NOT hold)`);
+      if (v.length > 0) {
+        console.log(`  resolution figures below are therefore measured against a state that`);
+        console.log(`  does not fully match the recording. Treat them as indicative.`);
+      }
+    }
+
+    if (startId === undefined) {
+      console.log("\n  cannot probe resolution without a located node. Use --from <nodeId> to force one.");
       return;
     }
     if (goalId === undefined) {
@@ -300,8 +320,8 @@ async function live(graph, goalId) {
     const goal = graph.nodes.find((n) => n.id === goalId || n.id.endsWith(`:${goalId}`));
     if (goal === undefined) { console.log(`\n  no such goal node: ${goalId}`); return; }
 
-    const path = findPath(graph, loc.nodeId, goal.id);
-    if (path === null) { console.log(`\n  no path from ${loc.nodeId} to ${goal.id}`); return; }
+    const path = findPath(graph, startId, goal.id);
+    if (path === null) { console.log(`\n  no path from ${startId} to ${goal.id}`); return; }
 
     console.log(`\n=== MEASUREMENT: greedy resolution along ${path.length} edges ===`);
     const nodes = new Map(graph.nodes.map((n) => [n.id, n]));
@@ -348,6 +368,68 @@ async function live(graph, goalId) {
     console.log(`  suspected false resolutions : ${falsePositives.length}`);
     for (const f of falsePositives) console.log(`     ${f.edge} ${f.kind} ${f.layer}@${f.conf.toFixed(2)} (app ${f.app})`);
     console.log(`  running apps          : ${running.length}`);
+  } finally {
+    sidecar.close();
+  }
+}
+
+// --- sweep: does ANY anchor resolve in the wrong application? ---------------
+
+/**
+ * The false-positive question, at the largest sample the graph allows.
+ *
+ * Greedy resolution's risk is an anchor that resolves against the WRONG app's
+ * tree — an identifier or label present in both — which would be swallowed into
+ * segment 1 and clicked. Walking the path only tests the anchors on that path;
+ * this tries every spatial anchor in the graph against whatever is frontmost, so
+ * each run measures every anchor that does NOT belong to the current app.
+ */
+async function sweep(graph) {
+  const sidecar = AxExecSidecar.spawn({ planId: `probe-sweep-${Date.now()}` });
+  const actuator = readOnly(sidecar);
+  try {
+    if (!(await waitForApp(actuator))) return;
+    const dump = await actuator.dump();
+    const origin = windowOriginOf(dump);
+    const opts = origin ? { windowOrigin: origin } : {};
+    const nodes = new Map(graph.nodes.map((n) => [n.id, n]));
+    console.log(`\n=== FALSE-POSITIVE SWEEP — frontmost is ${JSON.stringify(dump.app ?? null)} ===\n`);
+
+    let foreign = 0;
+    let foreignResolved = 0;
+    let own = 0;
+    let ownResolved = 0;
+
+    for (const e of graph.edges) {
+      const ownerApp = appOf(nodes.get(e.from));
+      for (const a of e.actions) {
+        if (!isSpatial(a)) continue;
+        const anc = anchorOf(a);
+        if (!hasAxLayer(anc)) continue; // point-only can never resolve to a rung
+        const r = await resolveAnchor(anc, (d) => actuator.locate(d), opts);
+        const isForeign = ownerApp !== undefined && ownerApp !== dump.app;
+        const hit = r.layer !== "point";
+        if (isForeign) { foreign++; if (hit) foreignResolved++; }
+        else { own++; if (hit) ownResolved++; }
+        const flag = isForeign && hit ? "   !!! FALSE POSITIVE" : "";
+        console.log(
+          `  ${e.id.split(":").pop().padEnd(4)} ${(ownerApp ?? "?").padEnd(15)}` +
+          ` [${descriptorsOf(anc).join(",")}]`.padEnd(34) +
+          ` -> ${r.layer}@${r.confidence.toFixed(2)}${isForeign ? "  (foreign)" : ""}${flag}`,
+        );
+      }
+    }
+
+    console.log(`\n  own-app anchors     : ${ownResolved}/${own} resolved to an AX rung`);
+    console.log(`  foreign anchors     : ${foreignResolved}/${foreign} resolved to an AX rung`);
+    console.log(
+      foreign === 0
+        ? `\n  NO FOREIGN ANCHORS to test — run this while a different app is frontmost.`
+        : foreignResolved === 0
+          ? `\n  CLEAN: no anchor resolved against an application it does not belong to.`
+          : `\n  FALSE POSITIVES FOUND: ${foreignResolved}. Greedy resolution would swallow these\n` +
+            `  into the current segment and click them.`,
+    );
   } finally {
     sidecar.close();
   }
@@ -431,7 +513,8 @@ try {
     process.exit(1);
   }
 
-  if (has("--diagnose-frontmost")) await diagnoseFrontmost(Number(val("--diagnose-frontmost") ?? 20));
+  if (has("--sweep")) await sweep(graph);
+  else if (has("--diagnose-frontmost")) await diagnoseFrontmost(Number(val("--diagnose-frontmost") ?? 20));
   else if (has("--list") || has("--offline")) offline(graph);
   else await live(graph, val("--goal"));
 } finally {
