@@ -1,8 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { buildPlan, edgeCost, findPath } from "../src/replay/plan.js";
-import type { Locate } from "../src/replay/types.js";
+import { isRepairStep } from "../src/replay/types.js";
+import type { Locate, PlanStep, PlannedAction } from "../src/replay/types.js";
 import type { Action, Graph, Predicate, TraceEdge, TraceNode } from "../src/trace/types.js";
 import type { Keymap } from "../src/capture/env/types.js";
+
+/** Narrow a plan step to the recorded-action kind these tests operate on. */
+const asAction = (s: PlanStep): PlannedAction => {
+  if (isRepairStep(s)) throw new Error("expected a PlannedAction, got a repair step");
+  return s;
+};
 
 const us: Keymap = {
   layoutId: "com.apple.keylayout.US",
@@ -102,7 +109,7 @@ describe("buildPlan", () => {
     expect(plan.steps).toHaveLength(1);
     // The fixture anchor has a label and a shallow path (depth 2) but no
     // identifier. A shallow path outranks a label, so the path rung wins.
-    expect(plan.steps[0]!.resolution!.layer).toBe("path");
+    expect(asAction(plan.steps[0]!).resolution!.layer).toBe("path");
     expect(plan.blockers).toEqual([]);
   });
 
@@ -114,7 +121,7 @@ describe("buildPlan", () => {
       observed: [],
       locate: missing,
     });
-    expect(plan.steps[0]!.resolution!.layer).toBe("point");
+    expect(asAction(plan.steps[0]!).resolution!.layer).toBe("point");
     expect(plan.brittleness[0]!.axRate).toBe(0);
     expect(plan.brittleness[0]!.belowFloor).toBe(true);
   });
@@ -202,7 +209,7 @@ describe("buildPlan", () => {
       keymap: us,
       slotBindings: { title: "aa" },
     });
-    expect(plan.steps[0]!.slotBinding).toEqual({ name: "title", value: "aa" });
+    expect(asAction(plan.steps[0]!).slotBinding).toEqual({ name: "title", value: "aa" });
   });
 
   it("throws when there is no path, rather than returning an empty plan", async () => {

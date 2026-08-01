@@ -14,6 +14,7 @@
 import { projectPath } from "../trace/paths.js";
 import { predicateKey } from "../trace/predicates.js";
 import { observe } from "./observe.js";
+import { isRepairStep } from "./types.js";
 import { strokesFor } from "./typing.js";
 import type {
   ExecOutcome,
@@ -73,7 +74,7 @@ export async function executePlan(
 
   for (let i = 0; i < plan.steps.length; i++) {
     const step = plan.steps[i]!;
-    if (step.resolution !== undefined) {
+    if (!isRepairStep(step) && step.resolution !== undefined) {
       telemetry.push({
         edgeId: step.edgeId,
         layer: step.resolution.layer,
@@ -81,6 +82,7 @@ export async function executePlan(
       });
     }
     try {
+      if (isRepairStep(step)) throw new Error(`activation repair is not implemented yet`);
       await runStep(step, input, pollMs);
     } catch (err) {
       return {

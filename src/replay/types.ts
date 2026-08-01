@@ -121,6 +121,9 @@ export interface AxObservation {
   windowTitle?: string;
 }
 
+/** `activated` — raised. `launched` — started, then raised. */
+export type ActivateOutcome = "activated" | "launched" | "not-running";
+
 /**
  * Everything that touches the desktop. `execute.ts` depends only on this, which
  * is what makes the suite structurally incapable of posting a real event.
@@ -128,6 +131,15 @@ export interface AxObservation {
 export interface Actuator {
   /** Live AX tree of the frontmost app, plus app/window, for verification. */
   dump(): Promise<AxObservation>;
+  /**
+   * Which applications are running, by `localizedName`. INERT — this is the read
+   * planning uses to decide between a repair step and a blocker. Planning must
+   * never call `activate` to find out, because that would activate the app and
+   * change the world the plan is describing.
+   */
+  runningApps(): Promise<string[]>;
+  /** Raise `app`, or launch it when `launch` is true. Execution only. */
+  activate(app: string, launch: boolean): Promise<ActivateOutcome>;
   locate(d: AxDescriptor): Promise<{ handle: number; bounds: Rect } | null>;
   moveTo(p: Vec2): Promise<void>;
   click(p: Vec2, button: number, count: number): Promise<void>;
@@ -159,6 +171,31 @@ export interface PlannedAction {
   slotBinding?: { name: string; value: string };
 }
 
+/**
+ * A step the EXECUTOR synthesized to reach a state, as opposed to one the user
+ * recorded. Activation is not an `Action` because `Action` is the IR — recorded
+ * behaviour — and nothing recorded this; keeping it separate is also what stops
+ * this feature from reaching into `src/trace/`.
+ */
+export interface RepairStep {
+  repair: "activate";
+  app: string;
+  /**
+   * Whether execution may LAUNCH the app rather than only raise it. Decided at
+   * plan time and recorded here, so the review shows exactly what will happen —
+   * an override that only lived in the executor's options would be a launch the
+   * plan never disclosed.
+   */
+  launch: boolean;
+  /** The unmet predicate this repairs, so the plan can explain itself. */
+  reason: string;
+}
+
+/** A plan step is either a recorded action or a synthesized repair. */
+export type PlanStep = PlannedAction | RepairStep;
+
+export const isRepairStep = (s: PlanStep): s is RepairStep => "repair" in s;
+
 /** An `assertable` predicate that does not hold, or an unusable `type` action. */
 export interface Blocker {
   predicate?: Predicate;
@@ -179,7 +216,7 @@ export interface Plan {
   from: string;
   /** Goal node id. */
   to: string;
-  steps: PlannedAction[];
+  steps: PlanStep[];
   /** Non-empty means the plan cannot be armed. */
   blockers: Blocker[];
   brittleness: EdgeBrittleness[];

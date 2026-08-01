@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { canArm, executePlan } from "../src/replay/execute.js";
-import type { Actuator, AxObservation, Plan, ReplayInput, UIElement } from "../src/replay/types.js";
+import type {
+  ActivateOutcome,
+  Actuator,
+  AxObservation,
+  Plan,
+  ReplayInput,
+  UIElement,
+} from "../src/replay/types.js";
+import { isRepairStep } from "../src/replay/types.js";
 import type { Action, Graph, Vec2 } from "../src/trace/types.js";
 import type { Keymap } from "../src/capture/env/types.js";
 
@@ -18,6 +26,18 @@ class FakeActuator implements Actuator {
     elements: this.tree,
     ...(this.app !== undefined ? { app: this.app } : {}),
   });
+  /** Apps the fake reports as running; drives the activate outcome. */
+  running: string[] = [];
+  runningApps = async (): Promise<string[]> => this.running;
+  activate = async (app: string, launch: boolean): Promise<ActivateOutcome> => {
+    this.calls.push(`activate ${app} launch=${launch}`);
+    if (this.running.includes(app)) return "activated";
+    if (launch) {
+      this.running.push(app);
+      return "launched";
+    }
+    return "not-running";
+  };
   locate = async (): Promise<{ handle: number; bounds: { x: number; y: number; w: number; h: number } }> => ({
     handle: 1,
     bounds: { x: 0, y: 0, w: 10, h: 10 },
@@ -38,6 +58,12 @@ class FakeActuator implements Actuator {
     this.calls.push(`key ${keycode} [${modifiers.join("+")}] ${down ? "down" : "up"}`);
   }
 }
+
+/** Narrow a plan step to the recorded-action kind these tests operate on. */
+const asAction = (s: Plan["steps"][number]) => {
+  if (isRepairStep(s)) throw new Error("expected a PlannedAction, got a repair step");
+  return s;
+};
 
 const graph: Graph = {
   id: "g1",
@@ -116,7 +142,7 @@ describe("executePlan", () => {
   it("moves then clicks at the RESOLVED point, not the recorded one", async () => {
     const a = new FakeActuator();
     const step = clickStep(10, 20);
-    step.resolution = { layer: "identifier", point: { x: 900, y: 40 }, confidence: 1, attempts: [] };
+    asAction(step).resolution = { layer: "identifier", point: { x: 900, y: 40 }, confidence: 1, attempts: [] };
     const out = await executePlan(plan([step]), input(a));
     expect(out.completed).toBe(true);
     expect(a.calls).toEqual(["move 900,40", "click 900,40 b1 x1"]);
