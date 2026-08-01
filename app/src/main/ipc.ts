@@ -58,9 +58,13 @@ export function registerIpc(
   ipcMain.handle(IPC.replayGraph, () => replay.graph());
   ipcMain.handle(IPC.replayWatch, (_e, on: boolean) => replay.watch(on));
   ipcMain.handle(IPC.replayStart, (_e, input: ReplayStartInput) =>
-    // Hiding is injected so ReplayService never touches Electron. It is what
-    // stops the reviewer's own window occluding the target it just approved.
-    replay.start(input, () => getWindow()?.hide()),
+    // Injected so ReplayService never touches Electron. Both halves matter: the
+    // run hides to OBSERVE a desktop that is not the reviewer, and shows again
+    // to put a plan in front of a human.
+    replay.start(input, {
+      hide: () => getWindow()?.hide(),
+      show: () => getWindow()?.show(),
+    }),
   );
   ipcMain.handle(IPC.replayArm, (_e, input: ReplayArmInput) => replay.arm(input));
   ipcMain.handle(IPC.replayCancel, () => replay.cancel());

@@ -35,6 +35,15 @@ const POLL_MS = 2000;
  */
 const SELF_NAMES: ReadonlySet<string> = new Set(["DeskRAG", "Electron"]);
 
+/**
+ * The reviewer's own window. Both halves are needed: the run must get DeskRAG
+ * out of the way BEFORE the loop observes, and must put it back to show a plan.
+ */
+export interface ReplayWindow {
+  hide(): void;
+  show(): void;
+}
+
 /** The app a node claims to be in, if it claims one. */
 function appPredicateOf(graph: Graph, nodeId: string): string | undefined {
   const node = graph.nodes.find((n) => n.id === nodeId);
@@ -175,10 +184,10 @@ export class ReplayService {
   }
 
   /**
-   * `hideWindow` is injected rather than imported so this class never touches
-   * Electron — the same reason `Actuator` is injected into `replay/`.
+   * The window controls are injected rather than imported so this class never
+   * touches Electron — the same reason `Actuator` is injected into `replay/`.
    */
-  async start(input: ReplayStartInput, hideWindow: () => void): Promise<void> {
+  async start(input: ReplayStartInput, win: ReplayWindow): Promise<void> {
     if (this.running) return;
     const graph = this.getGraph();
     if (graph === undefined) {
@@ -196,6 +205,28 @@ export class ReplayService {
     this.stopDetail = undefined;
     // The poller must not compete with the run for the sidecar's turn-taking.
     this.pausePolling();
+
+    // `executeRun`'s FIRST act is a dump, and at this moment DeskRAG is
+    // frontmost because the user just clicked Run — so the loop would observe
+    // the reviewer and stop at `not-located` before doing anything. The poller
+    // has a frontmost-is-self rule; `replay/` has none and can have none, since
+    // it does not know what application is hosting it.
+    //
+    // Same hazard as the arm-time handoff, one step earlier: get out of the way
+    // BEFORE the world is observed, not only before it is acted on.
+    win.hide();
+    if (!(await this.awaitForeignFrontmost())) {
+      this.running = false;
+      this.resumePolling();
+      win.show();
+      this.emitEvent({
+        type: "stopped",
+        reached: false,
+        reason: "handoff-failed",
+        detail: "the desktop stayed on DeskRAG, so there was nothing to observe",
+      });
+      return;
+    }
 
     let segment = 0;
     // The brittleness override is decided per segment, INSIDE `arm` — so it
@@ -221,13 +252,7 @@ export class ReplayService {
         },
         arm: async (plan: Plan) => {
           segment += 1;
-          const approved = await this.review(
-            plan,
-            graph,
-            segment,
-            hideWindow,
-            keymap === undefined,
-          );
+          const approved = await this.review(plan, graph, segment, win, keymap === undefined);
           override = this.override;
           return approved;
         },
@@ -244,6 +269,31 @@ export class ReplayService {
       this.running = false;
       this.pendingArm = null;
       this.resumePolling();
+      // The run hid the window to observe; the outcome is unreadable if it
+      // stays hidden.
+      win.show();
+    }
+  }
+
+  /**
+   * Wait until the frontmost application is NOT the reviewer.
+   *
+   * Hiding is asynchronous and macOS decides who is raised next, so this polls
+   * the same fact the loop is about to read rather than sleeping a guessed
+   * interval — the rule `restoreFocus` and `execute.ts` both already follow.
+   */
+  private async awaitForeignFrontmost(timeoutMs = 4000): Promise<boolean> {
+    const sidecar = this.ensureSidecar();
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      try {
+        const app = (await sidecar.dump()).app;
+        if (app !== undefined && !SELF_NAMES.has(app)) return true;
+      } catch {
+        return false;
+      }
+      if (Date.now() >= deadline) return false;
+      await new Promise((r) => setTimeout(r, 120));
     }
   }
 
@@ -264,7 +314,7 @@ export class ReplayService {
     plan: Plan,
     graph: Graph,
     segment: number,
-    hideWindow: () => void,
+    win: ReplayWindow,
     noKeymap: boolean,
   ): Promise<boolean> {
     const handoffApp = appPredicateOf(graph, plan.from);
@@ -280,6 +330,11 @@ export class ReplayService {
         scope: "segment",
       });
     }
+    // The plan was resolved against a desktop the reviewer was hidden from.
+    // Showing the window now raises DeskRAG over that desktop, which is exactly
+    // the occlusion the handoff below undoes — so the two belong together and
+    // nothing between them may act.
+    win.show();
     this.emitEvent({ type: "segment-planned", plan: dto });
 
     const decision = await new Promise<{ approve: boolean; override: boolean }>((resolve) => {
@@ -292,7 +347,7 @@ export class ReplayService {
     }
     this.override = decision.override;
 
-    hideWindow();
+    win.hide();
     this.emitEvent({
       type: "armed",
       segment,
