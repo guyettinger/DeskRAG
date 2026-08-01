@@ -88,4 +88,34 @@ describe("AxExecSidecar", () => {
     s.close();
     rmSync(dir, { recursive: true, force: true });
   }, 15_000);
+  it("parses runningApps", async () => {
+    const { dir, path } = stubBinary(`
+      console.log(JSON.stringify({ id: req.id, ok: true, result: { apps: ["TextEdit", "Google Chrome"] } }));
+    `);
+    const s = AxExecSidecar.spawn({ planId: "p1", binaryPath: "node", args: [path] });
+    expect(await s.runningApps()).toEqual(["TextEdit", "Google Chrome"]);
+    s.close();
+    rmSync(dir, { recursive: true, force: true });
+  }, 15_000);
+
+  it("parses an activate outcome and passes launch through", async () => {
+    const { dir, path } = stubBinary(`
+      console.log(JSON.stringify({ id: req.id, ok: true, result: { outcome: req.launch ? "launched" : "activated" } }));
+    `);
+    const s = AxExecSidecar.spawn({ planId: "p1", binaryPath: "node", args: [path] });
+    expect(await s.activate("TextEdit", false)).toBe("activated");
+    expect(await s.activate("TextEdit", true)).toBe("launched");
+    s.close();
+    rmSync(dir, { recursive: true, force: true });
+  }, 15_000);
+
+  it("treats a malformed activate result as not-running rather than throwing", async () => {
+    const { dir, path } = stubBinary(`
+      console.log(JSON.stringify({ id: req.id, ok: true, result: {} }));
+    `);
+    const s = AxExecSidecar.spawn({ planId: "p1", binaryPath: "node", args: [path] });
+    expect(await s.activate("Nope", false)).toBe("not-running");
+    s.close();
+    rmSync(dir, { recursive: true, force: true });
+  }, 15_000);
 });

@@ -109,4 +109,26 @@ describe.skipIf(!hasSwiftc)("ax-exec sidecar protocol", () => {
 
     proc.kill();
   }, 20_000);
+
+  // Exercised against a name that CANNOT match a running application, and with
+  // launch disabled, so this test activates and launches nothing.
+  it("answers runningApps and refuses to activate an unknown app", async () => {
+    const proc: ChildProcessWithoutNullStreams = spawn(bin, ["--plan", "p1"]);
+    const { lines, feed } = lineCollector();
+    proc.stdout.on("data", feed);
+
+    proc.stdin.write(`${JSON.stringify({ id: 1, cmd: "runningApps" })}\n`);
+    proc.stdin.write(
+      `${JSON.stringify({ id: 2, cmd: "activate", app: "NoSuchApp_ZZZ", launch: false })}\n`,
+    );
+    await new Promise((r) => setTimeout(r, 2500));
+
+    const byId = new Map(
+      lines.map((l) => JSON.parse(l) as { id: number; result?: Record<string, unknown> }).map((m) => [m.id, m]),
+    );
+    expect((byId.get(1)?.result?.apps as string[] | undefined)?.length).toBeGreaterThan(0);
+    expect(byId.get(2)?.result?.outcome).toBe("not-running");
+
+    proc.kill();
+  }, 20_000);
 });

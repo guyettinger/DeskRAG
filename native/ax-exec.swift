@@ -23,6 +23,8 @@ struct Request: Decodable {
     let cmd: String
     let identifier: String?
     let path: String?
+    let app: String?
+    let launch: Bool?
     let role: String?
     let label: String?
     let x: Double?
@@ -411,6 +413,51 @@ while let line = readLine(strippingNewline: true) {
         ev.flags = flagsFor(req.modifiers ?? [])
         post(ev)
         emit(req.id, ok: true)
+
+    case "runningApps":
+        // localizedName is what active-win records as `owner.name` and what
+        // `dump` returns, so an `app` predicate matches verbatim -- no
+        // normalization anywhere, which is the class of divergence that has
+        // already cost this project a day.
+        let names = NSWorkspace.shared.runningApplications.compactMap { $0.localizedName }
+        emit(req.id, ok: true, result: ["apps": Array(Set(names)).sorted()])
+
+    case "activate":
+        guard let wanted = req.app, !wanted.isEmpty else {
+            emit(req.id, ok: false, error: "activate needs app")
+            break
+        }
+        if let running = NSWorkspace.shared.runningApplications
+            .first(where: { $0.localizedName == wanted }) {
+            // `activateIgnoringOtherApps` is deprecated since macOS 14 and documented
+            // as having no effect; the plain call is the supported path.
+            running.activate()
+            emit(req.id, ok: true, result: ["outcome": "activated"])
+            break
+        }
+        // Launching is opt-in: it can restore windows, reopen documents and run
+        // startup work, which is categorically larger than raising an app.
+        //
+        // Resolution is by BUNDLE IDENTIFIER only. `app` predicates carry a
+        // localizedName, which is not a bundle id, so this will usually miss and
+        // report not-running -- a safe outcome. Guessing an app from a display
+        // name (via a default-handler lookup) could launch the WRONG
+        // application, which is not a mistake worth risking to save a step.
+        guard req.launch == true,
+              let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: wanted) else {
+            emit(req.id, ok: true, result: ["outcome": "not-running"])
+            break
+        }
+        let cfg = NSWorkspace.OpenConfiguration()
+        cfg.activates = true
+        let sema = DispatchSemaphore(value: 0)
+        var launched = false
+        NSWorkspace.shared.openApplication(at: url, configuration: cfg) { _, err in
+            launched = (err == nil)
+            sema.signal()
+        }
+        _ = sema.wait(timeout: .now() + 10)
+        emit(req.id, ok: true, result: ["outcome": launched ? "launched" : "not-running"])
 
     default:
         emit(req.id, ok: false, error: "unknown command \(req.cmd)")
