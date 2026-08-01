@@ -782,9 +782,44 @@ app-activation spec said this design was required to make possible:
 Both halves are now closed: supersession takes the edge to 100%, and the cut
 stops the plan before the anchors that cannot resolve yet.
 
-**Still never exercised: a multi-segment run that actually posts events.** Every
-figure above is a dry run. The single real CGEvent this project has posted
-remains the 2026-07-31 click.
+### The first live multi-segment run (2026-08-01)
+
+**Segment 1 posted for real.** `stepsRun: 6` of 7 — the TextEdit click at
+`identifier@1.00`, ⌘A, the typed text, and the activation, which succeeded
+(`runRepair` polls the `app` predicate and would have thrown on timeout).
+
+Four firsts in one run: a **chord**, **typed text**, an **app activation**, and
+**node-boundary verification** had never posted or run against a real desktop
+before. Until this run the project had posted exactly one live CGEvent, ever.
+
+**Then boundary verification stopped it, on its first live use.** It refused to
+continue into segment 2 rather than clicking into a Chrome window that was not in
+the expected state, and named every predicate that did not hold. The world was
+left partway — the honest cost this spec states — and `RunOutcome` reported
+exactly how far it got.
+
+**It immediately found a real defect.** The 24 missing predicates were all
+Chrome's **tab bar**: 20 open tabs exposed as `RadioButton`s labelled with page
+titles, plus 7 `TabGroup`s for collapsed groups — **27 of that node's 61
+predicates**. A Chrome node could only verify with the same pages open. Fixed by
+excluding anything under a `TabGroup` ancestor (measured 27/27); Chrome nodes
+went 61/62 → 33/34 predicates and stayed distinct.
+
+**That defect was introduced by this spec, and could not have been found
+offline.** The cap experiment above compared two snapshots *from the same
+session*, so the tab predicates were identical on both sides and cancelled out —
+a within-session comparison cannot reveal predicates stable within a session and
+volatile across sessions. Raising the cap 32 → 64 to fix the node collision is
+precisely what pulled the tab strip into identity.
+
+**A second run confirmed the fix**: no tab predicates in the failure, and the
+remaining 18 were genuine PR-page controls (`Edit title`, `assign yourself`,
+`Reviewers`) against a browser that was on a different page. 15 of 33 held. That
+is node identity working correctly — unlike a document name, a trace recorded on
+one pull request legitimately requires that pull request.
+
+**Still never exercised: a run that completes more than one segment.** Segment 2
+has never armed. Drags and `wait` actions have still never posted.
 
 Remaining findings are written back into this spec before implementation is
 called done, in the style of the executor spec's "Correction:" sections.
