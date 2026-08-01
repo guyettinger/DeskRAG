@@ -1,6 +1,18 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
+const here = (p: string): string => fileURLToPath(new URL(p, import.meta.url));
+
 export default defineConfig({
+  resolve: {
+    alias: {
+      // `app/src/main/plan-view.ts` is a pure projection and belongs in the
+      // suite, but it is written against the app's module names. Aliasing them
+      // here is cheaper than duplicating the DTOs into `src/`.
+      "@shared": here("./app/src/shared"),
+      deskrag: here("./src/index.ts"),
+    },
+  },
   test: {
     // Native modules (better-sqlite3) + LanceDB and process-kill tests are not
     // safe to run concurrently across worker threads sharing temp dirs; each
