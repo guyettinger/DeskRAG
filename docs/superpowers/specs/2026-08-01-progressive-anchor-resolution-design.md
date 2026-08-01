@@ -1,9 +1,9 @@
 # Progressive anchor resolution — segmenting a plan at the resolution frontier
 
 **Date:** 2026-08-01
-**Status:** Design approved and validated. The gate is closed except for one row
-that needs the graph re-lifted first. Five corrections folded in below, two of
-them fixes to already-shipped code that no test could have caught.
+**Status:** Design approved and validated — **the gate is closed**. Five
+corrections are folded in below, two of them fixes to already-shipped code that
+no test could have caught. Ready for an implementation plan.
 
 ## Context
 
@@ -701,8 +701,18 @@ corrections; the live half is outstanding.
 | --- | --- | --- |
 | Segments per cross-app plan | **2**, cut at `e3`, resume at `n3` | The cut lands exactly on the app boundary, measured not predicted. Two approvals, not six — the chosen shape survives. |
 | Whether any anchor **falsely** resolves in the wrong state | **0 in 9 foreign trials** across three frontmost apps (4 vs WebStorm, 2 vs TextEdit, 3 vs Chrome) | Greedy resolution's central risk did not materialise, including for `label` and `identifier` descriptors — not just the depth-17 path the single path-walk happened to test. |
-| Whether a node locates at all | **0 of 5 nodes verified.** `n2` missed by 3 of 19 while 16 held | Location was gated on document identity, not state. Fixed in the filter — see the correction below. |
-| How many recorded nodes verify per observation, and whether they nest | **Not yet answerable** | Nothing verified at all, so the tie-break never arose. Re-measure after the graph is re-lifted under the corrected filter. |
+| Whether a node locates at all | **0 of 5 nodes verified** before the filter fix; `n2` missed by 3 of 19 while 16 held. **After re-lifting: located, `candidates: 1`, not ambiguous** | Location was gated on document identity. Fixed in the filter — see the correction below. |
+| How many recorded nodes verify per observation, and whether they nest | **Exactly 1** | The tie-break was never reached, so predicate-count versus superset-nesting stays **untested rather than validated**. Count is retained as the simpler rule; the decision is unchanged but also unexercised. |
+
+The locator was confirmed end to end after re-lifting: `n2` located against a
+TextEdit document titled **`Untitled`**, not the recorded `Untitled.rtf`, which is
+precisely the generalization the filter correction existed to buy. The live
+observation carried 17 predicates against the node's 16 — the extra one is not a
+violation, which is the subset rule behaving as verification requires.
+
+The run also reproduced the segmentation result **without** the `--from`
+override — 1 of 2 edges, cut at `e3`, resume at `n3` — so the earlier figures
+were not an artefact of forcing the start node.
 
 One result is worth separating out because it inverts an assumption this design
 inherited: **resolution proved markedly more robust than location.** The same run
@@ -766,13 +776,11 @@ directory rather than by list.
 - **A zero-predicate node in the graph at all.** `n0` is the session's first
   boundary and carries nothing. It is inert here because the locator excludes it,
   but a node that describes no state is a lift-time defect worth its own look.
-- **Re-lifting an existing session.** Trace indexing runs only on recording stop,
-  so a corrected filter cannot be applied to graphs already on disk. The stored
-  `ax_snapshot` rows are sufficient to re-lift from — nothing needs re-recording —
-  but no surface exposes it. Blocks the last open gate row.
-- **The locator's tie-break is still unmeasured.** Predicate-count versus strict
-  superset-nesting was left to the recording, and the recording could not answer
-  it because nothing verified at all. Re-measure after re-lifting.
+- **The locator's tie-break remains unexercised.** Exactly one node verified, so
+  predicate-count versus strict superset-nesting was never reached. Count stands
+  as the simpler rule, but it is untested rather than validated, and a graph
+  dense enough to produce two equally-specific candidates would be the first real
+  test of it.
 - **The app's review UI.** Nothing in `app/` calls `buildPlan` yet. The segment
   and remainder shapes are designed to be rendered, but the surface is out of
   scope here.
