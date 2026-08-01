@@ -20,6 +20,7 @@ describe("replay barrel", () => {
       "agreement",
       "isRepairStep",
       "isSupersededStep",
+      "locateNode",
       "AxExecSidecar",
       "LAYER_CEILING",
       "BRITTLENESS_FLOOR",
