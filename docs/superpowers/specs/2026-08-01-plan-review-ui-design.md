@@ -483,10 +483,30 @@ remainder — none of which had ever been posted.
    against Chromium's 9%). The one anchor that failed was a **path**, in the edge
    that crosses into Chrome.
 
-**Still open.** Whether the segment loop continues past the cut — a second
-review for `e3 → n4` — is not established by this run and is recorded as unknown
-rather than assumed. The remainder's single edge is point-and-path only, so it
-is also the case that its anchor cannot improve.
+**The loop did NOT continue past the cut.** The run stopped after segment 1; no
+second review for `e3 → n4` appeared. The cut promised the run would resume from
+`n3` after re-observing, and it did not.
+
+The leading explanation is not the executor but the graph: `n3` is a Chrome node
+carrying **33 `ax_exists` predicates**, and re-locating is the same subset check
+that fails at start for the same reason — every one must hold. If so, the
+segment loop is correct and **progressive resolution is gated on node
+specificity**, which is a finding about lift-time predicate extraction rather
+than about replay. The stop reason distinguishes this (`not-located`) from a real
+loop defect (`failed`, `no-path`, `no-progress`) and has not yet been read back,
+so this stays a hypothesis.
+
+Two things follow either way:
+
+- **The remainder's edge cannot improve.** `e3 → n4` is `click · recorded: path`
+  with no identifier and no label, and its 100% AX rate is marked *upper bound*
+  precisely because that is arithmetic over the recording rather than a
+  measurement. Re-planning it buys a fresh `path` resolution attempt and nothing
+  more.
+- **`type` was posted but the result was not inspected.** Whether the text
+  landed correctly is unknown, and the recording itself is lossy: lift logged
+  several keycodes with no resolved char (`3675`, `54`, `42`, `14`), each
+  dropping its text gesture by design rather than fabricating a character.
 
 ## Out of scope
 

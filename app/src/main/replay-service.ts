@@ -435,20 +435,23 @@ export class ReplayService {
   }
 
   private report(outcome: RunOutcome): void {
-    const last = outcome.segments[outcome.segments.length - 1];
-    if (last !== undefined) {
+    // EVERY segment, not just the last. `executeRun` has no per-segment
+    // callback — only `arm` — so the whole run is reported here, and reporting
+    // one segment would silently discard the telemetry of every earlier one on
+    // exactly the multi-segment runs that telemetry exists for.
+    outcome.segments.forEach((s, i) => {
       this.emitEvent({
         type: "segment-done",
-        segment: outcome.segments.length,
-        completed: last.outcome.completed,
-        ...(last.outcome.failure !== undefined ? { failure: last.outcome.failure } : {}),
-        telemetry: last.outcome.telemetry.map((t) => ({
+        segment: i + 1,
+        completed: s.outcome.completed,
+        ...(s.outcome.failure !== undefined ? { failure: s.outcome.failure } : {}),
+        telemetry: s.outcome.telemetry.map((t) => ({
           edgeId: t.edgeId,
           layer: t.layer,
           confidence: t.confidence,
         })),
       });
-    }
+    });
     // executeRun reports every false `arm` as "declined". Which one it was is
     // known here and nowhere else.
     const reason: ReplayStopReason | undefined =
