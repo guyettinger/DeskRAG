@@ -1,87 +1,108 @@
-# Handoff — after the executor landed (2026-07-31)
+# Handoff — the executor's loop closed (2026-08-01)
 
-`main` is at `9791b3b`. PR #20 merged the executor and the trace fixes; both
-branches are deleted. Working tree clean, 647 tests passing, all three gates
-green (`npm run typecheck`, `npm test`, `npm --prefix app run typecheck`).
+`main` is at `35890c8`. Working tree clean, **684 tests passing**, all three
+gates green (`npm run typecheck`, `npm test`, `npm --prefix app run typecheck`).
+
+Read first: `CLAUDE.md` — section **"4. The executor (`src/replay/`)"** carries
+every invariant below in condensed form. Then, only if you need the reasoning:
+`docs/superpowers/specs/2026-07-31-executor-design.md` and
+`docs/superpowers/specs/2026-08-01-app-activation-repair-design.md`.
 
 ## Where the four subsystems stand
 
 | # | Subsystem | State |
 | --- | --- | --- |
 | 1 | Replay-fidelity capture | shipped |
-| 2 | Trace IR (`src/trace/`) | shipped, and now proven on real recordings |
-| 3 | **The executor (`src/replay/`)** | **shipped, never run against a live desktop** |
+| 2 | Trace IR (`src/trace/`) | shipped, proven on real recordings |
+| 3 | The executor (`src/replay/`) | shipped; **loop closed once, narrowly** |
 | 4 | AI-in-the-loop | wire contract fixed in the IR spec; runtime unbuilt |
 
-Read first: `CLAUDE.md` (now documents the `replay/` seam), then
-`docs/superpowers/specs/2026-07-31-executor-design.md`.
+## What "the loop closed" does and does not mean
+
+On 2026-07-31 a recorded node verified against the live desktop, its anchor
+resolved at `identifier@1.00` against a window that had moved since recording,
+the plan armed with no override, and the posted CGEvent had its intended effect
+(a triple-click selected the paragraph, confirmed visually).
+
+**That run was one click, in one app, with the target app already frontmost.**
+
+- `wait`, `type` and `chord` have still only executed against `FakeActuator`.
+- **Cross-app plans still cannot arm** — see the next section.
+- Every ladder figure in the executor spec is a **capture-time** measurement, and
+  the `point`-only shares among them are flagged as an upper bound that cannot be
+  recomputed (the graphs they came from were deleted).
 
 ## The one thing I would do next
 
-**Run the executor for real.** It is fully tested against `FakeActuator` and has
-never resolved a plan against a live AX tree or posted a single CGEvent. Every
-number in its spec — anchor ladder rates, path depths, brittleness — is a
-**capture-time** measurement. Whether a recorded anchor still resolves at
-*replay* time is a different question, and unanswered.
+**Progressive anchor resolution.** It is the single obstacle left between the
+executor and a multi-step replay, and it is a genuine design decision rather
+than a bug.
 
-This is the same shape of gap the previous handoff flagged for capture ("no real
-recording has been driven through the full chain"). Closing that one surfaced
-four defects within an hour, including one where **no real recording had ever
-produced a single AX predicate**. There is no reason to expect the executor to be
-in better shape.
+`buildPlan` resolves every anchor up front against the *current* state. Anchors
+belonging to later steps expect states that do not exist yet — most obviously in
+an app that is not frontmost — so they cannot resolve, their edges measure 0%,
+and the brittleness gate refuses. This is **not** cross-app specific; cross-app
+is just where it becomes undeniable.
 
-`buildPlan` is inert — no arming, no CGEvents — so this is zero-risk:
-
-- Four sessions are already recorded in the dev data dir
-  (`~/Library/Application Support/deskrag-app/DeskRAG/`): 2 TextEdit, 1 Chrome,
-  1 System Settings, merged into one graph (43 nodes, 50 edges, 4 slots).
-- Build a plan from live AX against that graph and read what happens: does the
-  current node get identified at all? Do the rungs resolve? How do replay-time
-  ladder rates compare with the capture-time ones?
-- Only then consider arming anything, and pick a target that is harmless to
-  replay.
+Resolving each anchor when execution reaches it fixes that, but weakens the
+dry-run promise from "the plan shows where every action will land" to "…where
+the next action will land" — which is the design's principal safety property.
+That trade needs its own spec, and app activation (PR #26) deliberately did not
+take it.
 
 ## Open work, roughly in order
 
-1. **Replay-time validation** (above).
-2. **A real-sidecar AX fixture in the test corpus.** Every AX fixture is
-   hand-written with `AX`-prefixed roles, which is exactly why the role-prefix
-   bug survived to production and produced zero predicates from real data. This
-   is a derived requirement in the executor spec and the cheapest guard against
-   that whole bug class recurring.
-3. **Region coverage for the visual rung.** All region rows are `source: "ax"` —
+1. **Progressive resolution** (above).
+2. **Multi-step arming against a real desktop.** `wait`/`type`/`chord` have never
+   posted a real event.
+3. **Deleting recordings orphans the graph.** `deleteSession` does not touch the
+   `trace_*` tables, so clearing every recording leaves nodes and edges behind
+   referencing dead sessions. Not a missing cascade: merging is lossy, so
+   per-session retraction from a graph is not well-defined. Needs a product
+   decision (drop the graph with the last session / an explicit reset / mark it
+   stale).
+4. **A real-sidecar AX fixture in the test corpus.** Every AX fixture is
+   hand-written; that is why the role-prefix bug reached production.
+5. **Region coverage for the visual rung.** All region rows are `source: "ax"` —
    grid tiles score 0.5 against AX's 2–5 and never survive the 14-region budget
-   in `fuse.ts`. Coverage is therefore inherited from the AX tree, so the visual
-   rung is thinnest where AX is thin. How badly that bites is app-specific
-   (5–8% of targets in TextEdit, 40% in Chrome). Note the proposal-only path does
-   no cropping, so a larger budget is nearly free there.
-4. **Subsystem #4, AI-in-the-loop.** Local Ollama model; `parseInterventionResponse`
-   is already a security boundary and is tested.
-5. **App wiring.** Nothing surfaces plans or replay in DeskRAGApp.
+   in `fuse.ts`. How much it matters is app-specific (5–8% of targets in
+   TextEdit, 40% in Chrome).
+6. **Subsystem #4, AI-in-the-loop.** `parseInterventionResponse` is already a
+   tested security boundary.
+7. **App wiring.** Nothing surfaces plans or replay in DeskRAGApp.
 
-## Three things worth carrying over
+## Things that cost a day, so they are worth carrying
 
-**The anchor ladder was falsified twice, each time by one more application.** It
-is now trust-ordered with `pathCeiling(depth)` rather than fixed. The decay
-constants are fitted to **9 anchors** — the only ones carrying both a label and a
-path. The *shape* (trust decays with path depth) is far better supported than any
-constant. Do not simplify it back to a fixed order; that has been tried twice and
-both orders were wrong for one AX implementation or another. More apps (Electron,
-Qt, Java/Swing) would firm up the constants.
+**Six defects were found in one day, and the test suite caught none of them.**
+It grew 565 → 684 tests across the same day. Every defect lived at a seam where
+synthetic fixtures agree with whatever the code assumes:
 
-**Availability is not a ranking criterion.** AXIdentifier appears on 67% of AX
-anchors in AppKit, 9% in Chromium, 20% in SwiftUI — and SwiftUI carries no usable
-labels at all. Availability measures the application's AX implementation, not the
-descriptor's reliability. The spec's first version got this wrong.
+| Defect | Found by |
+| --- | --- |
+| AX role prefix — no recording ever produced an AX predicate | inspecting a real graph |
+| Boundary nodes carried the previous app's tree | reading *which* predicates were unmet, not counting them |
+| `app`/`window` unobservable at replay | isolating state-mismatch from a real gap |
+| Empty AX attribute not treated as absent | index-by-index tree diff |
+| Geometry vetoed moved windows | probing `locate` when every target said `point` |
+| `app` predicate had no repair path | inspecting what the graph already encoded |
 
-**The suite cannot post a real event, and that is enforced, not assumed.**
-`test/replay.barrel.test.ts` asserts no file in `replay/` except `sidecar.ts`
-mentions `spawn`/`child_process`. If a resolver, planner, or verifier ever needs
-process access, that is a design smell — the `Actuator` seam exists for it.
+**Diagnose by looking at values, not counts.** "2 of 19 predicates unmet" said
+nothing; `app(app="WebStorm")` sitting beside `label="typeface"` said everything.
 
-## Caveat
+**Treat any measurement from one application as provisional.** The anchor ladder
+was falsified twice, each time by recording in one more app. It is now
+trust-ordered with `pathCeiling(depth)`, whose constants are fitted to **9
+anchors**. The *shape* is far better supported than any constant.
 
-`native/ax-exec` and `native/ax-dump` are gitignored. Run `npm run build:ax`
-before recording or replaying anything: a stale `ax-dump` silently ignored
-`--keymap`/`--displays` for two days here and every recording in that window lost
-its typed text entirely.
+**Rebuild the sidecars after any checkout.** `native/ax-dump` and
+`native/ax-exec` are gitignored. A stale `ax-dump` silently cost every recording
+its typed text for two days; a stale `ax-exec` would silently drop the `app`
+predicate and put node identification back to impossible. `npm run build:ax`.
+
+## Current data state
+
+The dev store (`~/Library/Application Support/deskrag-app/DeskRAG/`) holds **one
+session** recorded 2026-07-31 with every fix in place: 5 nodes, 7 edges, 1 slot,
+7 boundary stamps, 0 incoherent nodes. It is the only graph ever built that is
+trustworthy end to end. Earlier graphs were deleted; they cannot be repaired by
+re-lifting because boundary stamps were never captured.
