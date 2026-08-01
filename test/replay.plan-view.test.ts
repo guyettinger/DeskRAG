@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { labelNode, rankNodes, toGraphDTO } from "../app/src/main/plan-view.js";
+import { labelNode, rankNodes, toGraphDTO, toPlanDTO } from "../app/src/main/plan-view.js";
 import type { Graph, Predicate, TraceEdge, TraceNode } from "../src/trace/types.js";
+import type { Anchor, Plan } from "../src/replay/types.js";
 
 // Roles WITHOUT the "AX" prefix — the shape ax-dump actually emits
 // (`rawRole.dropFirst(2)`). Matching the prefixed spelling is the bug that
@@ -123,5 +124,126 @@ describe("toGraphDTO", () => {
     expect(dto.edges.map((e) => e.back)).toEqual([false, true]);
     expect(dto.nodes[1]?.frameBlobId).toBe("blob-1");
     expect(dto.nodes[1]?.rank).toBe(1);
+  });
+});
+
+const anchor = (over: Partial<Anchor> = {}): Anchor => ({
+  point: { x: 10, y: 20, displayId: "d0" },
+  ...over,
+});
+
+describe("toPlanDTO", () => {
+  const g = graph(
+    [node("n0", [app("TextEdit")]), node("n1", [app("Notes")])],
+    [edge("e0", "n0", "n1")],
+  );
+
+  const base: Plan = {
+    id: "p1",
+    graphId: "default",
+    from: "n0",
+    to: "n1",
+    steps: [],
+    blockers: [],
+    brittleness: [],
+    remainder: [],
+  };
+
+  it("puts the handoff first, before any recorded action", () => {
+    const plan: Plan = {
+      ...base,
+      steps: [
+        {
+          edgeId: "e0",
+          action: { kind: "click", anchor: anchor(), button: 0, count: 1 },
+          resolution: { layer: "identifier", point: { x: 1, y: 2 }, confidence: 1, attempts: [] },
+        },
+      ],
+    };
+    const dto = toPlanDTO(plan, g, 1, "TextEdit");
+    expect(dto.steps[0]).toEqual({ kind: "handoff", app: "TextEdit" });
+    expect(dto.steps[1]).toMatchObject({ kind: "action", layer: "identifier", confidence: 1 });
+  });
+
+  it("omits the handoff when there is no app to name", () => {
+    expect(toPlanDTO(base, g, 1).steps).toEqual([]);
+  });
+
+  it("describes a target from the RECORDED descriptors, not the resolution", () => {
+    const plan: Plan = {
+      ...base,
+      steps: [
+        {
+          edgeId: "e0",
+          action: {
+            kind: "click",
+            anchor: anchor({
+              ax: {
+                role: "Button",
+                label: "Save",
+                identifier: "save-btn",
+                path: "Window[0]>Button[1]",
+              },
+            }),
+            button: 0,
+            count: 1,
+          },
+          resolution: { layer: "point", point: { x: 9, y: 9 }, confidence: 0.3, attempts: [] },
+        },
+      ],
+    };
+    const step = toPlanDTO(plan, g, 1).steps[0];
+    expect(step).toMatchObject({ kind: "action", target: 'Button "Save" #save-btn' });
+  });
+
+  it("keeps superseded steps visible, with their reason", () => {
+    const plan: Plan = {
+      ...base,
+      steps: [
+        {
+          superseded: "activate",
+          edgeId: "e0",
+          action: { kind: "click", anchor: anchor(), button: 0, count: 1 },
+          reason: "the repair activates Notes directly",
+        },
+      ],
+    };
+    expect(toPlanDTO(plan, g, 1).steps[0]).toEqual({
+      kind: "superseded",
+      edgeId: "e0",
+      action: "click",
+      reason: "the repair activates Notes directly",
+    });
+  });
+
+  it("carries blockers, the cut and the remainder through intact", () => {
+    const plan: Plan = {
+      ...base,
+      blockers: [{ reason: "no keymap", scope: "segment" }],
+      brittleness: [{ edgeId: "e0", axRate: 0.25, belowFloor: true, bound: "measured" }],
+      cut: {
+        resumeAt: "n1",
+        edgeId: "e1",
+        attempts: [{ layer: "identifier", rejected: "not found" }],
+      },
+      remainder: [
+        {
+          edgeId: "e1",
+          toNodeId: "n2",
+          actions: [{ kind: "click", descriptors: ["label"], recordedPoint: { x: 5, y: 6 } }],
+          repairs: [
+            { repair: "activate", edgeId: "e1", app: "Notes", launch: false, reason: "app" },
+          ],
+        },
+      ],
+    };
+    const dto = toPlanDTO(plan, g, 2);
+    expect(dto.blockers).toEqual([{ reason: "no keymap", scope: "segment" }]);
+    expect(dto.brittleness[0]?.belowFloor).toBe(true);
+    expect(dto.cut?.attempts).toEqual([{ layer: "identifier", rejected: "not found" }]);
+    expect(dto.remainder[0]?.actions[0]?.recordedPoint).toEqual({ x: 5, y: 6 });
+    expect(dto.remainder[0]?.repairs).toEqual([{ app: "Notes", launch: false }]);
+    expect(dto.segment).toBe(2);
+    expect(dto.fromLabel).toBe("TextEdit");
   });
 });
