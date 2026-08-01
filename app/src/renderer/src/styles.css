@@ -1442,3 +1442,88 @@ select {
 .btn.danger:hover {
   filter: brightness(1.1);
 }
+
+/* --- replay -------------------------------------------------------------- */
+.replay { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+/* This file has no global muted-text utility — `.hint` and `.sub` are both
+   scoped — so this one is scoped to the surfaces added here rather than
+   introducing a global class the rest of the app does not use. */
+.replay .muted, .review .muted { color: var(--muted); }
+.replay__bar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.replay__slot, .replay__launch { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.replay__slot input { width: 140px; }
+
+/* Fixed split: the graph stays visible while the plan is read. Both children
+   need min-width/min-height 0 or the review's long text widens the row. */
+.replay__stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+.gcanvas {
+  position: relative; overflow: hidden; min-width: 0; min-height: 0;
+  border: 1px solid var(--hairline); border-radius: var(--radius);
+  background: var(--panel); cursor: grab; touch-action: none;
+}
+.gcanvas__world { position: absolute; transform-origin: 0 0; }
+.gcanvas__wires { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
+.gwire { fill: none; stroke: var(--hairline); stroke-width: 2; }
+.gwire.is-back { stroke-dasharray: 5 4; opacity: 0.7; }
+.gwire.is-synth { stroke-dasharray: 2 3; }
+
+.gnode {
+  position: absolute; display: flex; flex-direction: column; gap: 4px;
+  padding: 6px; text-align: left; overflow: hidden;
+  border: 1px solid var(--hairline); border-radius: var(--radius-sm);
+  background: var(--elevated); color: inherit; cursor: pointer;
+}
+/* --ok is the palette's "this is true right now"; --accent is interactive
+   selection. The recording red (--rec) is reserved for live capture. */
+.gnode.is-here { border-color: var(--ok); box-shadow: 0 0 0 2px rgb(88 213 163 / 0.25); }
+.gnode.is-goal { border-color: var(--accent); box-shadow: 0 0 0 2px rgb(124 156 255 / 0.25); }
+.gnode__shot { width: 100%; height: 72px; object-fit: cover; border-radius: 4px; }
+.gnode__shot--none {
+  display: grid; place-items: center; font-size: 11px;
+  color: var(--muted-dim); background: rgb(255 255 255 / 0.03);
+}
+.gnode__label { font-size: 12px; line-height: 1.25; max-height: 2.5em; overflow: hidden; }
+.gnode__meta { display: flex; gap: 6px; align-items: center; font-size: 10px; color: var(--muted); }
+.gnode__id { font-family: var(--font-mono); }
+.gnode__tag { padding: 1px 5px; border-radius: 999px; background: rgb(255 255 255 / 0.07); }
+.gnode__tag.is-here { background: rgb(88 213 163 / 0.2); color: var(--ok); }
+.gnode__tag.is-goal { background: rgb(124 156 255 / 0.2); color: var(--accent); }
+
+.review {
+  min-width: 0; min-height: 0; overflow-y: auto; padding: 12px;
+  border: 1px solid var(--hairline); border-radius: var(--radius);
+  background: var(--panel);
+}
+.review__title { margin: 0; font-size: 14px; }
+.review__route { margin: 2px 0 10px; font-size: 12px; color: var(--muted); }
+.review__banner.is-warn {
+  padding: 8px; margin-bottom: 10px; border-radius: var(--radius-sm); font-size: 12px;
+  color: var(--amber);
+  background: rgb(255 194 75 / 0.12); border: 1px solid rgb(255 194 75 / 0.3);
+}
+.steps { margin: 0 0 12px; padding-left: 18px; font-size: 12px; }
+.step { margin-bottom: 6px; }
+.step__kind { font-weight: 600; }
+.step__target { display: block; color: var(--muted); word-break: break-word; }
+.step__note { display: block; color: var(--muted); font-size: 11px; }
+.step__res { font-variant-numeric: tabular-nums; font-size: 11px; color: var(--muted); }
+.step__slot { display: block; font-size: 11px; }
+.step--handoff .step__kind { color: var(--accent); }
+.step--superseded { opacity: 0.6; }
+.step--superseded .step__kind { text-decoration: line-through; }
+.review__block { border-left: 3px solid var(--rec); padding-left: 8px; }
+.review__block h3, .review__cut h3, .review__remainder h3, .review__brittle h3 {
+  font-size: 12px; margin: 12px 0 4px;
+}
+.review section ul, .attempts { margin: 0; padding-left: 16px; font-size: 12px; }
+.review code, .remainder code { font-family: var(--font-mono); font-size: 11px; }
+.review__brittle .is-low { color: var(--amber); }
+.review__override { display: block; margin: 12px 0; font-size: 12px; }
+.review__actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }

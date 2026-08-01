@@ -69,6 +69,15 @@ export const IconNextKeyframe = (p: P): React.JSX.Element => (
   </svg>
 );
 
+/* A play head inside a return arc — "do that recorded thing again". */
+export const IconReplay = (p: P): React.JSX.Element => (
+  <svg {...base} {...p}>
+    <path d="M20 12a8 8 0 1 1-2.34-5.66" />
+    <path d="M20 3.2v3.8h-3.8" />
+    <path d="M10.4 9.4l4.6 2.6-4.6 2.6z" fill="currentColor" stroke="none" />
+  </svg>
+);
+
 /* A frame under a loupe — "open this keyframe with its regions". */
 export const IconInspect = (p: P): React.JSX.Element => (
   <svg {...base} {...p}>

@@ -201,11 +201,11 @@ export function PlanReview({ plan, status, busy, onArm, onCancel }: Props): Reac
       )}
 
       <div className="review__actions">
-        <button className="btn" onClick={onCancel} disabled={busy}>
+        <button className="btn ghost" onClick={onCancel} disabled={busy}>
           Cancel
         </button>
         <button
-          className="btn btn--primary"
+          className="btn"
           disabled={busy || blocked || (needsOverride && !override)}
           onClick={() => onArm(override)}
         >
