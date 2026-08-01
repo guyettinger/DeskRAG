@@ -1,9 +1,9 @@
 # Progressive anchor resolution — segmenting a plan at the resolution frontier
 
 **Date:** 2026-08-01
-**Status:** Design approved. Offline validation complete. The live half found and
-fixed a blocking sidecar defect; the remaining live measurements are outstanding.
-Four corrections folded in below.
+**Status:** Design approved and validated. The gate is closed except for one row
+that needs the graph re-lifted first. Five corrections folded in below, two of
+them fixes to already-shipped code that no test could have caught.
 
 ## Context
 
@@ -219,6 +219,61 @@ real event. `test/replay.sidecar.test.ts` therefore carries a source-level guard
 (drain present, before dispatch; `dump` resolving the app exactly once), in the
 same shape as the barrel inertness guard. It was mutation-checked: removing the
 drain fails it.
+
+### Correction: node identity encoded document identity, not state
+
+The live gate found that **no recorded node could be located at all**. `n2`
+missed by 3 predicates of 19 — the other 16 held — and all three were the
+identity of one document rather than a state:
+
+```
+window(title="Untitled.rtf")
+ax_exists(role="Window",  label="Untitled.rtf")
+ax_exists(role="MenuButton", label="Edited")
+```
+
+A window's label *is* its title, so a trace recorded in one document could never
+be located in another, though the UI is identical and the recorded task —
+type in the text area, switch to Chrome — is document-independent. `Edited` is
+the unsaved-changes indicator: present the moment you type, gone on save. That is
+precisely the clock/badge-count class the stability filter exists to remove, and
+it got through.
+
+**Dropping the titles alone caused a wrong merge.** Measured on this graph: the
+two Chrome nodes — a pull request page and a repository home — became
+byte-identical 32-predicate sets. `e3` would degenerate into a self-loop and the
+goal node become unreachable. That is silent corruption, which the IR ranks as
+strictly worse than a redundant node.
+
+**The cause was the 32-predicate cap.** Candidates sort shallowest-first, so the
+entire budget went to browser chrome and nothing page-specific survived. At 64
+the same two pages yield 61 and 62 predicates and differ by **25**, on controls
+already covered by `STABLE_ROLES` (`Edit title` vs `Add file`). The heaviest tree
+measured — 973 elements — produces 62, so 64 clears the observed ceiling rather
+than merely the observed collision. Native apps never came close: TextEdit
+produces 16 predicates and the Electron app 12.
+
+**Fix**, in `src/trace/predicates.ts`: stop emitting `window`; remove `Window`
+from `STABLE_ROLES` (`Sheet` and `Dialog` stay — their titles name a state,
+"Open" or "Save", not which file is open); add an anchored `Edited|Modified`
+volatile pattern so `Edited by Sam` is unaffected; raise
+`DEFAULT_MAX_AX_PREDICATES` to 64.
+
+**Verified** by re-extracting all 13 stored `ax_snapshot` rows: zero window
+predicates, zero `Edited`, the two Chrome pages still distinct, and the TextEdit
+snapshot reduced to exactly the 16 predicates that already held live.
+
+**Consequence: existing graphs must be re-lifted.** Their nodes were built under
+the old filter. The stored `ax_snapshot` rows are sufficient, so nothing needs
+re-recording — but nothing in `app/` currently exposes re-indexing; trace
+indexing runs only on recording stop. That is a derived requirement below.
+
+**A false trail, recorded so it is not repeated.** An intermediate measurement
+concluded that node identity was structurally blind to web page content, because
+two different Chrome pages produced identical predicate sets at *every* cap. The
+comparison was broken: both content markers matched the same snapshot, since a
+GitHub pull request page contains the repository's own name, so a page was being
+diffed against itself. Select snapshots by id, never by searching their contents.
 
 ## The decision this spec turns on
 
@@ -640,14 +695,20 @@ corrections; the live half is outstanding.
 | Where the switch sits in the edge | Final action, **4 of 4**, always point-only | The revised rule, and the repair's corrected position. |
 | Descriptor availability across spatial actions | identifier 25%, label 13%, path 50%, visual 25%, **none 50%** | Every point-only anchor in the graph is an app switch. |
 
-**Outstanding — live, `--wait-for <app> --goal <node>`:**
+**Answered — live:**
 
-| Measurement | The decision it feeds |
-| --- | --- |
-| Segments per cross-app plan | Whether the approval cost is tolerable. Six approvals for one task invalidates the chosen shape. |
-| Whether any anchor **falsely** resolves in the wrong state | The real risk in greedy resolution. An identifier present in both apps would be swallowed into segment 1 and clicked wrongly. Nothing but a live probe settles this; the harness flags any anchor that resolves to an AX rung while its own app is not frontmost. |
-| How many recorded nodes verify against one live observation, and whether they nest | Whether the locator's tie-break stays predicate-count or becomes strict superset-nesting. |
-| Whether a node locates at all against a re-created state | The `window` predicate carries a literal title (`Untitled.rtf`), so location may be more fragile than the subset rule implies. The harness reports near misses with the violated predicates. |
+| Measurement | Result | What it decided |
+| --- | --- | --- |
+| Segments per cross-app plan | **2**, cut at `e3`, resume at `n3` | The cut lands exactly on the app boundary, measured not predicted. Two approvals, not six — the chosen shape survives. |
+| Whether any anchor **falsely** resolves in the wrong state | **0 in 9 foreign trials** across three frontmost apps (4 vs WebStorm, 2 vs TextEdit, 3 vs Chrome) | Greedy resolution's central risk did not materialise, including for `label` and `identifier` descriptors — not just the depth-17 path the single path-walk happened to test. |
+| Whether a node locates at all | **0 of 5 nodes verified.** `n2` missed by 3 of 19 while 16 held | Location was gated on document identity, not state. Fixed in the filter — see the correction below. |
+| How many recorded nodes verify per observation, and whether they nest | **Not yet answerable** | Nothing verified at all, so the tie-break never arose. Re-measure after the graph is re-lifted under the corrected filter. |
+
+One result is worth separating out because it inverts an assumption this design
+inherited: **resolution proved markedly more robust than location.** The same run
+resolved a TextEdit anchor at `identifier@1.00` in a document with a *different
+name* at a *different screen origin*, while location refused the node outright.
+The spec worried about resolution timing; the binding constraint was the locator.
 
 The live half has begun. It confirmed the sidecar path end to end — 384 elements,
 35 predicates, `windowOrigin` resolved, and **0 candidates against WebStorm**, a
@@ -705,9 +766,13 @@ directory rather than by list.
 - **A zero-predicate node in the graph at all.** `n0` is the session's first
   boundary and carries nothing. It is inert here because the locator excludes it,
   but a node that describes no state is a lift-time defect worth its own look.
-- **The `window` predicate is a literal title.** `Untitled.rtf` will not match a
-  freshly created document, so node location may be more brittle than the subset
-  rule suggests. Measured by the outstanding live probe.
+- **Re-lifting an existing session.** Trace indexing runs only on recording stop,
+  so a corrected filter cannot be applied to graphs already on disk. The stored
+  `ax_snapshot` rows are sufficient to re-lift from — nothing needs re-recording —
+  but no surface exposes it. Blocks the last open gate row.
+- **The locator's tie-break is still unmeasured.** Predicate-count versus strict
+  superset-nesting was left to the recording, and the recording could not answer
+  it because nothing verified at all. Re-measure after re-lifting.
 - **The app's review UI.** Nothing in `app/` calls `buildPlan` yet. The segment
   and remainder shapes are designed to be rendered, but the surface is out of
   scope here.
