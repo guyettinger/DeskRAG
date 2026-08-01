@@ -217,12 +217,25 @@ async function live(graph, goalId) {
     const waitFor = val("--wait-for");
     if (waitFor !== undefined) {
       const deadline = Date.now() + 60_000;
-      process.stdout.write(`waiting for "${waitFor}" to come forward `);
+      // Report what is actually seen, not a dot. A silent poll that times out
+      // cannot distinguish "you never switched" from "dump reports another name".
+      console.log(`waiting for "${waitFor}" to come forward (ctrl-c to stop)`);
+      let last = null;
+      const seen = new Set();
       for (;;) {
         const d = await actuator.dump();
-        if (d.app === waitFor) { console.log("- got it\n"); break; }
-        if (Date.now() >= deadline) { console.log("\n  timed out."); return; }
-        process.stdout.write(".");
+        const app = d.app ?? "(none)";
+        if (app !== last) {
+          console.log(`   sees: ${JSON.stringify(app)}  window=${JSON.stringify(d.windowTitle ?? null)}`);
+          last = app;
+          seen.add(app);
+        }
+        if (d.app === waitFor) { console.log("   matched.\n"); break; }
+        if (Date.now() >= deadline) {
+          console.log(`\n  timed out. Apps seen while waiting: ${[...seen].map((s) => JSON.stringify(s)).join(", ")}`);
+          console.log(`  If one of those IS the app you meant, pass its exact name to --wait-for.`);
+          return;
+        }
         await new Promise((r) => setTimeout(r, 1000));
       }
     }
@@ -340,6 +353,74 @@ async function live(graph, goalId) {
   }
 }
 
+// --- diagnostic: does a long-lived sidecar track the frontmost app? ---------
+
+/**
+ * `ax-exec` blocks on `readLine` and spins no run loop, but
+ * `NSWorkspace.shared.frontmostApplication` is backed by workspace notifications
+ * delivered to the main run loop. If that value is pinned at spawn time, then
+ * both the reported app AND the AX tree (whose pid comes from the same call in
+ * `rootElement()`) describe whichever app was frontmost when the process started.
+ *
+ * A fresh process per sample cannot have the problem, so disagreement between
+ * the two is the proof.
+ */
+async function diagnoseFrontmost(seconds) {
+  const longLived = readOnly(AxExecSidecar.spawn({ planId: `probe-long-${Date.now()}` }));
+  console.log(`\n=== DIAGNOSTIC: long-lived vs fresh sidecar, ${seconds}s ===`);
+  console.log(`switch between apps now.\n`);
+  // The fresh spawn is SANDWICHED between two long-lived reads. Spawning a
+  // process takes time, so a plain before/after pair disagrees whenever the
+  // desktop moves mid-sample — which would look identical to a residual lag.
+  // If the trailing read has caught up to the fresh one, the world moved during
+  // the sample and the disagreement is the measurement's, not the sidecar's.
+  console.log(`   ${"long(before)".padEnd(16)} ${"fresh".padEnd(16)} ${"long(after)".padEnd(16)} verdict`);
+  let raced = 0;
+  let lagged = 0;
+  let samples = 0;
+  const longSeen = new Set();
+  const freshSeen = new Set();
+  try {
+    for (let i = 0; i < seconds; i++) {
+      const a = (await longLived.dump()).app ?? "(none)";
+      const fresh = AxExecSidecar.spawn({ planId: `probe-fresh-${i}` });
+      let b;
+      try { b = (await fresh.dump()).app ?? "(none)"; } finally { fresh.close(); }
+      const c = (await longLived.dump()).app ?? "(none)";
+      longSeen.add(a).add(c);
+      freshSeen.add(b);
+      samples++;
+      let verdict = "agree";
+      if (a !== b) {
+        if (c === b) { raced++; verdict = "raced (caught up)"; }
+        else { lagged++; verdict = "LAGGED <<<"; }
+      }
+      console.log(`   ${a.padEnd(16)} ${b.padEnd(16)} ${c.padEnd(16)} ${verdict}`);
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  } finally {
+    longLived.close();
+  }
+  console.log(`\n   raced (world moved mid-sample) : ${raced}`);
+  console.log(`   LAGGED (sidecar behind)        : ${lagged}`);
+  console.log(`   samples          : ${samples}`);
+  console.log(`   long-lived saw   : ${[...longSeen].map((s) => JSON.stringify(s)).join(", ")}`);
+  console.log(`   fresh spawns saw : ${[...freshSeen].map((s) => JSON.stringify(s)).join(", ")}`);
+  console.log(
+    longSeen.size === 1 && freshSeen.size > 1
+      ? `\n   CONFIRMED PINNED: the long-lived sidecar never left "${[...longSeen][0]}" while\n` +
+        `   the desktop moved. Its AX tree is pinned too — rootElement() takes the pid\n` +
+        `   from the same NSWorkspace call.`
+      : freshSeen.size <= 1
+        ? `\n   INCONCLUSIVE: the frontmost app never changed. Switch apps during the run.`
+        : lagged > 0
+          ? `\n   RESIDUAL LAG: ${lagged} sample(s) where the sidecar was still behind after the\n` +
+            `   fresh read. Not pinned, but not current either.`
+          : `\n   CLEAN: the long-lived sidecar tracked the desktop. Any disagreement was the\n` +
+            `   world moving mid-sample, which the trailing read confirms.`,
+  );
+}
+
 // --- main -------------------------------------------------------------------
 
 const store = await DualStore.open(join(DATA, "app.db"), join(DATA, "lance"));
@@ -350,8 +431,9 @@ try {
     process.exit(1);
   }
 
-  if (has("--list") || has("--offline")) offline(graph);
-  if (!has("--offline") && !has("--list")) await live(graph, val("--goal"));
+  if (has("--diagnose-frontmost")) await diagnoseFrontmost(Number(val("--diagnose-frontmost") ?? 20));
+  else if (has("--list") || has("--offline")) offline(graph);
+  else await live(graph, val("--goal"));
 } finally {
   store.close?.();
 }

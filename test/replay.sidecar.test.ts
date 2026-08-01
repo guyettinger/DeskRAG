@@ -5,7 +5,7 @@ import {
   spawnSync,
   type ChildProcessWithoutNullStreams,
 } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -131,4 +131,57 @@ describe.skipIf(!hasSwiftc)("ax-exec sidecar protocol", () => {
 
     proc.kill();
   }, 20_000);
+});
+
+/**
+ * A source-level guard, because the behaviour cannot be unit-tested: reproducing
+ * it requires the frontmost application to CHANGE mid-process, and no test may
+ * cause that without posting a real event.
+ *
+ * `NSWorkspace.shared.frontmostApplication` and `.runningApplications` are backed
+ * by workspace notifications delivered to the main run loop. `ax-exec` blocks in
+ * `readLine()` and spins no run loop, so without draining it first those values
+ * stay PINNED at whatever was true when the process started. Measured against a
+ * freshly spawned process: 14 disagreements in 20 one-second samples before the
+ * drain, 0 after.
+ *
+ * It is not only the app name. `rootElement()` takes its pid from the same call,
+ * so a pinned value means every `dump` and `locate` after an app change reads the
+ * WRONG application's tree — which makes `runRepair`'s confirmation poll and
+ * every `wait { until: app(X) }` incapable of ever succeeding.
+ */
+describe("ax-exec run loop", () => {
+  it("drains the run loop once per command, before dispatch", () => {
+    const src = readFileSync(join(process.cwd(), "native/ax-exec.swift"), "utf8");
+
+    const loop = src.indexOf("while let line = readLine");
+    const drain = src.indexOf("drainRunLoop()", loop);
+    const dispatch = src.indexOf("switch req.cmd", loop);
+
+    expect(loop, "the command loop must exist").toBeGreaterThan(-1);
+    expect(drain, "drainRunLoop() must be called inside the command loop").toBeGreaterThan(loop);
+    expect(
+      drain,
+      "drainRunLoop() must run BEFORE the command is dispatched, or the first " +
+        "command of each kind reads stale workspace state",
+    ).toBeLessThan(dispatch);
+  });
+
+  it("reads the frontmost application once per dump, for both the pid and the name", () => {
+    const src = readFileSync(join(process.cwd(), "native/ax-exec.swift"), "utf8");
+    const dump = src.indexOf('case "dump":');
+    const locate = src.indexOf('case "locate":', dump);
+    const body = src.slice(dump, locate);
+
+    // Two lookups could describe two different applications — the same
+    // split-fact hazard that made boundary snapshots report the previous app.
+    expect(
+      (body.match(/frontmostApp\(\)/g) ?? []).length,
+      "dump must resolve the frontmost app exactly once",
+    ).toBe(1);
+    expect(
+      body,
+      "dump must not read NSWorkspace directly; it would bypass the single lookup",
+    ).not.toMatch(/NSWorkspace\.shared\.frontmostApplication/);
+  });
 });

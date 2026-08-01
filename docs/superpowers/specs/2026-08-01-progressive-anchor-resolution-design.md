@@ -1,8 +1,9 @@
 # Progressive anchor resolution — segmenting a plan at the resolution frontier
 
 **Date:** 2026-08-01
-**Status:** Design approved. Offline validation complete — three corrections
-folded in below. The live half of the gate is outstanding.
+**Status:** Design approved. Offline validation complete. The live half found and
+fixed a blocking sidecar defect; the remaining live measurements are outstanding.
+Four corrections folded in below.
 
 ## Context
 
@@ -163,6 +164,61 @@ action** rather than preceding its first.
 vacuously satisfied by every observation, so `n0` verifies against any desktop
 whatsoever. The locator must exclude empty-predicate nodes outright rather than
 rank them last.
+
+### Correction: the long-lived sidecar could not observe the desktop at all
+
+Found by the live half of the gate, and it blocked every other live measurement.
+
+`ax-exec` reported a **frozen** frontmost application. Measured with
+`scripts/replay-probe.mjs --diagnose-frontmost`, which samples a long-lived
+sidecar against a freshly spawned one each second: **14 disagreements in 20
+samples**, the long-lived process pinned to the app that was frontmost when it
+started while fresh spawns tracked the desktop.
+
+**Cause.** `NSWorkspace.shared.frontmostApplication` is backed by workspace
+notifications delivered to the main run loop. `ax-exec` blocks in `readLine()`
+and spins no run loop, so the value never updates. `ax-dump` was never exposed —
+it is a fresh process per invocation — which is why capture data has always been
+correct while replay was not.
+
+**Blast radius: the whole sidecar, not the app name.** `rootElement()` took its
+pid from the same call, so after any app change every `dump` and `locate` walked
+the *wrong application's* tree. Consequently:
+
+- `runRepair` activates an app then polls `observe()` for the `app` predicate.
+  Against a pinned value that poll can only ever time out — **the activation
+  repair merged in `99d3844` could not work.**
+- `wait { until: app(X) }` could never be satisfied, for the same reason.
+- This design's segment loop re-observes at every boundary to locate the new node
+  and resolve the next segment's anchors. Against a frozen tree there is nothing
+  to re-observe, so **progressive anchor resolution was unimplementable** until
+  this was fixed.
+
+The executor's one successful run (2026-07-31) missed it by being single-app with
+the target already frontmost — exactly the case where a pinned value is the
+correct value.
+
+**Fix.** `drainRunLoop()`, called once at the top of the command dispatch so
+every command sees current state and a command added later cannot forget it.
+`dump` additionally now resolves the frontmost app **once**, feeding both the
+tree's pid and the reported name; it previously read `NSWorkspace` twice, so the
+tree and the name could describe two different applications — the same split-fact
+hazard the file's own comment warns about, immediately above the second call.
+
+**Verified** with the same diagnostic: 0 lagged samples, and the 4 remaining
+disagreements confirmed as the desktop moving mid-sample by a trailing read.
+
+**A rejected fix, recorded so it is not retried.** `AXUIElementCreateSystemWide()`
+with `kAXFocusedApplicationAttribute` looked like the better answer — a live
+query needing no run loop, fixing the pid and the name through one mechanism.
+Measured, it returns nothing at all: `(none)` on 20 of 20 samples.
+
+**Testing.** The behaviour cannot be unit-tested — reproducing it requires the
+frontmost app to change mid-process, which no test may cause without posting a
+real event. `test/replay.sidecar.test.ts` therefore carries a source-level guard
+(drain present, before dispatch; `dump` resolving the app exactly once), in the
+same shape as the barrel inertness guard. It was mutation-checked: removing the
+drain fails it.
 
 ## The decision this spec turns on
 
@@ -593,9 +649,11 @@ corrections; the live half is outstanding.
 | How many recorded nodes verify against one live observation, and whether they nest | Whether the locator's tie-break stays predicate-count or becomes strict superset-nesting. |
 | Whether a node locates at all against a re-created state | The `window` predicate carries a literal title (`Untitled.rtf`), so location may be more fragile than the subset rule implies. The harness reports near misses with the violated predicates. |
 
-An early live run confirmed the sidecar path end to end: 384 elements, 35
-predicates, `windowOrigin` resolved, and **0 candidates against WebStorm** — a
-correct decline for an app absent from the graph.
+The live half has begun. It confirmed the sidecar path end to end — 384 elements,
+35 predicates, `windowOrigin` resolved, and **0 candidates against WebStorm**, a
+correct decline for an app absent from the graph — and then immediately found the
+frozen-frontmost defect above, which had to be fixed before any of the remaining
+rows could be measured at all.
 
 Remaining findings are written back into this spec before implementation is
 called done, in the style of the executor spec's "Correction:" sections.
