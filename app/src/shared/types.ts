@@ -280,6 +280,151 @@ export interface SearchInput {
   imageBytes?: Uint8Array;
 }
 
+// --- replay (the plan review surface) ---------------------------------------
+
+export interface GraphNodeDTO {
+  id: string;
+  /** "TextEdit — Save", or the id when the node describes no state. */
+  label: string;
+  app?: string;
+  /**
+   * A Sheet/Dialog or focused-element label. NEVER a window title: a title is
+   * document identity rather than state, which is why `extractPredicates` emits
+   * no `window` predicate and `STABLE_ROLES` omits `Window`.
+   */
+  hint?: string;
+  /** From TraceNode.visual — served via deskrag://frame/<blobId>. */
+  frameBlobId?: string;
+  observations: number;
+  intervene: "none" | "select" | "synthesize";
+  /** BFS distance from the graph entry. The canvas's column. */
+  rank: number;
+}
+
+export interface GraphEdgeDTO {
+  id: string;
+  from: string;
+  to: string;
+  actions: number;
+  /** To an equal or lower rank — a loop a merge produced, not a mistake. */
+  back: boolean;
+  provenance: "recorded" | "synthesized";
+}
+
+export interface GraphDTO {
+  id: string;
+  entry: string;
+  nodes: GraphNodeDTO[];
+  edges: GraphEdgeDTO[];
+  slots: { name: string; samples: string[] }[];
+}
+
+/** Where the live desktop is, as far as the locator can tell. */
+export interface LocationDTO {
+  nodeId?: string;
+  candidates: number;
+  ambiguous: boolean;
+  app?: string;
+  /** From AxObservation.windowTitle — the one place a title is legitimate. */
+  window?: string;
+  /**
+   * Age of the last FOREIGN observation. Set while DeskRAG itself is frontmost,
+   * because then the observation describes the reviewer, not the desktop.
+   */
+  staleMs?: number;
+}
+
+export type PlanStepDTO =
+  | { kind: "handoff"; app: string }
+  | {
+      kind: "action";
+      edgeId: string;
+      /** "click", "type", "wait until app(TextEdit)" — already human. */
+      action: string;
+      /** Described from the RECORDED descriptors, never from the resolution. */
+      target: string;
+      layer?: string;
+      confidence?: number;
+      slot?: { name: string; value: string };
+    }
+  | { kind: "repair"; edgeId: string; app: string; launch: boolean; reason: string }
+  | { kind: "superseded"; edgeId: string; action: string; reason: string };
+
+export interface PlanDTO {
+  id: string;
+  /** 1-based. There is deliberately no total: the loop does not know one. */
+  segment: number;
+  from: string;
+  to: string;
+  fromLabel: string;
+  toLabel: string;
+  steps: PlanStepDTO[];
+  blockers: { reason: string; scope: "segment" | "remainder" }[];
+  brittleness: {
+    edgeId: string;
+    axRate: number;
+    belowFloor: boolean;
+    bound: "measured" | "upper";
+  }[];
+  cut?: {
+    resumeAt: string;
+    edgeId: string;
+    attempts: { layer: string; rejected: string }[];
+  };
+  remainder: {
+    edgeId: string;
+    toNodeId: string;
+    actions: {
+      kind: string;
+      descriptors?: string[];
+      /** Provenance. Never presented as a target. */
+      recordedPoint?: { x: number; y: number };
+      slot?: string;
+    }[];
+    repairs: { app: string; launch: boolean }[];
+  }[];
+  drift?: { expected: string; observed: string };
+}
+
+/**
+ * Why the run ended. `declined` covers both a user's Cancel and a failed focus
+ * handoff — `executeRun` reports any false `arm` as "declined" — so the service
+ * distinguishes them here rather than leaving the panel to guess.
+ */
+export type ReplayStopReason =
+  | "cancelled"
+  | "handoff-failed"
+  | "not-located"
+  | "no-path"
+  | "no-progress"
+  | "max-segments"
+  | "failed";
+
+export type RunEventDTO =
+  | { type: "segment-planned"; plan: PlanDTO }
+  | { type: "armed"; segment: number; app?: string }
+  | {
+      type: "segment-done";
+      segment: number;
+      completed: boolean;
+      failure?: { step: number; reason: string };
+      telemetry: { edgeId: string; layer: string; confidence: number }[];
+    }
+  | { type: "stopped"; reached: boolean; reason?: ReplayStopReason; detail?: string };
+
+export interface ReplayStartInput {
+  goalNodeId: string;
+  slotBindings?: Record<string, string>;
+  allowLaunch?: boolean;
+}
+
+export interface ReplayArmInput {
+  segment: number;
+  approve: boolean;
+  /** Accepts brittleness only. Blockers have no override and never will. */
+  override?: boolean;
+}
+
 export interface DeskRagApi {
   settings: {
     get(): Promise<SettingsView>;
@@ -311,6 +456,16 @@ export interface DeskRagApi {
      * existing indexing channel, so `onIndexing` covers this too.
      */
     reindex(): Promise<ReindexResultDTO>;
+  };
+  replay: {
+    graph(): Promise<GraphDTO | null>;
+    /** Spawns/kills the ax-exec sidecar AND starts/stops the poller. */
+    watch(on: boolean): Promise<void>;
+    start(input: ReplayStartInput): Promise<void>;
+    arm(input: ReplayArmInput): Promise<void>;
+    cancel(): Promise<void>;
+    onEvent(cb: (e: RunEventDTO) => void): () => void;
+    onLocation(cb: (l: LocationDTO) => void): () => void;
   };
   models: {
     /** Fires while weights download; may start from a search, not just indexing. */
@@ -369,6 +524,13 @@ export const IPC = {
   sessionsDetail: "sessions:detail",
   sessionsRemove: "sessions:remove",
   sessionsReindex: "sessions:reindex",
+  replayGraph: "replay:graph",
+  replayWatch: "replay:watch",
+  replayStart: "replay:start",
+  replayArm: "replay:arm",
+  replayCancel: "replay:cancel",
+  replayEvent: "replay:event",
+  replayLocationEvent: "replay:location-event",
   modelDownloadEvent: "models:download-event",
   ollamaVisionModels: "ollama:vision-models",
   systemEnv: "system:env",
