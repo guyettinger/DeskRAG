@@ -20,6 +20,7 @@ import type {
   ExecOutcome,
   Plan,
   PlannedAction,
+  RepairStep,
   ReplayInput,
   ResolvedLayer,
   Vec2,
@@ -30,6 +31,8 @@ export interface ExecuteOptions {
   override?: boolean;
   /** Poll interval for `wait`. */
   pollMs?: number;
+  /** How long to wait for an activated app to actually come forward. */
+  activateTimeoutMs?: number;
 }
 
 export function canArm(plan: Plan, override = false): { ok: boolean; reason?: string } {
@@ -70,6 +73,7 @@ export async function executePlan(
   }
 
   const pollMs = opts.pollMs ?? 100;
+  const activateTimeoutMs = opts.activateTimeoutMs ?? 5000;
   let stepsRun = 0;
 
   for (let i = 0; i < plan.steps.length; i++) {
@@ -82,8 +86,8 @@ export async function executePlan(
       });
     }
     try {
-      if (isRepairStep(step)) throw new Error(`activation repair is not implemented yet`);
-      await runStep(step, input, pollMs);
+      if (isRepairStep(step)) await runRepair(step, input, pollMs, activateTimeoutMs);
+      else await runStep(step, input, pollMs);
     } catch (err) {
       return {
         planId: plan.id,
@@ -174,6 +178,33 @@ async function runStep(step: PlannedAction, input: ReplayInput, pollMs: number):
         await sleep(pollMs);
       }
     }
+  }
+}
+
+/**
+ * Bring an application forward, then CONFIRM it by polling the `app` predicate.
+ * Never sleeps a fixed duration: a cold app takes an unpredictable time to come
+ * forward, and that is the difference between a replay that works once and one
+ * that works repeatedly.
+ */
+async function runRepair(
+  step: RepairStep,
+  input: ReplayInput,
+  pollMs: number,
+  timeoutMs: number,
+): Promise<void> {
+  const outcome = await input.actuator.activate(step.app, step.launch);
+  if (outcome === "not-running") {
+    throw new Error(`${step.app} is not running and launching was not permitted`);
+  }
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const observed = await observe(input.actuator);
+    if (observed.some((p) => p.kind === "app" && p.args.app === step.app)) return;
+    if (Date.now() >= deadline) {
+      throw new Error(`timed out waiting for ${step.app} to come to the front`);
+    }
+    await sleep(pollMs);
   }
 }
 
