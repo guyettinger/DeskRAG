@@ -409,6 +409,8 @@ export interface PlanDTO {
 export type ReplayStopReason =
   | "cancelled"
   | "handoff-failed"
+  /** DeskRAG never stopped being frontmost, so the run had nothing to observe. */
+  | "observe-blocked"
   | "not-located"
   | "no-path"
   | "no-progress"

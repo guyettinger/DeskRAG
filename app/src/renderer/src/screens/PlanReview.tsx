@@ -16,6 +16,8 @@ export function stopMessage(reason: ReplayStopReason, detail?: string): string {
       return "Cancelled — no event was posted.";
     case "handoff-failed":
       return `${detail ?? "The app"} did not come forward; nothing was posted.`;
+    case "observe-blocked":
+      return "DeskRAG stayed frontmost, so there was nothing to observe. Nothing was posted.";
     case "not-located":
       return "The desktop matches no recorded state.";
     case "no-path":

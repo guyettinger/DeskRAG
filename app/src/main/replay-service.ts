@@ -222,8 +222,7 @@ export class ReplayService {
       this.emitEvent({
         type: "stopped",
         reached: false,
-        reason: "handoff-failed",
-        detail: "the desktop stayed on DeskRAG, so there was nothing to observe",
+        reason: "observe-blocked",
       });
       return;
     }

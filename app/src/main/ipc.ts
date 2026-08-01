@@ -4,7 +4,7 @@
  * the renderer via webContents.send on the event channels.
  */
 
-import { ipcMain, type BrowserWindow } from "electron";
+import { app, ipcMain, type BrowserWindow } from "electron";
 import {
   IPC,
   type PermissionKind,
@@ -62,8 +62,21 @@ export function registerIpc(
     // run hides to OBSERVE a desktop that is not the reviewer, and shows again
     // to put a plan in front of a human.
     replay.start(input, {
-      hide: () => getWindow()?.hide(),
-      show: () => getWindow()?.show(),
+      /*
+       * `win.hide()` is NOT enough on macOS: it hides the window but leaves the
+       * APPLICATION active, so `NSWorkspace.frontmostApplication` still reports
+       * DeskRAG and the run has nothing foreign to observe. `app.hide()` is the
+       * Cmd-H equivalent — it resigns active status and raises the next app,
+       * which is the thing being waited for.
+       */
+      hide: () => {
+        if (process.platform === "darwin") app.hide();
+        else getWindow()?.hide();
+      },
+      show: () => {
+        if (process.platform === "darwin") app.show();
+        getWindow()?.show();
+      },
     }),
   );
   ipcMain.handle(IPC.replayArm, (_e, input: ReplayArmInput) => replay.arm(input));
