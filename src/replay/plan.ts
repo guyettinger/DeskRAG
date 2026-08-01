@@ -13,7 +13,7 @@
  */
 
 import { ulid } from "ulid";
-import type { Graph, TraceEdge } from "../trace/types.js";
+import type { Action, Anchor, Graph, TraceEdge } from "../trace/types.js";
 import { resolveAnchor } from "./resolve.js";
 import { strokesFor } from "./typing.js";
 import {
@@ -88,6 +88,45 @@ export function findPath(graph: Graph, from: string, to: string): TraceEdge[] | 
   return path.reverse();
 }
 
+/** Actions with a spatial target; the only kinds an anchor belongs to. */
+const isSpatial = (
+  a: Action,
+): a is Extract<Action, { kind: "click" | "hover" | "scroll" | "drag" }> =>
+  a.kind === "click" || a.kind === "hover" || a.kind === "scroll" || a.kind === "drag";
+
+/** The anchor an action aims at — `from` for a drag, `anchor` for the rest. */
+const anchorOf = (a: Action): Anchor | undefined =>
+  a.kind === "drag" ? a.from : isSpatial(a) ? a.anchor : undefined;
+
+/**
+ * Indices of the actions a repair for `app` REPLACES.
+ *
+ * The final action when it is spatial and carries no `ax` layer — both
+ * conditions required. `computeBoundaries` cuts a boundary at the focus change,
+ * so the action causing the switch is by construction the last one before it
+ * (4 of 4 cross-app edges measured), and the switch target sits outside the
+ * focused window's AX tree by definition, which is exactly why the recorded Dock
+ * click is point-only. An action aimed at an element in the app's own tree
+ * cannot have been the switch, so it is posted as recorded.
+ *
+ * Plus every `wait { until: app(X) }`, wherever it sits: `runRepair` already
+ * polls that predicate before returning, so dropping one is a no-op rather than
+ * a skipped check. Measurement put them mid-edge, not beside the switch — an
+ * earlier rule anchored on the wait fired on only half the real cross-app edges.
+ */
+function supersededBy(actions: readonly Action[], app: string): Set<number> {
+  const out = new Set<number>();
+  const lastIndex = actions.length - 1;
+  const last = actions[lastIndex];
+  if (last !== undefined && isSpatial(last) && anchorOf(last)?.ax === undefined) {
+    out.add(lastIndex);
+  }
+  actions.forEach((a, i) => {
+    if (a.kind === "wait" && a.until.kind === "app" && a.until.args.app === app) out.add(i);
+  });
+  return out;
+}
+
 export interface BuildPlanInput {
   graph: Graph;
   fromNodeId: string;
@@ -155,6 +194,11 @@ export async function buildPlan(input: BuildPlanInput): Promise<Plan> {
     // tagged achievable, which promises exactly this; replaying the recorded
     // Dock click instead is a coordinate on a surface whose contents move, and
     // it fails silently because a click always "succeeds".
+    // Built, NOT pushed: it belongs at the edge's END. The `app` predicate is on
+    // the DESTINATION node, so it must hold when the edge finishes; the edge's
+    // own actions run in the SOURCE app, and activating first posts them into
+    // the wrong application.
+    let repair: RepairStep | undefined;
     if (to !== undefined && input.runningApps !== undefined) {
       const wanted = to.predicates.find((p) => p.kind === "app")?.args.app;
       if (typeof wanted === "string" && wanted.length > 0 && wanted !== frontmost) {
@@ -163,21 +207,36 @@ export async function buildPlan(input: BuildPlanInput): Promise<Plan> {
         if (!running && !mayLaunch) {
           blockers.push({ reason: `${wanted} is not running`, scope: "segment" });
         } else {
-          const repair: RepairStep = {
+          repair = {
             repair: "activate",
             edgeId: edge.id,
             app: wanted,
             launch: !running && mayLaunch,
             reason: `app(app="${wanted}") does not hold`,
           };
-          steps.push(repair);
         }
         // Whatever we decided, the rest of the path is "in" this app now.
         frontmost = wanted;
       }
     }
 
-    for (const action of edge.actions) {
+    const superseded =
+      repair === undefined ? new Set<number>() : supersededBy(edge.actions, repair.app);
+
+    for (const [i, action] of edge.actions.entries()) {
+      if (superseded.has(i)) {
+        // Visible, never silent: the review has to be able to say what will NOT
+        // be posted and why. Skipping here also keeps it out of the AX rate,
+        // which is what makes a cross-app edge armable at all.
+        steps.push({
+          superseded: "activate",
+          edgeId: edge.id,
+          action,
+          reason: `activating ${repair!.app} replaces this`,
+        });
+        continue;
+      }
+
       const step: PlannedAction = { edgeId: edge.id, action };
 
       if (action.kind === "click" || action.kind === "hover" || action.kind === "scroll") {
@@ -211,6 +270,8 @@ export async function buildPlan(input: BuildPlanInput): Promise<Plan> {
 
       steps.push(step);
     }
+
+    if (repair !== undefined) steps.push(repair);
 
     const axRate = targets > 0 ? axTargets / targets : 1;
     brittleness.push({

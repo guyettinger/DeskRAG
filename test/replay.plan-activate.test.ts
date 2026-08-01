@@ -65,7 +65,13 @@ describe("buildPlan: app activation repair", () => {
     expect(repairs[0]!.reason).toMatch(/Google Chrome/);
   });
 
-  it("puts the repair BEFORE the edge's actions", async () => {
+  /**
+   * CORRECTED from "before". The `app` predicate being repaired lives on the
+   * DESTINATION node, so it has to hold when the edge FINISHES — the edge's own
+   * actions run in the source app. Activating first posted one application's
+   * clicks and keystrokes into another.
+   */
+  it("puts the repair AFTER the edge's actions", async () => {
     const plan = await buildPlan({
       graph: g,
       fromNodeId: "n0",
@@ -74,8 +80,8 @@ describe("buildPlan: app activation repair", () => {
       locate: found,
       runningApps: ["TextEdit", "Google Chrome"],
     });
-    expect(isRepairStep(plan.steps[0]!)).toBe(true);
-    expect(isRepairStep(plan.steps[1]!)).toBe(false);
+    expect(isRepairStep(plan.steps[plan.steps.length - 1]!)).toBe(true);
+    expect(isRepairStep(plan.steps[0]!)).toBe(false);
   });
 
   it("inserts nothing when the app already holds", async () => {
@@ -145,7 +151,14 @@ describe("buildPlan: app activation repair", () => {
   });
 
   // Repairs are not targets; a plan does not get less brittle by adding them.
-  it("does not let a repair step affect axRate", async () => {
+  /**
+   * CORRECTED from "axRate is 0". This edge's only action IS the recorded
+   * switch — a point-only final click — so the repair supersedes it and it is
+   * never posted. An action that will not be posted must not count against the
+   * edge's AX rate, which is precisely what takes cross-app edges from 0%/50%
+   * to 100% and below-floor edges from 2/4 to 0/4 on the real graph.
+   */
+  it("excludes the superseded switch from axRate, leaving nothing brittle", async () => {
     const plan = await buildPlan({
       graph: g,
       fromNodeId: "n0",
@@ -154,8 +167,8 @@ describe("buildPlan: app activation repair", () => {
       locate: found,
       runningApps: ["TextEdit", "Google Chrome"],
     });
-    // One click target, point-only anchor => resolves to point => 0%.
-    expect(plan.brittleness[0]!.axRate).toBe(0);
+    expect(plan.brittleness[0]!.axRate).toBe(1);
+    expect(plan.brittleness[0]!.belowFloor).toBe(false);
   });
 
   it("inserts no repair when runningApps was not supplied", async () => {
