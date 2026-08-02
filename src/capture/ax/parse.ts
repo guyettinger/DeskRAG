@@ -63,12 +63,40 @@ export function coerceAxElements(data: unknown): UIElement[] {
   return out;
 }
 
-export function parseAxElements(text: string): UIElement[] {
+/** The sidecar's walk: the tree, plus the page URL when the window has one. */
+export interface AxResult {
+  elements: UIElement[];
+  /** Raw `AXURL` from the focused window's web area. Absent for native apps. */
+  url?: string;
+}
+
+/**
+ * Accepts BOTH sidecar output shapes: the object `{ elements, url }` the current
+ * binary emits, and the bare array older ones did.
+ *
+ * A stale binary is this repo's classic silent failure — `ax-dump` ignored
+ * `--keymap`/`--displays` for two days and every recording lost its typed text.
+ * Tolerating the old shape means an un-rebuilt binary loses only the URL instead
+ * of every element.
+ */
+export function parseAxResult(text: string): AxResult {
   let data: unknown;
   try {
     data = JSON.parse(text);
   } catch {
-    return [];
+    return { elements: [] };
   }
-  return coerceAxElements(data);
+  if (Array.isArray(data)) return { elements: coerceAxElements(data) };
+  if (data === null || typeof data !== "object") return { elements: [] };
+
+  const o = data as Record<string, unknown>;
+  const url = typeof o.url === "string" && o.url.length > 0 ? o.url : undefined;
+  return {
+    elements: coerceAxElements(o.elements),
+    ...(url !== undefined ? { url } : {}),
+  };
+}
+
+export function parseAxElements(text: string): UIElement[] {
+  return parseAxResult(text).elements;
 }
