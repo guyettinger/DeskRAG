@@ -1448,20 +1448,23 @@ select {
 /* This file has no global muted-text utility — `.hint` and `.sub` are both
    scoped — so this one is scoped to the surfaces added here rather than
    introducing a global class the rest of the app does not use. */
-.replay .muted, .review .muted { color: var(--muted); }
+.replay .muted, .sheet .muted, .runlog .muted, .route .muted { color: var(--muted); }
 .replay__bar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
-.replay__slot, .replay__launch { display: flex; align-items: center; gap: 6px; font-size: 12px; }
-.replay__slot input { width: 140px; }
-
-/* Fixed split: the graph stays visible while the plan is read. Both children
-   need min-width/min-height 0 or the review's long text widens the row. */
-.replay__stage {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
-  gap: 12px;
-  flex: 1;
-  min-height: 0;
+.replay__pending {
+  font-size: 11px; color: var(--amber); padding: 3px 9px; border-radius: 999px;
+  background: rgb(255 194 75 / 0.14); border: 1px solid rgb(255 194 75 / 0.3);
 }
+/* A stop reason can name every predicate that did not hold, so it wraps. */
+.replay__status { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+
+/* ONE slot, holding browse or review. The old fixed 1fr/340px split mounted the
+   review column permanently to hold a single sentence. Both children need
+   min-height: 0 or the log's long text grows the row instead of scrolling. */
+.replay__stage {
+  display: flex; flex-direction: column; gap: 12px;
+  flex: 1; min-height: 0;
+}
+.replay__stage > .gcanvas { flex: 1; min-height: 200px; }
 
 .gcanvas {
   position: relative; overflow: hidden; min-width: 0; min-height: 0;

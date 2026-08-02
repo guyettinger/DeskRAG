@@ -122,9 +122,25 @@ function wire(a: PlacedNode, b: PlacedNode, back: boolean, width: number): strin
     const mid = (y1 + y2) / 2;
     return `M ${x1} ${y1} C ${x1} ${mid}, ${x2} ${mid}, ${x2} ${y2}`;
   }
+  const lane = Math.max(a.x, b.x) + CARD_W + Math.max(GAP_X, (width - Math.max(a.x, b.x)) / 3);
+
+  // A REVISITED STATE COLLAPSES INTO A SELF-LOOP, which this IR produces
+  // routinely — and its endpoints coincide exactly. An out-and-back cubic
+  // between two identical points degenerates into a flat horizontal line drawn
+  // over itself: measured on the real graph, it rendered as a dashed stub
+  // leaving the card and ending in mid-air, which reads as a broken wire rather
+  // than a loop. Give it vertical extent so the loop is visibly a loop.
+  if (a.node.id === b.node.id) {
+    const mid = a.y + CARD_H / 2;
+    const right = a.x + CARD_W;
+    return (
+      `M ${right} ${mid - CARD_H / 4} ` +
+      `C ${lane} ${mid - CARD_H / 2}, ${lane} ${mid + CARD_H / 2}, ${right} ${mid + CARD_H / 4}`
+    );
+  }
+
   // Out the right side, up the margin, back in the right side.
   const y1 = a.y + CARD_H / 2;
   const y2 = b.y + CARD_H / 2;
-  const lane = Math.max(a.x, b.x) + CARD_W + Math.max(GAP_X, (width - Math.max(a.x, b.x)) / 3);
   return `M ${a.x + CARD_W} ${y1} C ${lane} ${y1}, ${lane} ${y2}, ${b.x + CARD_W} ${y2}`;
 }

@@ -47,11 +47,25 @@ export function NodeSheet({
             {node.observations} observation{node.observations === 1 ? "" : "s"} · {edgeCounts.in} in
             · {edgeCounts.out} out
           </span>
-          {!node.locatable && (
+          {/* Two DIFFERENT reasons a node cannot be located, and saying the
+              wrong one is worse than saying nothing. An empty set is vacuously
+              a subset of every observation, so a zero-predicate node would
+              match any desktop at all and `locateNode` excludes it outright;
+              an `app`-only set is satisfied by every state in that one
+              application. Measured on the real graph: n0 has NO predicates and
+              was being told its identity was "only `app`". */}
+          {node.predicates.length === 0 ? (
             <span className="sheet__warn">
-              verifies but never locates — its identity is only `app`, which every state in that
-              application satisfies
+              no predicates — it can neither be verified nor located, because an empty set is
+              vacuously true of every desktop
             </span>
+          ) : (
+            !node.locatable && (
+              <span className="sheet__warn">
+                verifies but never locates — its identity is only `app`, which every state in that
+                application satisfies
+              </span>
+            )
           )}
           <button className="sheet__close" onClick={onClose} title="Close (Esc)">
             ╳
@@ -112,7 +126,9 @@ export function NodeSheet({
               title={
                 node.locatable
                   ? undefined
-                  : "This state cannot be located, so it cannot be reached as a goal"
+                  : node.predicates.length === 0
+                    ? "This state carries no predicates, so it matches every desktop and cannot be a goal"
+                    : "This state cannot be located, so it cannot be reached as a goal"
               }
             >
               Run to here

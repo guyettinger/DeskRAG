@@ -183,7 +183,11 @@ export function GraphCanvas({
                   {!node.locatable && (
                     <span
                       className="gnode__tag is-warn"
-                      title="Identity is only `app`, which every state in that application satisfies"
+                      title={
+                        node.predicates.length === 0
+                          ? "No predicates — an empty set is vacuously true of every desktop"
+                          : "Identity is only `app`, which every state in that application satisfies"
+                      }
                     >
                       unlocatable
                     </span>

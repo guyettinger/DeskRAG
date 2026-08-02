@@ -96,6 +96,23 @@ describe("layoutGraph", () => {
     expect(Math.max(...xs)).toBeGreaterThan(CARD_W);
   });
 
+  it("draws a self-loop with vertical extent, not a flat stub", () => {
+    // A revisited state collapses into a loop on itself. Both endpoints
+    // coincide, so an out-and-back cubic degenerates into a horizontal line
+    // drawn over itself — measured on the real graph as a dashed stub ending in
+    // mid-air. The loop must actually enclose area.
+    const out = layoutGraph(g([n("a", 0)], [e("self", "a", "a", true)]));
+    const d = out.edges[0]!.d;
+    const ys = [...d.matchAll(/-?\d+(?:\.\d+)?\s+(-?\d+(?:\.\d+)?)/g)].map((m) =>
+      Number(m[1]),
+    );
+    expect(Math.max(...ys) - Math.min(...ys)).toBeGreaterThan(0);
+    const xs = [...d.matchAll(/(-?\d+(?:\.\d+)?)\s+-?\d+(?:\.\d+)?/g)].map((m) =>
+      Number(m[1]),
+    );
+    expect(Math.max(...xs)).toBeGreaterThan(CARD_W);
+  });
+
   it("places an orphan rather than dropping it", () => {
     // rankNodes gives an unreachable node rank 0. Visible and fixable beats
     // silently absent.
