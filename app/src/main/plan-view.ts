@@ -14,7 +14,7 @@ import {
   type PlanDTO,
   type PlanStepDTO,
 } from "@shared/types";
-import { isRepairStep, isSupersededStep } from "deskrag";
+import { isLocatable, isRepairStep, isSupersededStep } from "deskrag";
 import type { Action, Anchor, Graph, Plan, PlanStep, Predicate, TraceNode } from "deskrag";
 
 /**
@@ -175,6 +175,8 @@ export function toGraphDTO(graph: Graph, resolveFrameBlob?: ResolveFrameBlob): G
       ...(named.hint !== undefined ? { hint: named.hint } : {}),
       ...(blobId !== undefined ? { frameBlobId: blobId } : {}),
       observations: n.observations,
+      predicates: n.predicates.map(describePredicate),
+      locatable: isLocatable(n.predicates),
       intervene: n.intervene,
       rank: ranks.get(n.id) ?? 0,
     };

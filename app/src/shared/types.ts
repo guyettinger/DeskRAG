@@ -318,6 +318,19 @@ export interface GraphNodeDTO {
   /** From TraceNode.visual — served via deskrag://frame/<blobId>. */
   frameBlobId?: string;
   observations: number;
+  /**
+   * The node's whole identity, human-readable via `describePredicate`. Empty
+   * when the node describes no state. This is what merges, verifies and
+   * locates, and it had no surface in the app until now.
+   */
+  predicates: string[];
+  /**
+   * False when the identity is only `app`. Such a node is satisfied by every
+   * observation in that application, so it cannot answer "which state is
+   * this?" — it verifies perfectly and locates never, which makes it unusable
+   * as a goal. Measured: without a URL only 3 of 8 nodes were locatable.
+   */
+  locatable: boolean;
   intervene: "none" | "select" | "synthesize";
   /** BFS distance from the graph entry. The canvas's column. */
   rank: number;

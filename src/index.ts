@@ -289,6 +289,13 @@ export {
   type MatchOptions,
   type MatchResult,
 } from "./trace/identity.js";
+/**
+ * `isLocatable` is exported for the app's graph projection: a node whose
+ * identity is only `app` VERIFIES perfectly and LOCATES never, and the reviewer
+ * has to be told that before a node is chosen as a goal. Pure, in `trace/`,
+ * loads nothing native.
+ */
+export { isLocatable } from "./trace/identity-set.js";
 export {
   groupGestures,
   DEFAULT_GESTURE_OPTIONS,
