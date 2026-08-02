@@ -313,7 +313,14 @@ export function toPlanDTO(plan: Plan, graph: Graph, segment: number, handoffApp?
     fromLabel: labelOf(plan.from),
     toLabel: labelOf(plan.to),
     steps,
-    blockers: plan.blockers.map((b) => ({ reason: b.reason, scope: b.scope })),
+    // `Blocker.predicate` carries WHICH predicate failed; dropping it left the
+    // panel saying "assertable predicate does not hold" with no way to tell
+    // what. A blocker that cannot be overridden had better say what it is.
+    blockers: plan.blockers.map((b) => ({
+      reason:
+        b.predicate === undefined ? b.reason : `${b.reason}: ${describePredicate(b.predicate)}`,
+      scope: b.scope,
+    })),
     brittleness: plan.brittleness.map((b) => ({
       edgeId: b.edgeId,
       axRate: b.axRate,

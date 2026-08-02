@@ -5,7 +5,7 @@ import type { Action, Anchor, Path, Predicate, TraceEdge } from "../src/trace/ty
 const p = (kind: Predicate["kind"], args: Predicate["args"]): Predicate => ({
   kind,
   args,
-  reach: kind === "url" ? "assertable" : "achievable",
+  reach: kind === "display" || kind === "file" ? "assertable" : "achievable",
 });
 
 const anchor = (ax?: Anchor["ax"]): Anchor => ({
@@ -206,5 +206,22 @@ describe("isLocatable", () => {
   });
   it("accepts app plus anything else", () => {
     expect(isLocatable([APP, URL])).toBe(true);
+  });
+});
+
+describe("assertable environment gates survive narrowing", () => {
+  it("keeps display and file, which no UI action can produce", () => {
+    // They can only refuse, which is precisely why narrowing must not drop
+    // them: they are the only check that a replay is on the same hardware.
+    const display = p("display", { id: "d0", w: 2560, h: 1440 });
+    const file = p("file", { path: "/Users/x/notes.txt" });
+    const out = identityPredicates({
+      observed: [APP, display, file, PAGE],
+      outgoing: [],
+      incoming: [],
+    });
+    expect(out).toContainEqual(display);
+    expect(out).toContainEqual(file);
+    expect(out).not.toContainEqual(PAGE);
   });
 });

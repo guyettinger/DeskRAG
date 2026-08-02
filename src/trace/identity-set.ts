@@ -102,6 +102,14 @@ export function identityPredicates(input: IdentityInput): Predicate[] {
   // For a browser the real application is the site. Without this, two recordings
   // of the same action on different pages would merge into one node.
   for (const q of input.observed) if (q.kind === "url") take(predicateKey(q));
+  // Assertable environment gates: `display` records the monitor setup a
+  // recording depended on, `file` the paths it needed. No UI action produces
+  // either, so they can only refuse — which is exactly why they must survive
+  // narrowing. An earlier draft of this function dropped them silently, which
+  // removed the only check that a replay is happening on the same hardware.
+  for (const q of input.observed) if (q.kind === "display" || q.kind === "file") {
+    take(predicateKey(q));
+  }
 
   // What the task touches. The first key an anchor offers that is actually
   // present wins, so an identifier beats a label exactly as the ladder ranks.

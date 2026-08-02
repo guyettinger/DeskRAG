@@ -3,11 +3,17 @@ import { extractPredicates } from "../src/trace/predicates.js";
 import { REACH_BY_KIND } from "../src/trace/types.js";
 
 describe("url predicate", () => {
-  it("is assertable — there is no navigation repair", () => {
-    // `app` is achievable because activation repairs it. Nothing in the
-    // executor navigates, so a url can only gate — and being on the wrong site
-    // should be exactly an unoverridable blocker.
-    expect(REACH_BY_KIND.url).toBe("assertable");
+  it("is ACHIEVABLE — an edge in the graph navigates", () => {
+    // Reach asks whether some edge ESTABLISHES the predicate, not whether the
+    // executor has a synthesized repair for it. Written `assertable` at first,
+    // which made every browser node a permanently unreachable goal: buildPlan
+    // turns an unmet assertable predicate on any remainder node into an
+    // unoverridable blocker, and a real plan toward a GitHub page was blocked
+    // with nothing to override.
+    //
+    // No protection is lost — wrong-page replay is prevented by verification
+    // and locating, which both still gate on this predicate.
+    expect(REACH_BY_KIND.url).toBe("achievable");
   });
 
   it("is emitted as the reduced prefix, not the raw URL", () => {
@@ -17,7 +23,7 @@ describe("url predicate", () => {
     });
     const url = preds.find((p) => p.kind === "url");
     expect(url?.args["prefix"]).toBe("github.com/guyettinger/DeskRAG/pull");
-    expect(url?.reach).toBe("assertable");
+    expect(url?.reach).toBe("achievable");
   });
 
   it("emits nothing for a scheme that names no site", () => {
