@@ -274,10 +274,54 @@ nothing. A session recorded now would give them `app(Google Chrome)` **plus**
 **locatable**. Web scope was designed to stop wrong-page merges; it turns out to
 also be what makes browser states addressable at all under task-derived identity.
 
-**Still unvalidated:** no fresh recording has been made with URL capture, and no
-armed run has been driven against a re-lifted graph. Continuation past a cut is
-proven in the suite (`test/run.expected.test.ts` drives two segments) but not yet
-against a real desktop.
+### The rebuilt graph, with URL capture (2026-08-01)
+
+Four fresh recordings, then `rebuildGraph`. **13 nodes, 28 edges.**
+
+| metric | before | after |
+|---|---|---|
+| max predicates on a node | 34 | **4** |
+| mean | ~14.6 | **2.0** |
+| nodes carrying >6 predicates | most | **0** |
+| locatable nodes | 3/8 | **9/13** |
+
+**Both halves of the merge contract hold on real data.**
+
+- **Merge:** `app(Google Chrome) ∧ url(github.com/guyettinger/DeskRAG/pull)`
+  carries **`observations = 2`** — two separate recordings of the pull-request
+  page collapsed into one node.
+- **Separate:** the issues page is a distinct node carrying
+  `url(github.com/guyettinger/DeskRAG/issues)`, and never merged with the pull
+  node. This is the case that motivated web scope at all.
+
+**Locatability recovered exactly as predicted.** Before URL capture, browser
+nodes were bare `app` and unlocatable; with it they carry a second predicate and
+9 of 13 nodes can now start a run, against 3 of 8 before.
+
+**A capture bug this found, and the repo had already paid to learn it once.**
+`url_change` was first stamped with the WALK's `t_mono`. The settle delay puts
+the walk ~250ms after the boundary it describes, so lift's latest-at-or-before
+lookup handed each URL to the NEXT node — measured directly: the Chrome node was
+bare `app` and its URL sat one node later. This is the same off-by-one that
+`boundaryTMono` already exists to fix for the snapshot itself, where it measured
+54% of nodes incoherent. The parameter was already being passed in and simply was
+not used.
+
+**Residual noise, explained rather than hidden.** Two recordings made before that
+fix still carry walk-stamped events, and re-lifting cannot repair them — the
+wrong timestamp is in the events table. They contribute a URL-less
+`app(Google Chrome) ∧ ax_exists(Search Issues)` node that did not merge with its
+corrected twin. That is stale data, not a design fault.
+
+**Over-merging, measured and inert.** `app(TextEdit)` and `app(Electron)` nodes
+show `observations = 6`: states whose recorded action touched nothing collapse
+together. They are also the nodes `isLocatable` excludes, so they cannot start a
+run or be planned toward. Visible, bounded, and worth revisiting only if a run
+ever needs one.
+
+**Still unvalidated:** no armed run has been driven against the rebuilt graph.
+Continuation past a cut is proven in the suite (`test/run.expected.test.ts`
+drives two segments through `executeRun`) but not against a real desktop.
 
 ## Out of scope
 
