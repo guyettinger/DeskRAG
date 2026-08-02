@@ -1448,7 +1448,7 @@ select {
 /* This file has no global muted-text utility — `.hint` and `.sub` are both
    scoped — so this one is scoped to the surfaces added here rather than
    introducing a global class the rest of the app does not use. */
-.replay .muted, .sheet .muted, .runlog .muted, .route .muted { color: var(--muted); }
+.replay .muted, .drawer .muted, .runlog .muted, .route .muted { color: var(--muted); }
 .replay__bar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .replay__pending {
   font-size: 11px; color: var(--amber); padding: 3px 9px; border-radius: 999px;
@@ -1521,39 +1521,49 @@ select {
 .gnode__tag.is-here { background: rgb(88 213 163 / 0.2); color: var(--ok); }
 .gnode__tag.is-warn { background: rgb(255 194 75 / 0.18); color: var(--amber); }
 
-/* --- the bottom sheet ---------------------------------------------------- */
-.sheet {
+/* --- the bottom drawer --------------------------------------------------- */
+/* NOT `.sheet` — that is SearchScreen's contact-sheet grid, and inheriting its
+   `display: grid` turned this element's header and body into side-by-side grid
+   items, collapsing the body's three columns into one ~250px track. `display`
+   is stated explicitly here so a future collision cannot silently re-layout it
+   the same way. */
+.drawer {
+  display: block;
   flex: 0 0 auto; max-height: 46%; overflow-y: auto;
   border: 1px solid var(--hairline); border-radius: var(--radius);
   background: var(--panel);
 }
-.sheet__head {
+.drawer__head {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   padding: 8px 10px; border-bottom: 1px solid var(--hairline-soft);
 }
-.sheet__chip { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
-.sheet__title { font-size: 13px; font-weight: 600; }
-.sheet__warn { font-size: 11px; color: var(--amber); }
-.sheet__close { margin-left: auto; color: var(--muted); font-size: 12px; padding: 2px 6px; }
-.sheet__close:hover { color: var(--text); }
-.sheet__body {
+.drawer__chip { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
+.drawer__title { font-size: 13px; font-weight: 600; }
+.drawer__warn { font-size: 11px; color: var(--amber); }
+.drawer__close { margin-left: auto; color: var(--muted); font-size: 12px; padding: 2px 6px; }
+.drawer__close:hover { color: var(--text); }
+.drawer__body {
   display: grid; grid-template-columns: 200px minmax(0, 1fr) 220px;
   gap: 14px; padding: 10px;
 }
-.sheet__body--diagnosis { display: block; }
-.sheet__shot { width: 100%; border-radius: var(--radius-sm); object-fit: contain; }
-.sheet__shot--none {
+.drawer__body--diagnosis { display: block; }
+/* Capped: a portrait or very tall keyframe would otherwise set the drawer's
+   height and push the predicates out of view. */
+.drawer__shot {
+  width: 100%; max-height: 150px; border-radius: var(--radius-sm); object-fit: contain;
+}
+.drawer__shot--none {
   display: grid; place-items: center; min-height: 90px; font-size: 11px;
   color: var(--muted-dim); background: rgb(255 255 255 / 0.03);
   border-radius: var(--radius-sm);
 }
-.sheet__preds ul { margin: 4px 0 0; padding-left: 16px; font-size: 11px; }
+.drawer__preds ul { margin: 4px 0 0; padding-left: 16px; font-size: 11px; }
 /* A predicate can be long (a URL prefix, an AX identifier) and must wrap
    rather than widen its column. */
-.sheet__preds li { font-family: var(--font-mono); word-break: break-word; color: var(--muted); }
-.sheet__run { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
-.sheet__slot, .sheet__launch { display: flex; align-items: center; gap: 6px; font-size: 12px; }
-.sheet__slot input { width: 130px; }
+.drawer__preds li { font-family: var(--font-mono); word-break: break-word; color: var(--muted); }
+.drawer__run { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.drawer__slot, .drawer__launch { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.drawer__slot input { width: 130px; }
 
 .nearby { margin: 8px 0; padding-left: 8px; border-left: 2px solid var(--hairline); }
 .nearby__head { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; }

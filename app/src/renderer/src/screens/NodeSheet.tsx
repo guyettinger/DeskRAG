@@ -1,10 +1,17 @@
 /**
- * The graph's detail surface: one sheet, three possible contents, in strict
+ * The graph's detail surface: one drawer, three possible contents, in strict
  * precedence — selected node, then the locating diagnosis, then nothing.
  *
  * It rises from the bottom rather than sitting beside the canvas. A downward
  * flow is tall and narrow, so horizontal room is exactly what the transpose
  * freed; an inspector column would take it straight back.
+ *
+ * The class prefix is `drawer`, NOT `sheet`: `.sheet` is already SearchScreen's
+ * contact-sheet grid (`display: grid; repeat(auto-fill, minmax(232px, 1fr))`).
+ * Reusing the name made this element inherit that grid, so its header and body
+ * became side-by-side grid items and the body's three columns collapsed into
+ * one ~250px track — predicates wrapped one character per line. A base rule
+ * that does not reset `display` inherits whatever the colliding rule set.
  */
 
 import React from "react";
@@ -39,10 +46,10 @@ export function NodeSheet({
 }: Props): React.JSX.Element | null {
   if (node !== null) {
     return (
-      <aside className="sheet">
-        <header className="sheet__head">
-          <span className="sheet__chip">{node.chip}</span>
-          <span className="sheet__title">{node.label}</span>
+      <aside className="drawer">
+        <header className="drawer__head">
+          <span className="drawer__chip">{node.chip}</span>
+          <span className="drawer__title">{node.label}</span>
           <span className="muted">
             {node.observations} observation{node.observations === 1 ? "" : "s"} · {edgeCounts.in} in
             · {edgeCounts.out} out
@@ -55,31 +62,31 @@ export function NodeSheet({
               application. Measured on the real graph: n0 has NO predicates and
               was being told its identity was "only `app`". */}
           {node.predicates.length === 0 ? (
-            <span className="sheet__warn">
+            <span className="drawer__warn">
               no predicates — it can neither be verified nor located, because an empty set is
               vacuously true of every desktop
             </span>
           ) : (
             !node.locatable && (
-              <span className="sheet__warn">
+              <span className="drawer__warn">
                 verifies but never locates — its identity is only `app`, which every state in that
                 application satisfies
               </span>
             )
           )}
-          <button className="sheet__close" onClick={onClose} title="Close (Esc)">
+          <button className="drawer__close" onClick={onClose} title="Close (Esc)">
             ╳
           </button>
         </header>
 
-        <div className="sheet__body">
+        <div className="drawer__body">
           {node.frameBlobId !== undefined ? (
-            <img className="sheet__shot" src={`deskrag://frame/${node.frameBlobId}`} alt="" />
+            <img className="drawer__shot" src={`deskrag://frame/${node.frameBlobId}`} alt="" />
           ) : (
-            <div className="sheet__shot sheet__shot--none">no keyframe</div>
+            <div className="drawer__shot drawer__shot--none">no keyframe</div>
           )}
 
-          <section className="sheet__preds">
+          <section className="drawer__preds">
             <h3 className="eyebrow">Predicates</h3>
             {node.predicates.length === 0 ? (
               <p className="muted">No predicates — this state cannot be verified or located.</p>
@@ -92,12 +99,12 @@ export function NodeSheet({
             )}
           </section>
 
-          <section className="sheet__run">
+          <section className="drawer__run">
             <h3 className="eyebrow">Run</h3>
             {/* Only when the graph actually has slots — an empty control is
                 worse than no control. */}
             {slots.map((s) => (
-              <label key={s.name} className="sheet__slot">
+              <label key={s.name} className="drawer__slot">
                 {s.name}
                 <input
                   list={`slot-${s.name}`}
@@ -111,7 +118,7 @@ export function NodeSheet({
                 </datalist>
               </label>
             ))}
-            <label className="sheet__launch">
+            <label className="drawer__launch">
               <input
                 type="checkbox"
                 checked={allowLaunch}
@@ -141,14 +148,14 @@ export function NodeSheet({
 
   if (nearest !== undefined && nearest.length > 0) {
     return (
-      <aside className="sheet">
-        <header className="sheet__head">
-          <span className="sheet__title">Why nothing matched</span>
-          <button className="sheet__close" onClick={onClose} title="Close (Esc)">
+      <aside className="drawer">
+        <header className="drawer__head">
+          <span className="drawer__title">Why nothing matched</span>
+          <button className="drawer__close" onClick={onClose} title="Close (Esc)">
             ╳
           </button>
         </header>
-        <div className="sheet__body sheet__body--diagnosis">
+        <div className="drawer__body drawer__body--diagnosis">
           <p className="muted">
             Locating is a subset check — every predicate a state claims must hold.
           </p>
