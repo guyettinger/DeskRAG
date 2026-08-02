@@ -319,9 +319,54 @@ together. They are also the nodes `isLocatable` excludes, so they cannot start a
 run or be planned toward. Visible, bounded, and worth revisiting only if a run
 ever needs one.
 
-**Still unvalidated:** no armed run has been driven against the rebuilt graph.
-Continuation past a cut is proven in the suite (`test/run.expected.test.ts`
-drives two segments through `executeRun`) but not against a real desktop.
+### The armed run against the rebuilt graph (2026-08-02)
+
+Nine steps posted into a real desktop, and confirmed by looking at the screen:
+the reviewer hid, TextEdit came forward, `CheckBox "bold"` at `path@0.88` toggled
+bold, `TextArea #First Text View` at `identifier@1.00` took focus, `type` put real
+characters in the document, and the activation repair brought another app
+forward.
+
+**Two firsts.** Typing end to end — keymap captured at record, resolved at lift,
+replayed through `strokesFor`, characters visibly on screen — and the focus
+handoff under a **multi-step** sequence rather than the single click of
+2026-07-31. Every event landed in TextEdit, which is also the evidence that none
+landed in the reviewer: a click into DeskRAG's window is a click TextEdit does
+not receive.
+
+**It then refused to continue, correctly.** Boundary verification named
+`ax_exists(label="Stop recording", role="Button")` — a button that exists only
+*while a recording is running*. The state genuinely did not hold, and the run
+aborted naming the predicate.
+
+**Three fixes this run forced, in order of how badly each was needed.**
+
+1. **`url` had to become `achievable`** (above). Until then the plan was blocked
+   with nothing to override, because `buildPlan` turns an unmet assertable
+   predicate on a remainder node into a hard blocker.
+2. **A blocker must name its predicate.** `Blocker.predicate` carried it and the
+   DTO dropped it, so the panel said "assertable predicate does not hold" with no
+   way to tell which. Restoring it diagnosed the above in one run.
+3. **`reach` is denormalized into stored predicates**, so changing
+   `REACH_BY_KIND` does nothing to a graph on disk. The code, the tests and the
+   built `dist/` all agreed on `achievable` while a live plan was still blocked by
+   `url/assertable` read straight out of `trace_node`. It needs a rebuild.
+
+### The open problem this exposed: the graph contains the recorder
+
+Every session begins and ends by clicking Record/Stop in DeskRAG, so the app's
+own nodes are in the graph and are **hubs** — paths route through them. Worse,
+their identity includes transient recorder UI (`Stop recording`), which exists
+only while recording and therefore can never verify during a replay.
+
+This is a recording-hygiene problem, not an executor one, and it is what stopped
+this run. It is **not** addressed by this spec and wants its own decision: the
+obvious candidate is excluding the recorder's own application at lift time, on
+the grounds that the tool doing the recording is not part of the recorded task.
+
+**Still unvalidated:** continuation past a cut against a real desktop. The run
+aborted before segment 2, so the `expected`-node mechanism remains proven only in
+the suite (`test/run.expected.test.ts`).
 
 ## Out of scope
 
