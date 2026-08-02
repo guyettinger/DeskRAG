@@ -53,7 +53,13 @@ export function labelNode(node: TraceNode): { label: string; app?: string; hint?
     (p) => p.kind === "ax_exists" && HINT_ROLES.has(canonical(p.args["role"])),
   );
   const focus = preds.find((p) => p.kind === "ax_focused");
-  const hint = str(sheet?.args["label"]) ?? str(focus?.args["label"]);
+  // The URL sits between them: a sheet names a state outright ("Save"), a URL
+  // names WHICH web app you are in — the thing `app` is too coarse to say and
+  // the only way two browser nodes are distinguishable on a card — and a focused
+  // element is the weakest of the three, being wherever the caret happened to be.
+  const url = preds.find((p) => p.kind === "url");
+  const hint =
+    str(sheet?.args["label"]) ?? str(url?.args["prefix"]) ?? str(focus?.args["label"]);
 
   if (appName === undefined && hint === undefined) {
     // The full id is a 30-char session-scoped ULID; this label is read in a

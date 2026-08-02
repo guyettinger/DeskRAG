@@ -287,3 +287,32 @@ describe("toPlanDTO", () => {
     expect(dto.fromLabel).toBe("TextEdit");
   });
 });
+
+describe("labelNode with web scope", () => {
+  const url = (prefix: string): Predicate => ({
+    kind: "url",
+    args: { prefix },
+    reach: "assertable",
+  });
+
+  it("names the site, which is what distinguishes two browser nodes", () => {
+    const a = node("n3", [app("Google Chrome"), url("github.com/o/r/pull")]);
+    const b = node("n4", [app("Google Chrome"), url("github.com/o/r/issues")]);
+    expect(labelNode(a).label).toBe("Google Chrome — github.com/o/r/pull");
+    expect(labelNode(a).label).not.toBe(labelNode(b).label);
+  });
+
+  it("still prefers a sheet, which names a state outright", () => {
+    const n = node("n5", [
+      app("Google Chrome"),
+      url("github.com/o/r"),
+      exists("Sheet", "Save"),
+    ]);
+    expect(labelNode(n).hint).toBe("Save");
+  });
+
+  it("beats a focused element, which is only where the caret was", () => {
+    const n = node("n6", [app("Google Chrome"), url("github.com/o/r"), focused("TextField", "Search")]);
+    expect(labelNode(n).hint).toBe("github.com/o/r");
+  });
+});
