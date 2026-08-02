@@ -20,6 +20,12 @@ npm run test:watch     # vitest watch
 npm run build:ax       # compile BOTH Swift sidecars -> native/ax-dump + native/ax-exec (gitignored)
                        # a STALE binary fails silently: ax-dump ignored --keymap/--displays for two days
                        # and every recording lost its typed text. Rebuild after touching native/.
+                       # THE REVERSE IS ALSO FATAL AND WAS ALSO PAID FOR: ax-dump's stdout is an
+                       # OBJECT ({elements, url}), and a dist/ built before that change parses it as
+                       # nothing. Rebuilding native/ therefore REQUIRES `npm run build` + restarting
+                       # the app, or every AX walk silently returns [] — measured: one whole recording
+                       # with 14 snapshots and 0 elements. `parseAxResult` tolerates the old bare
+                       # array so a stale BINARY degrades; a stale dist/ cannot be made to degrade.
 npm run gen:brand      # regenerate assets/ + app/build/ icons from scripts/brand/geometry.ts
 npm run gen:shots      # regenerate docs/images/*.png by driving the built app (quit any dev instance first)
 npm run smoke:onnx-electron   # ColSmol x3 under the Electron allocator — the ONE crash vitest cannot reach
