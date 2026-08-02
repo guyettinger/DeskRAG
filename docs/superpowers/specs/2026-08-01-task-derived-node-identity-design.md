@@ -232,6 +232,53 @@ it; those nodes simply carry no web scope.
   fresh cross-app session and drive the full armed run, which is the only thing
   that can show continuation past a cut working.
 
+## What re-lifting the real recordings measured (2026-08-01)
+
+Read-only, against the two sessions already on disk. Nothing was armed.
+
+| | predicate counts per node |
+|---|---|
+| **Before** (stored graph) | `0, 12, 16, 33, 34, 13, 2, 17` |
+| **After** session `3PH1DM` | `0, 1, 3, 1, 1, 3, 2, 1` |
+| **After** session `CXS7JS` | `0, 1, 1, 1, 4, 2, 2, 1` |
+
+**The 18 GitHub predicates are gone.** The two Chrome nodes went from 33 and 34
+predicates to **one each** — `app(Google Chrome)` — because the recording's only
+action there was a point-only click.
+
+Two things confirmed by inspection rather than by argument:
+
+- **`ax_exists(role=TextArea, identifier="First Text View")` now appears.** That
+  predicate could not exist before: identity was built from labels, and this
+  element has an identifier and no label. It is the element the failing run was
+  actually operating on.
+- **`ax_focused` appears exactly on the nodes whose outgoing edge types**, and
+  nowhere else.
+
+### The unanticipated consequence: most nodes are now unlocatable
+
+Five of eight nodes in `3PH1DM` carry only `app` (or nothing), so under the
+locate floor they can be verified but never located. Only the two TextEdit nodes
+with three predicates can start a run.
+
+That is not a defect of the floor — a node whose recorded behaviour is one
+point-only click genuinely does not describe a distinguishable state — but it is
+a sharper constraint than "identity gets smaller" suggested, and it makes the
+`expected` mechanism load-bearing rather than a convenience. Without it these
+graphs would be almost entirely unreachable past the first segment.
+
+**The URL predicate is the repair, and this is why it matters beyond
+disambiguation.** These sessions predate URL capture, so their Chrome nodes get
+nothing. A session recorded now would give them `app(Google Chrome)` **plus**
+`url(github.com/…)` — and since `url` is not `app`, those nodes become
+**locatable**. Web scope was designed to stop wrong-page merges; it turns out to
+also be what makes browser states addressable at all under task-derived identity.
+
+**Still unvalidated:** no fresh recording has been made with URL capture, and no
+armed run has been driven against a re-lifted graph. Continuation past a cut is
+proven in the suite (`test/run.expected.test.ts` drives two segments) but not yet
+against a real desktop.
+
 ## Out of scope
 
 - **Navigation as a repair.** A URL predicate gates and never repairs; giving it
