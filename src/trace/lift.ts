@@ -264,17 +264,32 @@ function buildNode(id: string, tMono: number, events: readonly TraceEvent[], inp
 
 /** The most recent `focus_change` at or before `tMono` supplies app/window. */
 function focusContext(tMono: number, events: readonly TraceEvent[]): PredicateContext {
-  let ctx: PredicateContext = {};
+  let app: string | undefined;
+  let windowTitle: string | undefined;
+  let url: string | undefined;
   for (const e of events) {
     if (e.tMono > tMono) break;
-    if (e.kind !== "focus_change") continue;
-    const d = e.data !== null && typeof e.data === "object" ? (e.data as Record<string, unknown>) : {};
-    ctx = {
-      ...(typeof d.app === "string" ? { app: d.app } : {}),
-      ...(typeof d.title === "string" ? { windowTitle: d.title } : {}),
-    };
+    const d =
+      e.data !== null && typeof e.data === "object" ? (e.data as Record<string, unknown>) : {};
+    if (e.kind === "focus_change") {
+      app = typeof d.app === "string" ? d.app : undefined;
+      windowTitle = typeof d.title === "string" ? d.title : undefined;
+      // Switching application invalidates the page you were on: the next
+      // `url_change` will re-establish it if the new app has one. Carrying it
+      // across would attach a browser's URL to a text editor's state.
+      url = undefined;
+    } else if (e.kind === "url_change" && typeof d.url === "string") {
+      url = d.url;
+    }
   }
-  return ctx;
+  // Accumulated rather than replaced wholesale, because `url_change` and
+  // `focus_change` are separate events and the latest of EACH is what describes
+  // this moment — the same latest-at-or-before rule display topology uses.
+  return {
+    ...(app !== undefined ? { app } : {}),
+    ...(windowTitle !== undefined ? { windowTitle } : {}),
+    ...(url !== undefined ? { url } : {}),
+  };
 }
 
 function anchorFor(point: Vec2, tMono: number, input: LiftInput): Anchor {

@@ -14,11 +14,26 @@ import type { AxSnapshotReason, Store } from "../../store/types.js";
 import type { AxSource } from "./types.js";
 
 export class AxCapturer {
+  /** Last URL reported, so only CHANGES are announced. */
+  private lastUrl: string | undefined;
+
   constructor(
     private readonly store: Pick<Store, "putAxSnapshot">,
     private readonly source: AxSource,
     private readonly sessionId: string,
     private readonly now: () => number,
+    /**
+     * Called when the walk reports a page URL different from the previous one.
+     *
+     * A URL is an ENVIRONMENT FACT, like display topology and keyboard layout:
+     * it changes mid-session and fails silently when it does. It therefore
+     * travels as an event resolved latest-at-or-before, not as a column —
+     * `ax_snapshot` has no room for one and the repo has no migration mechanism.
+     *
+     * It rides the boundary walk rather than its own poller: a spawn every 500ms
+     * to learn something that only matters at a boundary is not worth the cost.
+     */
+    private readonly onUrlChange?: (url: string, tMono: number) => void,
   ) {}
 
   /**
@@ -39,7 +54,14 @@ export class AxCapturer {
     // state the snapshot claims to describe.
     const tMono = this.now();
     const started = Date.now();
-    const elements = await this.source.query();
+    const walk = this.source.walk !== undefined
+      ? await this.source.walk()
+      : { elements: await this.source.query() };
+    const elements = walk.elements;
+    if (walk.url !== undefined && walk.url !== this.lastUrl) {
+      this.lastUrl = walk.url;
+      this.onUrlChange?.(walk.url, tMono);
+    }
     await this.store.putAxSnapshot({
       id: ulid(),
       sessionId: this.sessionId,
