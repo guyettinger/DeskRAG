@@ -232,6 +232,156 @@ it; those nodes simply carry no web scope.
   fresh cross-app session and drive the full armed run, which is the only thing
   that can show continuation past a cut working.
 
+## What re-lifting the real recordings measured (2026-08-01)
+
+Read-only, against the two sessions already on disk. Nothing was armed.
+
+| | predicate counts per node |
+|---|---|
+| **Before** (stored graph) | `0, 12, 16, 33, 34, 13, 2, 17` |
+| **After** session `3PH1DM` | `0, 1, 3, 1, 1, 3, 2, 1` |
+| **After** session `CXS7JS` | `0, 1, 1, 1, 4, 2, 2, 1` |
+
+**The 18 GitHub predicates are gone.** The two Chrome nodes went from 33 and 34
+predicates to **one each** — `app(Google Chrome)` — because the recording's only
+action there was a point-only click.
+
+Two things confirmed by inspection rather than by argument:
+
+- **`ax_exists(role=TextArea, identifier="First Text View")` now appears.** That
+  predicate could not exist before: identity was built from labels, and this
+  element has an identifier and no label. It is the element the failing run was
+  actually operating on.
+- **`ax_focused` appears exactly on the nodes whose outgoing edge types**, and
+  nowhere else.
+
+### The unanticipated consequence: most nodes are now unlocatable
+
+Five of eight nodes in `3PH1DM` carry only `app` (or nothing), so under the
+locate floor they can be verified but never located. Only the two TextEdit nodes
+with three predicates can start a run.
+
+That is not a defect of the floor — a node whose recorded behaviour is one
+point-only click genuinely does not describe a distinguishable state — but it is
+a sharper constraint than "identity gets smaller" suggested, and it makes the
+`expected` mechanism load-bearing rather than a convenience. Without it these
+graphs would be almost entirely unreachable past the first segment.
+
+**The URL predicate is the repair, and this is why it matters beyond
+disambiguation.** These sessions predate URL capture, so their Chrome nodes get
+nothing. A session recorded now would give them `app(Google Chrome)` **plus**
+`url(github.com/…)` — and since `url` is not `app`, those nodes become
+**locatable**. Web scope was designed to stop wrong-page merges; it turns out to
+also be what makes browser states addressable at all under task-derived identity.
+
+### The rebuilt graph, with URL capture (2026-08-01)
+
+Four fresh recordings, then `rebuildGraph`. **13 nodes, 28 edges.**
+
+| metric | before | after |
+|---|---|---|
+| max predicates on a node | 34 | **4** |
+| mean | ~14.6 | **2.0** |
+| nodes carrying >6 predicates | most | **0** |
+| locatable nodes | 3/8 | **9/13** |
+
+**Both halves of the merge contract hold on real data.**
+
+- **Merge:** `app(Google Chrome) ∧ url(github.com/guyettinger/DeskRAG/pull)`
+  carries **`observations = 2`** — two separate recordings of the pull-request
+  page collapsed into one node.
+- **Separate:** the issues page is a distinct node carrying
+  `url(github.com/guyettinger/DeskRAG/issues)`, and never merged with the pull
+  node. This is the case that motivated web scope at all.
+
+**Locatability recovered exactly as predicted.** Before URL capture, browser
+nodes were bare `app` and unlocatable; with it they carry a second predicate and
+9 of 13 nodes can now start a run, against 3 of 8 before.
+
+**A capture bug this found, and the repo had already paid to learn it once.**
+`url_change` was first stamped with the WALK's `t_mono`. The settle delay puts
+the walk ~250ms after the boundary it describes, so lift's latest-at-or-before
+lookup handed each URL to the NEXT node — measured directly: the Chrome node was
+bare `app` and its URL sat one node later. This is the same off-by-one that
+`boundaryTMono` already exists to fix for the snapshot itself, where it measured
+54% of nodes incoherent. The parameter was already being passed in and simply was
+not used.
+
+**Residual noise, explained rather than hidden.** Two recordings made before that
+fix still carry walk-stamped events, and re-lifting cannot repair them — the
+wrong timestamp is in the events table. They contribute a URL-less
+`app(Google Chrome) ∧ ax_exists(Search Issues)` node that did not merge with its
+corrected twin. That is stale data, not a design fault.
+
+**Over-merging, measured and inert.** `app(TextEdit)` and `app(Electron)` nodes
+show `observations = 6`: states whose recorded action touched nothing collapse
+together. They are also the nodes `isLocatable` excludes, so they cannot start a
+run or be planned toward. Visible, bounded, and worth revisiting only if a run
+ever needs one.
+
+### The armed run against the rebuilt graph (2026-08-02)
+
+Nine steps posted into a real desktop, and confirmed by looking at the screen:
+the reviewer hid, TextEdit came forward, `CheckBox "bold"` at `path@0.88` toggled
+bold, `TextArea #First Text View` at `identifier@1.00` took focus, `type` put real
+characters in the document, and the activation repair brought another app
+forward.
+
+**Two firsts.** Typing end to end — keymap captured at record, resolved at lift,
+replayed through `strokesFor`, characters visibly on screen — and the focus
+handoff under a **multi-step** sequence rather than the single click of
+2026-07-31. Every event landed in TextEdit, which is also the evidence that none
+landed in the reviewer: a click into DeskRAG's window is a click TextEdit does
+not receive.
+
+**It then refused to continue, correctly.** Boundary verification named
+`ax_exists(label="Stop recording", role="Button")` — a button that exists only
+*while a recording is running*. The state genuinely did not hold, and the run
+aborted naming the predicate.
+
+**Three fixes this run forced, in order of how badly each was needed.**
+
+1. **`url` had to become `achievable`** (above). Until then the plan was blocked
+   with nothing to override, because `buildPlan` turns an unmet assertable
+   predicate on a remainder node into a hard blocker.
+2. **A blocker must name its predicate.** `Blocker.predicate` carried it and the
+   DTO dropped it, so the panel said "assertable predicate does not hold" with no
+   way to tell which. Restoring it diagnosed the above in one run.
+3. **`reach` is denormalized into stored predicates**, so changing
+   `REACH_BY_KIND` does nothing to a graph on disk. The code, the tests and the
+   built `dist/` all agreed on `achievable` while a live plan was still blocked by
+   `url/assertable` read straight out of `trace_node`. It needs a rebuild.
+
+### The recorder is not special, and excluding it was the wrong instinct
+
+Every session begins and ends by clicking Record/Stop in DeskRAG, so the app's
+own nodes are in the graph and act as **hubs** that paths route through. The run
+above stopped on one of them, because `n6`'s identity includes
+`ax_exists("Stop recording")` — a button present only while recording.
+
+**Excluding the recorder at lift time was proposed and REJECTED.** It would be an
+app-specific heuristic in a design whose central claim is that it needs none:
+this whole spec exists because "page content versus application chrome" could not
+be answered by a rule about apps, and excluding one app by name is that same
+mistake one level up. It would also be wrong for a task legitimately recorded
+*inside* DeskRAG.
+
+Read without the special case, the failure is the system telling the truth.
+`ax_exists("Stop recording")` is correct identity — that state does have that
+button — and it is unverifiable outside recording mode for exactly the reason a
+node recorded with a modal open is unverifiable with the modal closed. Note the
+contrast with `Edited|Modified` in `VOLATILE_PATTERNS`: that is a label which
+changes *within* one state, whereas this is a genuine mode marker, and filtering
+it would hide state rather than remove noise.
+
+**So the lesson is about which route a recording takes, not about the recorder.**
+A task recorded without detouring through the app produces a graph without those
+hubs. Nothing in the code changes.
+
+**Still unvalidated:** continuation past a cut against a real desktop. The run
+aborted before segment 2, so the `expected`-node mechanism remains proven only in
+the suite (`test/run.expected.test.ts`).
+
 ## Out of scope
 
 - **Navigation as a repair.** A URL predicate gates and never repairs; giving it

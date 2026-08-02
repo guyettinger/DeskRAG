@@ -36,19 +36,21 @@ describe("locateNode", () => {
    * recorded — the common case, given how aggressive the stability filter is.
    */
   it("tolerates observed predicates the node never claimed", () => {
-    const nodes = [node("n1", [app("TextEdit")])];
-    const r = locateNode([app("TextEdit"), exists("Button", "New")], nodes);
+    // The node must carry something beyond `app` to be a candidate at all —
+    // see "never returns a node whose only predicate is app" below.
+    const nodes = [node("n1", [app("TextEdit"), exists("Button", "Save")])];
+    const r = locateNode([app("TextEdit"), exists("Button", "Save"), exists("Button", "New")], nodes);
     expect(r.nodeId).toBe("n1");
   });
 
   /**
-   * Subset matching is MONOTONE: a node carrying only `app` is satisfied by
-   * every observation in that app. So the most specific description that still
-   * holds wins, or a two-predicate node would beat a twenty-predicate one.
+   * Subset matching is MONOTONE: a node carrying fewer predicates is satisfied by
+   * strictly more worlds. So the most specific description that still holds wins,
+   * or a two-predicate node would beat a twenty-predicate one.
    */
   it("prefers the most specific candidate over one that is a strict subset", () => {
     const nodes = [
-      node("broad", [app("TextEdit")]),
+      node("broad", [app("TextEdit"), exists("Button", "Save")]),
       node("specific", [app("TextEdit"), exists("Button", "Save"), exists("Button", "New")]),
     ];
     const r = locateNode(
@@ -57,6 +59,16 @@ describe("locateNode", () => {
     );
     expect(r.nodeId).toBe("specific");
     expect(r.candidates).toBe(2);
+  });
+
+  /**
+   * The floor generalizes the zero-predicate exclusion. `app` is shared by every
+   * node in an application, so it has no discriminating power for the question
+   * locating asks — while remaining a fine answer to the one verifying asks.
+   */
+  it("never returns a node whose only predicate is app", () => {
+    const nodes = [node("weak", [app("TextEdit")])];
+    expect(locateNode([app("TextEdit"), exists("Button", "New")], nodes).nodeId).toBeUndefined();
   });
 
   /**

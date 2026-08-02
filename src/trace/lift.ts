@@ -19,6 +19,7 @@ import { buildAnchor } from "./anchors.js";
 import { groupGestures, type Gesture, type GestureOptions } from "./gestures.js";
 import { fitPath } from "./paths.js";
 import { extractPredicates, predicateKey, type PredicateContext } from "./predicates.js";
+import { identityPredicates } from "./identity-set.js";
 import type {
   Action,
   Anchor,
@@ -209,6 +210,32 @@ export function liftTrace(input: LiftInput): Trace {
     });
   }
 
+  // PHASE 3 — narrow each node to its identity.
+  //
+  // Nodes were built with the FULL observed set because `buildNode` runs before
+  // any edge exists AND `newlyTruePredicate` derives waits from those full sets.
+  // Identity is derived from the edges, so it can only be computed once they
+  // exist: narrowing here rather than in `buildNode` is a sequence requirement,
+  // not a preference.
+  const outgoingBy = new Map<string, TraceEdge[]>();
+  const incomingBy = new Map<string, TraceEdge[]>();
+  const push = (m: Map<string, TraceEdge[]>, key: string, e: TraceEdge): void => {
+    const list = m.get(key);
+    if (list === undefined) m.set(key, [e]);
+    else list.push(e);
+  };
+  for (const e of edges) {
+    push(outgoingBy, e.from, e);
+    push(incomingBy, e.to, e);
+  }
+  for (const n of nodes) {
+    n.predicates = identityPredicates({
+      observed: n.predicates,
+      outgoing: outgoingBy.get(n.id) ?? [],
+      incoming: incomingBy.get(n.id) ?? [],
+    });
+  }
+
   return { sessionId: input.sessionId, nodes, edges, slots: [...slots.values()] };
 }
 
@@ -237,17 +264,32 @@ function buildNode(id: string, tMono: number, events: readonly TraceEvent[], inp
 
 /** The most recent `focus_change` at or before `tMono` supplies app/window. */
 function focusContext(tMono: number, events: readonly TraceEvent[]): PredicateContext {
-  let ctx: PredicateContext = {};
+  let app: string | undefined;
+  let windowTitle: string | undefined;
+  let url: string | undefined;
   for (const e of events) {
     if (e.tMono > tMono) break;
-    if (e.kind !== "focus_change") continue;
-    const d = e.data !== null && typeof e.data === "object" ? (e.data as Record<string, unknown>) : {};
-    ctx = {
-      ...(typeof d.app === "string" ? { app: d.app } : {}),
-      ...(typeof d.title === "string" ? { windowTitle: d.title } : {}),
-    };
+    const d =
+      e.data !== null && typeof e.data === "object" ? (e.data as Record<string, unknown>) : {};
+    if (e.kind === "focus_change") {
+      app = typeof d.app === "string" ? d.app : undefined;
+      windowTitle = typeof d.title === "string" ? d.title : undefined;
+      // Switching application invalidates the page you were on: the next
+      // `url_change` will re-establish it if the new app has one. Carrying it
+      // across would attach a browser's URL to a text editor's state.
+      url = undefined;
+    } else if (e.kind === "url_change" && typeof d.url === "string") {
+      url = d.url;
+    }
   }
-  return ctx;
+  // Accumulated rather than replaced wholesale, because `url_change` and
+  // `focus_change` are separate events and the latest of EACH is what describes
+  // this moment — the same latest-at-or-before rule display topology uses.
+  return {
+    ...(app !== undefined ? { app } : {}),
+    ...(windowTitle !== undefined ? { windowTitle } : {}),
+    ...(url !== undefined ? { url } : {}),
+  };
 }
 
 function anchorFor(point: Vec2, tMono: number, input: LiftInput): Anchor {
@@ -325,7 +367,14 @@ function toAction(
  */
 function newlyTruePredicate(before: TraceNode, after: TraceNode): Predicate | undefined {
   const had = new Set(before.predicates.map(predicateKey));
-  const fresh = after.predicates.find((p) => !had.has(predicateKey(p)));
-  if (fresh !== undefined) return fresh;
+  const fresh = after.predicates.filter((p) => !had.has(predicateKey(p)));
+  // RANKED, not first-wins. A wait on `app(Chrome)` describes an arrival; a wait
+  // on `ax_exists(label="Reviewers")` describes one page's furniture — and
+  // because an incoming edge's waits become the destination's identity, picking
+  // the wrong one reintroduces exactly the page content this design removes.
+  const rank = (p: Predicate): number =>
+    p.kind === "app" ? 0 : p.kind === "url" ? 1 : p.kind === "ax_focused" ? 2 : 3;
+  const best = [...fresh].sort((a, b) => rank(a) - rank(b))[0];
+  if (best !== undefined) return best;
   return after.predicates.find((p) => p.kind === "ax_focused");
 }

@@ -21,8 +21,8 @@
 
 import { execFile } from "node:child_process";
 import type { UIElement } from "../../embed/types.js";
-import type { AxSource } from "./types.js";
-import { parseAxElements } from "./parse.js";
+import type { AxSource, AxWalk } from "./types.js";
+import { parseAxResult } from "./parse.js";
 
 export interface SwiftAxSourceOptions {
   /** Path to the ax-dump binary (default: ERAG_AX_BIN or "ax-dump" on PATH). */
@@ -47,7 +47,12 @@ export class SwiftAxSource implements AxSource {
     this.onError = opts.onError ?? ((m) => console.error(`[ax] ${m}`));
   }
 
-  query(): Promise<UIElement[]> {
+  async query(): Promise<UIElement[]> {
+    return (await this.walk()).elements;
+  }
+
+  /** The tree and the page URL from ONE spawn — see `AxSource.walk`. */
+  walk(): Promise<AxWalk> {
     return new Promise((resolve) => {
       execFile(
         this.binaryPath,
@@ -56,10 +61,10 @@ export class SwiftAxSource implements AxSource {
         (err, stdout) => {
           if (err) {
             this.onError(err.message);
-            resolve([]); // best-effort: never throw
+            resolve({ elements: [] }); // best-effort: never throw
             return;
           }
-          resolve(parseAxElements(stdout));
+          resolve(parseAxResult(stdout));
         },
       );
     });

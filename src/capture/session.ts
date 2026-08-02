@@ -56,6 +56,8 @@ export class CaptureSession {
   private sessionId: string | undefined;
   private ingestor: FrameIngestor | undefined;
   private axCapturer: AxCapturer | undefined;
+  /** Set once the context exists; the AX capturer may report a URL before then. */
+  private emitUrl: ((url: string, tMono: number) => void) | undefined;
   private boundaryAx: BoundaryAxTrigger | undefined;
   private running = false;
   /** Paths + media for blobs reserved by producers, pending commit. */
@@ -100,7 +102,17 @@ export class CaptureSession {
       this.opts.blobStore,
     );
     this.axCapturer = this.opts.axSource
-      ? new AxCapturer(this.store, this.opts.axSource, this.sessionId, () => this.clock.now())
+      ? new AxCapturer(
+          this.store,
+          this.opts.axSource,
+          this.sessionId,
+          () => this.clock.now(),
+          // Same treatment as `display_change` and `keymap_change`: an
+          // environment fact that changes mid-session and fails silently when it
+          // does, so it is an event resolved latest-at-or-before rather than
+          // configuration. Routed through the same batcher every producer uses.
+          (url, tMono) => this.emitUrlChange(url, tMono),
+        )
       : undefined;
     this.boundaryAx =
       this.axCapturer !== undefined
@@ -197,6 +209,7 @@ export class CaptureSession {
         this.boundaryAx?.onEvent(row.kind, row.tMono);
       },
     };
+    this.emitUrl = (url, tMono) => ctx.emitEvent({ kind: "url_change", tMono, data: { url } });
     for (const p of this.producers) await p.start(ctx);
     return this.sessionId;
   }
@@ -214,5 +227,10 @@ export class CaptureSession {
     this.axCapturer?.close();
     await this.store.endSession(this.id, this.clock.wallAt(this.clock.now()));
     this.running = false;
+  }
+
+  /** Buffered until the capture context exists, then routed through it. */
+  private emitUrlChange(url: string, tMono: number): void {
+    this.emitUrl?.(url, tMono);
   }
 }

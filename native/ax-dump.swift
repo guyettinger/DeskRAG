@@ -55,6 +55,8 @@ final class AXReader {
     /// True when a cap (nodes/depth/time) cut the walk short — the result is a
     /// partial tree, which the best-effort contract allows.
     private(set) var truncated = false
+    /// The page URL, captured during the walk. See the `WebArea` branch below.
+    private(set) var webUrl: String?
     private var visited = 0
     private let maxNodes = 4000
     private let maxDepth = 60
@@ -125,6 +127,20 @@ final class AXReader {
            size.width > 0, size.height > 0 {
             // Strip the "AX" prefix so roles are clean + FTS-friendly ("Button").
             let role = rawRole.hasPrefix("AX") ? String(rawRole.dropFirst(2)) : rawRole
+            // The page's URL, taken DURING the walk rather than by a second
+            // traversal. Measured: Chromium puts its WebArea at depth 8 and 11,
+            // so a shallow independent search silently finds nothing — and a
+            // deep one would re-walk a 900-element tree for a single string.
+            // Reading it here also guarantees the URL describes the very tree
+            // being emitted. First one wins: a page with iframes exposes several
+            // WebAreas and the outermost is the document you are on.
+            if role == "WebArea", webUrl == nil {
+                var urlValue: CFTypeRef?
+                if AXUIElementCopyAttributeValue(el, "AXURL" as CFString, &urlValue) == .success {
+                    if let u = urlValue as? URL { webUrl = u.absoluteString }
+                    else if let s = urlValue as? String, !s.isEmpty { webUrl = s }
+                }
+            }
             let label = str(el, kAXTitleAttribute as String)
                 ?? str(el, kAXDescriptionAttribute as String)
             let identifier = str(el, kAXIdentifierAttribute as String)
@@ -141,10 +157,27 @@ final class AXReader {
     }
 }
 
-func emit(_ elements: [AXElem]) {
-    let data = (try? JSONEncoder().encode(elements)) ?? Data("[]".utf8)
+/// The walk's output. An OBJECT rather than a bare array, so the page URL can
+/// travel with the tree it was read from.
+///
+/// The bundling is the point. Sourcing the tree and the URL through two separate
+/// spawns is the two-halves-of-one-observation hazard this repo has already been
+/// bitten by: navigate between the spawns and the URL describes a different page
+/// than the elements. `AxObservation` bundles app+tree for the same reason.
+///
+/// `url` is a nil Optional for every non-browser app, and Swift's synthesized
+/// Codable omits it, so a native app's payload gains only the object wrapper.
+struct AxOut: Codable {
+    let elements: [AXElem]
+    let url: String?
+}
+
+func emit(_ elements: [AXElem], url: String? = nil) {
+    let data = (try? JSONEncoder().encode(AxOut(elements: elements, url: url)))
+        ?? Data(#"{"elements":[]}"#.utf8)
     FileHandle.standardOutput.write(data)
 }
+
 
 // --- main ---------------------------------------------------------------------
 
@@ -367,5 +400,5 @@ if AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &fo
 if reader.truncated {
     FileHandle.standardError.write(Data("[ax-dump] walk truncated (budget \(Int(budgetMs))ms)\n".utf8))
 }
-emit(reader.elements)
+emit(reader.elements, url: reader.webUrl)
 exit(0)

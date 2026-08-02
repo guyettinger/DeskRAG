@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { parseAxResult } from "../src/capture/ax/parse.js";
 import { SwiftAxSource } from "../src/capture/ax/swift-ax-source.js";
 import { axFilter } from "../src/represent/regions/ax.js";
 
@@ -87,24 +88,35 @@ describe.skipIf(!hasSwiftc)("ax-dump Swift sidecar", () => {
     const t0 = performance.now();
     const out = execFileSync(bin, [], { encoding: "utf8", timeout: 15_000 });
     const elapsed = performance.now() - t0;
-    expect(Array.isArray(JSON.parse(out))).toBe(true);
+    expect(Array.isArray(parseAxResult(out).elements)).toBe(true);
     // Default budget is 800ms; allow generous headroom for spawn + one in-flight
     // AX call, while still failing loudly on the unbounded walk (which ran >20s).
     expect(elapsed).toBeLessThan(5000);
   });
 
-  it("honors an explicit --budget-ms and still emits a valid array", () => {
+  it("honors an explicit --budget-ms and still emits a valid walk", () => {
     const t0 = performance.now();
     const out = execFileSync(bin, ["--budget-ms", "1"], { encoding: "utf8", timeout: 15_000 });
     const elapsed = performance.now() - t0;
-    expect(Array.isArray(JSON.parse(out))).toBe(true);
+    expect(Array.isArray(parseAxResult(out).elements)).toBe(true);
     expect(elapsed).toBeLessThan(2000);
   });
 
-  it("exits 0 and prints a JSON array when run directly", () => {
+  /**
+   * The walk emits an OBJECT, not a bare array: the page URL has to travel with
+   * the tree it was read from, because sourcing them through two spawns lets a
+   * navigation in between make the URL describe a different page.
+   */
+  it("exits 0 and prints a walk object when run directly", () => {
     // timeout: the sidecar now bounds its own walk, but a direct exec has no other
     // backstop — never let a stall become a 30s suite-wide vitest timeout again.
     const out = execFileSync(bin, [], { encoding: "utf8", timeout: 5000 });
-    expect(Array.isArray(JSON.parse(out))).toBe(true);
+    const raw: unknown = JSON.parse(out);
+    expect(Array.isArray(raw)).toBe(false);
+    expect(Array.isArray((raw as { elements: unknown }).elements)).toBe(true);
+    // A url appears only for a browser, so its presence is not asserted — only
+    // that when present it is a non-empty string.
+    const { url } = parseAxResult(out);
+    if (url !== undefined) expect(url.length).toBeGreaterThan(0);
   });
 });
