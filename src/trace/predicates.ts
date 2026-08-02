@@ -194,28 +194,32 @@ export function extractPredicates(
       STABLE_ROLES.has(canonicalRole(focused.role)) &&
       !inTabStrip(focused, nested)
     ) {
-      add("ax_focused", labelArgs(focused));
+      const args = descriptorArgs(focused);
+      if (args !== undefined) add("ax_focused", args);
     }
 
     // Deterministic order independent of input order: shallowest first, then
-    // role, then label. Two captures of the same screen must yield the same
+    // role, then descriptor. Two captures of the same screen must yield the same
     // truncation, or the cap itself becomes a source of false mismatches.
     const candidates = nested
       .filter((e) => STABLE_ROLES.has(canonicalRole(e.role)))
       .filter((e) => !inTabStrip(e, nested))
-      .filter((e) => e.label !== undefined && e.label.length > 0 && !isVolatileLabel(e.label))
+      .filter((e) => descriptorArgs(e) !== undefined)
       .sort(
         (a, b) =>
           (a.depth ?? 0) - (b.depth ?? 0) ||
           canonicalRole(a.role).localeCompare(canonicalRole(b.role)) ||
-          (a.label ?? "").localeCompare(b.label ?? ""),
+          descriptorOf(a).localeCompare(descriptorOf(b)),
       );
 
     const seen = new Set<string>();
     const cap = ctx.maxAxPredicates ?? DEFAULT_MAX_AX_PREDICATES;
     for (const e of candidates) {
-      const args = labelArgs(e);
-      const key = `${args.role} ${args.label}`;
+      const args = descriptorArgs(e)!;
+      // Keyed by the CANONICAL predicate form, not by role+value: an element
+      // identified `dup` and another labelled `dup` are different predicates,
+      // and a key built from the bare value would silently drop one of them.
+      const key = predicateKey({ kind: "ax_exists", args, reach: REACH_BY_KIND.ax_exists });
       if (seen.has(key)) continue;
       seen.add(key);
       add("ax_exists", args);
@@ -226,6 +230,41 @@ export function extractPredicates(
   return out;
 }
 
-function labelArgs(e: UIElement): { role: string; label: string } {
-  return { role: canonicalRole(e.role), label: e.label ?? "" };
+/** Args for an element's predicate: its best descriptor, or none. */
+export type DescriptorArgs =
+  | { role: string; identifier: string }
+  | { role: string; label: string };
+
+/**
+ * The best available descriptor for an element, as predicate args.
+ *
+ * IDENTIFIER FIRST, matching `LAYER_CEILING`: an `AXIdentifier` is app-assigned
+ * and stable (ceiling 1.0) while a label is display text (0.8). Identity used to
+ * be built from labels alone, so the single most reliable descriptor never
+ * reached it — and the target of the first failing live replay was `TextArea`
+ * with identifier `First Text View` and no label, contributing nothing at all.
+ *
+ * ONE predicate per element. Emitting both keys would double every count and
+ * silently move the truncation cap.
+ *
+ * A volatile label is rejected, but only AFTER the identifier is considered: an
+ * element labelled "Inbox (14)" behind a stable `inbox` identifier is a stable
+ * element with a noisy caption, not a noisy element.
+ */
+function descriptorArgs(e: UIElement): DescriptorArgs | undefined {
+  const role = canonicalRole(e.role);
+  if (e.identifier !== undefined && e.identifier.length > 0) {
+    return { role, identifier: e.identifier };
+  }
+  if (e.label !== undefined && e.label.length > 0 && !isVolatileLabel(e.label)) {
+    return { role, label: e.label };
+  }
+  return undefined;
+}
+
+/** The descriptor VALUE, for ordering and de-duplication. */
+function descriptorOf(e: UIElement): string {
+  const args = descriptorArgs(e);
+  if (args === undefined) return "";
+  return "identifier" in args ? args.identifier : args.label;
 }
