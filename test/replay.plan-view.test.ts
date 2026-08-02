@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { chipIds, labelNode, rankNodes, toGraphDTO, toPlanDTO } from "../app/src/main/plan-view.js";
+import {
+  chipIds,
+  failedStepIndex,
+  labelNode,
+  rankNodes,
+  toGraphDTO,
+  toPlanDTO,
+} from "../app/src/main/plan-view.js";
 import type { Graph, Predicate, TraceEdge, TraceNode } from "../src/trace/types.js";
 import type { Anchor, Plan } from "../src/replay/types.js";
 
@@ -339,5 +346,25 @@ describe("toGraphDTO identity fields", () => {
     const dto = toGraphDTO(graph([node("n1")], [], "n1"));
     expect(dto.nodes[0]!.predicates).toEqual([]);
     expect(dto.nodes[0]!.locatable).toBe(false);
+  });
+});
+
+describe("failedStepIndex", () => {
+  it("shifts past a prepended handoff step", () => {
+    // execute.ts says step 0; the rendered list has the handoff at 0, so the
+    // action the reviewer sees fail is at 1.
+    expect(failedStepIndex(0, 1)).toBe(1);
+    expect(failedStepIndex(6, 1)).toBe(7);
+  });
+
+  it("is identity when no handoff was prepended", () => {
+    expect(failedStepIndex(0, 0)).toBe(0);
+    expect(failedStepIndex(6, 0)).toBe(6);
+  });
+
+  it("returns undefined for a refusal to start", () => {
+    // canArm reports step -1: nothing ran, so no step failed.
+    expect(failedStepIndex(-1, 1)).toBeUndefined();
+    expect(failedStepIndex(-1, 0)).toBeUndefined();
   });
 });

@@ -465,6 +465,13 @@ export type RunEventDTO =
       type: "segment-done";
       segment: number;
       completed: boolean;
+      /**
+       * `step` indexes the RENDERED `PlanDTO.steps`, NOT the library's plan.
+       * The DTO prepends a handoff step whenever the `from` node carries an
+       * `app` predicate, so the raw index from `execute.ts` is one short.
+       * `replay-service.report` converts it with `failedStepIndex`; absent when
+       * the segment refused to start (raw -1), because then no step ran.
+       */
       failure?: { step: number; reason: string };
       telemetry: { edgeId: string; layer: string; confidence: number }[];
     }

@@ -207,6 +207,22 @@ export const describePredicate = (p: Predicate): string => {
   return `${p.kind}(${args})`;
 };
 
+/**
+ * Which step of the RENDERED list failed.
+ *
+ * `execute.ts` indexes the library's `plan.steps`; `toPlanDTO` prepends a
+ * handoff step whenever the `from` node carries an `app` predicate, which is
+ * nearly always. Without the shift the reviewer is told a step number one below
+ * the step that actually failed — measured: "step 7" for the activate at
+ * position 8.
+ *
+ * `canArm` reports -1, meaning it refused to start. That is not a step that
+ * ran, so there is no index to name.
+ */
+export function failedStepIndex(rawStep: number, handoffOffset: number): number | undefined {
+  return rawStep < 0 ? undefined : rawStep + handoffOffset;
+}
+
 /** What the step does, in a reviewer's words rather than an enum's. */
 export function describeAction(a: Action): string {
   switch (a.kind) {
