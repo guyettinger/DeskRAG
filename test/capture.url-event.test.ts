@@ -86,3 +86,51 @@ describe("url_change events reach node identity", () => {
     expect(urlsIn(trace)).toHaveLength(0);
   });
 });
+
+describe("url_change is stamped with the boundary, not the walk", () => {
+  it("uses boundaryTMono when the walk was boundary-triggered", async () => {
+    const { AxCapturer } = await import("../src/capture/ax/ax-capturer.js");
+    const stamps: { url: string; tMono: number }[] = [];
+    const store = { putAxSnapshot: async (): Promise<void> => {} };
+    const source = {
+      query: async () => [],
+      walk: async () => ({ elements: [], url: "https://example.com/a" }),
+    };
+    // The walk always post-dates its boundary by the settle delay; here the
+    // clock reads 1250 while the boundary being described was at 1000.
+    const cap = new AxCapturer(store, source, "s1", () => 1250, (url, tMono) =>
+      stamps.push({ url, tMono }),
+    );
+    await cap.capture("focus_change", undefined, 1000);
+    expect(stamps).toEqual([{ url: "https://example.com/a", tMono: 1000 }]);
+  });
+
+  it("falls back to the walk's own time for a keyframe walk, which has no boundary", async () => {
+    const { AxCapturer } = await import("../src/capture/ax/ax-capturer.js");
+    const stamps: { url: string; tMono: number }[] = [];
+    const store = { putAxSnapshot: async (): Promise<void> => {} };
+    const source = {
+      query: async () => [],
+      walk: async () => ({ elements: [], url: "https://example.com/a" }),
+    };
+    const cap = new AxCapturer(store, source, "s1", () => 1250, (url, tMono) =>
+      stamps.push({ url, tMono }),
+    );
+    await cap.capture("keyframe", "f1");
+    expect(stamps[0]?.tMono).toBe(1250);
+  });
+
+  it("announces only CHANGES, so a settled page emits one event", async () => {
+    const { AxCapturer } = await import("../src/capture/ax/ax-capturer.js");
+    const stamps: string[] = [];
+    const store = { putAxSnapshot: async (): Promise<void> => {} };
+    const source = {
+      query: async () => [],
+      walk: async () => ({ elements: [], url: "https://example.com/a" }),
+    };
+    const cap = new AxCapturer(store, source, "s1", () => 1, (url) => stamps.push(url));
+    await cap.capture("focus_change", undefined, 1);
+    await cap.capture("focus_change", undefined, 2);
+    expect(stamps).toHaveLength(1);
+  });
+});

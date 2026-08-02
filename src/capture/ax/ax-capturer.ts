@@ -60,7 +60,16 @@ export class AxCapturer {
     const elements = walk.elements;
     if (walk.url !== undefined && walk.url !== this.lastUrl) {
       this.lastUrl = walk.url;
-      this.onUrlChange?.(walk.url, tMono);
+      // Stamped with the BOUNDARY, not the walk. The settle delay puts the walk
+      // ~250ms AFTER the boundary it describes, so a walk-stamped event sits
+      // just past the boundary and lift's latest-at-or-before lookup hands it to
+      // the NEXT node instead. Measured exactly that way on a real recording:
+      // the Chrome node was bare `app` and the URL landed one node later.
+      //
+      // The identical off-by-one is why `boundaryTMono` exists for the snapshot
+      // itself (`getAxForBoundary`), which measured 54% of nodes incoherent
+      // before it was added. Same delay, same fix.
+      this.onUrlChange?.(walk.url, boundaryTMono ?? tMono);
     }
     await this.store.putAxSnapshot({
       id: ulid(),
