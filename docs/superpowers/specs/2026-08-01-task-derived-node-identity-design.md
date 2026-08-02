@@ -352,17 +352,31 @@ aborted naming the predicate.
    built `dist/` all agreed on `achievable` while a live plan was still blocked by
    `url/assertable` read straight out of `trace_node`. It needs a rebuild.
 
-### The open problem this exposed: the graph contains the recorder
+### The recorder is not special, and excluding it was the wrong instinct
 
 Every session begins and ends by clicking Record/Stop in DeskRAG, so the app's
-own nodes are in the graph and are **hubs** — paths route through them. Worse,
-their identity includes transient recorder UI (`Stop recording`), which exists
-only while recording and therefore can never verify during a replay.
+own nodes are in the graph and act as **hubs** that paths route through. The run
+above stopped on one of them, because `n6`'s identity includes
+`ax_exists("Stop recording")` — a button present only while recording.
 
-This is a recording-hygiene problem, not an executor one, and it is what stopped
-this run. It is **not** addressed by this spec and wants its own decision: the
-obvious candidate is excluding the recorder's own application at lift time, on
-the grounds that the tool doing the recording is not part of the recorded task.
+**Excluding the recorder at lift time was proposed and REJECTED.** It would be an
+app-specific heuristic in a design whose central claim is that it needs none:
+this whole spec exists because "page content versus application chrome" could not
+be answered by a rule about apps, and excluding one app by name is that same
+mistake one level up. It would also be wrong for a task legitimately recorded
+*inside* DeskRAG.
+
+Read without the special case, the failure is the system telling the truth.
+`ax_exists("Stop recording")` is correct identity — that state does have that
+button — and it is unverifiable outside recording mode for exactly the reason a
+node recorded with a modal open is unverifiable with the modal closed. Note the
+contrast with `Edited|Modified` in `VOLATILE_PATTERNS`: that is a label which
+changes *within* one state, whereas this is a genuine mode marker, and filtering
+it would hide state rather than remove noise.
+
+**So the lesson is about which route a recording takes, not about the recorder.**
+A task recorded without detouring through the app produces a graph without those
+hubs. Nothing in the code changes.
 
 **Still unvalidated:** continuation past a cut against a real desktop. The run
 aborted before segment 2, so the `expected`-node mechanism remains proven only in
