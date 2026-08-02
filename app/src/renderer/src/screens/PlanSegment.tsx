@@ -15,13 +15,7 @@
 
 import React from "react";
 import { shortId, type PlanDTO } from "@shared/types";
-
-export interface SegmentOutcome {
-  state: "awaiting" | "running" | "completed" | "failed";
-  /** Index into the RENDERED `plan.steps`; already DTO-space. */
-  failedStep?: number;
-  reason?: string;
-}
+import type { SegmentOutcome } from "./run-log.js";
 
 const pct = (n: number): string => `${Math.round(n * 100)}%`;
 

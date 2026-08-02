@@ -12,8 +12,9 @@
  */
 
 import React, { useState } from "react";
-import type { PlanDTO, ReplayStopReason } from "@shared/types";
-import { PlanSegment, type SegmentOutcome } from "./PlanSegment.js";
+import type { ReplayStopReason } from "@shared/types";
+import { PlanSegment } from "./PlanSegment.js";
+import type { LoggedSegment } from "./run-log.js";
 
 export function stopMessage(reason: ReplayStopReason, detail?: string): string {
   switch (reason) {
@@ -34,11 +35,6 @@ export function stopMessage(reason: ReplayStopReason, detail?: string): string {
     case "failed":
       return detail ?? "A step failed; the run stopped.";
   }
-}
-
-export interface LoggedSegment {
-  plan: PlanDTO;
-  outcome: SegmentOutcome;
 }
 
 export function RunLog({
