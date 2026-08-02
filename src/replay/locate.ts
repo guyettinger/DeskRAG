@@ -19,6 +19,7 @@
 
 import type { TraceNode } from "../trace/types.js";
 import type { NodeLocation, Predicate } from "./types.js";
+import { isLocatable } from "../trace/identity-set.js";
 import { verifyNode } from "./verify.js";
 
 export function locateNode(
@@ -28,8 +29,14 @@ export function locateNode(
   // A node with NO predicates is vacuously satisfied by every observation, so it
   // would verify against any desktop at all. Excluded outright rather than
   // ranked last: ranking cannot help when it is the only candidate.
+  //
+  // `isLocatable` GENERALIZES that exclusion: a node carrying only `app` is
+  // nearly as weak, because `app` is shared by every node in an application and
+  // so has zero discriminating power for the question THIS function asks. Both
+  // still VERIFY — "did I reach Chrome?" has a real answer — which is why the
+  // rule lives here and `verifyNode` is untouched.
   const candidates = nodes.filter(
-    (n) => n.predicates.length > 0 && verifyNode(n.predicates, observed).satisfied,
+    (n) => isLocatable(n.predicates) && verifyNode(n.predicates, observed).satisfied,
   );
   if (candidates.length === 0) return { candidates: 0, ambiguous: false };
 
