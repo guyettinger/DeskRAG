@@ -10,12 +10,19 @@
 
 import { nestAxElements } from "../capture/ax/tree.js";
 import type { Predicate, UIElement } from "./types.js";
+import { urlPrefix } from "./url.js";
 import { REACH_BY_KIND } from "./types.js";
 
 export interface PredicateContext {
   /** Focused application name, from a `focus_change` event. */
   app?: string;
   windowTitle?: string;
+  /**
+   * The RAW page URL, from a `url_change` event. Reduced to a site-level prefix
+   * here rather than by the caller, so every producer of one agrees on the
+   * grain — and so the raw value stays available if the rule changes.
+   */
+  url?: string;
   /** Assertable — recorded so replay can refuse on a different monitor setup. */
   displays?: { id: string; w: number; h: number }[];
   /** Assertable — paths the recording depended on existing. */
@@ -162,6 +169,14 @@ export function extractPredicates(
   };
 
   if (ctx.app !== undefined && ctx.app.length > 0) add("app", { app: ctx.app });
+  // For a browser the real application is the SITE: `app=Google Chrome` is too
+  // coarse to tell two web apps apart, and full page content is far too
+  // specific. `urlPrefix` returns undefined for anything that names no site, so
+  // a `file:` or `about:` page contributes nothing rather than a junk identity.
+  if (ctx.url !== undefined) {
+    const prefix = urlPrefix(ctx.url);
+    if (prefix !== undefined) add("url", { prefix });
+  }
   // `ctx.windowTitle` is deliberately NOT emitted as a predicate. A title is
   // document or page identity, not state — see STABLE_ROLES above — and as a
   // node predicate it made every recording unusable outside the exact file it

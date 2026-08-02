@@ -78,6 +78,8 @@ export interface Path {
 export type PredicateKind =
   | "app"
   | "window"
+  /** Site-level web scope: `app` is too coarse for a browser. See `url.ts`. */
+  | "url"
   | "ax_exists"
   | "ax_focused"
   | "display"
@@ -95,6 +97,13 @@ export type Reach = "achievable" | "assertable";
 export const REACH_BY_KIND: Readonly<Record<PredicateKind, Reach>> = {
   app: "achievable",
   window: "achievable",
+  /**
+   * ASSERTABLE, deliberately. `app` is achievable because activation is a real
+   * repair; nothing here navigates, so a URL can only gate. Being on the wrong
+   * site is therefore a clean, unoverridable blocker — which is exactly the
+   * wrong-page replay this predicate exists to prevent.
+   */
+  url: "assertable",
   ax_exists: "achievable",
   ax_focused: "achievable",
   display: "assertable",
