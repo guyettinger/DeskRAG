@@ -16,7 +16,7 @@ import { CaptureSession } from "../src/capture/session.js";
 import { AxCapturer } from "../src/capture/ax/ax-capturer.js";
 import { NoopAxSource } from "../src/capture/ax/noop.js";
 import { SwiftAxSource } from "../src/capture/ax/swift-ax-source.js";
-import { parseAxElements, coerceAxElements } from "../src/capture/ax/parse.js";
+import { parseAxElements, parseAxResult, coerceAxElements } from "../src/capture/ax/parse.js";
 import type { AxSource } from "../src/capture/ax/types.js";
 import { MonotonicClock } from "../src/timeline/clock.js";
 import { FakeEmbeddingProvider } from "../src/embed/fake.js";
@@ -291,5 +291,33 @@ describe("coerceAxElements — identifier", () => {
   it("ignores a non-string identifier", () => {
     const [a] = coerceAxElements([{ role: "AXButton", x: 0, y: 0, w: 1, h: 1, identifier: 42 }]);
     expect("identifier" in a!).toBe(false);
+  });
+});
+
+describe("parseAxResult", () => {
+  it("reads the object shape the current sidecar emits", () => {
+    const r = parseAxResult(
+      '{"elements":[{"role":"Button","x":0,"y":0,"w":1,"h":1}],"url":"https://a.example/b"}',
+    );
+    expect(r.elements).toHaveLength(1);
+    expect(r.url).toBe("https://a.example/b");
+  });
+
+  it("still reads a BARE ARRAY, so a stale binary loses only the url", () => {
+    // A stale sidecar is this repo's classic silent failure — ax-dump ignored
+    // --keymap for two days and every recording lost its typed text. Tolerating
+    // the old shape means an un-rebuilt binary degrades instead of returning
+    // nothing at all.
+    const r = parseAxResult('[{"role":"Button","x":0,"y":0,"w":1,"h":1}]');
+    expect(r.elements).toHaveLength(1);
+    expect(r.url).toBeUndefined();
+  });
+
+  it("omits an empty url rather than carrying a meaningless one", () => {
+    expect(parseAxResult('{"elements":[],"url":""}').url).toBeUndefined();
+  });
+
+  it("degrades to no elements on malformed json", () => {
+    expect(parseAxResult("not json").elements).toEqual([]);
   });
 });

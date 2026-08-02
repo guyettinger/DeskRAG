@@ -8,6 +8,7 @@ import { app, BrowserWindow, Tray, Menu, nativeImage } from "electron";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
 import { DeskRagService } from "./deskrag-service.js";
+import { ReplayService } from "./replay-service.js";
 import { SettingsStore, dataDir } from "./settings.js";
 import { registerIpc } from "./ipc.js";
 import { registerScheme, registerProtocol } from "./protocol.js";
@@ -15,6 +16,7 @@ import { registerScheme, registerProtocol } from "./protocol.js";
 let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let service: DeskRagService;
+let replay: ReplayService;
 let quitting = false;
 
 registerScheme(); // must precede app.whenReady
@@ -25,6 +27,15 @@ registerScheme(); // must precede app.whenReady
 if (!process.env["ERAG_AX_BIN"]) {
   const sidecar = join(__dirname, "../../../native/ax-dump");
   if (existsSync(sidecar)) process.env["ERAG_AX_BIN"] = sidecar;
+}
+
+// `ax-exec` is a SEPARATE binary from `ax-dump` on purpose: ax-dump is
+// read-only and two of its modes are deliberately permission-free, so folding
+// actuation in would mean every AX read is performed by something that can also
+// click. Same dev resolution, its own variable.
+if (!process.env["ERAG_AX_EXEC_BIN"]) {
+  const exec = join(__dirname, "../../../native/ax-exec");
+  if (existsSync(exec)) process.env["ERAG_AX_EXEC_BIN"] = exec;
 }
 
 /**
@@ -130,7 +141,11 @@ app.whenReady().then(async () => {
   await service.open();
 
   registerProtocol(service);
-  registerIpc(service, settings, () => win);
+  replay = new ReplayService(
+    () => service.traceGraph(),
+    (frameId) => service.frameBlobId(frameId),
+  );
+  registerIpc(service, settings, replay, () => win);
   service.onState(() => rebuildTray());
 
   // An unpackaged macOS dev run shows Electron's own dock icon otherwise.
@@ -154,5 +169,8 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", () => {
   quitting = true;
+  // Before the store: the sidecar is a child process, and leaving one alive
+  // outlives the app that is the only thing able to stop it.
+  replay?.close();
   service?.close();
 });

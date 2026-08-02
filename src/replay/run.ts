@@ -21,6 +21,7 @@
 
 import { executePlan } from "./execute.js";
 import { locateNode } from "./locate.js";
+import { verifyNode } from "./verify.js";
 import { predicatesOf, windowOriginOf } from "./observe.js";
 import { buildPlan, findPath } from "./plan.js";
 import type { ExecOutcome, Plan, RunInput, RunOutcome, RunStop } from "./types.js";
@@ -48,10 +49,25 @@ export async function executeRun(input: RunInput): Promise<RunOutcome> {
     const observed = predicatesOf(observation);
     const origin = windowOriginOf(observation);
 
-    const located = locateNode(observed, input.graph.nodes);
-    if (located.nodeId === undefined) return stop("not-located");
+    // Prefer the node the previous segment said it would reach. `expected` was
+    // already tracked for drift reporting; using it HERE is what lets a run
+    // continue into a node whose identity is too thin to locate — the common
+    // case for a state whose only outgoing anchor is a coordinate, since
+    // identity is derived from what the task touches.
+    //
+    // It is not taken on faith: the node still has to VERIFY against this
+    // observation. Verifying a specific claim is a strictly easier question than
+    // choosing among all recorded states, and a cold start has no prior at all,
+    // so the first turn always locates.
+    const expectedNode =
+      expected === undefined ? undefined : input.graph.nodes.find((n) => n.id === expected);
+    const currentId =
+      expectedNode !== undefined && verifyNode(expectedNode.predicates, observed).satisfied
+        ? expectedNode.id
+        : locateNode(observed, input.graph.nodes).nodeId;
+    if (currentId === undefined) return stop("not-located");
 
-    const path = findPath(input.graph, located.nodeId, input.goalNodeId);
+    const path = findPath(input.graph, currentId, input.goalNodeId);
     if (path === null) return stop("no-path");
     if (path.length === 0) {
       return { goalNodeId: input.goalNodeId, reached: true, segments };
@@ -59,7 +75,7 @@ export async function executeRun(input: RunInput): Promise<RunOutcome> {
 
     const plan = await buildPlan({
       graph: input.graph,
-      fromNodeId: located.nodeId,
+      fromNodeId: currentId,
       toNodeId: input.goalNodeId,
       observed,
       locate: (d) => input.actuator.locate(d),
@@ -73,8 +89,8 @@ export async function executeRun(input: RunInput): Promise<RunOutcome> {
     // Drift is not a mechanism: the turn above re-located regardless of where the
     // previous segment claimed it would end. It only has to be disclosed, and
     // the caller has to arm again in any case, so it costs nothing to surface.
-    if (expected !== undefined && expected !== located.nodeId) {
-      plan.drift = { expected, observed: located.nodeId };
+    if (expected !== undefined && expected !== currentId) {
+      plan.drift = { expected, observed: currentId };
     }
 
     // A segment with nothing in it that resumes where it started cannot advance,
@@ -82,7 +98,7 @@ export async function executeRun(input: RunInput): Promise<RunOutcome> {
     // specific: the first edge begins at the node just located, so an anchor
     // that cannot resolve there is GONE rather than not-yet-arrived. The
     // reviewer is never asked to arm an empty plan.
-    if (plan.steps.length === 0 && plan.cut?.resumeAt === located.nodeId) {
+    if (plan.steps.length === 0 && plan.cut?.resumeAt === currentId) {
       return stop("no-progress");
     }
 

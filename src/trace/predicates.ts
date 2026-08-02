@@ -10,12 +10,19 @@
 
 import { nestAxElements } from "../capture/ax/tree.js";
 import type { Predicate, UIElement } from "./types.js";
+import { urlPrefix } from "./url.js";
 import { REACH_BY_KIND } from "./types.js";
 
 export interface PredicateContext {
   /** Focused application name, from a `focus_change` event. */
   app?: string;
   windowTitle?: string;
+  /**
+   * The RAW page URL, from a `url_change` event. Reduced to a site-level prefix
+   * here rather than by the caller, so every producer of one agrees on the
+   * grain — and so the raw value stays available if the rule changes.
+   */
+  url?: string;
   /** Assertable — recorded so replay can refuse on a different monitor setup. */
   displays?: { id: string; w: number; h: number }[];
   /** Assertable — paths the recording depended on existing. */
@@ -162,6 +169,14 @@ export function extractPredicates(
   };
 
   if (ctx.app !== undefined && ctx.app.length > 0) add("app", { app: ctx.app });
+  // For a browser the real application is the SITE: `app=Google Chrome` is too
+  // coarse to tell two web apps apart, and full page content is far too
+  // specific. `urlPrefix` returns undefined for anything that names no site, so
+  // a `file:` or `about:` page contributes nothing rather than a junk identity.
+  if (ctx.url !== undefined) {
+    const prefix = urlPrefix(ctx.url);
+    if (prefix !== undefined) add("url", { prefix });
+  }
   // `ctx.windowTitle` is deliberately NOT emitted as a predicate. A title is
   // document or page identity, not state — see STABLE_ROLES above — and as a
   // node predicate it made every recording unusable outside the exact file it
@@ -179,28 +194,32 @@ export function extractPredicates(
       STABLE_ROLES.has(canonicalRole(focused.role)) &&
       !inTabStrip(focused, nested)
     ) {
-      add("ax_focused", labelArgs(focused));
+      const args = descriptorArgs(focused);
+      if (args !== undefined) add("ax_focused", args);
     }
 
     // Deterministic order independent of input order: shallowest first, then
-    // role, then label. Two captures of the same screen must yield the same
+    // role, then descriptor. Two captures of the same screen must yield the same
     // truncation, or the cap itself becomes a source of false mismatches.
     const candidates = nested
       .filter((e) => STABLE_ROLES.has(canonicalRole(e.role)))
       .filter((e) => !inTabStrip(e, nested))
-      .filter((e) => e.label !== undefined && e.label.length > 0 && !isVolatileLabel(e.label))
+      .filter((e) => descriptorArgs(e) !== undefined)
       .sort(
         (a, b) =>
           (a.depth ?? 0) - (b.depth ?? 0) ||
           canonicalRole(a.role).localeCompare(canonicalRole(b.role)) ||
-          (a.label ?? "").localeCompare(b.label ?? ""),
+          descriptorOf(a).localeCompare(descriptorOf(b)),
       );
 
     const seen = new Set<string>();
     const cap = ctx.maxAxPredicates ?? DEFAULT_MAX_AX_PREDICATES;
     for (const e of candidates) {
-      const args = labelArgs(e);
-      const key = `${args.role} ${args.label}`;
+      const args = descriptorArgs(e)!;
+      // Keyed by the CANONICAL predicate form, not by role+value: an element
+      // identified `dup` and another labelled `dup` are different predicates,
+      // and a key built from the bare value would silently drop one of them.
+      const key = predicateKey({ kind: "ax_exists", args, reach: REACH_BY_KIND.ax_exists });
       if (seen.has(key)) continue;
       seen.add(key);
       add("ax_exists", args);
@@ -211,6 +230,41 @@ export function extractPredicates(
   return out;
 }
 
-function labelArgs(e: UIElement): { role: string; label: string } {
-  return { role: canonicalRole(e.role), label: e.label ?? "" };
+/** Args for an element's predicate: its best descriptor, or none. */
+export type DescriptorArgs =
+  | { role: string; identifier: string }
+  | { role: string; label: string };
+
+/**
+ * The best available descriptor for an element, as predicate args.
+ *
+ * IDENTIFIER FIRST, matching `LAYER_CEILING`: an `AXIdentifier` is app-assigned
+ * and stable (ceiling 1.0) while a label is display text (0.8). Identity used to
+ * be built from labels alone, so the single most reliable descriptor never
+ * reached it — and the target of the first failing live replay was `TextArea`
+ * with identifier `First Text View` and no label, contributing nothing at all.
+ *
+ * ONE predicate per element. Emitting both keys would double every count and
+ * silently move the truncation cap.
+ *
+ * A volatile label is rejected, but only AFTER the identifier is considered: an
+ * element labelled "Inbox (14)" behind a stable `inbox` identifier is a stable
+ * element with a noisy caption, not a noisy element.
+ */
+function descriptorArgs(e: UIElement): DescriptorArgs | undefined {
+  const role = canonicalRole(e.role);
+  if (e.identifier !== undefined && e.identifier.length > 0) {
+    return { role, identifier: e.identifier };
+  }
+  if (e.label !== undefined && e.label.length > 0 && !isVolatileLabel(e.label)) {
+    return { role, label: e.label };
+  }
+  return undefined;
+}
+
+/** The descriptor VALUE, for ordering and de-duplication. */
+function descriptorOf(e: UIElement): string {
+  const args = descriptorArgs(e);
+  if (args === undefined) return "";
+  return "identifier" in args ? args.identifier : args.label;
 }

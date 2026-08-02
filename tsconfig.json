@@ -17,7 +17,27 @@
     "outDir": "dist",
     "rootDir": ".",
     "resolveJsonModule": true,
-    "forceConsistentCasingInFileNames": true
+    "forceConsistentCasingInFileNames": true,
+    /*
+     * `test/replay.plan-view.test.ts` imports `app/src/main/plan-view.ts` — a
+     * pure projection that belongs in this suite but is written against the
+     * app's module names. tsc follows that import, so it needs the same two
+     * names the vitest aliases provide. Mirrors `app/tsconfig.node.json`, except
+     * that `deskrag` points at the source rather than `dist`, so the gate does
+     * not depend on a build having been run.
+     *
+     * `tsconfig.build.json` excludes `app` and only includes `src`, so nothing
+     * here reaches the published output.
+     *
+     * Both are EXACT file mappings rather than the app's `@shared/*` wildcard:
+     * the app resolves modules as a bundler does and may omit extensions, while
+     * this project is NodeNext and requires them, so a wildcard onto a directory
+     * resolves in the app and fails here.
+     */
+    "paths": {
+      "@shared/types": ["./app/src/shared/types.ts"],
+      "deskrag": ["./src/index.ts"]
+    }
   },
   "include": ["src", "test", "scripts"],
   "exclude": ["dist", "node_modules"]

@@ -78,6 +78,8 @@ export interface Path {
 export type PredicateKind =
   | "app"
   | "window"
+  /** Site-level web scope: `app` is too coarse for a browser. See `url.ts`. */
+  | "url"
   | "ax_exists"
   | "ax_focused"
   | "display"
@@ -95,6 +97,26 @@ export type Reach = "achievable" | "assertable";
 export const REACH_BY_KIND: Readonly<Record<PredicateKind, Reach>> = {
   app: "achievable",
   window: "achievable",
+  /**
+   * ACHIEVABLE. This was first written `assertable` on the reasoning that
+   * nothing in the executor navigates, and that was the wrong question: `Reach`
+   * asks whether SOME EDGE IN THE GRAPH establishes the predicate, not whether
+   * the executor has a synthesized repair for it. A URL is established by
+   * navigating, which is a recorded click on a link. `ax_exists` and
+   * `ax_focused` are likewise achievable with no synthesized repair;
+   * `display`/`file`/`permission` are assertable because no UI action produces
+   * them at all.
+   *
+   * Measured cost of the mistake: every browser node became a permanently
+   * unreachable goal, because `buildPlan` turns an unmet assertable predicate on
+   * any remainder node into an unoverridable blocker. A real plan toward a
+   * GitHub page was blocked with nothing to override.
+   *
+   * No protection is lost. Wrong-page replay is prevented by VERIFICATION and
+   * LOCATING, which both still gate on this predicate; achievable only stops it
+   * from declaring a distant goal impossible before the run starts.
+   */
+  url: "achievable",
   ax_exists: "achievable",
   ax_focused: "achievable",
   display: "assertable",
