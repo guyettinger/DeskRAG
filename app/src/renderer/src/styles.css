@@ -1466,13 +1466,32 @@ select {
 .gcanvas {
   position: relative; overflow: hidden; min-width: 0; min-height: 0;
   border: 1px solid var(--hairline); border-radius: var(--radius);
-  background: var(--panel); cursor: grab; touch-action: none;
+  background: var(--panel);
 }
+/* The pan surface is a child, not .gcanvas itself, so the control cluster can
+   sit above it without every press on a button starting a pan. */
+.gcanvas__surface { position: absolute; inset: 0; cursor: grab; touch-action: none; }
+.gcanvas__surface:active { cursor: grabbing; }
 .gcanvas__world { position: absolute; transform-origin: 0 0; }
 .gcanvas__wires { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
 .gwire { fill: none; stroke: var(--hairline); stroke-width: 2; }
 .gwire.is-back { stroke-dasharray: 5 4; opacity: 0.7; }
 .gwire.is-synth { stroke-dasharray: 2 3; }
+
+.gcanvas__controls {
+  position: absolute; right: 10px; bottom: 10px; z-index: 2;
+  display: flex; gap: 4px; padding: 4px;
+  border: 1px solid var(--hairline); border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--elevated) 88%, transparent);
+  backdrop-filter: blur(6px);
+}
+.gbtn {
+  min-width: 26px; height: 24px; padding: 0 7px;
+  font-size: 11px; font-family: var(--font-mono); color: var(--muted);
+  border-radius: 5px;
+}
+.gbtn:hover:not(:disabled) { background: rgb(255 255 255 / 0.07); color: var(--text); }
+.gbtn:disabled { opacity: 0.4; cursor: default; }
 
 .gnode {
   position: absolute; display: flex; flex-direction: column; gap: 4px;
@@ -1483,7 +1502,10 @@ select {
 /* --ok is the palette's "this is true right now"; --accent is interactive
    selection. The recording red (--rec) is reserved for live capture. */
 .gnode.is-here { border-color: var(--ok); box-shadow: 0 0 0 2px rgb(88 213 163 / 0.25); }
-.gnode.is-goal { border-color: var(--accent); box-shadow: 0 0 0 2px rgb(124 156 255 / 0.25); }
+.gnode.is-selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgb(124 156 255 / 0.25); }
+/* Dimmed, not hidden: it is still a real recorded state and still worth
+   reading — it just cannot answer "which state is this?". */
+.gnode.is-unlocatable .gnode__shot { opacity: 0.55; }
 .gnode__shot { width: 100%; height: 72px; object-fit: cover; border-radius: 4px; }
 .gnode__shot--none {
   display: grid; place-items: center; font-size: 11px;
@@ -1494,7 +1516,7 @@ select {
 .gnode__id { font-family: var(--font-mono); }
 .gnode__tag { padding: 1px 5px; border-radius: 999px; background: rgb(255 255 255 / 0.07); }
 .gnode__tag.is-here { background: rgb(88 213 163 / 0.2); color: var(--ok); }
-.gnode__tag.is-goal { background: rgb(124 156 255 / 0.2); color: var(--accent); }
+.gnode__tag.is-warn { background: rgb(255 194 75 / 0.18); color: var(--amber); }
 
 .review {
   min-width: 0; min-height: 0; overflow-y: auto; padding: 12px;
