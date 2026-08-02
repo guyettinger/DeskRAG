@@ -1518,6 +1518,40 @@ select {
 .gnode__tag.is-here { background: rgb(88 213 163 / 0.2); color: var(--ok); }
 .gnode__tag.is-warn { background: rgb(255 194 75 / 0.18); color: var(--amber); }
 
+/* --- the bottom sheet ---------------------------------------------------- */
+.sheet {
+  flex: 0 0 auto; max-height: 46%; overflow-y: auto;
+  border: 1px solid var(--hairline); border-radius: var(--radius);
+  background: var(--panel);
+}
+.sheet__head {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 10px; border-bottom: 1px solid var(--hairline-soft);
+}
+.sheet__chip { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
+.sheet__title { font-size: 13px; font-weight: 600; }
+.sheet__warn { font-size: 11px; color: var(--amber); }
+.sheet__close { margin-left: auto; color: var(--muted); font-size: 12px; padding: 2px 6px; }
+.sheet__close:hover { color: var(--text); }
+.sheet__body {
+  display: grid; grid-template-columns: 200px minmax(0, 1fr) 220px;
+  gap: 14px; padding: 10px;
+}
+.sheet__body--diagnosis { display: block; }
+.sheet__shot { width: 100%; border-radius: var(--radius-sm); object-fit: contain; }
+.sheet__shot--none {
+  display: grid; place-items: center; min-height: 90px; font-size: 11px;
+  color: var(--muted-dim); background: rgb(255 255 255 / 0.03);
+  border-radius: var(--radius-sm);
+}
+.sheet__preds ul { margin: 4px 0 0; padding-left: 16px; font-size: 11px; }
+/* A predicate can be long (a URL prefix, an AX identifier) and must wrap
+   rather than widen its column. */
+.sheet__preds li { font-family: var(--font-mono); word-break: break-word; color: var(--muted); }
+.sheet__run { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.sheet__slot, .sheet__launch { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.sheet__slot input { width: 130px; }
+
 .review {
   min-width: 0; min-height: 0; overflow-y: auto; padding: 12px;
   border: 1px solid var(--hairline); border-radius: var(--radius);
