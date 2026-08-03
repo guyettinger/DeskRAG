@@ -6,11 +6,12 @@
 
 An Electron desktop app over the [DeskRAG](../README.md) library: pick your local
 models, grant macOS permissions, toggle capture signals, record an experience, then
-play it back with the index on the timeline — or search your sessions as a contact
-sheet of keyframes and drill into any hit.
+play it back with the index on the timeline — search your sessions as a contact
+sheet of keyframes and drill into any hit, or replay a recorded task against the
+live desktop.
 
-- **electron-vite + React + TypeScript.** Four screens: Record, Library, Search,
-  Settings.
+- **electron-vite + React + TypeScript.** Five screens: Record, Library, Replay,
+  Search, Settings.
 - **Fully local.** Every model runs on this machine — an Ollama daemon on
   localhost, or ONNX in-process. There is no cloud provider and no API key
   anywhere in the app, so nothing you record can leave the device.
@@ -34,9 +35,19 @@ stage-by-stage indexing progress after Stop.
 
 Every session you've captured, with the index put on the timeline. Keyframes become
 player **chapter cues** — so the scrubber is divided at exactly the frames that were
-indexed — and thumbnail images on scrub. Below the frame, a filmstrip tracks the
-playhead and scrolls to the nearest keyframe. Sessions delete with a confirm, which
-removes the rows and then the blobs.
+indexed — and thumbnail images on scrub.
+
+Below the frame is the **track rail**: fifteen lanes of what was actually captured —
+input rates, focus spans, segments, keyframes, accessibility snapshots, regions, and
+an audio envelope — sharing **one time axis** with the scrubber above it, so a lane
+and the playhead always mean the same instant. The rail scrolls and yields space to
+the frame before the page does, so how many lanes are visible follows the window. In a density lane, a gap is not a
+zero: recorded silence is a flat line, while a stretch with no audio at all reads as
+no coverage, which is how a dead microphone stays distinguishable from a quiet room.
+A lane can also carry a warning where the data is present but unusable — keystrokes
+recorded without a keyboard layout look healthy and were dropped at lift.
+
+Sessions delete with a confirm, which removes the rows and then the blobs.
 
 Playback has **no audio**: the screen video is video-only, so volume and mute
 controls are removed rather than shown inert. Fullscreen and picture-in-picture are
@@ -66,6 +77,45 @@ instead, with its label; the screenshot below is opened from the Library, so the
 is no query and the AX locator is the only overlay.
 
 ![Detail view](../docs/images/detail.png)
+
+### Replay
+
+The other direction: instead of recalling a session, **re-run** one. Indexing lifts
+every recording into a **trace graph** — nodes are states verified against the
+accessibility tree, edges are the actions you actually performed — and every session
+merges into the same graph, so recording a task a second time branches it or fills in
+a variable rather than starting a disconnected chain.
+
+**Rebuild trace graph** in the Library discards the graph and re-lifts every
+recording, oldest first — needed after a change to how identity is derived, since a
+stored node keeps the shape it was written with. It has to be a whole rebuild rather
+than a re-lift of one session: a graph *accretes*, so folding a session into a graph
+that already contains it would count it twice and inflate the very evidence used to
+choose a route. Nothing is re-recorded — lifting re-reads the accessibility snapshots
+and the event stream already on disk, so no video or keyframe is touched.
+
+The screen is **two modes**, not a split. *Browse* is the graph plus a bottom drawer:
+pick a node as the goal, fill any slots the route needs, and press Run. *Review* is
+the route and the run log. A chip in the bar reports where you are on the graph right
+now, polled live — and because looking at this screen makes DeskRAG frontmost, that
+reading is of the last *other* application seen, labelled with its age.
+
+Locating fails more often than it succeeds, so failure is a first-class view: the
+drawer names the nearest recorded states, how many of their predicates held, and
+exactly which ones didn't. Nodes that can never be located are marked — an identity
+of only `app` is satisfied by every state in that application, and a node with no
+predicates at all is vacuously true of any desktop.
+
+**Nothing is posted from a plan you haven't reviewed at exact resolution.** Plans are
+dry-run by default; arming is a separate click, per segment. A plan *stops* where
+resolution stops working and discloses the rest as an unresolved remainder — bulleted,
+never numbered, because a step number would be a claim of authorization. Unmet
+preconditions that no action can establish are blockers and cannot be overridden;
+brittleness can be, explicitly. Before acting the app hides itself and confirms it has
+resigned frontmost, since the reviewer is an application too and its own window would
+otherwise be sitting over the coordinates about to be clicked.
+
+![Replay screen](../docs/images/replay.png)
 
 ### Settings
 
@@ -136,7 +186,13 @@ Each is best-effort — a missing one only disables its signal:
 | --- | --- |
 | Screen, Microphone | `ffmpeg` on `PATH` |
 | Accessibility tree | the `ax-dump` sidecar — build with `npm run build:ax` (repo root) |
+| Replay | the `ax-exec` sidecar — same `npm run build:ax` |
 | Transcripts | a `whisper.cpp` binary + model, set in **Settings → Transcription** |
+
+> `ax-exec` is a **separate binary from `ax-dump`, deliberately**. `ax-dump` is
+> read-only, and two of its modes need no permission at all; folding actuation into
+> it would mean every accessibility read was performed by something that can also
+> click. `ax-exec` refuses to start without a plan id, so a bare invocation is inert.
 
 ## Run
 

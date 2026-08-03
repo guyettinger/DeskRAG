@@ -19,6 +19,13 @@ on the desktop we read real UI structure from the **accessibility tree**, giving
 labeled region proposals — grounded bounding boxes and roles that video systems must
 infer.
 
+Recordings don't stay read-only. Each one is lifted into a **trace graph** — states
+verified against the accessibility tree, edges of the actions you actually performed —
+which DeskRAG can **replay** against the live desktop. Recording a task twice is what
+discovers its variable parts, so the variation comes from what you did rather than
+from a model inventing it. Plans are dry-run by default and arming is an explicit
+per-segment approval: nothing is posted from a plan you haven't reviewed.
+
 **Every model runs on your machine.** There is no cloud provider, no API key, and no
 network call to anything but a daemon on localhost — the privacy claim is structural,
 not a matter of how you configured it. TypeScript throughout, strict types, pluggable
@@ -34,9 +41,12 @@ permissions, and how it's wired.
 
 <table>
 <tr>
-<td><img src="docs/images/record.png" alt="Record screen"><br><strong>Record</strong> — a per-signal switchboard with live permission status.</td>
-<td><img src="docs/images/search.png" alt="Search screen"><br><strong>Search</strong> — hits come back as a contact sheet of keyframes.</td>
-<td><img src="docs/images/detail.png" alt="Detail view"><br><strong>Detail</strong> — pick an accessibility node to locate it on the frame.</td>
+<td width="50%"><img src="docs/images/record.png" alt="Record screen"><br><strong>Record</strong> — a per-signal switchboard with live permission status.</td>
+<td width="50%"><img src="docs/images/search.png" alt="Search screen"><br><strong>Search</strong> — hits come back as a contact sheet of keyframes.</td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/images/detail.png" alt="Detail view"><br><strong>Detail</strong> — pick an accessibility node to locate it on the frame.</td>
+<td width="50%"><img src="docs/images/replay.png" alt="Replay screen"><br><strong>Replay</strong> — the trace graph, and a plan you approve before anything is posted.</td>
 </tr>
 </table>
 
