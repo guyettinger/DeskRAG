@@ -1367,7 +1367,12 @@ select {
   min-height: 0;
   padding: 0 var(--tracks-inset);
   gap: 4px;
-  flex: none;
+  /* `0 1 auto`, NEVER `none`. `flex: none` cannot shrink, so the player's
+     minimum became the 300px media floor PLUS the whole rail, which overflows
+     the stage and puts the scrollbar back on .content — the one thing the
+     Library height chain exists to prevent. The rail gives before the page
+     does; .tracks__body carries the floor. */
+  flex: 0 1 auto;
 }
 
 .tracks--note {
@@ -1383,7 +1388,9 @@ select {
   position: relative;
   overflow-y: auto;
   overflow-x: hidden;
-  min-height: 0;
+  /* The explicit floor the chain needs back at its end: ~4 lanes. Below this
+     the rail stops being readable and the media frame should give instead. */
+  min-height: 96px;
   max-height: 34vh;
   border: 1px solid var(--hairline-soft);
   border-radius: var(--radius-sm);

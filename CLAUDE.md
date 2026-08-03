@@ -178,6 +178,58 @@ electron-vite + React + TS. Three source roots with a hard rule between them: **
     - **`smallLayoutWhen={false}`.** Vidstack's small layout (default `width < 576 || height < 380`) stacks a centred play button, a top menu row and a bottom slider — an arrangement for chrome floating over a whole frame. Docked in an `auto` row it stretches into dead space, and a 900x600 window trips it.
   - **Fullscreen and PiP are removed, which takes four separate places** — the `fullscreenButton`/`pipButton` slots, the `f`/`i` key shortcuts, the `disablePictureInPicture` attribute set from `onProviderChange` (the element keeps its own affordance), and a `display: none` on the `toggle:fullscreen` *gesture*, which `DefaultVideoGestures` hardcodes. A gesture is hit-tested by its rect, so `display: none` disables it — that is how Vidstack disables its own. `noGestures` is the wrong tool: it would also kill click-to-pause. Nulling a button slot does **not** drop its `before*`/`after*` slots (`slot()` emits them regardless), which is what keeps Inspect at the end of the bar.
   - **`.filmstrip` centring must not use `offsetLeft`.** Nothing from `.filmstrip` up to `<body>` is positioned, so `offsetLeft` reports a document-space number (rail + session list + page padding included) and scrolls the clicked keyframe out of view. Measure with `getBoundingClientRect()` deltas, and leave an already-visible item alone or a click yanks the thing just clicked.
+- **The track rail is the Library's ONE time axis** (`renderer/src/screens/TrackRail.tsx`),
+  and it REPLACED the keyframe filmstrip so the screen has a single mental model.
+  `main/session-tracks.ts` + `main/track-buckets.ts` are the pure projection, tested
+  in the ROOT suite like `plan-view.ts`; `DeskRagService.sessionTracks` does the I/O
+  and memoizes. Fifteen lanes on a real recording, from `event`/`segment`/`frame`/
+  `ax_snapshot`/`region` rows plus the audio blobs — no schema change, since every
+  lane is derivable from what is already on disk.
+  - **Fifteen lanes are FOUR shapes** (`density`, `span`, `mark`, `thumb`), so a new
+    signal is a builder in `session-tracks.ts` and never a new renderer component.
+  - **`null` in a density lane means NO COVERAGE and is not zero.** Recorded silence
+    is a flat zero; a stretch with no audio blob is null. Collapsing them makes a
+    dead microphone indistinguishable from a quiet room, which is half of why the
+    rail exists. Only audio emits null — for event-sourced lanes absence genuinely
+    is zero, because nobody typed. Measured: the real 39.7s session covers 852/1000
+    buckets, because four 10s blobs do not reach the end of a 39.6s axis.
+  - **`warning` is not `emptyReason`.** A session with `key_down` events and no
+    `keymap_change` has a full, healthy-looking typing lane whose every character
+    was dropped at lift by `resolveKeys`. An empty-reason cannot say that.
+  - **A per-bucket rate is arithmetically true and practically a lie.** At 1000
+    buckets over 40 seconds each bucket is 40ms, so ONE keystroke reported "25
+    keys/s". `bucketRate` smooths over `max(1s, one bucket)`; the same recording
+    then reports 10.1 keys/s. Found by driving a real session, invisible to the suite.
+  - **`wavPeaks` reports the duration it MEASURED from the bytes**, never the blob
+    row's declared span, so a truncated file reads as a gap for its missing tail
+    rather than an envelope stretched over time nobody recorded. It lives beside
+    `encodeWav` because two readers of one header is the drift hazard that already
+    bit `ax-dump`/`ax-exec`.
+  - **Bucket count is fixed at 1000 in main, never the renderer's width** — the width
+    changes on every frame of a resize drag, and an SVG path scales free.
+  - **`thumbPlacement` needs its epsilon.** `0.2 + 0.1` is `0.30000000000000004`, so
+    a thumbnail landing exactly on the previous one's right edge was kept at one
+    offset and dropped at another — floating-point noise alone deciding the layout,
+    the same trap `Path.curve` span splitting hit. The translation-invariance test
+    is what catches it.
+  - **The playhead is written imperatively** from `player.subscribe`, which fires
+    every animation frame; through state it would re-render fifteen lanes at 60fps.
+  - **The rail is `.tracks`, NOT `.rail`** — `.rail` is the left navigation sidebar
+    (`--rail-w: 76px`). Caught by grepping before minting the class, the same rule
+    `.drawer` exists because of.
+  - **`.tracks` is `flex: 0 1 auto`, never `flex: none`.** With `none` it cannot
+    shrink, so the player's minimum became the 300px media floor PLUS the whole
+    rail, which overflows the stage and puts the scrollbar back on `.content`.
+    The rail gives before the page does; `.tracks__body` carries the floor (96px,
+    ~4 lanes). **Measured at 1180px wide: 4 lanes at 800px tall (the default), 12 at
+    1000, all 15 at 1200.** Below the documented floor `.content` scrolls, as it did
+    with the filmstrip.
+  - **`THUMB_FRAC` in `TrackLane.tsx` must equal `.tracks__thumb`'s width.** Two
+    files, nothing enforces it, and the failure is thumbnails that overlap instead
+    of degrading to ticks.
+  - **A session with no video still gets a rail.** The axis comes from the `t_mono`
+    span; there is no playhead and a keyframe click opens `DetailView`, which is
+    what the filmstrip did in that case.
 - **The Library fills the content area; the panes scroll, not the page.** `.page--fill` → `.library` → `.library__stage` → `.player` → `.player__media` is a height chain: every link needs `min-height: 0` so the row *bounds* the video instead of growing to fit it (one omission silently restores page scroll), and the last link then needs an explicit floor back, for the reason above. `.content` was already a correctly bounded scroller — nothing there had to change.
 - **The Replay screen is the plan review surface, and its hard rule is that the reviewer is itself an application.** `main/replay-service.ts` owns everything; `main/plan-view.ts` is the pure `Graph`/`Plan` → DTO projection and is tested in the ROOT suite (`tsconfig.json` and `vitest.config.ts` both map `@shared/types` and `deskrag` for it — exact file paths, because the app resolves modules as a bundler and may omit extensions while the root is NodeNext and may not).
   - **Getting out of the way happens TWICE, and both are inside the injected `arm` seam** so `replay/` needs no change. Before planning: `executeRun`'s first act is a `dump()`, and the user just clicked Run, so the loop would observe DeskRAG, match no node and stop at `not-located`. After approving: the click that approves raises DeskRAG *over* the target, and `app` was met at plan time so `buildPlan` planned no repair — execution would post the first click at a coordinate the reviewer's own window now covers. Hide, poll the predicate, then act; a failed handoff returns `false` and stops the run rather than acting.

@@ -32,6 +32,20 @@ describe("densityPath", () => {
   it("returns an empty path when there is nothing covered at all", () => {
     expect(densityPath([null, null], 10)).toBe("");
   });
+
+  it("draws a VISIBLE baseline for zero, not one clipped on the bottom edge", () => {
+    // A recorded-silent lane must not look identical to an absent one, so a
+    // zero is inset rather than sitting exactly on `height`.
+    const d = densityPath([0, 0], 24);
+    const ys = [...d.matchAll(/,([\d.]+)/g)].map((m) => Number(m[1]));
+    expect(ys.every((y) => y < 24)).toBe(true);
+    expect(ys.every((y) => y > 22)).toBe(true);
+  });
+
+  it("still puts a full-scale value at the top of the box", () => {
+    const ys = [...densityPath([1], 24).matchAll(/,([\d.]+)/g)].map((m) => Number(m[1]));
+    expect(ys[0]).toBeCloseTo(1, 5);
+  });
 });
 
 describe("readoutAt", () => {

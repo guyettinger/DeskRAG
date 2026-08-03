@@ -61,7 +61,12 @@ export function densityPath(values: readonly (number | null)[], height: number):
       return;
     }
     const x = i * step;
-    const y = height - v * height;
+    // Inset by one unit at both ends. A zero drawn at exactly `height` sits on
+    // the clipped bottom edge and half the stroke disappears, which made a
+    // recorded-silent audio lane look identical to an absent one — the one
+    // distinction this lane exists to draw. Measured on a real recording whose
+    // microphone captured digital silence.
+    const y = height - 1 - v * (height - 2);
     d += `${open ? "L" : "M"}${x.toFixed(3)},${y.toFixed(3)}`;
     open = true;
   });
