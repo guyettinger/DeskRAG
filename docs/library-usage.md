@@ -44,6 +44,58 @@ for (const frame of result.frames) {
 }
 ```
 
+## Trace and replay
+
+The same session can be lifted into an executable graph instead of recalled. `trace/`
+and `replay/` are **leaves** — they never import `store/`, so the world reaches them
+through injected callbacks, and the caller binds those to whatever it has.
+
+```ts
+import { liftTrace, mergeTrace, executeRun, AxExecSidecar } from "deskrag";
+
+// --- lift + merge ---------------------------------------------------------
+// The environment callbacks (keymapAt, displayIdAt, windowBoundsAt) all resolve
+// "latest at-or-before this t_mono" from the session's own event stream — which
+// is why layout and display topology are recorded as events, not read as config.
+const trace = liftTrace({
+  sessionId,
+  events,
+  endTMono,
+  axAt,             // prefer the walk taken FOR a boundary over the nearest one
+  regionsAt,
+  keymapAt,
+  displayIdAt,
+  windowBoundsAt,
+});
+const graph = await mergeTrace(existingGraph, trace);  // every session → ONE graph
+
+// --- plan + run -----------------------------------------------------------
+// The ONLY thing here that can act — and it refuses to start without a plan id,
+// so a bare invocation is inert.
+const sidecar = AxExecSidecar.spawn({ planId });
+const outcome = await executeRun({
+  graph,
+  goalNodeId,
+  actuator: sidecar,
+  keymap,                                         // required: no fallback layout, ever
+  slotBindings: { query: "auth dialog" },
+  // The review gate. `replay/` never decides to act — return false and nothing
+  // is posted. This is where a UI (or, later, a model) approves a segment.
+  arm: async (plan) => await reviewSomehow(plan),
+});
+```
+
+- **`keymap` is not optional and is never defaulted.** The lift resolved keycode →
+  character against a captured layout; typing through a different one is silently
+  wrong text. Text the layout cannot produce is a *blocker*, not a guess.
+- **`executeRun` loops observe → locate → plan → arm → execute**, re-planning at each
+  segment because a plan stops where anchor resolution stops working. `arm` is called
+  once per segment, so approval is per segment and never blanket.
+- **Merging into one graph is the point.** A second recording of the same task
+  branches it or fills a slot; a fresh graph per session would produce disconnected
+  chains that never discover a variable. `mergeTrace` seeds a *new* graph's id from
+  the session it lifted, so pin the id on write if you want one graph per install.
+
 ## Things worth knowing
 
 - **Producers never touch the store**, including for files they write themselves. A

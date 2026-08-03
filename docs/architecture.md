@@ -11,6 +11,8 @@ invariants that constrain changes to this design, see [CLAUDE.md](../CLAUDE.md).
 - **Six embeddable views** per experience — transcript (local whisper.cpp STT), VLM caption, structured-event digest, behavioral feature vector, whole-frame image, and region image.
 - **Coarse-to-fine retrieval** — pHash → segment RRF → frame ANN → region ANN + accessibility-label full-text search → optional cross-encoder rerank — returning **highlights**: the matched region bounding boxes + labels to outline *where* on the recalled frame the match is.
 - **The PixelRAG edge, grounded** — region proposals fuse the accessibility tree, interaction hotspots (weighted DBSCAN over clicks/dwell — a signal video RAG can't have), and grid tiling.
+- **Recorded behavior as a graph** — sessions lift into a **trace IR** of verified states and action edges that merges across recordings, so a task recorded twice discovers its own variable slots instead of being told them.
+- **An executor that acts only on an approved plan** — layered anchors resolve a route against the live accessibility tree, and a plan stops where resolution stops working rather than guessing past it.
 
 ## The pipeline
 
@@ -50,13 +52,59 @@ when a provider changes.
 Correlation is on `t_mono` — a monotonic offset from a session epoch — never
 wall-clock. `started_at` exists only for human display.
 
+## The other direction: trace and replay
+
+Retrieval reads sessions back. The trace IR (`src/trace/`) turns them into something
+executable, and the executor (`src/replay/`) runs it.
+
+```
+ session ──▶ lift ──▶ Trace (a linear chain) ──▶ merge ──▶ Graph ──▶ plan ──▶ [approve] ──▶ execute
+                      nodes: verified states             one graph    dry run    explicit,     CGEvent
+                      edges: action sequences            per install  by default per segment
+```
+
+**A node is a set of predicates**, extracted from the accessibility tree and filtered
+to what the task actually touches: the app, the elements its outgoing edges target,
+the focused element when it types, the waits its incoming edge established, and a URL
+prefix. Not what was on screen — content the recording never touched is excluded by
+construction, so no page-vs-chrome heuristic is needed.
+
+**Variation comes from recording, not from invention.** Two recordings that differ
+only in typed text merge into one edge with two slot samples; that's how slots are
+discovered rather than declared. A revisited state collapses into a loop. Identity is
+predicate-primary and **ambiguity declines to merge** — a redundant node is visible
+and fixable, a wrong merge is silent corruption.
+
+**Merging and locating want opposite things**, and conflating them is the trap this
+design is shaped around. Merging asks "is this the same state?" and wants exact set
+equality; locating and verification ask "does what this state claims still hold?" and
+use a subset rule, because a live screen that has gained anything would never match
+exactly.
+
+**Targets are layered anchors** — `ax → visual → point`, recorded independently and
+never derived from one another at replay time. The middle of that ladder is ordered by
+measured trust rather than fixed: a shallow path outranks a label, a deep one doesn't,
+because applications differ in how deep their trees are and in whether they publish
+labels at all.
+
+**The safety story is structural, not procedural.** `replay/` depends only on an
+injected actuator, and a test asserts that no file in it but the sidecar wrapper even
+mentions `spawn` — so the suite is *incapable* of posting a real event. Actuation
+lives in its own binary (`native/ax-exec`) separate from the read-only
+`native/ax-dump`, and a plan stops at the first anchor that describes a state which
+doesn't exist yet, disclosing the remainder as explicitly unresolved.
+
+Both `trace/` and `replay/` are **leaves**: pure TypeScript that never imports
+`store/`, `represent/` or `retrieve/`. External data arrives through injected
+callbacks, which is what keeps graph persistence a one-directional dependency.
+
 ## Repo layout
 
 | Path | What it is |
 |---|---|
-| `src/` | the DeskRAG library — capture, store, represent, retrieve (published as `deskrag`) |
+| `src/` | the DeskRAG library — capture, store, represent, retrieve, trace, replay (published as `deskrag`) |
 | `app/` | **DeskRAGApp**, the Electron desktop UI over the library (`deskrag-app`, its own install — not a workspace member) |
-| `native/` | the macOS accessibility sidecar (`ax-dump.swift`, built with `npm run build:ax`) |
+| `native/` | the macOS Swift sidecars — `ax-dump.swift` (read-only) and `ax-exec.swift` (actuation), both built with `npm run build:ax` |
 | `test/` | the executable documentation — vitest suite, deterministic |
 | `assets/` | the brand mark — generated from `scripts/brand/geometry.ts` via `npm run gen:brand` |
 | `docs/` | this documentation set, plus design specs under `docs/superpowers/` |

@@ -13,7 +13,8 @@ Optional, per feature — a missing one disables exactly that feature:
 |---|---|
 | Screen capture, audio chunks | **`ffmpeg`** on `PATH` |
 | Mouse/keyboard + focused window | **`uiohook-napi`**, **`active-win`** (optionalDependencies) |
-| Accessibility tree | **`swiftc`** (Xcode Command Line Tools) — build the sidecar with `npm run build:ax` |
+| Accessibility tree | **`swiftc`** (Xcode Command Line Tools) — build the sidecars with `npm run build:ax` |
+| Replay (acting on a trace graph) | the **`ax-exec`** sidecar, from the same `npm run build:ax` |
 | Transcription | a **`whisper.cpp`** binary + a `ggml-*.bin` model on disk |
 | Ollama-backed embeddings/captions | an **Ollama** daemon on localhost |
 
@@ -23,8 +24,12 @@ Optional, per feature — a missing one disables exactly that feature:
 npm install
 npm run typecheck
 npm test
-npm run build:ax   # optional: compile the macOS accessibility sidecar (native/ax-dump)
+npm run build:ax   # optional: compile both macOS sidecars (native/ax-dump, native/ax-exec)
 ```
+
+> Rebuild the sidecars *and* the library together. `ax-dump`'s stdout shape is
+> parsed by `dist/`, so a `native/` built against an older `dist/` makes every
+> accessibility walk silently return nothing — no error, just empty results.
 
 To run the desktop client instead of using the library directly, see
 [DeskRAGApp](../app/README.md).
@@ -74,9 +79,11 @@ npm run smoke:onnx-electron  # the ONNX allocator crash vitest structurally cann
   `test/brand.assets.test.ts` byte-compares committed output against a fresh render
   and fails on hand edits.
 - **`gen:shots`** builds the app, then drives it with Playwright's Electron driver to
-  capture the four screens plus the detail view. It opens the real app data dir, so
+  capture the five screens plus the detail view. It opens the real app data dir, so
   **quit any running dev instance first**; screens with no indexed data capture as
-  empty states with a warning rather than failing.
+  empty states with a warning rather than failing. Rail buttons are targeted by
+  **label, not index** — inserting a screen renumbers every one below it, and an
+  index silently drives the wrong screen instead of failing.
 - **`smoke:onnx-electron`** is the only thing that reproduces the ONNX allocator
   crashes — they need Chromium's allocator *and* a second run, and vitest gives
   neither. Any change to ORT session options, tile counts, or model exports wants

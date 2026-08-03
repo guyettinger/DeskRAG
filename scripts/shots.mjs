@@ -10,8 +10,15 @@
  *   - `npm run app:install` has been run once.
  *   - **Quit any running dev instance first.** This launches a second app that
  *     opens the same DualStore / LanceDB data dir, and LanceDB will not share it.
- *   - Real recorded sessions in the data dir, or the Library/Search shots will
- *     capture empty states (the script warns rather than failing).
+ *   - Real recorded sessions in the data dir, or the Library/Replay/Search shots
+ *     will capture empty states (the script warns rather than failing). Replay
+ *     additionally needs a session that reached the Trace stage, since the graph
+ *     is what it draws.
+ *
+ * Note: visiting the Replay screen starts `replay:watch`, so the `ax-exec`
+ * sidecar is alive for that shot. It only ever `dump`s here — this script never
+ * clicks Run, and arming is a separate explicit gate — but it is why the run may
+ * ask for Accessibility permission.
  *
  * Usage: npm run gen:shots     (builds the library + app, then runs this)
  */
@@ -34,16 +41,22 @@ const HEIGHT = 800;
 const SETTLE_MS = 8000;
 
 /**
- * One capture per screen. `nav` is the index of the rail button (DOM order in
- * App.tsx); `settle` is a selector that means "this screen has content"; `ready`
- * is an optional extra wait that may legitimately never arrive (no data, no
- * provider configured), in which case we capture the empty state and warn.
+ * One capture per screen. `nav` is the rail button's LABEL, never its index:
+ * inserting Replay between Library and Search shifted every index below it, so
+ * the "search" shot silently drove the Replay screen and waited 8s for a
+ * `.searchbar` that was never going to appear. A label is what the shot means.
+ *
+ * `settle` is a selector that means "this screen has content"; `ready` is an
+ * optional extra wait that may legitimately never arrive (no data, no provider
+ * configured), in which case we capture the empty state and warn; `pick` is an
+ * optional click made before the capture, to put the screen in the state the
+ * screenshot is meant to show.
  */
 const SHOTS = [
-  { id: "record", nav: 0, settle: ".transport" },
+  { id: "record", nav: "Record", settle: ".transport" },
   {
     id: "library",
-    nav: 1,
+    nav: "Library",
     settle: ".library, .empty",
     ready: ".player, .empty",
     // The detail view is captured from the Library, not from Search, on purpose.
@@ -63,8 +76,27 @@ const SHOTS = [
       close: ".detail__close",
     },
   },
-  { id: "search", nav: 2, settle: ".searchbar", query: "reviewing the pull request in the editor" },
-  { id: "settings", nav: 3, settle: ".card" },
+  {
+    id: "replay",
+    nav: "Replay",
+    // `.replay` is the screen either way; without a trace graph it renders one
+    // line of prose instead of a stage, which is a legitimate empty state.
+    settle: ".replay",
+    ready: ".gcanvas, .replay .muted",
+    // Select a node so the drawer is open — the graph alone doesn't show what
+    // the screen is FOR. Two filters, both about having something to show:
+    // `.is-unlocatable` marks a node whose identity is only `app` or empty, so a
+    // locatable one is what carries predicates and a Run button; and a node with
+    // a keyframe fills the drawer's thumbnail, which `--none` nodes leave blank.
+    pick: ".gnode:not(.is-unlocatable):has(.gnode__shot:not(.gnode__shot--none))",
+  },
+  {
+    id: "search",
+    nav: "Search",
+    settle: ".searchbar",
+    query: "reviewing the pull request in the editor",
+  },
+  { id: "settings", nav: "Settings", settle: ".card" },
 ];
 
 async function capture(page, id) {
@@ -123,7 +155,17 @@ async function main() {
   try {
     for (const shot of SHOTS) {
       console.log(`→ ${shot.id}`);
-      await page.locator(".rail__nav .rail__item").nth(shot.nav).click();
+      // Exact match: "Record" is a substring of nothing here, but `hasText` is
+      // a substring test and a future "Recordings" would quietly match both.
+      const tab = page.locator(".rail__nav .rail__item", {
+        hasText: new RegExp(`^${shot.nav}$`),
+      });
+      if ((await tab.count()) !== 1) {
+        throw new Error(
+          `${shot.id}: expected exactly one rail button labelled "${shot.nav}", found ${await tab.count()}`,
+        );
+      }
+      await tab.click();
       await soften(page, shot.settle, shot.id, "screen root");
 
       if (shot.query) {
@@ -132,6 +174,17 @@ async function main() {
         await soften(page, ".sheet .frame, .empty, .banner", shot.id, "results");
       }
       await soften(page, shot.ready, shot.id, "content");
+
+      // Best effort, like the detail sub-shot: the state it selects may not
+      // exist (an empty graph has no nodes), and an empty screen is still a
+      // truthful screenshot.
+      if (shot.pick) {
+        await page
+          .locator(shot.pick)
+          .first()
+          .click({ timeout: SETTLE_MS })
+          .catch(() => console.warn(`  ! ${shot.id}: nothing to select (${shot.pick}) — capturing as-is`));
+      }
 
       // Let images decode and the Lottie/spinner state settle. The Library video
       // stays paused on purpose — a playing <video> can composite as black.
