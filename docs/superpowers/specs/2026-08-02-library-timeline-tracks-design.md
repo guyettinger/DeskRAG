@@ -266,7 +266,7 @@ changes.
 
 **The rail owns its own time axis and does not depend on the scrubber's
 geometry.** Visual alignment with Vidstack's slider is cosmetic and achieved by
-sharing one `--rail-inset` custom property with the control bar's horizontal
+sharing one `--tracks-inset` custom property with the control bar's horizontal
 padding. Correctness comes from the rail computing `currentTime / total` itself.
 Given this repo's history with Vidstack's `:where()` rules and the
 `minmax(0, 1fr)` column trap, the rail's correctness must not depend on the
@@ -287,10 +287,18 @@ every link needs `min-height: 0` and the chain then needs its explicit floor bac
 at the end — one omission silently restores page scroll.
 
 **`styles.css` is one global sheet with no scoping, so every new base class is a
-repo-wide identifier.** Grep before minting `.rail`, `.lane`, `.gutter` or any
-other name; `.drawer` exists because `.sheet` was already SearchScreen's
-contact-sheet grid, and a base rule that does not restate `display` silently
-inherits the colliding one's.
+repo-wide identifier.** `.drawer` exists because `.sheet` was already
+SearchScreen's contact-sheet grid, and a base rule that does not restate
+`display` silently inherits the colliding one's.
+
+Grepping first found the collision this design would otherwise have shipped:
+**`.rail` is already the app's left navigation sidebar** (`--rail-w: 76px`,
+`grid-template-columns: var(--rail-w) 1fr`). The track rail is therefore
+`.tracks`, with `.tracks__lane`, `.tracks__gutter`, `.tracks__playhead`,
+`.tracks__readout`, and the inset variable is `--tracks-inset` so it cannot be
+misread as a sibling of `--rail-w`. `.tracks`, `.lane`, `.gutter`, `.playhead`,
+`.readout`, `.thumb`, `.mark`, `.span` and `.density` were each verified free as
+base classes.
 
 ## Contract
 
