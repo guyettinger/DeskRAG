@@ -158,6 +158,9 @@ export class DualStore implements Store {
           WHERE session_id = ? AND t_mono <= ?
           ORDER BY t_mono DESC LIMIT 1`,
       ),
+      selectAxSnapshotsBySession: db.prepare(
+        "SELECT * FROM ax_snapshot WHERE session_id = ? ORDER BY t_mono ASC",
+      ),
       selectAxByFrame: db.prepare(
         "SELECT elements FROM ax_snapshot WHERE frame_id = ? ORDER BY t_mono DESC LIMIT 1",
       ),
@@ -613,6 +616,22 @@ export class DualStore implements Store {
 
   getAxAt(sessionId: string, tMono: number): AxSnapshotRow | undefined {
     return this.hydrateAxSnapshot(this.stmts.selectAxAt.get(sessionId, tMono));
+  }
+
+  /**
+   * Every AX snapshot for a session, oldest first.
+   *
+   * `getAxForBoundary` and `getAxAt` both answer "which tree was in force at
+   * this instant" — the question represent and lift ask. This one answers "what
+   * was walked, and when", which is what a timeline needs, including the empty
+   * results that exist precisely so "captured nothing" stays distinguishable
+   * from "never captured".
+   */
+  getAxSnapshotsBySession(sessionId: string): AxSnapshotRow[] {
+    return (this.stmts.selectAxSnapshotsBySession.all(sessionId) as unknown[]).flatMap((r) => {
+      const row = this.hydrateAxSnapshot(r);
+      return row ? [row] : [];
+    });
   }
 
   private hydrateAxSnapshot(row: unknown): AxSnapshotRow | undefined {
