@@ -93,7 +93,7 @@ export {
   FfmpegAudioProducer,
   type FfmpegAudioOptions,
 } from "./capture/producers/ffmpeg-audio.js";
-export { encodeWav, type WavFormat } from "./capture/producers/wav.js";
+export { encodeWav, wavPeaks, type WavFormat, type WavPeaks } from "./capture/producers/wav.js";
 
 /**
  * segment/ — boundary detection plus multi-granularity overlapping windowing.
@@ -296,6 +296,12 @@ export {
  * loads nothing native.
  */
 export { isLocatable } from "./trace/identity-set.js";
+/**
+ * The site-level prefix rule — id-like path segments dropped, capped at 3.
+ * Exported so anything that displays a recorded URL reads it the same way node
+ * identity does, rather than growing a second, quietly different prefix rule.
+ */
+export { urlPrefix } from "./trace/url.js";
 export {
   groupGestures,
   DEFAULT_GESTURE_OPTIONS,

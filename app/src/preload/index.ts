@@ -53,6 +53,7 @@ const api: DeskRagApi = {
     detail: (sessionId: string) => ipcRenderer.invoke(IPC.sessionsDetail, sessionId),
     remove: (sessionId: string) => ipcRenderer.invoke(IPC.sessionsRemove, sessionId),
     reindex: () => ipcRenderer.invoke(IPC.sessionsReindex),
+    tracks: (sessionId: string) => ipcRenderer.invoke(IPC.sessionsTracks, sessionId),
   },
   replay: {
     graph: () => ipcRenderer.invoke(IPC.replayGraph),

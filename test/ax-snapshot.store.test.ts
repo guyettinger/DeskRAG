@@ -139,6 +139,24 @@ describe("ax_snapshot", () => {
     });
     expect(store.listVectorSpaces()).toEqual(before);
   });
+
+  it("returns every snapshot for a session, in t_mono order", async () => {
+    // Written out of order on purpose: a caller drawing these on a timeline
+    // must not depend on insertion order.
+    for (const tMono of [300, 100, 200]) {
+      await store.putAxSnapshot({
+        id: ulid(), sessionId, tMono, frameId: null,
+        reason: "focus_change", walkMs: 80, elements: els("Button"),
+      });
+    }
+    const rows = store.getAxSnapshotsBySession(sessionId);
+    expect(rows.map((r) => r.tMono)).toEqual([100, 200, 300]);
+    expect(rows[0]!.elements).toHaveLength(1);
+  });
+
+  it("returns an empty array for a session with no snapshots", () => {
+    expect(store.getAxSnapshotsBySession("nope")).toEqual([]);
+  });
 });
 
 describe("getRegionsByFrame", () => {

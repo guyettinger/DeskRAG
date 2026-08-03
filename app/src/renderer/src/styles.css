@@ -1202,10 +1202,11 @@ select {
      text (see .vds-slider-chapter-title). That floor would widen the column past
      the stage and scale the video — at width: 100% of the column — with it. */
   grid-template-columns: minmax(0, 1fr);
-  /* The frame takes whatever the docked bar leaves. The bar, filmstrip, meta and
-     page head are all fixed height, so in a short window (the app allows 900x600)
-     this row is the only thing that can give — hence the floor above, past which
-     the interface stops filling and .content scrolls instead. */
+  /* The frame takes whatever the docked bar leaves. The bar, track rail, meta
+     and page head are all bounded height (the rail scrolls internally rather
+     than growing), so in a short window (the app allows 900x600) this row is the
+     only thing that can give — hence the floor above, past which the interface
+     stops filling and .content scrolls instead. */
   grid-template-rows: minmax(0, 1fr) auto;
   border-radius: var(--radius);
   overflow: hidden;
@@ -1353,55 +1354,238 @@ select {
   letter-spacing: -0.01em;
 }
 
-/* --- keyframe filmstrip -------------------------------------------------- */
-.filmstrip {
+/* --- timeline track rail --------------------------------------------------
+   NOT `.rail` — that is the left navigation sidebar (--rail-w: 76px). This is
+   one global sheet with no scoping, so a base class is a repo-wide identifier;
+   `.drawer` exists because `.sheet` was already taken the same way.
+   --------------------------------------------------------------------------- */
+.tracks {
+  --tracks-inset: 12px; /* matches the docked control bar's horizontal padding */
+  --tracks-gutter: 92px;
   display: flex;
-  gap: 8px;
-  overflow-x: auto;
-  padding-bottom: 4px;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0 var(--tracks-inset);
+  gap: 4px;
+  /* `0 1 auto`, NEVER `none`. `flex: none` cannot shrink, so the player's
+     minimum became the 300px media floor PLUS the whole rail, which overflows
+     the stage and puts the scrollbar back on .content — the one thing the
+     Library height chain exists to prevent. The rail gives before the page
+     does; .tracks__body carries the floor. */
+  flex: 0 1 auto;
+}
+
+.tracks--note {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 12px var(--tracks-inset);
+}
+
+/* The rail scrolls VERTICALLY in its own bounded box: fifteen lanes do not fit
+   above a video frame in a 900x600 window. min-height: 0 keeps it a bounded
+   scroller inside the .player height chain rather than growing to fit. */
+.tracks__body {
+  position: relative;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* The explicit floor the chain needs back at its end: ~4 lanes. Below this
+     the rail stops being readable and the media frame should give instead. */
+  min-height: 96px;
+  max-height: 34vh;
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  cursor: crosshair;
   scrollbar-width: thin;
   scrollbar-color: var(--hairline) transparent;
-  flex: none;
 }
-.filmstrip__item {
-  flex: 0 0 auto;
-  width: 128px;
-  padding: 0;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  text-align: left;
-}
-.filmstrip__item:hover {
-  border-color: var(--hairline);
-}
-.filmstrip__item.is-active {
-  border-color: var(--amber);
-}
-.filmstrip__thumb {
-  position: relative;
-  height: 74px;
-  border-radius: 5px;
-  overflow: hidden;
-  background: #06080b;
+
+.tracks__lane {
   display: grid;
-  place-items: center;
+  grid-template-columns: var(--tracks-gutter) minmax(0, 1fr);
+  align-items: center;
+  border-bottom: 1px solid var(--hairline-soft);
 }
-.filmstrip__thumb img {
+
+.tracks__lane:last-child {
+  border-bottom: none;
+}
+
+.tracks__gutter {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 0 8px;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.tracks__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tracks__warn {
+  color: var(--amber);
+  font-weight: 700;
+  cursor: help;
+}
+
+.tracks__plot {
+  position: relative;
+  min-width: 0;
+  height: 18px;
+}
+
+.tracks__lane[data-shape="density"] .tracks__plot {
+  height: 24px;
+}
+
+.tracks__lane[data-shape="thumb"] .tracks__plot {
+  height: 34px;
+}
+
+.tracks__empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  padding-left: 6px;
+  color: var(--muted-dim);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tracks__span {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  min-width: 1px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--tone);
+}
+
+.tracks__span-label {
+  display: block;
+  padding: 0 4px;
+  color: var(--ink);
+  font-size: 9px;
+  line-height: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tracks__mark {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  width: 2px;
+  margin-left: -1px;
+  padding: 0;
+  border: none;
+  border-radius: 1px;
+  background: var(--tone, var(--accent));
+}
+
+.tracks__thumb {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  /* MUST stay in step with THUMB_FRAC in TrackLane.tsx (0.055). Nothing
+     enforces it: the compiler cannot connect a constant to a stylesheet, and
+     the failure is thumbnails that overlap instead of degrading to ticks. */
+  width: 5.5%;
+  margin-left: -2.75%;
+  padding: 0;
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--elevated);
+  cursor: pointer;
+}
+
+.tracks__thumb img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
 }
-.filmstrip__tc {
-  display: block;
-  padding: 4px 2px 0;
-  font-size: 10px;
-  color: var(--muted-dim);
+
+.tracks__density {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
 }
-.filmstrip__item.is-active .filmstrip__tc {
-  color: var(--amber);
+
+.tracks__trace {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 0.6;
+  vector-effect: non-scaling-stroke;
 }
+
+.tracks__trace.is-second {
+  stroke: var(--ok);
+}
+
+.tracks__playhead,
+.tracks__crosshair {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  pointer-events: none;
+}
+
+.tracks__playhead {
+  left: 0;
+  background: var(--rec);
+  will-change: transform;
+}
+
+.tracks__crosshair {
+  background: var(--text);
+  opacity: 0.35;
+}
+
+.tracks__readout {
+  min-height: 16px;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Tones. One app is one colour across every lane and every session, so these
+   slots are assigned by a hash of the app name, never by position. */
+.tracks__span[data-tone="neutral"],
+.tracks__mark[data-tone="neutral"] { --tone: var(--muted-dim); }
+.tracks__span[data-tone="accent"],
+.tracks__mark[data-tone="accent"] { --tone: var(--accent); }
+.tracks__span[data-tone="ok"],
+.tracks__mark[data-tone="ok"] { --tone: var(--ok); }
+.tracks__span[data-tone="warn"],
+.tracks__mark[data-tone="warn"] { --tone: var(--amber); }
+.tracks__span[data-tone="alarm"],
+.tracks__mark[data-tone="alarm"] { --tone: var(--rec); }
+.tracks__span[data-tone="app-0"] { --tone: #7c9cff; }
+.tracks__span[data-tone="app-1"] { --tone: #58d5a3; }
+.tracks__span[data-tone="app-2"] { --tone: #ffc24b; }
+.tracks__span[data-tone="app-3"] { --tone: #d68cff; }
+.tracks__span[data-tone="app-4"] { --tone: #4bd3e0; }
+.tracks__span[data-tone="app-5"] { --tone: #ff9f6e; }
+.tracks__span[data-tone="app-6"] { --tone: #9fd35c; }
+.tracks__span[data-tone="app-7"] { --tone: #ff7fa8; }
 
 /* --- confirm ------------------------------------------------------------- */
 .confirm {

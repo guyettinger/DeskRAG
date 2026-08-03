@@ -235,6 +235,107 @@ export interface SessionDetailDTO {
   sizeBytes: number;
 }
 
+// --- timeline tracks ---------------------------------------------------------
+
+/**
+ * Bucket count for every density lane. FIXED, never the renderer's pixel width:
+ * the width changes on every frame of a resize drag, and an SVG path scales to
+ * any width for free.
+ */
+export const TRACK_BUCKETS = 1000;
+
+/**
+ * Tone names, mapped to colours by `styles.css`. The `app-N` slots come from a
+ * stable hash of the application name, so one app is one colour across every
+ * lane and every session — position in the timeline never decides a colour.
+ */
+export type TrackTone =
+  | "neutral"
+  | "accent"
+  | "ok"
+  | "warn"
+  | "alarm"
+  | "app-0"
+  | "app-1"
+  | "app-2"
+  | "app-3"
+  | "app-4"
+  | "app-5"
+  | "app-6"
+  | "app-7";
+
+export type TrackShape = "density" | "span" | "mark" | "thumb";
+
+export interface TrackSpanDTO {
+  startSec: number;
+  endSec: number;
+  label: string;
+  tone: TrackTone;
+}
+
+export interface TrackMarkDTO {
+  atSec: number;
+  label: string;
+  tone: TrackTone;
+}
+
+export interface TrackThumbDTO {
+  atSec: number;
+  /**
+   * The SAME marker the player's chapter cues and hover thumbnails use, so
+   * `keyframeLabel()` stays the one label rule rather than gaining a second
+   * implementation here.
+   */
+  marker: KeyframeMarkerDTO;
+  regionCount: number;
+}
+
+export interface TrackDensityDTO {
+  /**
+   * Length TRACK_BUCKETS, normalized 0–1.
+   *
+   * `null` means NO COVERAGE and is NOT zero. Recorded silence is a flat zero;
+   * a stretch with no audio blob at all is null. Collapsing the two would make
+   * a dead microphone indistinguishable from a quiet room. Only audio emits
+   * null — for event-sourced lanes absence genuinely is zero, because nobody
+   * typed.
+   */
+  values: (number | null)[];
+  /** The real-world value that 1.0 corresponds to. */
+  peak: number;
+  unit: string;
+  /** A second trace in the same lane, same length. Only `mouse-xy` uses it. */
+  values2?: (number | null)[];
+}
+
+export interface TrackLaneDTO {
+  id: string;
+  title: string;
+  shape: TrackShape;
+  density?: TrackDensityDTO;
+  spans?: TrackSpanDTO[];
+  marks?: TrackMarkDTO[];
+  thumbs?: TrackThumbDTO[];
+  /** Non-null when the lane is legitimately empty. The reason IS the payload. */
+  emptyReason: string | null;
+  /**
+   * Non-null when the lane HAS data and that data is compromised. Not an
+   * alternative to `emptyReason`: a session with `key_down` events and no
+   * `keymap_change` has a full, healthy-looking typing lane whose every
+   * character was dropped at lift, and an empty-reason cannot say that.
+   */
+  warning: string | null;
+}
+
+export interface SessionTracksDTO {
+  sessionId: string;
+  /** Seconds. The axis every lane's offsets are measured against. */
+  totalSec: number;
+  /** Offsets are relative to the video when there is one, else to t_mono zero. */
+  anchoredToVideo: boolean;
+  lanes: TrackLaneDTO[];
+}
+
 export interface EnvInfo {
   platform: string;
   ffmpegAvailable: boolean;
@@ -521,6 +622,8 @@ export interface DeskRagApi {
      * existing indexing channel, so `onIndexing` covers this too.
      */
     reindex(): Promise<ReindexResultDTO>;
+    /** Every recorded signal, bucketed onto the session's own time axis. */
+    tracks(sessionId: string): Promise<SessionTracksDTO | null>;
   };
   replay: {
     graph(): Promise<GraphDTO | null>;
@@ -589,6 +692,7 @@ export const IPC = {
   sessionsDetail: "sessions:detail",
   sessionsRemove: "sessions:remove",
   sessionsReindex: "sessions:reindex",
+  sessionsTracks: "sessions:tracks",
   replayGraph: "replay:graph",
   replayWatch: "replay:watch",
   replayStart: "replay:start",

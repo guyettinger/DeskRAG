@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { encodeWav } from "../src/capture/producers/wav.js";
+import { encodeWav, wavPeaks } from "../src/capture/producers/wav.js";
 
 const ascii = (bytes: Uint8Array, off: number, len: number): string =>
   String.fromCharCode(...bytes.subarray(off, off + len));
@@ -33,5 +33,49 @@ describe("encodeWav", () => {
     expect(() => encodeWav(pcm, { sampleRate: 0, channels: 1, bitsPerSample: 16 })).toThrow();
     expect(() => encodeWav(pcm, { sampleRate: 16000, channels: 0, bitsPerSample: 16 })).toThrow();
     expect(() => encodeWav(pcm, { sampleRate: 16000, channels: 1, bitsPerSample: 12 })).toThrow();
+  });
+});
+
+/** PCM whose quarters ramp in amplitude. Signs alternate so the peak is a
+ *  genuine max of |s| rather than a DC offset. */
+function rampPcm(amps: number[], framesPer: number): Uint8Array {
+  const pcm = new Uint8Array(amps.length * framesPer * 2);
+  const dv = new DataView(pcm.buffer);
+  amps.forEach((a, q) => {
+    for (let i = 0; i < framesPer; i++) {
+      dv.setInt16((q * framesPer + i) * 2, i % 2 === 0 ? a : -a, true);
+    }
+  });
+  return pcm;
+}
+
+const FMT = { sampleRate: 16000, channels: 1, bitsPerSample: 16 } as const;
+
+describe("wavPeaks", () => {
+  it("recovers the envelope encodeWav wrote", () => {
+    const wav = encodeWav(rampPcm([0, 8192, 16384, 32767], 400), FMT);
+    const out = wavPeaks(wav, 4);
+    expect(out).not.toBeNull();
+    expect(out!.peaks.map((p) => Math.round(p * 100))).toEqual([0, 25, 50, 100]);
+    expect(out!.sampleRate).toBe(16000);
+    expect(out!.channels).toBe(1);
+    expect(out!.durationSec).toBeCloseTo(1600 / 16000, 5);
+  });
+
+  it("reports duration from the BYTES PRESENT, not the declared size", () => {
+    // A killed recorder leaves exactly this: a header promising more than the
+    // file holds. The measured duration is what makes the missing tail read as
+    // a coverage gap instead of a stretched envelope.
+    const wav = encodeWav(rampPcm([32767], 1600), FMT);
+    const truncated = wav.slice(0, 44 + 1600); // half the declared data chunk
+    const out = wavPeaks(truncated, 2);
+    expect(out).not.toBeNull();
+    expect(out!.durationSec).toBeCloseTo(800 / 16000, 5);
+  });
+
+  it("returns null for a format it cannot read, so the caller can say why", () => {
+    expect(wavPeaks(encodeWav(new Uint8Array(64), { ...FMT, bitsPerSample: 8 }), 4)).toBeNull();
+    expect(wavPeaks(new Uint8Array([1, 2, 3]), 4)).toBeNull();
+    expect(wavPeaks(encodeWav(new Uint8Array(0), FMT), 4)).toBeNull();
   });
 });
