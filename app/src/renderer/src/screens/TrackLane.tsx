@@ -3,13 +3,21 @@ import type { TrackLaneDTO } from "@shared/types";
 import { keyframeLabel } from "../api.js";
 import { densityPath, thumbPlacement } from "./track-view.js";
 
-const DENSITY_H = 24;
-/** Thumbnail width as a fraction of the rail. MUST match `.tracks__thumb` width. */
-const THUMB_FRAC = 0.055;
+/** Matches `.tracks__plot`'s height, so a one-unit inset is one pixel. */
+const DENSITY_H = 48;
+/**
+ * Thumbnail width in PIXELS — 16:9 against the 42px image `.tracks__thumb`
+ * draws. It used to be a fraction duplicated as a percentage in the stylesheet,
+ * with nothing to enforce the pair; the axis width now arrives measured, so this
+ * one constant drives both the CSS width and the placement decision.
+ */
+const THUMB_PX = 76;
 
 interface Props {
   lane: TrackLaneDTO;
   totalSec: number;
+  /** The plot column's measured width. 0 until the rail's observer first fires. */
+  axisWidth: number;
   /** Null when there is no video: the axis is real but nothing can be sought. */
   onSeek: ((sec: number) => void) | null;
   onInspect: (frameId: string) => void;
@@ -17,6 +25,12 @@ interface Props {
 
 const pct = (sec: number, totalSec: number): string =>
   `${totalSec > 0 ? Math.max(0, Math.min(100, (sec / totalSec) * 100)) : 0}%`;
+
+/** A thumbnail's left edge in pixels, centred on its time but kept on the axis. */
+const thumbLeft = (sec: number, totalSec: number, axisWidth: number): number => {
+  const centre = totalSec > 0 ? (sec / totalSec) * axisWidth : 0;
+  return Math.max(0, Math.min(Math.max(0, axisWidth - THUMB_PX), centre - THUMB_PX / 2));
+};
 
 /**
  * One lane of the rail. Four shapes cover fifteen lanes, so a new signal is a
@@ -45,7 +59,9 @@ export function TrackLane(props: Props): React.JSX.Element {
   );
 }
 
-function LaneBody({ lane, totalSec, onSeek, onInspect }: Props): React.JSX.Element | null {
+function LaneBody({ lane, totalSec, axisWidth, onSeek, onInspect }: Props): React.JSX.Element | null {
+  // No `title` anywhere below: the hover card names every lane at once, and a
+  // native tooltip appearing over it would fight it for the same pixels.
   if (lane.shape === "span") {
     return (
       <>
@@ -54,7 +70,6 @@ function LaneBody({ lane, totalSec, onSeek, onInspect }: Props): React.JSX.Eleme
             key={i}
             className="tracks__span"
             data-tone={s.tone}
-            title={s.label}
             style={{
               left: pct(s.startSec, totalSec),
               width: pct(s.endSec - s.startSec, totalSec),
@@ -75,7 +90,6 @@ function LaneBody({ lane, totalSec, onSeek, onInspect }: Props): React.JSX.Eleme
             key={i}
             className="tracks__mark"
             data-tone={m.tone}
-            title={m.label}
             style={{ left: pct(m.atSec, totalSec) }}
           />
         ))}
@@ -85,10 +99,12 @@ function LaneBody({ lane, totalSec, onSeek, onInspect }: Props): React.JSX.Eleme
 
   if (lane.shape === "thumb") {
     const thumbs = lane.thumbs ?? [];
+    // Before the first measurement nothing is known about the spacing, so only
+    // the first keeps an image and the rest degrade to ticks for that one frame.
     const show = thumbPlacement(
       thumbs.map((t) => t.atSec),
       totalSec,
-      THUMB_FRAC,
+      axisWidth > 0 ? THUMB_PX / axisWidth : Infinity,
     );
     return (
       <>
@@ -99,9 +115,17 @@ function LaneBody({ lane, totalSec, onSeek, onInspect }: Props): React.JSX.Eleme
               key={t.marker.frameId}
               className={show[i] ? "tracks__thumb" : "tracks__mark"}
               data-tone="accent"
-              title={label}
               aria-label={label}
-              style={{ left: pct(t.atSec, totalSec) }}
+              // The width is written HERE, not in the stylesheet, so THUMB_PX is
+              // the single source both the box and `thumbPlacement` read. An
+              // image is CLAMPED to the axis rather than centred past its end —
+              // a keyframe near t=0 otherwise paints over the title column,
+              // which is now the transport's column too. Ticks stay exact.
+              style={
+                show[i]
+                  ? { left: thumbLeft(t.atSec, totalSec, axisWidth), width: THUMB_PX }
+                  : { left: pct(t.atSec, totalSec) }
+              }
               onClick={() => (onSeek ? onSeek(t.atSec) : onInspect(t.marker.frameId))}
               onDoubleClick={() => onInspect(t.marker.frameId)}
             >
