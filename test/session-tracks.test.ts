@@ -1,13 +1,19 @@
 import { describe, expect, it } from "vitest";
-import type { EventRow } from "../src/store/types.js";
+import type { AxSnapshotRow, EventRow, SegmentRow } from "../src/store/types.js";
 import {
   appTone,
   appsLane,
+  axLane,
+  captionLane,
   clicksLane,
+  finestGranularity,
+  framesLane,
   markersLane,
   mouseSpeedLane,
   mouseXyLane,
   scrollLane,
+  segmentLanes,
+  transcriptLane,
   typingLane,
   webLane,
   type LaneInput,
@@ -37,6 +43,48 @@ const input = (events: EventRow[], over: Partial<LaneInput> = {}): LaneInput => 
   keyframes: [],
   regionCounts: new Map(),
   audio: [],
+  ...over,
+});
+
+const seg = (
+  id: string,
+  granularity: string,
+  startMs: number,
+  endMs: number,
+  over: Partial<SegmentRow> = {},
+): SegmentRow => ({
+  id,
+  sessionId: "s1",
+  granularity,
+  tMonoStart: startMs,
+  tMonoEnd: endMs,
+  boundaryReason: "window",
+  transcript: null,
+  digest: null,
+  caption: null,
+  ...over,
+});
+
+const snap = (
+  id: string,
+  tMono: number,
+  elements: number,
+  over: Partial<AxSnapshotRow> = {},
+): AxSnapshotRow => ({
+  id,
+  sessionId: "s1",
+  tMono,
+  frameId: null,
+  reason: "focus_change",
+  walkMs: 80,
+  elements: new Array(elements).fill({
+    role: "Button",
+    label: "x",
+    x: 0,
+    y: 0,
+    w: 1,
+    h: 1,
+  }) as AxSnapshotRow["elements"],
   ...over,
 });
 
@@ -174,5 +222,92 @@ describe("markersLane", () => {
       "bookmark",
       "displays changed",
     ]);
+  });
+});
+
+describe("finestGranularity", () => {
+  it("picks the granularity with the most segments — action over task", () => {
+    expect(
+      finestGranularity([
+        seg("a1", "action", 0, 1000),
+        seg("a2", "action", 1000, 2000),
+        seg("t1", "task", 0, 2000),
+      ]),
+    ).toBe("action");
+  });
+
+  it("returns null when there are no segments at all", () => {
+    expect(finestGranularity([])).toBeNull();
+  });
+});
+
+describe("segmentLanes", () => {
+  it("emits ONE LANE PER GRANULARITY found in the data, not a hardcoded pair", () => {
+    const lanes = segmentLanes(
+      input([], { segments: [seg("a1", "action", 0, 4000), seg("t1", "task", 0, 10000)] }),
+    );
+    expect(lanes.map((l) => l.id)).toEqual(["seg-action", "seg-task"]);
+    expect(lanes[0]!.spans).toEqual([
+      { startSec: 0, endSec: 4, label: "window", tone: "neutral" },
+    ]);
+  });
+
+  it("prefers the caption as the span label and falls back to the digest", () => {
+    const lanes = segmentLanes(
+      input([], {
+        segments: [
+          seg("a1", "action", 0, 1000, { caption: "the PR page", digest: "clicked Files" }),
+          seg("a2", "action", 1000, 2000, { digest: "typed a comment" }),
+        ],
+      }),
+    );
+    expect(lanes[0]!.spans!.map((s) => s.label)).toEqual(["the PR page", "typed a comment"]);
+  });
+});
+
+describe("transcriptLane / captionLane", () => {
+  it("covers only the segments that actually carry the view", () => {
+    const i = input([], {
+      segments: [
+        seg("a1", "action", 0, 2000, { transcript: "hello" }),
+        seg("a2", "action", 2000, 4000),
+      ],
+    });
+    expect(transcriptLane(i).spans).toHaveLength(1);
+    expect(transcriptLane(i).spans![0]!.endSec).toBe(2);
+  });
+
+  it("says a provider was probably never configured when NOTHING carries the view", () => {
+    const i = input([], { segments: [seg("a1", "action", 0, 2000)] });
+    expect(captionLane(i).emptyReason).toContain("captioner");
+    expect(transcriptLane(i).emptyReason).toContain("whisper");
+  });
+});
+
+describe("axLane", () => {
+  it("flags a walk that returned ZERO elements — that is what `reason` exists to measure", () => {
+    const lane = axLane(input([], { axSnapshots: [snap("x1", 1000, 0), snap("x2", 2000, 12)] }));
+    expect(lane.marks![0]!.tone).toBe("alarm");
+    expect(lane.marks![0]!.label).toContain("0 elements");
+    expect(lane.marks![1]!.tone).not.toBe("alarm");
+  });
+});
+
+describe("framesLane", () => {
+  it("carries the marker itself so keyframeLabel() stays the ONE label rule", () => {
+    const marker = {
+      frameId: "f1",
+      tMono: 3000,
+      offsetSec: 3,
+      thumbUrl: "deskrag://frame/b1",
+      segmentCaption: "the PR page",
+      segmentDigest: null,
+    };
+    const lane = framesLane(input([], { keyframes: [marker], regionCounts: new Map([["f1", 14]]) }));
+    expect(lane.thumbs).toEqual([{ atSec: 3, marker, regionCount: 14 }]);
+  });
+
+  it("says so when nothing was indexed", () => {
+    expect(framesLane(input([])).emptyReason).toContain("keyframe");
   });
 });

@@ -240,6 +240,178 @@ export function clicksLane(input: LaneInput): TrackLaneDTO {
   };
 }
 
+// --- the index ---------------------------------------------------------------
+
+/** Boundary reason → tone. The union is `BoundaryReason` in `src/segment/types.ts`. */
+const BOUNDARY_TONE: Record<string, TrackTone> = {
+  session_start: "ok",
+  session_end: "ok",
+  focus_change: "accent",
+  dwell_gap: "warn",
+  bookmark: "ok",
+  window: "neutral",
+};
+
+/**
+ * The granularity with the most segments — `action` against `task` in every
+ * recording so far.
+ *
+ * Presence lanes (transcript, caption) need ONE granularity or their spans
+ * stack on top of each other, and the finest is the one that shows where a view
+ * actually stops and starts.
+ */
+export function finestGranularity(segments: readonly SegmentRow[]): string | null {
+  const counts = new Map<string, number>();
+  for (const s of segments) counts.set(s.granularity, (counts.get(s.granularity) ?? 0) + 1);
+  let best: string | null = null;
+  let bestN = 0;
+  for (const [g, n] of counts) {
+    if (n > bestN) {
+      best = g;
+      bestN = n;
+    }
+  }
+  return best;
+}
+
+function segmentLabel(s: SegmentRow): string {
+  // Caption first for the same reason `keyframeLabel` prefers it: the VLM
+  // describes the pixels, the digest is a template over events.
+  return s.caption ?? s.digest ?? s.boundaryReason ?? "segment";
+}
+
+export function segmentLanes(input: LaneInput): TrackLaneDTO[] {
+  const byGranularity = new Map<string, SegmentRow[]>();
+  for (const s of input.segments) {
+    const list = byGranularity.get(s.granularity) ?? [];
+    list.push(s);
+    byGranularity.set(s.granularity, list);
+  }
+  // Sorted so lane order is stable across reads; Map iteration would otherwise
+  // follow whatever order SQLite happened to return.
+  return [...byGranularity.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([granularity, rows]) => ({
+      id: `seg-${granularity}`,
+      title: granularity,
+      shape: "span" as const,
+      spans: rows
+        .slice()
+        .sort((a, b) => a.tMonoStart - b.tMonoStart)
+        .map((s) => ({
+          startSec: secOf(s.tMonoStart, input.originMono),
+          endSec: secOf(s.tMonoEnd, input.originMono),
+          label: segmentLabel(s),
+          tone: BOUNDARY_TONE[s.boundaryReason ?? "window"] ?? "neutral",
+        })),
+      emptyReason: null,
+      warning: null,
+    }));
+}
+
+function presenceLane(
+  input: LaneInput,
+  id: string,
+  title: string,
+  pick: (s: SegmentRow) => string | null,
+  absent: string,
+): TrackLaneDTO {
+  const g = finestGranularity(input.segments);
+  const spans: TrackSpanDTO[] = input.segments
+    .filter((s) => s.granularity === g && pick(s) !== null)
+    .sort((a, b) => a.tMonoStart - b.tMonoStart)
+    .map((s) => ({
+      startSec: secOf(s.tMonoStart, input.originMono),
+      endSec: secOf(s.tMonoEnd, input.originMono),
+      label: pick(s) ?? "",
+      tone: "ok" as TrackTone,
+    }));
+  return {
+    id,
+    title,
+    shape: "span",
+    spans,
+    emptyReason: spans.length === 0 ? absent : null,
+    warning: null,
+  };
+}
+
+export function transcriptLane(input: LaneInput): TrackLaneDTO {
+  // Hedged deliberately: the store cannot prove retroactively that a provider
+  // was absent, only that nothing carries the view.
+  return presenceLane(
+    input,
+    "transcript",
+    "transcript",
+    (s) => s.transcript,
+    "nothing was transcribed — most likely no whisper model was configured when this was indexed",
+  );
+}
+
+export function captionLane(input: LaneInput): TrackLaneDTO {
+  return presenceLane(
+    input,
+    "caption",
+    "caption",
+    (s) => s.caption,
+    "nothing was captioned — most likely no captioner was configured when this was indexed",
+  );
+}
+
+export function axLane(input: LaneInput): TrackLaneDTO {
+  const marks: TrackMarkDTO[] = input.axSnapshots
+    .slice()
+    .sort((a, b) => a.tMono - b.tMono)
+    .map((s) => {
+      const n = s.elements.length;
+      return {
+        atSec: secOf(s.tMono, input.originMono),
+        label: `${s.reason} · ${n} elements · ${Math.round(s.walkMs)}ms`,
+        // An empty result is a real row, written precisely so that "captured
+        // nothing" stays distinguishable from "never captured". Zero elements
+        // is the failure this lane exists to surface.
+        tone:
+          n === 0
+            ? ("alarm" as TrackTone)
+            : s.reason === "keyframe"
+              ? ("accent" as TrackTone)
+              : ("neutral" as TrackTone),
+      };
+    });
+  return {
+    id: "ax",
+    title: "ax walks",
+    shape: "mark",
+    marks,
+    emptyReason:
+      marks.length === 0
+        ? "no accessibility snapshots — the AX sidecar was unavailable or permission was not granted"
+        : null,
+    warning: null,
+  };
+}
+
+export function framesLane(input: LaneInput): TrackLaneDTO {
+  const thumbs = input.keyframes.map((marker) => ({
+    atSec: marker.offsetSec,
+    // The marker travels whole rather than being flattened to a string, so
+    // `keyframeLabel()` in the renderer stays the ONE place a keyframe is named.
+    marker,
+    regionCount: input.regionCounts.get(marker.frameId) ?? 0,
+  }));
+  return {
+    id: "frames",
+    title: "keyframes",
+    shape: "thumb",
+    thumbs,
+    emptyReason:
+      thumbs.length === 0
+        ? "no keyframes were indexed — the screen was settled throughout, or the Screen signal was off"
+        : null,
+    warning: null,
+  };
+}
+
 // --- pointer motion ----------------------------------------------------------
 
 /**
