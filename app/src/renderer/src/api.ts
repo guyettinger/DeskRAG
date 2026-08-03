@@ -31,7 +31,7 @@ export function elapsed(fromMs: number): string {
 
 /**
  * How a keyframe is named wherever it is labelled — chapter cues, the control
- * bar title, the chapters menu, the filmstrip tooltip.
+ * bar title, the chapters menu, the track rail's keyframe tooltip.
  *
  * The VLM caption describes what is on screen, so it wins; the templated event
  * digest is the fallback for sessions indexed without a captioner, and the

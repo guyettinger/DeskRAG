@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
   MediaPlayer,
   MediaProvider,
@@ -15,7 +15,7 @@ import type { KeyframeMarkerDTO, SessionDetailDTO } from "@shared/types";
 import { keyframeLabel } from "../api.js";
 import { IconInspect, IconNextKeyframe, IconPrevKeyframe } from "../icons.js";
 import { DetailView } from "./DetailView.js";
-import { KeyframeStrip } from "./KeyframeStrip.js";
+import { TrackRail } from "./TrackRail.js";
 
 const SPEEDS = [0.5, 1, 2, 4];
 
@@ -144,9 +144,6 @@ export function SessionPlayer({ detail }: { detail: SessionDetailDTO }): React.J
   const playerRef = useRef<MediaPlayerInstance>(null);
   const keyframes = detail.keyframes;
   const [openFrame, setOpenFrame] = useState<string | null>(null);
-  const [activeFrameId, setActiveFrameId] = useState<string | null>(
-    keyframes[0]?.frameId ?? null,
-  );
 
   // A fragmented MP4 can report Infinity until enough of it is buffered, so the
   // timeline starts on the t_mono span the keyframe offsets are measured
@@ -154,11 +151,6 @@ export function SessionPlayer({ detail }: { detail: SessionDetailDTO }): React.J
   const span = detail.video ? (detail.video.tMonoEnd - detail.video.tMonoStart) / 1000 : 0;
   const [duration, setDuration] = useState(span);
   const total = duration > 0 ? duration : span;
-
-  const seek = useCallback((sec: number): void => {
-    const player = playerRef.current;
-    if (player) player.currentTime = Math.max(0, sec);
-  }, []);
 
   const step = useCallback(
     (dir: 1 | -1): void => {
@@ -169,17 +161,6 @@ export function SessionPlayer({ detail }: { detail: SessionDetailDTO }): React.J
     },
     [keyframes],
   );
-
-  // Track the playhead for the filmstrip highlight. The store ticks every
-  // frame, so state is only touched when the *nearest keyframe* changes.
-  useEffect(() => {
-    const player = playerRef.current;
-    if (!player) return;
-    return player.subscribe(({ currentTime }) => {
-      const id = nearestKeyframe(keyframes, currentTime)?.frameId ?? null;
-      setActiveFrameId((cur) => (cur === id ? cur : id));
-    });
-  }, [keyframes]);
 
   // Keyframes as chapters: the slider is divided at exactly the frames that
   // were indexed, and hovering one names its segment. This one track feeds every
@@ -218,9 +199,11 @@ export function SessionPlayer({ detail }: { detail: SessionDetailDTO }): React.J
       <div className="player">
         <div className="player__note">
           No video for this session — it was recorded before video capture, or with the Screen
-          signal off. Its {keyframes.length} indexed keyframes:
+          signal off. Its signals are still on a real time axis:
         </div>
-        <KeyframeStrip keyframes={keyframes} activeFrameId={null} onInspect={setOpenFrame} />
+        {/* No player, so no seeking: a keyframe click opens it instead, which is
+            what the filmstrip did in this case. */}
+        <TrackRail sessionId={detail.id} player={null} onInspect={setOpenFrame} />
         {openFrame && <DetailView frameId={openFrame} onClose={() => setOpenFrame(null)} />}
       </div>
     );
@@ -333,12 +316,7 @@ export function SessionPlayer({ detail }: { detail: SessionDetailDTO }): React.J
         />
       </MediaPlayer>
 
-      <KeyframeStrip
-        keyframes={keyframes}
-        activeFrameId={activeFrameId}
-        onSeek={seek}
-        onInspect={setOpenFrame}
-      />
+      <TrackRail sessionId={detail.id} player={playerRef} onInspect={setOpenFrame} />
 
       <div className="player__meta mono">
         {keyframes.length} keyframes · {detail.segmentCount} segments · {detail.eventCount} events
