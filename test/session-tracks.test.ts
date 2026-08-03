@@ -3,7 +3,9 @@ import type { AxSnapshotRow, EventRow, SegmentRow } from "../src/store/types.js"
 import {
   appTone,
   appsLane,
+  audioLanes,
   axLane,
+  buildSessionTracks,
   captionLane,
   clicksLane,
   finestGranularity,
@@ -309,5 +311,72 @@ describe("framesLane", () => {
 
   it("says so when nothing was indexed", () => {
     expect(framesLane(input([])).emptyReason).toContain("keyframe");
+  });
+});
+
+describe("audioLanes", () => {
+  it("gives each medium its own lane and leaves uncovered stretches null", () => {
+    const lanes = audioLanes(
+      input([], {
+        audio: [
+          { media: "mic", blobs: [{ startSec: 0, durationSec: 2, peaks: [0.4, 0.4] }] },
+          {
+            media: "desktop_audio",
+            blobs: [{ startSec: 0, durationSec: 10, peaks: new Array(40).fill(0.9) }],
+          },
+        ],
+      }),
+    );
+    expect(lanes.map((l) => l.id)).toEqual(["audio-mic", "audio-desktop_audio"]);
+    expect(lanes[0]!.density!.values[9]).toBeNull(); // mic stopped at 2s
+    expect(lanes[1]!.density!.values[9]).not.toBeNull();
+    expect(lanes[0]!.density!.unit).toBe("amplitude");
+  });
+
+  it("produces one empty lane saying why when no audio was captured at all", () => {
+    const lanes = audioLanes(input([]));
+    expect(lanes).toHaveLength(1);
+    expect(lanes[0]!.emptyReason).toContain("audio");
+  });
+});
+
+describe("buildSessionTracks", () => {
+  it("puts the lanes in reading order: screen, attention, index, hands, sound", () => {
+    const dto = buildSessionTracks({
+      ...input([ev("focus_change", 0, { data: { app: "TextEdit" } })], {
+        segments: [seg("a1", "action", 0, 4000)],
+      }),
+      sessionId: "s1",
+      anchoredToVideo: true,
+    });
+    expect(dto.lanes.map((l) => l.id)).toEqual([
+      "frames",
+      "apps",
+      "web",
+      "seg-action",
+      "transcript",
+      "caption",
+      "ax",
+      "typing",
+      "clicks",
+      "scroll",
+      "mouse-speed",
+      "mouse-xy",
+      "audio-none",
+      "markers",
+    ]);
+    expect(dto.sessionId).toBe("s1");
+    expect(dto.totalSec).toBe(10);
+    expect(dto.anchoredToVideo).toBe(true);
+  });
+
+  it("renders an empty rail rather than dividing by zero on a session with no span", () => {
+    const dto = buildSessionTracks({
+      ...input([], { totalSec: 0 }),
+      sessionId: "s1",
+      anchoredToVideo: false,
+    });
+    expect(dto.totalSec).toBe(0);
+    expect(dto.lanes.every((l) => l.emptyReason !== null || l.shape === "span")).toBe(true);
   });
 });

@@ -19,6 +19,7 @@ import {
 } from "deskrag";
 import type {
   KeyframeMarkerDTO,
+  SessionTracksDTO,
   TrackLaneDTO,
   TrackMarkDTO,
   TrackSpanDTO,
@@ -28,6 +29,7 @@ import {
   bucketCounts,
   bucketHold,
   bucketMax,
+  mergeAudioPeaks,
   normalize,
   type AudioBlobPeaks,
 } from "./track-buckets.js";
@@ -497,5 +499,80 @@ export function mouseXyLane(input: LaneInput): TrackLaneDTO {
     },
     emptyReason: ms.length === 0 ? "no pointer movement recorded" : null,
     warning: null,
+  };
+}
+
+// --- sound -------------------------------------------------------------------
+
+export function audioLanes(input: LaneInput): TrackLaneDTO[] {
+  if (input.audio.length === 0) {
+    return [
+      {
+        id: "audio-none",
+        title: "audio",
+        shape: "density",
+        density: { values: new Array(input.buckets).fill(null), peak: 0, unit: "amplitude" },
+        emptyReason: "no audio was captured — the Audio signal was off, or every blob is missing",
+        warning: null,
+      },
+    ];
+  }
+  return input.audio.map((a) => {
+    const values = mergeAudioPeaks(a.blobs, input.totalSec, input.buckets);
+    let peak = 0;
+    let covered = false;
+    for (const v of values) {
+      if (v === null) continue;
+      covered = true;
+      if (v > peak) peak = v;
+    }
+    return {
+      id: `audio-${a.media}`,
+      title: a.media === "mic" ? "audio (mic)" : `audio (${a.media})`,
+      shape: "density" as const,
+      // NOT re-normalized: amplitude is already 0–1 against full scale, and
+      // rescaling to the loudest moment would make a whisper look like a shout.
+      density: { values, peak, unit: "amplitude" },
+      emptyReason: covered ? null : "every audio blob for this medium was unreadable or missing",
+      warning: null,
+    };
+  });
+}
+
+// --- assembly ----------------------------------------------------------------
+
+export interface TrackInput extends LaneInput {
+  sessionId: string;
+  anchoredToVideo: boolean;
+}
+
+/**
+ * Lanes in reading order: screen → attention → index → hands → sound.
+ *
+ * Every lane is emitted even when it is empty. Absence is the answer to two of
+ * the four questions this rail exists to answer, so a missing lane and a lane
+ * that says why it is missing are very different things.
+ */
+export function buildSessionTracks(input: TrackInput): SessionTracksDTO {
+  return {
+    sessionId: input.sessionId,
+    totalSec: input.totalSec,
+    anchoredToVideo: input.anchoredToVideo,
+    lanes: [
+      framesLane(input),
+      appsLane(input),
+      webLane(input),
+      ...segmentLanes(input),
+      transcriptLane(input),
+      captionLane(input),
+      axLane(input),
+      typingLane(input),
+      clicksLane(input),
+      scrollLane(input),
+      mouseSpeedLane(input),
+      mouseXyLane(input),
+      ...audioLanes(input),
+      markersLane(input),
+    ],
   };
 }
