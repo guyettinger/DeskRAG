@@ -1448,31 +1448,53 @@ select {
 /* This file has no global muted-text utility — `.hint` and `.sub` are both
    scoped — so this one is scoped to the surfaces added here rather than
    introducing a global class the rest of the app does not use. */
-.replay .muted, .review .muted { color: var(--muted); }
+.replay .muted, .drawer .muted, .runlog .muted, .route .muted { color: var(--muted); }
 .replay__bar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
-.replay__slot, .replay__launch { display: flex; align-items: center; gap: 6px; font-size: 12px; }
-.replay__slot input { width: 140px; }
-
-/* Fixed split: the graph stays visible while the plan is read. Both children
-   need min-width/min-height 0 or the review's long text widens the row. */
-.replay__stage {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
-  gap: 12px;
-  flex: 1;
-  min-height: 0;
+.replay__pending {
+  font-size: 11px; color: var(--amber); padding: 3px 9px; border-radius: 999px;
+  background: rgb(255 194 75 / 0.14); border: 1px solid rgb(255 194 75 / 0.3);
 }
+/* A stop reason can name every predicate that did not hold, so it wraps. */
+.replay__status { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+
+/* ONE slot, holding browse or review. The old fixed 1fr/340px split mounted the
+   review column permanently to hold a single sentence. Both children need
+   min-height: 0 or the log's long text grows the row instead of scrolling. */
+.replay__stage {
+  display: flex; flex-direction: column; gap: 12px;
+  flex: 1; min-height: 0;
+}
+.replay__stage > .gcanvas { flex: 1; min-height: 200px; }
 
 .gcanvas {
   position: relative; overflow: hidden; min-width: 0; min-height: 0;
   border: 1px solid var(--hairline); border-radius: var(--radius);
-  background: var(--panel); cursor: grab; touch-action: none;
+  background: var(--panel);
 }
+/* The pan surface is a child, not .gcanvas itself, so the control cluster can
+   sit above it without every press on a button starting a pan. */
+.gcanvas__surface { position: absolute; inset: 0; cursor: grab; touch-action: none; }
+.gcanvas__surface:active { cursor: grabbing; }
 .gcanvas__world { position: absolute; transform-origin: 0 0; }
 .gcanvas__wires { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
 .gwire { fill: none; stroke: var(--hairline); stroke-width: 2; }
 .gwire.is-back { stroke-dasharray: 5 4; opacity: 0.7; }
 .gwire.is-synth { stroke-dasharray: 2 3; }
+
+.gcanvas__controls {
+  position: absolute; right: 10px; bottom: 10px; z-index: 2;
+  display: flex; gap: 4px; padding: 4px;
+  border: 1px solid var(--hairline); border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--elevated) 88%, transparent);
+  backdrop-filter: blur(6px);
+}
+.gbtn {
+  min-width: 26px; height: 24px; padding: 0 7px;
+  font-size: 11px; font-family: var(--font-mono); color: var(--muted);
+  border-radius: 5px;
+}
+.gbtn:hover:not(:disabled) { background: rgb(255 255 255 / 0.07); color: var(--text); }
+.gbtn:disabled { opacity: 0.4; cursor: default; }
 
 .gnode {
   position: absolute; display: flex; flex-direction: column; gap: 4px;
@@ -1483,7 +1505,10 @@ select {
 /* --ok is the palette's "this is true right now"; --accent is interactive
    selection. The recording red (--rec) is reserved for live capture. */
 .gnode.is-here { border-color: var(--ok); box-shadow: 0 0 0 2px rgb(88 213 163 / 0.25); }
-.gnode.is-goal { border-color: var(--accent); box-shadow: 0 0 0 2px rgb(124 156 255 / 0.25); }
+.gnode.is-selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgb(124 156 255 / 0.25); }
+/* Dimmed, not hidden: it is still a real recorded state and still worth
+   reading — it just cannot answer "which state is this?". */
+.gnode.is-unlocatable .gnode__shot { opacity: 0.55; }
 .gnode__shot { width: 100%; height: 72px; object-fit: cover; border-radius: 4px; }
 .gnode__shot--none {
   display: grid; place-items: center; font-size: 11px;
@@ -1494,45 +1519,138 @@ select {
 .gnode__id { font-family: var(--font-mono); }
 .gnode__tag { padding: 1px 5px; border-radius: 999px; background: rgb(255 255 255 / 0.07); }
 .gnode__tag.is-here { background: rgb(88 213 163 / 0.2); color: var(--ok); }
-.gnode__tag.is-goal { background: rgb(124 156 255 / 0.2); color: var(--accent); }
+.gnode__tag.is-warn { background: rgb(255 194 75 / 0.18); color: var(--amber); }
 
-.review {
-  min-width: 0; min-height: 0; overflow-y: auto; padding: 12px;
+/* --- the bottom drawer --------------------------------------------------- */
+/* NOT `.sheet` — that is SearchScreen's contact-sheet grid, and inheriting its
+   `display: grid` turned this element's header and body into side-by-side grid
+   items, collapsing the body's three columns into one ~250px track. `display`
+   is stated explicitly here so a future collision cannot silently re-layout it
+   the same way. */
+.drawer {
+  display: block;
+  flex: 0 0 auto; max-height: 46%; overflow-y: auto;
   border: 1px solid var(--hairline); border-radius: var(--radius);
   background: var(--panel);
 }
-.review__title { margin: 0; font-size: 14px; }
-.review__route { margin: 2px 0 10px; font-size: 12px; color: var(--muted); }
-.review__banner.is-warn {
-  padding: 8px; margin-bottom: 10px; border-radius: var(--radius-sm); font-size: 12px;
-  color: var(--amber);
-  background: rgb(255 194 75 / 0.12); border: 1px solid rgb(255 194 75 / 0.3);
+.drawer__head {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 10px; border-bottom: 1px solid var(--hairline-soft);
 }
-.steps { margin: 0 0 12px; padding-left: 18px; font-size: 12px; }
-.step { margin-bottom: 6px; }
-.step__kind { font-weight: 600; }
-.step__target { display: block; color: var(--muted); word-break: break-word; }
-.step__note { display: block; color: var(--muted); font-size: 11px; }
-.step__res { font-variant-numeric: tabular-nums; font-size: 11px; color: var(--muted); }
-.step__slot { display: block; font-size: 11px; }
-.step--handoff .step__kind { color: var(--accent); }
-.step--superseded { opacity: 0.6; }
-.step--superseded .step__kind { text-decoration: line-through; }
-.review__block { border-left: 3px solid var(--rec); padding-left: 8px; }
-.review__block h3, .review__cut h3, .review__remainder h3, .review__brittle h3 {
-  font-size: 12px; margin: 12px 0 4px;
+.drawer__chip { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
+.drawer__title { font-size: 13px; font-weight: 600; }
+.drawer__warn { font-size: 11px; color: var(--amber); }
+.drawer__close { margin-left: auto; color: var(--muted); font-size: 12px; padding: 2px 6px; }
+.drawer__close:hover { color: var(--text); }
+.drawer__body {
+  display: grid; grid-template-columns: 200px minmax(0, 1fr) 220px;
+  gap: 14px; padding: 10px;
 }
-.review section ul, .attempts { margin: 0; padding-left: 16px; font-size: 12px; }
-.review code, .remainder code { font-family: var(--font-mono); font-size: 11px; }
-.review__brittle .is-low { color: var(--amber); }
-.review__override { display: block; margin: 12px 0; font-size: 12px; }
-.review__actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
-.review__nearest h3 { font-size: 12px; margin: 14px 0 4px; }
+.drawer__body--diagnosis { display: block; }
+/* Capped: a portrait or very tall keyframe would otherwise set the drawer's
+   height and push the predicates out of view. */
+.drawer__shot {
+  width: 100%; max-height: 150px; border-radius: var(--radius-sm); object-fit: contain;
+}
+.drawer__shot--none {
+  display: grid; place-items: center; min-height: 90px; font-size: 11px;
+  color: var(--muted-dim); background: rgb(255 255 255 / 0.03);
+  border-radius: var(--radius-sm);
+}
+.drawer__preds ul { margin: 4px 0 0; padding-left: 16px; font-size: 11px; }
+/* A predicate can be long (a URL prefix, an AX identifier) and must wrap
+   rather than widen its column. */
+.drawer__preds li { font-family: var(--font-mono); word-break: break-word; color: var(--muted); }
+.drawer__run { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.drawer__slot, .drawer__launch { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.drawer__slot input { width: 130px; }
+
 .nearby { margin: 8px 0; padding-left: 8px; border-left: 2px solid var(--hairline); }
 .nearby__head { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; }
 .nearby__score { font-variant-numeric: tabular-nums; color: var(--amber); }
 .nearby ul { margin: 2px 0 0; padding-left: 16px; font-size: 11px; color: var(--muted); }
 .nearby li { font-family: var(--font-mono); word-break: break-word; }
+
+/* --- review mode --------------------------------------------------------- */
+.route {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 6px 10px;
+  border: 1px solid var(--hairline); border-radius: var(--radius);
+  background: var(--panel);
+}
+.route__chain { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.route__node {
+  padding: 2px 7px; border-radius: 999px; font-family: var(--font-mono); font-size: 11px;
+  color: var(--muted); background: rgb(255 255 255 / 0.06);
+}
+.route__node.is-dest { color: var(--accent); background: rgb(124 156 255 / 0.16); }
+.route__link { width: 14px; height: 1px; background: var(--hairline); }
+.route__pending { margin-left: auto; font-size: 11px; color: var(--amber); }
+
+.seg { border-top: 1px solid var(--hairline-soft); padding: 8px 0; }
+.seg:first-child { border-top: none; }
+.seg__head {
+  display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left;
+  font-size: 12px; padding: 2px 0;
+}
+.seg__caret { color: var(--muted-dim); }
+.seg__state.is-completed { color: var(--ok); }
+.seg__state.is-failed { color: var(--amber); }
+.seg__state.is-running { color: var(--accent); }
+.seg__title { font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; font-size: 11px; }
+.seg__count { margin-left: auto; }
+.seg__failline { font-size: 11px; color: var(--amber); padding: 2px 0 0 24px; overflow-wrap: anywhere; }
+.seg__banner.is-warn {
+  padding: 8px; margin: 6px 0; border-radius: var(--radius-sm); font-size: 12px;
+  color: var(--amber);
+  background: rgb(255 194 75 / 0.12); border: 1px solid rgb(255 194 75 / 0.3);
+}
+
+.steps, .remainder { margin: 6px 0; padding: 0; list-style: none; font-size: 12px; }
+.step {
+  display: grid; grid-template-columns: 18px 1fr; gap: 2px 6px; margin-bottom: 6px;
+}
+.step__mark { font-family: var(--font-mono); color: var(--muted-dim); text-align: center; }
+.step__kind { font-weight: 600; }
+.step__target, .step__note, .step__slot, .step__res, .step__brittle, .step__fail {
+  grid-column: 2; font-size: 11px;
+}
+.step__target, .step__note { color: var(--muted); word-break: break-word; }
+.step__res { font-variant-numeric: tabular-nums; color: var(--muted); }
+.step--handoff .step__kind { color: var(--accent); font-weight: 400; }
+.step--superseded { opacity: 0.6; }
+.step--superseded .step__kind { text-decoration: line-through; }
+.step.is-brittle .step__mark { color: var(--amber); }
+.step__brittle { color: var(--amber); }
+.step__fail { color: var(--amber); overflow-wrap: anywhere; }
+.remainder { opacity: 0.55; }
+.remainder li { display: grid; grid-template-columns: 18px 1fr; gap: 2px 6px; margin-bottom: 6px; }
+
+.cut { margin: 10px 0; }
+.cut__rule {
+  font-size: 11px; color: var(--amber); text-transform: uppercase; letter-spacing: 0.06em;
+  padding-bottom: 4px; border-bottom: 2px dashed rgb(255 194 75 / 0.4);
+}
+.cut__attempts { margin: 6px 0 0; padding-left: 34px; font-size: 11px; color: var(--muted); }
+.cut code, .seg code, .remainder code { font-family: var(--font-mono); font-size: 11px; }
+
+.runlog {
+  display: flex; flex-direction: column; min-height: 0; flex: 1;
+  border: 1px solid var(--hairline); border-radius: var(--radius);
+  background: var(--panel);
+}
+.runlog__list { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 12px; }
 /* A boundary-verification failure names every predicate that did not hold, so
    this line can be long and must wrap rather than widen the column. */
-.review--empty p.muted { overflow-wrap: anywhere; }
+.runlog__status { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; padding-top: 8px; }
+.runlog__gate {
+  flex: 0 0 auto; padding: 10px 12px; border-top: 1px solid var(--hairline);
+  background: var(--elevated); border-radius: 0 0 var(--radius) var(--radius);
+}
+/* --rec on the blocker border is the one legitimate replay use of the recording
+   red: a blocker is the hardest stop the system has. */
+.gate__block { border-left: 3px solid var(--rec); padding-left: 8px; margin-bottom: 8px; }
+.gate__block h3 { font-size: 12px; margin: 0 0 4px; }
+.gate__block ul { margin: 0; padding-left: 16px; font-size: 12px; }
+.gate__override { display: block; margin-bottom: 8px; font-size: 12px; }
+.gate__actions { display: flex; gap: 8px; justify-content: flex-end; }

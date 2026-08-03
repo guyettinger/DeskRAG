@@ -318,6 +318,19 @@ export interface GraphNodeDTO {
   /** From TraceNode.visual — served via deskrag://frame/<blobId>. */
   frameBlobId?: string;
   observations: number;
+  /**
+   * The node's whole identity, human-readable via `describePredicate`. Empty
+   * when the node describes no state. This is what merges, verifies and
+   * locates, and it had no surface in the app until now.
+   */
+  predicates: string[];
+  /**
+   * False when the identity is only `app`. Such a node is satisfied by every
+   * observation in that application, so it cannot answer "which state is
+   * this?" — it verifies perfectly and locates never, which makes it unusable
+   * as a goal. Measured: without a URL only 3 of 8 nodes were locatable.
+   */
+  locatable: boolean;
   intervene: "none" | "select" | "synthesize";
   /** BFS distance from the graph entry. The canvas's column. */
   rank: number;
@@ -452,6 +465,13 @@ export type RunEventDTO =
       type: "segment-done";
       segment: number;
       completed: boolean;
+      /**
+       * `step` indexes the RENDERED `PlanDTO.steps`, NOT the library's plan.
+       * The DTO prepends a handoff step whenever the `from` node carries an
+       * `app` predicate, so the raw index from `execute.ts` is one short.
+       * `replay-service.report` converts it with `failedStepIndex`; absent when
+       * the segment refused to start (raw -1), because then no step ran.
+       */
       failure?: { step: number; reason: string };
       telemetry: { edgeId: string; layer: string; confidence: number }[];
     }

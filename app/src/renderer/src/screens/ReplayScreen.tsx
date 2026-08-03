@@ -1,41 +1,57 @@
+/**
+ * Two modes, not a split.
+ *
+ * The stage holds ONE component. Browse is the graph plus its bottom sheet;
+ * review is the route strip plus the run log. The base mode is derived, never
+ * stored — `plan or log exists` — so there is no mode variable to desynchronize
+ * from the data.
+ *
+ * `⟵ graph` is a PEEK, not a cancel. Looking at the graph while deciding
+ * whether to arm is the loop this screen exists for, so the back affordance
+ * works while a segment awaits approval; it sets one flag and posts nothing.
+ * Browse then carries a bar saying an approval is outstanding, so an unanswered
+ * authorization cannot be lost by navigating away. Only Cancel declines.
+ */
+
 import React, { useEffect, useMemo, useState } from "react";
-import { shortId, type GraphDTO, type LocationDTO, type PlanDTO, type RunEventDTO } from "@shared/types";
+import type { GraphDTO, LocationDTO, RunEventDTO } from "@shared/types";
 import { api } from "../api.js";
 import { GraphCanvas } from "./GraphCanvas.js";
-import { PlanReview, stopMessage } from "./PlanReview.js";
+import { NodeSheet } from "./NodeSheet.js";
+import { RouteStrip } from "./RouteStrip.js";
+import { RunLog, stopMessage } from "./RunLog.js";
+import { reduceRunEvent, type LoggedSegment } from "./run-log.js";
 
 export function ReplayScreen(): React.JSX.Element {
   const [graph, setGraph] = useState<GraphDTO | null>(null);
   const [location, setLocation] = useState<LocationDTO | null>(null);
-  const [goalId, setGoalId] = useState<string | null>(null);
-  const [plan, setPlan] = useState<PlanDTO | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [segments, setSegments] = useState<LoggedSegment[]>([]);
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [peeking, setPeeking] = useState(false);
   const [allowLaunch, setAllowLaunch] = useState(false);
   const [bindings, setBindings] = useState<Record<string, string>>({});
+  /** Closed explicitly, so the diagnosis does not reopen on the next poll. */
+  const [diagnosisClosed, setDiagnosisClosed] = useState(false);
 
   useEffect(() => {
     void api.replay.graph().then(setGraph);
     void api.replay.watch(true);
     const offLoc = api.replay.onLocation(setLocation);
     const offEvt = api.replay.onEvent((e: RunEventDTO) => {
+      setSegments((cur) => reduceRunEvent(cur, e));
       if (e.type === "segment-planned") {
-        setPlan(e.plan);
         setBusy(false);
         setStatus(null);
+        // A new decision is due: stop peeking and show it.
+        setPeeking(false);
       } else if (e.type === "armed") {
         setBusy(true);
         setStatus(e.app === undefined ? "Arming…" : `Returning focus to ${e.app}…`);
       } else if (e.type === "segment-done") {
-        setStatus(
-          e.completed
-            ? `Segment ${e.segment} completed.`
-            : `Segment ${e.segment} failed at step ${(e.failure?.step ?? 0) + 1}: ${
-                e.failure?.reason ?? "unknown"
-              }`,
-        );
+        setStatus(null);
       } else {
-        setPlan(null);
         setBusy(false);
         setStatus(
           e.reached
@@ -76,73 +92,103 @@ export function ReplayScreen(): React.JSX.Element {
     );
   }
 
+  const pending = segments.find((s) => s.outcome.state === "awaiting");
+  const reviewing = segments.length > 0 && !peeking;
+  const selected = graph.nodes.find((n) => n.id === selectedId) ?? null;
+  const edgeCounts = {
+    in: graph.edges.filter((e) => e.to === selectedId).length,
+    out: graph.edges.filter((e) => e.from === selectedId).length,
+  };
+
   return (
     <div className="page page--fill replay">
       <div className="replay__bar">
-        <span className={`chip${location?.nodeId !== undefined ? " live" : ""}`}>
-          <span className="dot" /> {here}
-        </span>
-        <span className="muted" title={goalId ?? undefined}>
-          {goalId === null
-            ? "Pick a goal on the graph"
-            : `Goal: ${graph.nodes.find((n) => n.id === goalId)?.label ?? shortId(goalId)}`}
-        </span>
-        <label className="replay__launch">
-          <input
-            type="checkbox"
-            checked={allowLaunch}
-            onChange={(e) => setAllowLaunch(e.target.checked)}
-          />
-          allow launching apps
-        </label>
-        {graph.slots.map((s) => (
-          <label key={s.name} className="replay__slot">
-            {s.name}
-            <input
-              list={`slot-${s.name}`}
-              value={bindings[s.name] ?? ""}
-              onChange={(e) => setBindings((b) => ({ ...b, [s.name]: e.target.value }))}
-            />
-            <datalist id={`slot-${s.name}`}>
-              {s.samples.map((v) => (
-                <option key={v} value={v} />
-              ))}
-            </datalist>
-          </label>
-        ))}
         <button
-          className="btn"
-          disabled={goalId === null || busy || plan !== null}
-          onClick={() => {
-            if (goalId === null) return;
-            setStatus("Planning…");
-            setBusy(true);
-            void api.replay.start({ goalNodeId: goalId, slotBindings: bindings, allowLaunch });
-          }}
+          className={`chip${location?.nodeId !== undefined ? " live" : ""}`}
+          onClick={() => setDiagnosisClosed(false)}
+          title="Show why nothing matched"
         >
-          Run
+          <span className="dot" /> {here}
         </button>
+        {peeking && pending !== undefined && (
+          <button className="replay__pending" onClick={() => setPeeking(false)}>
+            Segment {pending.plan.segment} awaiting approval · return to review
+          </button>
+        )}
+        {/* A run can stop BEFORE any segment is planned — `not-located`,
+            `no-path`, `observe-blocked` — and then there is no run log to
+            carry the message. The old empty review column was its only home,
+            so without this, pressing Run against a desktop that matches
+            nothing looks like nothing happening at all. */}
+        {!reviewing && status !== null && <span className="replay__status">{status}</span>}
       </div>
 
-      <div className="replay__stage">
-        <GraphCanvas
-          graph={graph}
-          goalId={goalId}
-          locationNodeId={location?.nodeId}
-          onPick={setGoalId}
-        />
-        <PlanReview
-          plan={plan}
-          status={status}
-          busy={busy}
-          nearest={location?.nearest}
-          onArm={(override) => {
-            setBusy(true);
-            void api.replay.arm({ segment: plan?.segment ?? 1, approve: true, override });
-          }}
-          onCancel={() => void api.replay.cancel()}
-        />
-      </div>
+      {reviewing ? (
+        <div className="replay__stage">
+          <RouteStrip
+            plan={pending?.plan ?? segments[segments.length - 1]?.plan ?? null}
+            graph={graph}
+            pending={pending !== undefined}
+            onBack={() => {
+              // A finished run leaves review for real; a pending one peeks.
+              if (pending === undefined) setSegments([]);
+              else setPeeking(true);
+            }}
+          />
+          <RunLog
+            segments={segments}
+            status={status}
+            busy={busy}
+            onArm={(override) => {
+              setBusy(true);
+              void api.replay.arm({
+                segment: pending?.plan.segment ?? 1,
+                approve: true,
+                override,
+              });
+            }}
+            onCancel={() => void api.replay.cancel()}
+          />
+        </div>
+      ) : (
+        <div className="replay__stage">
+          <GraphCanvas
+            graph={graph}
+            selectedId={selectedId}
+            locationNodeId={location?.nodeId}
+            onSelect={(id) => {
+              setSelectedId(id);
+              if (id !== null) setDiagnosisClosed(false);
+            }}
+          />
+          <NodeSheet
+            node={selected}
+            nearest={diagnosisClosed ? undefined : location?.nearest}
+            slots={graph.slots}
+            bindings={bindings}
+            allowLaunch={allowLaunch}
+            busy={busy}
+            edgeCounts={edgeCounts}
+            onBind={(name, value) => setBindings((b) => ({ ...b, [name]: value }))}
+            onAllowLaunch={setAllowLaunch}
+            onRun={() => {
+              if (selectedId === null) return;
+              setStatus("Planning…");
+              setBusy(true);
+              setPeeking(false);
+              void api.replay.start({
+                goalNodeId: selectedId,
+                slotBindings: bindings,
+                allowLaunch,
+              });
+            }}
+            onClose={() => {
+              if (selected !== null) setSelectedId(null);
+              else setDiagnosisClosed(true);
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 }

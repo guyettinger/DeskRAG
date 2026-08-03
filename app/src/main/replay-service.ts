@@ -32,7 +32,13 @@ import type {
   ReplayStopReason,
   RunEventDTO,
 } from "@shared/types";
-import { describePredicate, labelNode, toGraphDTO, toPlanDTO } from "./plan-view.js";
+import {
+  describePredicate,
+  failedStepIndex,
+  labelNode,
+  toGraphDTO,
+  toPlanDTO,
+} from "./plan-view.js";
 
 const POLL_MS = 2000;
 const MAX_NEAREST = 3;
@@ -451,11 +457,15 @@ export class ReplayService {
     // one segment would silently discard the telemetry of every earlier one on
     // exactly the multi-segment runs that telemetry exists for.
     outcome.segments.forEach((s, i) => {
+      const f = s.outcome.failure;
+      // DTO space, once, here — every consumer downstream renders the list this
+      // index points into and must not re-shift it.
+      const at = f === undefined ? undefined : failedStepIndex(f.step, this.handoffOffsets[i] ?? 0);
       this.emitEvent({
         type: "segment-done",
         segment: i + 1,
         completed: s.outcome.completed,
-        ...(s.outcome.failure !== undefined ? { failure: s.outcome.failure } : {}),
+        ...(f !== undefined && at !== undefined ? { failure: { step: at, reason: f.reason } } : {}),
         telemetry: s.outcome.telemetry.map((t) => ({
           edgeId: t.edgeId,
           layer: t.layer,
@@ -479,10 +489,13 @@ export class ReplayService {
     const failedAt = outcome.segments.findIndex((s) => !s.outcome.completed);
     const failed = failedAt >= 0 ? outcome.segments[failedAt]?.outcome.failure : undefined;
     // `canArm` reports step -1: a refusal to start, not a step that ran.
-    const stepLabel =
-      failed === undefined || failed.step < 0
+    const at =
+      failed === undefined
         ? undefined
-        : `step ${failed.step + 1 + (this.handoffOffsets[failedAt] ?? 0)}: `;
+        : failedStepIndex(failed.step, this.handoffOffsets[failedAt] ?? 0);
+    // The `+ 1` stays here and only here: this is one-based prose for a human,
+    // while `failure.step` on the event is a zero-based array index.
+    const stepLabel = at === undefined ? undefined : `step ${at + 1}: `;
     const detail =
       this.stopDetail ?? (failed !== undefined ? `${stepLabel ?? ""}${failed.reason}` : undefined);
 

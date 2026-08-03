@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { chipIds, labelNode, rankNodes, toGraphDTO, toPlanDTO } from "../app/src/main/plan-view.js";
+import {
+  chipIds,
+  failedStepIndex,
+  labelNode,
+  rankNodes,
+  toGraphDTO,
+  toPlanDTO,
+} from "../app/src/main/plan-view.js";
 import type { Graph, Predicate, TraceEdge, TraceNode } from "../src/trace/types.js";
 import type { Anchor, Plan } from "../src/replay/types.js";
 
@@ -314,5 +321,50 @@ describe("labelNode with web scope", () => {
   it("beats a focused element, which is only where the caret was", () => {
     const n = node("n6", [app("Google Chrome"), url("github.com/o/r"), focused("TextField", "Search")]);
     expect(labelNode(n).hint).toBe("github.com/o/r");
+  });
+});
+
+describe("toGraphDTO identity fields", () => {
+  it("renders every predicate as human-readable text", () => {
+    const n = node("n1", [app("TextEdit"), exists("TextArea", "Body")]);
+    const dto = toGraphDTO(graph([n], [], "n1"));
+    expect(dto.nodes[0]!.predicates).toEqual([
+      "app(app=TextEdit)",
+      "ax_exists(role=TextArea, label=Body)",
+    ]);
+  });
+
+  it("marks an app-only node unlocatable — `app` cannot say WHICH state", () => {
+    const bare = node("n1", [app("TextEdit")]);
+    const rich = node("n2", [app("TextEdit"), focused("TextArea", "Body")]);
+    const dto = toGraphDTO(graph([bare, rich], [edge("e1", "n1", "n2")], "n1"));
+    expect(dto.nodes[0]!.locatable).toBe(false);
+    expect(dto.nodes[1]!.locatable).toBe(true);
+  });
+
+  it("gives a predicate-less node an empty list, not undefined", () => {
+    const dto = toGraphDTO(graph([node("n1")], [], "n1"));
+    expect(dto.nodes[0]!.predicates).toEqual([]);
+    expect(dto.nodes[0]!.locatable).toBe(false);
+  });
+});
+
+describe("failedStepIndex", () => {
+  it("shifts past a prepended handoff step", () => {
+    // execute.ts says step 0; the rendered list has the handoff at 0, so the
+    // action the reviewer sees fail is at 1.
+    expect(failedStepIndex(0, 1)).toBe(1);
+    expect(failedStepIndex(6, 1)).toBe(7);
+  });
+
+  it("is identity when no handoff was prepended", () => {
+    expect(failedStepIndex(0, 0)).toBe(0);
+    expect(failedStepIndex(6, 0)).toBe(6);
+  });
+
+  it("returns undefined for a refusal to start", () => {
+    // canArm reports step -1: nothing ran, so no step failed.
+    expect(failedStepIndex(-1, 1)).toBeUndefined();
+    expect(failedStepIndex(-1, 0)).toBeUndefined();
   });
 });
