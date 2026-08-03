@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { SessionTracksDTO } from "../app/src/shared/types.js";
+import type { KeyframeMarkerDTO, SessionTracksDTO } from "../app/src/shared/types.js";
 import {
   densityPath,
   readoutAt,
@@ -49,6 +49,15 @@ describe("densityPath", () => {
 });
 
 describe("readoutAt", () => {
+  const marker = (frameId: string): KeyframeMarkerDTO => ({
+    frameId,
+    thumbUrl: null,
+    tMono: 3000,
+    offsetSec: 3,
+    segmentCaption: "a window of code",
+    segmentDigest: null,
+  });
+
   const tracks: SessionTracksDTO = {
     sessionId: "s1",
     totalSec: 10,
@@ -82,18 +91,59 @@ describe("readoutAt", () => {
         emptyReason: null,
         warning: null,
       },
+      {
+        id: "markers",
+        title: "markers",
+        shape: "mark",
+        marks: [{ atSec: 3, label: "bookmark", tone: "ok" }],
+        emptyReason: null,
+        warning: null,
+      },
+      {
+        id: "keyframes",
+        title: "keyframes",
+        shape: "thumb",
+        thumbs: [{ atSec: 3, marker: marker("f1"), regionCount: 7 }],
+        emptyReason: null,
+        warning: null,
+      },
     ],
   };
 
+  const opts = { tolSec: 0.5, label: (m: KeyframeMarkerDTO) => `L:${m.frameId}` };
+  const text = (r: ReturnType<typeof readoutAt>, laneId: string): string | undefined =>
+    r.rows.find((row) => row.laneId === laneId)?.text;
+
   it("names the span in force and the density value in real units", () => {
-    expect(readoutAt(tracks, 2.5)).toEqual(["0:02", "TextEdit", "4 keys/s"]);
+    const r = readoutAt(tracks, 2.5, opts);
+    expect(r.timecode).toBe("0:02");
+    expect(text(r, "apps")).toBe("TextEdit");
+    expect(text(r, "typing")).toBe("4 keys/s");
+  });
+
+  it("carries each lane's own title, so the card's left column matches the gutter", () => {
+    const r = readoutAt(tracks, 2.5, opts);
+    expect(r.rows.find((row) => row.laneId === "audio-mic")).toBeUndefined();
+    expect(r.rows.map((row) => row.title)).toContain("apps");
   });
 
   it("omits a lane with no coverage rather than reporting it as zero", () => {
-    expect(readoutAt(tracks, 2.5).some((p) => p.includes("amplitude"))).toBe(false);
+    expect(text(readoutAt(tracks, 2.5, opts), "audio-mic")).toBeUndefined();
   });
 
   it("drops a span lane once its last span has ended", () => {
-    expect(readoutAt(tracks, 7)).toEqual(["0:07", "0 keys/s"]);
+    const r = readoutAt(tracks, 7, opts);
+    expect(r.timecode).toBe("0:07");
+    expect(text(r, "apps")).toBeUndefined();
+    expect(text(r, "typing")).toBe("0 keys/s");
+  });
+
+  it("reports a mark only while the cursor is within the pixel tolerance", () => {
+    expect(text(readoutAt(tracks, 3.2, opts), "markers")).toBe("bookmark");
+    expect(text(readoutAt(tracks, 4.5, opts), "markers")).toBeUndefined();
+  });
+
+  it("names a keyframe through the INJECTED label, never its own rule", () => {
+    expect(text(readoutAt(tracks, 3, opts), "keyframes")).toBe("L:f1 · 7 regions");
   });
 });

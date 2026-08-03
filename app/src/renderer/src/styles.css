@@ -1144,7 +1144,25 @@ select {
 /* The layout is Vidstack's; every colour, radius and typeface below comes from
    the app's own tokens, so the player reads as part of the instrument rather
    than as a web video player dropped into it. */
+/* ONE axis, declared once. The docked scrubber and the track rail are separate
+   subtrees that must agree on where time starts and stops, so every number that
+   decides that lives here and both read it — alignment is structural, not tuned.
+   Before this the scrubber began 23.5px from the left edge (4px controls padding
+   + 12px group padding + half a slider thumb) and the lanes began at 105px
+   (12px inset + 1px border + a 92px gutter). */
 .player {
+  --bar-pad: 12px; /* horizontal inset of BOTH the control bar and the rail */
+  --transport-btn: 38px; /* .vds-button's own size */
+  /* The transport cluster IS the rail's title column. */
+  --bar-gutter: calc(var(--transport-btn) * 3);
+  /* ZERO, and measured rather than assumed. Vidstack gives .vds-slider
+     `margin: 0 calc(var(--thumb-size) / 2)` to stop the thumb flowing out — but
+     that rule is `:where()`-wrapped at specificity 0, and the `* { margin: 0 }`
+     reset at the top of this sheet loads after it and wins. So the scrubber's
+     track spans its whole grid column (measured 561→1127 against a column of
+     561→1127), and an inset here would push the lanes off by 7px at each end.
+     If that reset ever stops applying, this is the one place to put it back. */
+  --axis-inset: 0px;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -1265,10 +1283,28 @@ select {
   visibility: visible;
   background-image: none; /* the scrim only makes sense over video */
   background: var(--panel);
-  padding: 6px 4px 4px;
+  padding: 6px var(--bar-pad) 4px;
 }
 /* Docked, the spacers and the empty top/centre groups have nothing to push. */
 .player__media .vds-controls > .vds-controls-spacer {
+  display: none;
+}
+/* The scrubber's row is the axis: a fixed gutter holding the transport, then
+   the slider across the rest. The rail repeats exactly this grid, which is what
+   makes the two line up. Vidstack's own `padding: 0 12px` on this group is a
+   single-class rule, so the extra class here is enough to drop it. */
+.player__media .vds-controls-group:has(.vds-time-slider) {
+  display: grid;
+  grid-template-columns: var(--bar-gutter) minmax(0, 1fr);
+  padding: 0;
+}
+.player__transport {
+  display: flex;
+  align-items: center;
+}
+/* Both of its slots are null, so what is left is an empty flex item sitting
+   where the play button used to start the lower row. */
+.player__media .vds-volume {
   display: none;
 }
 .player__media .vds-controls-group:not(
@@ -1321,6 +1357,10 @@ select {
   --media-slider-track-bg: var(--hairline);
   --media-slider-track-fill-bg: var(--accent);
   --media-slider-track-progress-bg: var(--muted-dim);
+  /* Pinned, not defaulted (15px): the slider's own margin is half of this, and
+     `--axis-inset` on .player has to be the same number for the rail's plot to
+     start where the slider's track does. An odd size would half-pixel it. */
+  --media-slider-thumb-size: 14px;
   --media-slider-thumb-bg: var(--accent);
   --media-slider-thumb-border: 1px solid var(--ink);
   --media-slider-preview-bg: var(--panel);
@@ -1360,8 +1400,11 @@ select {
    `.drawer` exists because `.sheet` was already taken the same way.
    --------------------------------------------------------------------------- */
 .tracks {
-  --tracks-inset: 12px; /* matches the docked control bar's horizontal padding */
-  --tracks-gutter: 92px;
+  /* Both from .player, so the rail cannot drift from the bar it sits under:
+     the same horizontal inset, and a title column the width of the transport
+     cluster that now stands left of the scrubber. */
+  --tracks-inset: var(--bar-pad);
+  --tracks-gutter: var(--bar-gutter);
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -1381,29 +1424,50 @@ select {
   padding: 12px var(--tracks-inset);
 }
 
-/* The rail scrolls VERTICALLY in its own bounded box: fifteen lanes do not fit
-   above a video frame in a 900x600 window. min-height: 0 keeps it a bounded
+/* The rail scrolls VERTICALLY in its own bounded box: fifteen 48px lanes do not
+   fit above a video frame in a 900x600 window. min-height: 0 keeps it a bounded
    scroller inside the .player height chain rather than growing to fit. */
 .tracks__body {
-  position: relative;
   overflow-y: auto;
   overflow-x: hidden;
-  /* The explicit floor the chain needs back at its end: ~4 lanes. Below this
-     the rail stops being readable and the media frame should give instead. */
-  min-height: 96px;
+  /* The explicit floor the chain needs back at its end: exactly 3 lanes of 49px
+     (48 + its rule). Six pixels under this and the third lane is clipped, which
+     is what a round 144 did. Below this the rail stops being readable and the
+     media frame should give instead. */
+  min-height: 150px;
   max-height: 34vh;
+  /* Load-bearing, not decoration. The player carries `--video-border: 1px`, so
+     the control bar's content box already starts one pixel inside .player__media
+     — without a matching border here the rail's axis is off by exactly one from
+     the scrubber's. Measured: group.left 447 against body.left 446. */
   border: 1px solid var(--hairline-soft);
   border-radius: var(--radius-sm);
   background: var(--panel);
   cursor: crosshair;
-  scrollbar-width: thin;
-  scrollbar-color: var(--hairline) transparent;
+  /* The scrollbar is hidden because a classic one steals width from the RIGHT
+     END OF THE AXIS ONLY, which would tilt the whole alignment against the
+     scrubber whenever the rail happened to overflow. The fade says there is
+     more below; the wheel still scrolls. */
+  scrollbar-width: none;
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 12px), transparent);
+}
+.tracks__body::-webkit-scrollbar {
+  display: none;
+}
+
+/* Holds the lanes AND the axis overlay. The overlay cannot live on the scroller
+   itself: an abspos child of a scroll container is sized to the client box, so
+   the playhead would stop at the fold the moment the rail is scrolled. */
+.tracks__inner {
+  position: relative;
+  min-height: 100%;
 }
 
 .tracks__lane {
   display: grid;
   grid-template-columns: var(--tracks-gutter) minmax(0, 1fr);
   align-items: center;
+  min-height: 48px;
   border-bottom: 1px solid var(--hairline-soft);
 }
 
@@ -1435,18 +1499,15 @@ select {
   cursor: help;
 }
 
+/* The margin gives back exactly what the slider's thumb margin takes, so this
+   box and the scrubber's track are the same span of pixels. Margin, not padding:
+   an abspos child resolves its percentages against the PADDING box, so padding
+   would inset the box without moving anything inside it. */
 .tracks__plot {
   position: relative;
   min-width: 0;
-  height: 18px;
-}
-
-.tracks__lane[data-shape="density"] .tracks__plot {
-  height: 24px;
-}
-
-.tracks__lane[data-shape="thumb"] .tracks__plot {
-  height: 34px;
+  height: 48px;
+  margin: 0 var(--axis-inset);
 }
 
 .tracks__empty {
@@ -1462,22 +1523,25 @@ select {
   white-space: nowrap;
 }
 
+/* Centred at a fixed height rather than inset from the lane's edges: at 48px an
+   edge-inset bar fills the lane and the rail reads as a stack of blocks. */
 .tracks__span {
   position: absolute;
-  top: 3px;
-  bottom: 3px;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 26px;
   min-width: 1px;
-  border-radius: 2px;
+  border-radius: 3px;
   overflow: hidden;
   background: var(--tone);
 }
 
 .tracks__span-label {
   display: block;
-  padding: 0 4px;
+  padding: 6px 5px;
   color: var(--ink);
-  font-size: 9px;
-  line-height: 12px;
+  font-size: 11px;
+  line-height: 14px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1485,8 +1549,9 @@ select {
 
 .tracks__mark {
   position: absolute;
-  top: 3px;
-  bottom: 3px;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 28px;
   width: 2px;
   margin-left: -1px;
   padding: 0;
@@ -1495,15 +1560,14 @@ select {
   background: var(--tone, var(--accent));
 }
 
+/* Width and offset are written by TrackLane from THUMB_PX — the same constant
+   `thumbPlacement` decides overlap with, so the pair cannot drift. This rule
+   deliberately sets neither. */
 .tracks__thumb {
   position: absolute;
-  top: 2px;
-  bottom: 2px;
-  /* MUST stay in step with THUMB_FRAC in TrackLane.tsx (0.055). Nothing
-     enforces it: the compiler cannot connect a constant to a stylesheet, and
-     the failure is thumbnails that overlap instead of degrading to ticks. */
-  width: 5.5%;
-  margin-left: -2.75%;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 42px;
   padding: 0;
   border: 1px solid var(--hairline);
   border-radius: 3px;
@@ -1537,55 +1601,128 @@ select {
   stroke: var(--ok);
 }
 
+/* The axis IS this box — the plot column, not the rail. The gutter holds lane
+   titles, so a playhead spanning the rail's full width is on a different SCALE
+   from the lanes it stands over. Same two tokens the lane grid and the plot's
+   margin use, and the same two the scrubber's row uses. */
+.tracks__axis {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--tracks-gutter) + var(--axis-inset));
+  right: var(--axis-inset);
+  pointer-events: none;
+}
+
 .tracks__playhead,
 .tracks__crosshair {
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 1px;
   pointer-events: none;
 }
 
+/* FULL WIDTH with the line drawn by its left border, not a 1px box. The
+   playhead is moved by `translateX(<percent>)`, and a percentage translate
+   resolves against the ELEMENT's own size — at 1px wide the whole timeline
+   moved the line one pixel. Measured: seeking 0 → 100% walked it 561.0 → 562.0.
+   At 100% width the same percentage means what it says. */
 .tracks__playhead {
   left: 0;
-  background: var(--rec);
+  width: 100%;
+  border-left: 1px solid var(--rec);
   will-change: transform;
 }
 
 .tracks__crosshair {
+  width: 1px;
   background: var(--text);
   opacity: 0.35;
 }
 
-.tracks__readout {
-  min-height: 16px;
-  color: var(--muted);
+/* Every lane resolved at the cursor. `fixed`, because the rail is a clipped
+   scroller and a card anchored inside it would be cut off at exactly the lanes
+   nearest its edges. Replaces a one-line readout that ellipsized precisely when
+   it had the most to say. */
+.tracks__tip {
+  position: fixed;
+  z-index: 60;
+  width: max-content;
+  max-width: 320px;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--elevated);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+}
+
+.tracks__tip-head {
   font-size: 11px;
+  color: var(--muted);
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--hairline-soft);
+}
+
+.tracks__tip-rows {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 10px;
+  font-size: 12px;
+}
+
+/* Same typography as the rail's gutter, so a row reads as the lane it names. */
+.tracks__tip-title {
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   white-space: nowrap;
+  padding-top: 1px;
+}
+
+/* Clamped, because a segment lane's label is a whole VLM caption and an
+   unclamped card grows past the video it is meant to annotate. This is a
+   glance, not the record — DetailView and the chapters menu carry the full
+   text. */
+.tracks__tip-value {
+  color: var(--text);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
+}
+
+/* The same colour the lane draws, so a row is recognisable as its bar. */
+.tracks__tip-value[data-tone]::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 2px;
+  background: var(--tone, var(--accent));
 }
 
 /* Tones. One app is one colour across every lane and every session, so these
-   slots are assigned by a hash of the app name, never by position. */
-.tracks__span[data-tone="neutral"],
-.tracks__mark[data-tone="neutral"] { --tone: var(--muted-dim); }
-.tracks__span[data-tone="accent"],
-.tracks__mark[data-tone="accent"] { --tone: var(--accent); }
-.tracks__span[data-tone="ok"],
-.tracks__mark[data-tone="ok"] { --tone: var(--ok); }
-.tracks__span[data-tone="warn"],
-.tracks__mark[data-tone="warn"] { --tone: var(--amber); }
-.tracks__span[data-tone="alarm"],
-.tracks__mark[data-tone="alarm"] { --tone: var(--rec); }
-.tracks__span[data-tone="app-0"] { --tone: #7c9cff; }
-.tracks__span[data-tone="app-1"] { --tone: #58d5a3; }
-.tracks__span[data-tone="app-2"] { --tone: #ffc24b; }
-.tracks__span[data-tone="app-3"] { --tone: #d68cff; }
-.tracks__span[data-tone="app-4"] { --tone: #4bd3e0; }
-.tracks__span[data-tone="app-5"] { --tone: #ff9f6e; }
-.tracks__span[data-tone="app-6"] { --tone: #9fd35c; }
-.tracks__span[data-tone="app-7"] { --tone: #ff7fa8; }
+   slots are assigned by a hash of the app name, never by position. Keyed by the
+   attribute alone rather than per element, so the hover card's rows carry the
+   same colour as the bar they describe. */
+.tracks [data-tone="neutral"] { --tone: var(--muted-dim); }
+.tracks [data-tone="accent"] { --tone: var(--accent); }
+.tracks [data-tone="ok"] { --tone: var(--ok); }
+.tracks [data-tone="warn"] { --tone: var(--amber); }
+.tracks [data-tone="alarm"] { --tone: var(--rec); }
+.tracks [data-tone="app-0"] { --tone: #7c9cff; }
+.tracks [data-tone="app-1"] { --tone: #58d5a3; }
+.tracks [data-tone="app-2"] { --tone: #ffc24b; }
+.tracks [data-tone="app-3"] { --tone: #d68cff; }
+.tracks [data-tone="app-4"] { --tone: #4bd3e0; }
+.tracks [data-tone="app-5"] { --tone: #ff9f6e; }
+.tracks [data-tone="app-6"] { --tone: #9fd35c; }
+.tracks [data-tone="app-7"] { --tone: #ff7fa8; }
 
 /* --- confirm ------------------------------------------------------------- */
 .confirm {

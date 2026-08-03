@@ -2,11 +2,13 @@ import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
   MediaPlayer,
   MediaProvider,
+  PlayButton,
   Poster,
   Tooltip,
   Track,
   isVideoProvider,
   useMediaPlayer,
+  useMediaState,
   type MediaPlayerInstance,
   type VTTContent,
 } from "@vidstack/react";
@@ -62,8 +64,26 @@ function stepKeyframe(
     : [...ks].reverse().find((k) => k.offsetSec < sec - 0.01);
 }
 
-/** A control-bar button with the layout's own tooltip, so injected controls are
+/** The layout's own tooltip around an injected control, so it is
  *  indistinguishable from Vidstack's. */
+function BarTip({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  return (
+    <Tooltip.Root>
+      <Tooltip.Trigger asChild>{children}</Tooltip.Trigger>
+      <Tooltip.Content className="vds-tooltip-content" placement="top">
+        {label}
+      </Tooltip.Content>
+    </Tooltip.Root>
+  );
+}
+
+/** A control-bar button with the layout's own tooltip. */
 function BarButton({
   label,
   onClick,
@@ -74,25 +94,40 @@ function BarButton({
   children: React.ReactNode;
 }): React.JSX.Element {
   return (
-    <Tooltip.Root>
-      <Tooltip.Trigger asChild>
-        <button className="vds-button" aria-label={label} onClick={onClick}>
-          {children}
-        </button>
-      </Tooltip.Trigger>
-      <Tooltip.Content className="vds-tooltip-content" placement="top">
-        {label}
-      </Tooltip.Content>
-    </Tooltip.Root>
+    <BarTip label={label}>
+      <button className="vds-button" aria-label={label} onClick={onClick}>
+        {children}
+      </button>
+    </BarTip>
+  );
+}
+
+/** Vidstack's own play button, rebuilt because the default sits in the row the
+ *  transport left. Same states, same icons — see `DefaultPlayButton`. */
+function PlayControl(): React.JSX.Element {
+  const paused = useMediaState("paused");
+  const ended = useMediaState("ended");
+  const Icons = defaultLayoutIcons.PlayButton;
+  const Icon = ended ? Icons.Replay : paused ? Icons.Play : Icons.Pause;
+  const label = paused ? "Play" : "Pause";
+  return (
+    <BarTip label={label}>
+      <PlayButton className="vds-play-button vds-button" aria-label={label}>
+        <Icon className="vds-icon" />
+      </PlayButton>
+    </BarTip>
   );
 }
 
 /**
- * Prev/next keyframe, in the control bar where ±10s seek buttons would be.
+ * Play plus prev/next keyframe, in a block the exact width of the rail's title
+ * column — that is what puts the scrubber's left edge over the lane plots'.
+ * Keyframe stepping stands where ±10s seeking would.
+ *
  * Reads `player.currentTime` on click rather than subscribing to it, so the
  * control bar does not re-render on every frame of playback.
  */
-function KeyframeNav({ keyframes }: { keyframes: KeyframeMarkerDTO[] }): React.JSX.Element | null {
+function Transport({ keyframes }: { keyframes: KeyframeMarkerDTO[] }): React.JSX.Element {
   const player = useMediaPlayer();
 
   const step = (dir: 1 | -1): void => {
@@ -101,17 +136,20 @@ function KeyframeNav({ keyframes }: { keyframes: KeyframeMarkerDTO[] }): React.J
     if (next) player.currentTime = next.offsetSec;
   };
 
-  if (keyframes.length === 0) return null;
-
   return (
-    <>
-      <BarButton label="Previous keyframe (←)" onClick={() => step(-1)}>
-        <IconPrevKeyframe className="vds-icon" />
-      </BarButton>
-      <BarButton label="Next keyframe (→)" onClick={() => step(1)}>
-        <IconNextKeyframe className="vds-icon" />
-      </BarButton>
-    </>
+    <div className="player__transport">
+      <PlayControl />
+      {keyframes.length > 0 && (
+        <>
+          <BarButton label="Previous keyframe (←)" onClick={() => step(-1)}>
+            <IconPrevKeyframe className="vds-icon" />
+          </BarButton>
+          <BarButton label="Next keyframe (→)" onClick={() => step(1)}>
+            <IconNextKeyframe className="vds-icon" />
+          </BarButton>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -203,7 +241,7 @@ export function SessionPlayer({ detail }: { detail: SessionDetailDTO }): React.J
         </div>
         {/* No player, so no seeking: a keyframe click opens it instead, which is
             what the filmstrip did in this case. */}
-        <TrackRail sessionId={detail.id} player={null} onInspect={setOpenFrame} />
+        <TrackRail sessionId={detail.id} player={null} videoSec={null} onInspect={setOpenFrame} />
         {openFrame && <DetailView frameId={openFrame} onClose={() => setOpenFrame(null)} />}
       </div>
     );
@@ -293,7 +331,11 @@ export function SessionPlayer({ detail }: { detail: SessionDetailDTO }): React.J
             // Keyframe stepping replaces ±10s seeking.
             seekBackwardButton: null,
             seekForwardButton: null,
-            afterPlayButton: <KeyframeNav keyframes={keyframes} />,
+            // The transport moves OUT of the lower row and into the slider's,
+            // where its fixed width becomes the axis' left gutter. `slot()`
+            // emits before*/after* around every slot, so this needs no fork.
+            playButton: null,
+            beforeTimeSlider: <Transport keyframes={keyframes} />,
             // Silent video, local-first: nothing to mute, nowhere to cast.
             muteButton: null,
             volumeSlider: null,
@@ -316,7 +358,7 @@ export function SessionPlayer({ detail }: { detail: SessionDetailDTO }): React.J
         />
       </MediaPlayer>
 
-      <TrackRail sessionId={detail.id} player={playerRef} onInspect={setOpenFrame} />
+      <TrackRail sessionId={detail.id} player={playerRef} videoSec={total} onInspect={setOpenFrame} />
 
       <div className="player__meta mono">
         {keyframes.length} keyframes · {detail.segmentCount} segments · {detail.eventCount} events

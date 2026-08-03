@@ -6,7 +6,12 @@
  * `run-log.ts` lives beside `RunLog.tsx` for exactly this reason.
  */
 
-import type { SessionTracksDTO, TrackDensityDTO } from "@shared/types";
+import type {
+  KeyframeMarkerDTO,
+  SessionTracksDTO,
+  TrackDensityDTO,
+  TrackTone,
+} from "@shared/types";
 
 /**
  * Which keyframes get an image and which degrade to a tick.
@@ -91,24 +96,86 @@ function densityReadout(d: TrackDensityDTO, sec: number, totalSec: number): stri
   return `${real >= 10 ? Math.round(real) : Number(real.toFixed(2))} ${d.unit}`;
 }
 
+/** The nearest of `items` to `sec`, or null when the closest is past `tolSec`. */
+function nearest<T>(items: readonly T[], at: (t: T) => number, sec: number, tolSec: number): T | null {
+  let best: T | null = null;
+  let bestGap = Infinity;
+  for (const item of items) {
+    const gap = Math.abs(at(item) - sec);
+    if (gap < bestGap) {
+      best = item;
+      bestGap = gap;
+    }
+  }
+  return bestGap <= tolSec ? best : null;
+}
+
+export interface ReadoutRow {
+  laneId: string;
+  /** The lane's own title, so the card's left column matches the rail's gutter. */
+  title: string;
+  text: string;
+  tone: TrackTone | null;
+}
+
+export interface Readout {
+  timecode: string;
+  rows: ReadoutRow[];
+}
+
+export interface ReadoutOptions {
+  /**
+   * How far from the cursor a point event still counts as "here", in seconds.
+   * A parameter, not a constant: it is a PIXEL tolerance, so only the rail knows
+   * it — it depends on the measured width of the axis.
+   */
+  tolSec: number;
+  /**
+   * `keyframeLabel`, injected. It lives in `api.ts`, which evaluates
+   * `window.deskrag` at module scope and so cannot be imported by a root test;
+   * injecting it keeps this module a leaf AND keeps that function the one label
+   * rule. Same pattern as `LiftInput.axAt` in the library.
+   */
+  label: (marker: KeyframeMarkerDTO) => string;
+}
+
 /**
- * Every lane resolved at one instant — the crosshair readout.
+ * Every lane resolved at one instant — what the hover card shows.
  *
- * One line answering "what was happening here" across all lanes is what makes
- * the rail readable; per-lane tooltips would make you hover fifteen times to
- * ask one question.
+ * ONE hover answers "what was happening here" across all lanes; per-lane
+ * tooltips would make you hover fifteen times to ask one question. The rows are
+ * laid out rather than joined, because the single line this replaced truncated
+ * exactly when it had the most to say: a caption-length keyframe label and five
+ * lane values do not fit on one line.
  */
-export function readoutAt(tracks: SessionTracksDTO, sec: number): string[] {
-  const parts: string[] = [timecodeShort(sec)];
+export function readoutAt(
+  tracks: SessionTracksDTO,
+  sec: number,
+  { tolSec, label }: ReadoutOptions,
+): Readout {
+  const rows: ReadoutRow[] = [];
+  const push = (laneId: string, title: string, text: string, tone: TrackTone | null): void => {
+    rows.push({ laneId, title, text, tone });
+  };
+
   for (const lane of tracks.lanes) {
     if (lane.emptyReason !== null) continue;
     if (lane.shape === "span") {
       const span = lane.spans?.find((s) => sec >= s.startSec && sec < s.endSec);
-      if (span) parts.push(span.label);
+      if (span) push(lane.id, lane.title, span.label, span.tone);
     } else if (lane.shape === "density" && lane.density) {
       const text = densityReadout(lane.density, sec, tracks.totalSec);
-      if (text) parts.push(text);
+      if (text) push(lane.id, lane.title, text, null);
+    } else if (lane.shape === "mark") {
+      const mark = nearest(lane.marks ?? [], (m) => m.atSec, sec, tolSec);
+      if (mark) push(lane.id, lane.title, mark.label, mark.tone);
+    } else if (lane.shape === "thumb") {
+      const thumb = nearest(lane.thumbs ?? [], (t) => t.atSec, sec, tolSec);
+      if (thumb) {
+        push(lane.id, lane.title, `${label(thumb.marker)} · ${thumb.regionCount} regions`, "accent");
+      }
     }
   }
-  return parts;
+
+  return { timecode: timecodeShort(sec), rows };
 }

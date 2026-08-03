@@ -169,8 +169,8 @@ electron-vite + React + TS. Three source roots with a hard rule between them: **
 - **`KeymapProducer` is wired to the input signal, not its own toggle.** Without it nothing emits a layout, `resolveKeys` has nothing to apply, and every text gesture is dropped — so a recording with keys but no keymap silently loses all typed content. The Trace stage says so in its progress label rather than only in the console, because nothing else would tell the user.
 - **Deleting a recording is two calls, in order:** `store.deleteSession(id)` then `blobs.removeSession(id)`. The store records where blobs are; it does not own the files. Rows first — a row pointing at a deleted file is a broken read, whereas a file with no row is just reclaimable disk.
 - **Video is served over a separate protocol host.** `deskrag://frame/<blobId>` buffers a keyframe whole; `deskrag://media/<blobId>` streams with `Range` → `206`. Chromium will not let a `<video>` seek without the 206 + `content-range` path.
-- **The Library player (`renderer/src/screens/SessionPlayer.tsx`) puts the index on the timeline.** Keyframes become Vidstack *chapter cues* (so the scrubber is divided at exactly the frames that were indexed) and *thumbnail images* (an object array of `deskrag://frame/` URLs — never a WebVTT sprite, which would need a fetch the CSP does not allow). Duration is seeded from the `t_mono` span because a fragmented MP4 reports `Infinity` until buffered, then adopts the provider's value. Playback has no audio — the screen video is video-only — so mute/volume/audio-gain are removed, not styled. `KeyframeStrip` tracks the playhead via `player.subscribe` and sets state only when the *nearest keyframe* changes; subscribing per time update would re-render the strip every animation frame.
-  - **One label rule, one source: `keyframeLabel()` in `renderer/src/api.ts` — caption → digest → timecode.** The VLM caption describes the pixels, so it wins; the templated event digest is the fallback for sessions indexed without a captioner. Every surface reads it (control-bar title, slider chapter titles and hover preview, chapters menu, filmstrip tooltip) because they all resolve through that *one* chapters track. `KeyframeMarkerDTO` carries both, resolved in `sessionDetail()` from a single `getSegmentsBySession()` map — never a `getSegment()` per keyframe — using the same shortest-segment-wins rule as `detail()`, so a frame is labelled identically in both.
+- **The Library player (`renderer/src/screens/SessionPlayer.tsx`) puts the index on the timeline.** Keyframes become Vidstack *chapter cues* (so the scrubber is divided at exactly the frames that were indexed) and *thumbnail images* (an object array of `deskrag://frame/` URLs — never a WebVTT sprite, which would need a fetch the CSP does not allow). Duration is seeded from the `t_mono` span because a fragmented MP4 reports `Infinity` until buffered, then adopts the provider's value. Playback has no audio — the screen video is video-only — so mute/volume/audio-gain are removed, not styled. That adopted duration is also what the track rail's playhead divides by; see the rail's `videoSec` below, because it is NOT the same number the lanes are measured against.
+  - **One label rule, one source: `keyframeLabel()` in `renderer/src/api.ts` — caption → digest → timecode.** The VLM caption describes the pixels, so it wins; the templated event digest is the fallback for sessions indexed without a captioner. Every surface reads it (control-bar title, slider chapter titles and hover preview, chapters menu, and the rail's hover card — which takes it as an injected parameter) because they all resolve through that *one* chapters track. `KeyframeMarkerDTO` carries both, resolved in `sessionDetail()` from a single `getSegmentsBySession()` map — never a `getSegment()` per keyframe — using the same shortest-segment-wins rule as `detail()`, so a frame is labelled identically in both.
   - **The controls are DOCKED under the frame, not overlaid on it** — a two-row grid on `.player__media` (frame | controls), which works only because `:where(.vds-video-layout)` is `display: contents`: `.vds-controls` and the overlays are direct grid items of the player, so `grid-area` places them. Vidstack's rules are nearly all `:where()` (specificity 0), so plain class selectors retune it without `!important`. Docked means always visible, hence the forced `opacity`/`visibility` and no scrim. The player's `aspect-ratio` is overridden to `auto` so the frame fills the stage at `object-fit: contain` — never cropped, because this is an inspection surface. Three traps, each measured in the running app:
     - **The grid column must be `minmax(0, 1fr)`, never the implicit `auto`.** An `auto` track is floored at its content's min-content width, and `.vds-slider-chapter-title` — the scrubber's per-chapter hover label — has *no* `nowrap`, `overflow` or `max-width` in Vidstack's CSS. A caption-length title measured 2031px, which widened the column to 2131px inside a 966px stage and scaled the video (at `width: 100%` of the column) with it. Every flex link down to that text also needs `min-width: 0`, and the label itself a `max-width` + wrap.
     - **`min-height` on the player must be explicit.** It sets `overflow: hidden` for the rounded corners, and a flex item's `min-height: auto` resolves to the content-based minimum *only while overflow is visible* — with `hidden` that automatic minimum is 0, so the player collapses under its own rows. The floor is ~200px of frame plus the ~100px bar; below it the interface stops filling and `.content` scrolls (the app allows a 900x600 window).
@@ -212,21 +212,70 @@ electron-vite + React + TS. Three source roots with a hard rule between them: **
     offset and dropped at another — floating-point noise alone deciding the layout,
     the same trap `Path.curve` span splitting hit. The translation-invariance test
     is what catches it.
+  - **The scrubber and the lanes are ONE axis, and the geometry is declared once**
+    on `.player` (`--bar-pad`, `--transport-btn`, `--bar-gutter`, `--axis-inset`).
+    The scrubber's `.vds-controls-group` becomes a two-column grid — transport,
+    then slider — and `.tracks` repeats exactly that grid, so alignment is
+    structural rather than tuned. **The transport moved there through the
+    `beforeTimeSlider` slot** (Vidstack's `slot()` emits `before*`/`after*` around
+    every slot, so no fork), which is what makes the gutter a *width the bar and
+    the rail share* instead of two numbers. Measured after: both spans 561→1127.
+    Three traps, each found by measuring the running app, never by reading:
+    - **`.tracks__body`'s 1px border is load-bearing.** The player carries
+      `--video-border: 1px`, so the control bar's content box already starts one
+      pixel inside `.player__media`. Replacing the rail's border with an inset
+      shadow "so it adds no layout" put the two axes 1px apart (447 vs 446).
+    - **`--axis-inset` is 0, and that is a MEASUREMENT.** Vidstack insets
+      `.vds-slider` by half a thumb (`margin: 0 calc(var(--thumb-size)/2)`) — but
+      that rule is `:where()`-wrapped at specificity 0 and `styles.css`'s
+      `* { margin: 0 }` reset loads after it and wins. Giving the rail the 7px
+      back put it 7px off at each end.
+    - **The scrollbar is hidden** (`scrollbar-width: none` + a bottom fade mask),
+      because a classic scrollbar steals width from the RIGHT END OF THE AXIS
+      ONLY and would tilt the whole alignment whenever the rail overflowed.
+  - **`.tracks__axis` IS the axis — the plot column, not the rail.** The gutter
+    holds lane titles, so measuring the cursor against `.tracks__body` puts the
+    crosshair on a different SCALE from the lanes it stands over. It also has to
+    live inside `.tracks__inner` rather than on the scroller: an abspos child of a
+    scroll container is sized to the CLIENT box, so the playhead stopped at the
+    fold once the rail was scrolled.
   - **The playhead is written imperatively** from `player.subscribe`, which fires
     every animation frame; through state it would re-render fifteen lanes at 60fps.
+    It is **full width with the line drawn by its left border**: a percentage
+    `translateX` resolves against the ELEMENT's own size, and the 1px box it
+    shipped as moved the playhead ONE PIXEL across the whole timeline (measured
+    561.0 → 562.0 seeking 0 → 100%). It looked stationary and nothing failed.
+  - **Media seconds are NOT lane seconds.** The lanes are `t_mono` offsets; the
+    scrubber is media time, and the encoded video is shorter than the span it
+    covers — measured 84.9s of media for an 85.76s session, a 1% divergence that
+    is 5px at the right end. `TrackRail` takes `videoSec` and converts at exactly
+    one place (`seek`, and the playhead's divisor); everything else stays in lane
+    seconds. Dividing one clock by the other's total is the bug to watch for.
   - **The rail is `.tracks`, NOT `.rail`** — `.rail` is the left navigation sidebar
     (`--rail-w: 76px`). Caught by grepping before minting the class, the same rule
     `.drawer` exists because of.
   - **`.tracks` is `flex: 0 1 auto`, never `flex: none`.** With `none` it cannot
     shrink, so the player's minimum became the 300px media floor PLUS the whole
     rail, which overflows the stage and puts the scrollbar back on `.content`.
-    The rail gives before the page does; `.tracks__body` carries the floor (96px,
-    ~4 lanes). **Measured at 1180px wide: 4 lanes at 800px tall (the default), 12 at
-    1000, all 15 at 1200.** Below the documented floor `.content` scrolls, as it did
-    with the filmstrip.
-  - **`THUMB_FRAC` in `TrackLane.tsx` must equal `.tracks__thumb`'s width.** Two
-    files, nothing enforces it, and the failure is thumbnails that overlap instead
-    of degrading to ticks.
+    The rail gives before the page does; `.tracks__body` carries the floor —
+    **150px, which is exactly 3 lanes of 49px; a round 144 clipped the third.**
+    **Measured at 1180px wide with 48px lanes: 3 lanes at 800px tall (the
+    default), 3 at 900, 5 at 1000, and `.player__media` pinned at its 300px floor
+    throughout** — the rail already takes every pixel the frame does not need, so
+    only lowering that floor would show more. At 900x600 `.content` scrolls, as it
+    did with the filmstrip.
+  - **`THUMB_PX` in `TrackLane.tsx` is now the ONLY thumbnail width.** It was a
+    fraction in TS and a percentage in CSS with nothing enforcing the pair; the
+    rail measures its axis with a `ResizeObserver` and passes the width down, so
+    the same constant sizes the box and decides `thumbPlacement`'s overlap. An
+    image is also CLAMPED to the axis — centred on its time, a keyframe near t=0
+    painted over the title column, which is the transport's column too.
+  - **The hover readout is a CARD, and it is still one card for all lanes.**
+    `.tracks__tip` is `position: fixed` because the rail is a clipped scroller,
+    and each value is clamped to three lines because a segment lane's label is a
+    whole VLM caption. `readoutAt` takes `keyframeLabel` as an INJECTED
+    parameter — `api.ts` evaluates `window.deskrag` at module scope and cannot be
+    imported by a root test, and injecting keeps that function the one label rule.
   - **A session with no video still gets a rail.** The axis comes from the `t_mono`
     span; there is no playhead and a keyframe click opens `DetailView`, which is
     what the filmstrip did in that case.
