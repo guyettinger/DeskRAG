@@ -40,6 +40,7 @@ import {
   FramePatchRepresenter,
   OllamaCaptionProvider,
   nestAxElements,
+  wavPeaks,
   type Producer,
   type EmbeddingProvider,
   type ImageEmbeddingProvider,
@@ -57,6 +58,7 @@ import { DEFAULT_GRAPH_ID, indexTrace, rebuildGraph } from "./trace-index.js";
 import { ModelStore, type ModelDownloadProgress } from "./model-store.js";
 import { OnnxHost } from "./onnx-host.js";
 import { spawnOnnxWorker } from "./onnx-spawn.js";
+import { TRACK_BUCKETS } from "@shared/types";
 import type {
   Capabilities,
   HighlightDTO,
@@ -70,9 +72,12 @@ import type {
   SearchResultDTO,
   SessionDetailDTO,
   SessionSummaryDTO,
+  SessionTracksDTO,
   SessionVideoDTO,
   SignalKind,
 } from "@shared/types";
+import { buildSessionTracks, type AudioLaneInput } from "./session-tracks.js";
+import { peakCountFor, type AudioBlobPeaks } from "./track-buckets.js";
 
 interface Providers {
   textEmbedder: EmbeddingProvider;
@@ -127,6 +132,11 @@ export class DeskRagService {
   private modelListeners = new Set<(p: ModelDownloadProgress) => void>();
   /** Region highlights from the most recent search, for detail() to reuse. */
   private lastHighlights = new Map<string, HighlightDTO[]>();
+  /**
+   * Timeline rails, keyed by session id. A FINISHED session is immutable, so
+   * this is correct by construction — see the guard in `sessionTracks`.
+   */
+  private readonly trackCache = new Map<string, SessionTracksDTO>();
 
   constructor(dataDir: string, settings: SettingsStore) {
     this.dir = dataDir;
@@ -784,6 +794,84 @@ export class DeskRagService {
     };
   }
 
+  /**
+   * Every recorded signal, bucketed onto the session's own time axis.
+   *
+   * All the arithmetic lives in `session-tracks.ts`, which is pure and
+   * root-tested; this method is only the reads and the cache.
+   */
+  async sessionTracks(sessionId: string): Promise<SessionTracksDTO | null> {
+    const cached = this.trackCache.get(sessionId);
+    if (cached) return cached;
+
+    const detail = this.sessionDetail(sessionId);
+    if (!detail) return null;
+
+    // Offsets are measured from the video when there is one, so the rail and
+    // the scrubber share an origin; from t_mono zero otherwise.
+    const originMono = detail.video ? detail.video.tMonoStart : 0;
+    const totalSec = detail.video
+      ? (detail.video.tMonoEnd - detail.video.tMonoStart) / 1000
+      : detail.durationMs / 1000;
+
+    const frames = this.store.getFramesBySession(sessionId);
+    const regionCounts = new Map<string, number>();
+    for (const f of frames) {
+      const n = this.store.getRegionsByFrame(f.id).length;
+      if (n > 0) regionCounts.set(f.id, n);
+    }
+
+    const byMedia = new Map<string, AudioBlobPeaks[]>();
+    for (const blob of this.store.getBlobsBySession(sessionId)) {
+      if (blob.media !== "mic" && blob.media !== "desktop_audio") continue;
+      let bytes: Uint8Array;
+      try {
+        bytes = await this.blobs.read(blob);
+      } catch {
+        // The row says the audio is there and the file is not. That stretch
+        // stays uncovered, which is exactly what the rail should show — one
+        // missing blob must not sink the whole thing.
+        continue;
+      }
+      const declaredSec = (blob.tMonoEnd - blob.tMonoStart) / 1000;
+      const peaks = wavPeaks(bytes, peakCountFor(declaredSec, totalSec, TRACK_BUCKETS));
+      if (!peaks) continue;
+      const list = byMedia.get(blob.media) ?? [];
+      list.push({
+        startSec: (blob.tMonoStart - originMono) / 1000,
+        // The MEASURED duration, so a truncated blob reads as a gap for its
+        // missing tail rather than as a stretched envelope.
+        durationSec: peaks.durationSec,
+        peaks: peaks.peaks,
+      });
+      byMedia.set(blob.media, list);
+    }
+    const audio: AudioLaneInput[] = [...byMedia.entries()].map(([media, blobs]) => ({
+      media,
+      blobs,
+    }));
+
+    const dto = buildSessionTracks({
+      sessionId,
+      originMono,
+      totalSec,
+      buckets: TRACK_BUCKETS,
+      anchoredToVideo: detail.video !== null,
+      events: this.store.getEventsBySession(sessionId),
+      segments: this.store.getSegmentsBySession(sessionId),
+      frames,
+      axSnapshots: this.store.getAxSnapshotsBySession(sessionId),
+      keyframes: detail.keyframes,
+      regionCounts,
+      audio,
+    });
+
+    // Only a FINISHED session is immutable. Caching an open one would freeze
+    // the rail at whatever the recording had reached when it was first opened.
+    if (detail.endedAt !== null) this.trackCache.set(sessionId, dto);
+    return dto;
+  }
+
   async removeSession(sessionId: string): Promise<void> {
     if (this.state.state !== "idle" && this.state.sessionId === sessionId) {
       throw new Error("That recording is still in progress — stop it before deleting.");
@@ -793,6 +881,7 @@ export class DeskRagService {
     await this.store.deleteSession(sessionId);
     await this.blobs.removeSession(sessionId);
     this.lastHighlights.clear();
+    this.trackCache.delete(sessionId);
   }
 
   /**

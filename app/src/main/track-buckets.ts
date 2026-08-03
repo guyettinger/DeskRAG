@@ -73,6 +73,36 @@ export function bucketHold(
   return out;
 }
 
+/**
+ * Counts per bucket → a per-second rate, smoothed over at least one second.
+ *
+ * A raw per-bucket rate is arithmetically true and practically a lie. With 1000
+ * buckets over a 40-second recording each bucket is 40ms, so ONE keystroke
+ * reads as "25 keys/s" — a rate nobody types at. Measured exactly that way on a
+ * real recording: 65 keystrokes reported a 25.2 keys/s peak.
+ *
+ * The window is `max(1s, one bucket)`, so a long session whose buckets already
+ * exceed a second is left alone.
+ */
+export function bucketRate(counts: readonly number[], perBucketSec: number): number[] {
+  if (!(perBucketSec > 0) || counts.length === 0) return counts.map(() => 0);
+  const span = Math.max(1, Math.round(1 / perBucketSec)); // buckets per second
+  if (span === 1) return counts.map((c) => c / perBucketSec);
+
+  // Prefix sums so the sliding window stays O(n) rather than O(n * span).
+  const prefix = new Array<number>(counts.length + 1).fill(0);
+  for (let i = 0; i < counts.length; i++) prefix[i + 1] = prefix[i]! + counts[i]!;
+
+  const half = Math.floor(span / 2);
+  return counts.map((_, i) => {
+    const lo = Math.max(0, i - half);
+    const hi = Math.min(counts.length, i - half + span);
+    // Divide by the window ACTUALLY covered, so the first and last buckets are
+    // not damped toward zero by a window hanging off the end of the axis.
+    return (prefix[hi]! - prefix[lo]!) / ((hi - lo) * perBucketSec);
+  });
+}
+
 /** Scale to 0–1 by the largest value present, preserving nulls. */
 export function normalize(raw: readonly (number | null)[]): {
   values: (number | null)[];

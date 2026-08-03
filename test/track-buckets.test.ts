@@ -4,6 +4,7 @@ import {
   bucketHold,
   bucketIndex,
   bucketMax,
+  bucketRate,
   mergeAudioPeaks,
   normalize,
   peakCountFor,
@@ -58,6 +59,39 @@ describe("bucketHold", () => {
     const out = bucketHold([{ sec: 3, value: 42 }], 10, 10);
     expect(out.slice(0, 3)).toEqual([null, null, null]);
     expect(out.slice(3)).toEqual([42, 42, 42, 42, 42, 42, 42]);
+  });
+});
+
+describe("bucketRate", () => {
+  // 25 buckets to the second — the shape a 40s recording takes at 1000 buckets,
+  // which is where the misleading number was measured.
+  const PER_BUCKET = 0.04;
+
+  it("does not turn ONE event into 25 per second", () => {
+    const counts = new Array(1000).fill(0);
+    counts[500] = 1;
+    const rate = bucketRate(counts, PER_BUCKET);
+    expect(Math.max(...rate)).toBeCloseTo(1, 5);
+  });
+
+  it("reports a real burst at its real rate", () => {
+    // Five keystrokes inside one second is five per second.
+    const counts = new Array(1000).fill(0);
+    for (let i = 500; i < 505; i++) counts[i] = 1;
+    expect(Math.max(...bucketRate(counts, PER_BUCKET))).toBeCloseTo(5, 5);
+  });
+
+  it("leaves a long session alone, where a bucket already exceeds a second", () => {
+    expect(bucketRate([0, 2, 0], 4)).toEqual([0, 0.5, 0]);
+  });
+
+  it("does not damp the edges toward zero with a window hanging off the axis", () => {
+    const counts = new Array(1000).fill(0);
+    counts[0] = 1;
+    const rate = bucketRate(counts, PER_BUCKET);
+    // The window at index 0 covers 13 buckets, not 25, and divides by 13.
+    expect(rate[0]!).toBeGreaterThan(1);
+    expect(rate[0]!).toBeLessThan(2.5);
   });
 });
 

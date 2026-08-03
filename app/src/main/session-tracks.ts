@@ -29,6 +29,7 @@ import {
   bucketCounts,
   bucketHold,
   bucketMax,
+  bucketRate,
   mergeAudioPeaks,
   normalize,
   type AudioBlobPeaks,
@@ -167,9 +168,9 @@ function rateLane(
     .filter((e) => e.kind === kind)
     .map((e) => secOf(e.tMono, input.originMono));
   const perBucketSec = input.totalSec / input.buckets;
-  const rate = bucketCounts(secs, input.totalSec, input.buckets).map((c) =>
-    perBucketSec > 0 ? c / perBucketSec : 0,
-  );
+  // Smoothed over at least a second: a raw per-bucket rate turns one keystroke
+  // in a 40ms bucket into "25 keys/s", which is true and useless.
+  const rate = bucketRate(bucketCounts(secs, input.totalSec, input.buckets), perBucketSec);
   const { values, peak } = normalize(rate);
   return {
     lane: {
