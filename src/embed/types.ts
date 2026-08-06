@@ -99,6 +99,13 @@ export interface CaptionProvider {
 export interface TranscriptionResult {
   /** The recognized speech; empty string when there is no speech / on failure. */
   text: string;
+  /**
+   * Sub-clip timing, when the provider can give it (whisper.cpp's -oj JSON
+   * output; startMs/endMs are relative to the clip passed to transcribe()).
+   * Absent means the caller must treat `text` as one opaque span — the
+   * fallback TranscriptRepresenter.represent() uses for whole-blob attribution.
+   */
+  segments?: { text: string; startMs: number; endMs: number }[];
 }
 
 /**

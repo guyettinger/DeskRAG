@@ -5,13 +5,13 @@
  * path. Audio never leaves the machine; no API key, no per-minute cost.
  *
  * Best-effort by contract (mirrors SwiftAxSource): a missing binary, missing
- * model, non-zero exit, or timeout all resolve to `{ text: "" }` (logged via
- * onError), so absent STT degrades to "no transcript" rather than failing the
- * represent pass.
+ * model, non-zero exit, or malformed output all resolve to `{ text: "" }`
+ * (logged via onError), so absent/broken STT degrades to "no transcript"
+ * rather than failing the represent pass.
  *
  * Contract for the binary (whisper.cpp `whisper-cli` / legacy `main`):
- *   whisper-cli -m <model> -f <audio.wav> -nt -l <lang> -otxt -of <out>
- *   → writes recognized text (no timestamps) to `<out>.txt`.
+ *   whisper-cli -m <model> -f <audio.wav> -l <lang> -oj -of <out>
+ *   → writes a JSON transcript (with per-segment offsets, in ms) to `<out>.json`.
  * The audio is written to a temp 16 kHz mono WAV first (that's what the audio
  * producer emits), transcribed, then both temp files are removed.
  */
@@ -34,6 +34,41 @@ export interface WhisperCppOptions {
   /** Kill + return "" after this many ms (default 120000). */
   timeoutMs?: number;
   onError?: (msg: string) => void;
+}
+
+interface WhisperJsonEntry {
+  text?: unknown;
+  offsets?: { from?: unknown; to?: unknown };
+}
+
+/** Parses whisper.cpp's -oj JSON shape defensively; any mismatch degrades to
+ *  `{ text: "" }` rather than throwing, the same contract a missing binary has. */
+export function parseWhisperJson(
+  json: string,
+  onError: (msg: string) => void,
+): TranscriptionResult {
+  let parsed: { transcription?: WhisperJsonEntry[] };
+  try {
+    parsed = JSON.parse(json) as { transcription?: WhisperJsonEntry[] };
+  } catch (err) {
+    onError(
+      `could not parse whisper JSON output: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return { text: "" };
+  }
+  const entries = parsed.transcription;
+  if (!Array.isArray(entries)) return { text: "" };
+
+  const segments: { text: string; startMs: number; endMs: number }[] = [];
+  for (const e of entries) {
+    const text = typeof e.text === "string" ? e.text.trim() : "";
+    const startMs = e.offsets?.from;
+    const endMs = e.offsets?.to;
+    if (!text || typeof startMs !== "number" || typeof endMs !== "number") continue;
+    segments.push({ text, startMs, endMs });
+  }
+  const text = segments.map((s) => s.text).join(" ").trim();
+  return segments.length > 0 ? { text, segments } : { text };
 }
 
 export class WhisperCppTranscription implements TranscriptionProvider {
@@ -65,18 +100,16 @@ export class WhisperCppTranscription implements TranscriptionProvider {
     try {
       dir = await mkdtemp(join(tmpdir(), "erag-whisper-"));
       const wavPath = join(dir, "clip.wav");
-      const outBase = join(dir, "clip"); // whisper appends ".txt"
+      const outBase = join(dir, "clip"); // whisper appends ".json"
       await writeFile(wavPath, audio);
       const args = [
         "-m", this.modelPath,
         "-f", wavPath,
-        "-nt",
         "-l", opts?.language ?? this.language,
-        "-otxt", "-of", outBase,
+        "-oj", "-of", outBase,
         ...this.extraArgs,
       ];
-      const text = await this.run(args, `${outBase}.txt`);
-      return { text: text.trim() };
+      return await this.run(args, `${outBase}.json`);
     } catch (err) {
       this.onError(err instanceof Error ? err.message : String(err));
       return { text: "" };
@@ -85,22 +118,21 @@ export class WhisperCppTranscription implements TranscriptionProvider {
     }
   }
 
-  private run(args: string[], outPath: string): Promise<string> {
+  private run(args: string[], outPath: string): Promise<TranscriptionResult> {
     return new Promise((resolve) => {
       execFile(
         this.binaryPath,
         args,
         { timeout: this.timeoutMs, maxBuffer: 16 * 1024 * 1024, encoding: "utf8" },
-        (err, stdout) => {
+        (err) => {
           if (err) {
             this.onError(err.message);
-            resolve("");
+            resolve({ text: "" });
             return;
           }
-          // Prefer the -otxt file; fall back to stdout for binaries that ignore it.
           readFile(outPath, "utf8").then(
-            (txt) => resolve(txt),
-            () => resolve(stdout ?? ""),
+            (json) => resolve(parseWhisperJson(json, this.onError)),
+            () => resolve({ text: "" }),
           );
         },
       );
