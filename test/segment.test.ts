@@ -163,6 +163,33 @@ describe("windowSegments", () => {
     ]);
   });
 
+  it("does not emit a bogus trailing window when a boundary-aware span is shorter than targetMs but longer than strideMs", () => {
+    // Found by driving a real recording: task (targetMs 30_000, strideMs
+    // 15_000 once adaptive-resolved) cutting a 16.5s focus_change span used
+    // to emit a second "window" segment that was a near-duplicate of the
+    // first's tail, because the boundaryAware loop kept sliding by strideMs
+    // even after the first window already reached the span's end.
+    const taskLike: GranularityConfig = {
+      name: "task",
+      targetMs: 30_000,
+      strideMs: 15_000,
+      boundaryAware: true,
+      cutReasons: ["focus_change", "bookmark"],
+    };
+    const bounds: Boundary[] = [
+      { tMono: 0, reason: "session_start" },
+      { tMono: 2187, reason: "focus_change" },
+      { tMono: 18692, reason: "focus_change" }, // span length 16_505 < targetMs, > strideMs
+      { tMono: 19101, reason: "session_end" },
+    ];
+    const segs = windowSegments("s", taskLike, bounds, ulid);
+    expect(segs.map((s) => [s.tMonoStart, s.tMonoEnd, s.boundaryReason])).toEqual([
+      [0, 2187, "session_start"],
+      [2187, 18692, "focus_change"],
+      [18692, 19101, "focus_change"],
+    ]);
+  });
+
   it("an undefined cutReasons keeps every boundary (today's behavior)", () => {
     const bounds: Boundary[] = [
       { tMono: 0, reason: "session_start" },

@@ -51,6 +51,13 @@ export function windowSegments(
       while (start < b1.tMono) {
         const stop = Math.min(start + g.targetMs, b1.tMono);
         mk(start, stop, first ? b0.reason : "window");
+        // Stop the moment a window reaches the span's end, same rule the
+        // non-boundary-aware branch already uses. Without it, a span shorter
+        // than targetMs but longer than strideMs gets a bogus trailing
+        // window that's a near-duplicate of the one that already covered it
+        // — invisible whenever strideMs === targetMs (action), only exposed
+        // once task became boundary-aware with strideMs < targetMs.
+        if (stop >= b1.tMono) break;
         start += g.strideMs;
         first = false;
       }
