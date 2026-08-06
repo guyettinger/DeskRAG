@@ -22,7 +22,7 @@ const blobs = new BlobStore("blobs");
 const session = new CaptureSession(store, { blobStore: blobs, keyframeGate: new KeyframeGate() });
 // session.addProducer(new UiohookInputProducer());
 // session.addProducer(new ActiveWindowProducer());
-// session.addProducer(new FfmpegScreenProducer({ input: "1", fps: 1 }));
+// session.addProducer(new FfmpegScreenProducer({ fps: 1 })); // input: auto-detected display
 const sessionId = await session.start();
 // ... user works ...
 await session.stop();

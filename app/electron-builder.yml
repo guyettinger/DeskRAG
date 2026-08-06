@@ -10,6 +10,17 @@ files:
 mac:
   icon: build/icon.icns
   category: public.app-category.productivity
+  # Microphone capture runs in a spawned ffmpeg, so the grant has to belong to
+  # the bundle: without the usage string macOS never shows the prompt, and
+  # without audio-input (inherited by children) ffmpeg's avfoundation input
+  # fails with "Input/output error" under Hardened Runtime.
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    NSMicrophoneUsageDescription: DeskRAG records microphone audio so your sessions can be transcribed and searched. Audio never leaves this machine.
+    NSCameraUsageDescription: DeskRAG does not use the camera.
+    NSAppleEventsUsageDescription: DeskRAG reads the accessibility tree of the focused app to make on-screen text searchable.
 win:
   icon: build/icon.ico
 linux:

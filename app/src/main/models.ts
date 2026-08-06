@@ -16,6 +16,12 @@
  * needs 17. scripts/export-colsmol.py re-exports with a dynamic tile count;
  * the result is published to guyettinger/colSmol-256M-dynamic-onnx so users
  * download it like any other model rather than building it locally.
+ *
+ * Whisper is the one entry that is NOT ONNX: it is a GGML file consumed by an
+ * external whisper.cpp binary. It lives here anyway so speech-to-text works out
+ * of the box — the previous "bring your own model path" default meant
+ * transcription was silently off for everyone. base.en at q5_1 is 57MB, which is
+ * small enough to fetch on first use and accurate enough for desktop speech.
  */
 
 export interface ModelFile {
@@ -144,6 +150,19 @@ export const MODELS = {
         path: "config.json",
         sha256: "e68e589bbc081d258f585d32ff90d41f0eededdddd5d5d38f006d80ff7de0c0d",
         bytes: 7268,
+      },
+    ],
+  },
+  whisper: {
+    id: "whisper-base.en-q5_1",
+    source: "download",
+    repo: "ggerganov/whisper.cpp",
+    revision: "5359861c739e955e79d9a303bcbc70fb988958b1",
+    files: [
+      {
+        path: "ggml-base.en-q5_1.bin",
+        sha256: "4baf70dd0d7c4247ba2b81fafd9c01005ac77c2f9ef064e00dcf195d0e2fdd2f",
+        bytes: 59721011,
       },
     ],
   },

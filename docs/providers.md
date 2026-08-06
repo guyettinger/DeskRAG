@@ -13,7 +13,7 @@ regression, not a feature to add.**
 | Image, late interaction | ONNX (in-process) | `colSmol-256M-dynamic` — patches *are* the regions, so highlights fall out of the MaxSim argmax instead |
 | Behavioral vector | builtin | `input-dynamics-v1`, 12-dim |
 | VLM caption | Ollama (daemon) | any vision model you've pulled, e.g. `qwen3-vl:4b` |
-| Transcription (STT) | whisper.cpp (subprocess) | a `ggml-*.bin` on disk |
+| Transcription (STT) | whisper.cpp (subprocess) | `ggml-base.en-q5_1.bin`, downloaded like any other weight |
 | Rerank (Tier 4) | ONNX (in-process) | `jina-reranker-v1-turbo-en` |
 
 ## Weights are pinned
@@ -24,6 +24,19 @@ namespace kept claiming the same one, silently breaking vector comparability.
 
 Acquisition lives in the app, never the library: `deskrag` on npm fetches nothing at
 install or at runtime.
+
+The whisper GGML model is in that manifest too, even though it is not ONNX and is read
+by an external binary rather than in-process. An empty `providers.whisper.modelPath`
+therefore means "use the managed model", not "transcription off" — set it only to point
+at your own file — and an empty `binaryPath` means `whisper-cli` on `PATH` for exactly the
+same reason. Neither empty value means "off". The **binary** is still yours to install
+(`brew install whisper-cpp`); whether it resolves is reported as
+`EnvInfo.whisperConfigured`, not as a capability.
+
+It is also the only weight fetched while *indexing* rather than while searching, which is
+why Transcribing is the one stage permitted to fail without failing the run: it downloads,
+and it runs before the trace graph is built. A failed download costs you a transcript and
+says so in the progress label; it does not cost you the session.
 
 ## The two image paths are mutually exclusive
 

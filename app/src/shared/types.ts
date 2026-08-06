@@ -82,12 +82,19 @@ export interface ModelDownloadProgress {
   done: boolean;
 }
 
-/** What library features are usable given the current settings (renderer gating). */
+/**
+ * What library features are usable given the current settings (renderer gating).
+ *
+ * Configured INTENT, so every member is a provider choice. Transcription has no
+ * member and must not get one back: both whisper settings default when empty
+ * (managed model, `whisper-cli` on PATH), so no setting expresses "off" and the
+ * answer would be a constant `true`. Whether it can actually run is a fact about
+ * the machine, not the settings — `EnvInfo.whisperConfigured`.
+ */
 export interface Capabilities {
   imageSearch: boolean;
   caption: boolean;
   rerank: boolean;
-  transcript: boolean;
 }
 
 // --- recording ---------------------------------------------------------------

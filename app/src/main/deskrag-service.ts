@@ -55,7 +55,11 @@ import type { SettingsStore } from "./settings.js";
 import { MODELS } from "./models.js";
 import { libUrl } from "./lib-resolve.js";
 import { DEFAULT_GRAPH_ID, indexTrace, rebuildGraph } from "./trace-index.js";
-import { ModelStore, type ModelDownloadProgress } from "./model-store.js";
+import {
+  ModelFilesMissingError,
+  ModelStore,
+  type ModelDownloadProgress,
+} from "./model-store.js";
 import { OnnxHost } from "./onnx-host.js";
 import { spawnOnnxWorker } from "./onnx-spawn.js";
 import { TRACK_BUCKETS } from "@shared/types";
@@ -76,6 +80,8 @@ import type {
   SessionVideoDTO,
   SignalKind,
 } from "@shared/types";
+import { request as requestPermission } from "./permissions.js";
+import { resolveWhisperBinary, whisperAvailable } from "./whisper.js";
 import { buildSessionTracks, type AudioLaneInput } from "./session-tracks.js";
 import { peakCountFor, type AudioBlobPeaks } from "./track-buckets.js";
 
@@ -92,7 +98,6 @@ interface Providers {
   patchEmbedder: MultiVectorProvider | null;
   captioner: LibCaptionProvider | null;
   reranker: Reranker | null;
-  transcriber: WhisperCppTranscription;
 }
 
 /**
@@ -107,8 +112,34 @@ export function capabilitiesFor(p: ProviderSettingsView): Capabilities {
     imageSearch: p.imageProvider !== "none",
     caption: p.captionProvider !== "none",
     rerank: p.rerankProvider !== "none",
-    transcript: Boolean(p.whisper.modelPath),
+    // No transcript member, deliberately — see Capabilities in shared/types.ts.
   };
+}
+
+/**
+ * Why transcription was skipped, in one line a user can act on.
+ *
+ * A "Model directory" is the case worth naming: setting it disables managed
+ * downloads by design (see model-store.ts), so the whisper GGML has to be put
+ * there by hand. Reaching around the override to download anyway would break
+ * the one promise that setting makes.
+ */
+export function transcribeFailure(err: unknown): string {
+  if (err instanceof ModelFilesMissingError) {
+    return (
+      `the model directory has no ${MODELS.whisper.files[0]!.path} — add it there, ` +
+      `or clear the Model directory setting to use the managed download`
+    );
+  }
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** "downloading model 23/57MB" — MB because a byte count means nothing here. */
+export function downloadLabel(p: ModelDownloadProgress): string {
+  const mb = (n: number): string => (n / 1_000_000).toFixed(0);
+  return p.totalBytes > 0
+    ? `downloading model ${mb(p.receivedBytes)}/${mb(p.totalBytes)}MB`
+    : `downloading model ${mb(p.receivedBytes)}MB`;
 }
 
 export class DeskRagService {
@@ -127,6 +158,8 @@ export class DeskRagService {
    * Chromium, LanceDB and libvips. See onnx-host.ts.
    */
   private onnx!: OnnxHost;
+  /** The indexing stage currently running, so a weight download can label itself. */
+  private downloading: IndexingProgress | undefined;
   private stateListeners = new Set<(s: RecordingStatus) => void>();
   private indexingListeners = new Set<(p: IndexingProgress) => void>();
   private modelListeners = new Set<(p: ModelDownloadProgress) => void>();
@@ -160,6 +193,13 @@ export class DeskRagService {
       overrideDir: this.settings.view().providers.localModels.dir,
       onProgress: (p) => {
         for (const cb of this.modelListeners) cb(p);
+        // Settings renders this channel directly, but indexing has its own
+        // screen and its own progress bar — so while a stage is running, fold
+        // the download into that stage's label rather than leaving it silent.
+        const at = this.downloading;
+        if (at && !p.done) {
+          this.emitIndexing({ ...at, stage: `${at.stage} — ${downloadLabel(p)}` });
+        }
       },
     });
     // 60s idle: back-to-back searches reuse a warm worker (a session costs
@@ -302,11 +342,6 @@ export class DeskRagService {
       }
     }
 
-    const transcriber = new WhisperCppTranscription({
-      binaryPath: p.whisper.binaryPath,
-      ...(p.whisper.modelPath ? { modelPath: p.whisper.modelPath } : {}),
-    });
-
     return {
       textEmbedder,
       behavior,
@@ -314,8 +349,34 @@ export class DeskRagService {
       patchEmbedder,
       captioner,
       reranker,
-      transcriber,
     };
+  }
+
+  /**
+   * Built separately from the other providers, and only for the transcribe
+   * stage: resolving the model may DOWNLOAD it, and buildProviders() also runs
+   * on the search path, where a 57MB fetch would be a surprise.
+   *
+   * An explicit modelPath wins; otherwise the managed GGML file is ensured on
+   * disk. `.en` models reject a language other than English, so the managed one
+   * is pinned to "en" while a user-supplied (possibly multilingual) model keeps
+   * whisper's auto-detect.
+   */
+  private async buildTranscriber(): Promise<WhisperCppTranscription> {
+    const w = this.settings.view().providers.whisper;
+    const binaryPath = resolveWhisperBinary(w.binaryPath);
+    if (w.modelPath) {
+      return new WhisperCppTranscription({
+        binaryPath,
+        modelPath: w.modelPath,
+      });
+    }
+    const dir = await this.models.ensure(MODELS.whisper);
+    return new WhisperCppTranscription({
+      binaryPath,
+      modelPath: join(dir, MODELS.whisper.files[0]!.path),
+      language: "en",
+    });
   }
 
   /**
@@ -396,14 +457,25 @@ export class DeskRagService {
       }
     }
     if (sig.audio.enabled) {
-      session.addProducer(
-        new FfmpegAudioProducer({
-          device: sig.audio.device,
-          chunkSeconds: sig.audio.chunkSeconds,
-          media: "mic",
-        }),
-      );
-      active.push("audio");
+      // Prompt HERE, not only from the Settings screen: ffmpeg reads the mic in a
+      // child process, and an ungranted device fails with a bare avfoundation
+      // "Input/output error" that looks like a broken build. Requesting first
+      // means the user sees the system dialog at the moment it makes sense, and a
+      // refusal drops the signal instead of pretending it is recording.
+      const mic = await requestPermission("microphone");
+      if (mic.state === "granted" || mic.state === "unknown") {
+        session.addProducer(
+          new FfmpegAudioProducer({
+            device: sig.audio.device,
+            chunkSeconds: sig.audio.chunkSeconds,
+            media: "mic",
+            onError: (m) => console.error(`[deskrag] audio: ${m}`),
+          }),
+        );
+        active.push("audio");
+      } else {
+        console.error(`[deskrag] microphone ${mic.state}: recording without audio`);
+      }
     }
     if (sig.ax.enabled) active.push("ax");
 
@@ -526,15 +598,35 @@ export class DeskRagService {
         }).represent(sessionId);
       },
     });
-    if (hasAudio && this.settings.view().providers.whisper.modelPath) {
+    // Probed, not "configured": the model downloads itself, so the only thing
+    // that can still be missing is the whisper.cpp binary — and skipping here is
+    // what keeps a machine without it from fetching 57MB it cannot use.
+    if (hasAudio && whisperAvailable(this.settings.view().providers.whisper.binaryPath)) {
+      const at = stages.length; // this stage's own index, for the failure report
       stages.push({
         name: "Transcribing",
-        run: () =>
-          new TranscriptRepresenter(this.store, {
-            transcriber: prov.transcriber,
-            transcriptEmbedder: prov.textEmbedder,
-            blobStore: this.blobs,
-          }).represent(sessionId),
+        // The ONLY stage that is allowed to fail without failing the run, and it
+        // has to be: transcription is on by default now, so a download, a
+        // checksum, or a binary that vanished between the probe and here would
+        // otherwise abort indexing — and Trace, which runs AFTER this, would be
+        // lost with it. A session with no transcript is still a session; a
+        // session with no trace graph is a session the executor cannot use.
+        run: async () => {
+          try {
+            await new TranscriptRepresenter(this.store, {
+              transcriber: await this.buildTranscriber(),
+              transcriptEmbedder: prov.textEmbedder,
+              blobStore: this.blobs,
+            }).represent(sessionId);
+          } catch (err) {
+            console.error("[deskrag] transcription failed:", err);
+            this.emitIndexing({
+              stage: `Transcribing skipped — ${transcribeFailure(err)}`,
+              done: at,
+              total: stages.length,
+            });
+          }
+        },
       });
     }
 
@@ -568,8 +660,16 @@ export class DeskRagService {
     const total = stages.length;
     for (let i = 0; i < stages.length; i++) {
       const s = stages[i]!;
+      // Named so a weight download that starts INSIDE this stage can rewrite the
+      // label. Whisper's model is fetched lazily by Transcribing, and 57MB of
+      // silence is indistinguishable from a hung stage.
+      this.downloading = { stage: s.name, done: i, total };
       this.emitIndexing({ stage: s.name, done: i, total });
-      await s.run();
+      try {
+        await s.run();
+      } finally {
+        this.downloading = undefined;
+      }
     }
     this.emitIndexing({ stage: "Done", done: total, total });
   }

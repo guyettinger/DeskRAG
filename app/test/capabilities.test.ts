@@ -20,7 +20,6 @@ describe("capabilitiesFor", () => {
       imageSearch: false,
       caption: false,
       rerank: false,
-      transcript: false,
     });
   });
 
@@ -31,12 +30,7 @@ describe("capabilitiesFor", () => {
       captionProvider: "ollama",
       rerankProvider: "onnx",
     });
-    expect(c).toEqual({
-      imageSearch: true,
-      caption: true,
-      rerank: true,
-      transcript: false,
-    });
+    expect(c).toEqual({ imageSearch: true, caption: true, rerank: true });
   });
 
   it("keeps the three provider capabilities independent", () => {
@@ -44,16 +38,27 @@ describe("capabilitiesFor", () => {
       imageSearch: true,
       caption: false,
       rerank: false,
-      transcript: false,
     });
   });
 
-  it("ties transcript to a whisper model path, not the binary", () => {
-    expect(
-      capabilitiesFor({ ...base, whisper: { binaryPath: "w", modelPath: "" } }).transcript,
-    ).toBe(false);
-    expect(
-      capabilitiesFor({ ...base, whisper: { binaryPath: "w", modelPath: "/m.bin" } }).transcript,
-    ).toBe(true);
+  /**
+   * Capabilities report configured INTENT, and no whisper setting expresses
+   * "off": both fields default when empty (managed model, "whisper-cli" on
+   * PATH). A `transcript` member could therefore only ever be `true`, and the
+   * version of it that read a field is precisely what silently disabled the
+   * stage — and with it the model download, since only that stage fetches it.
+   * Availability belongs to EnvInfo.whisperConfigured, which probes the binary.
+   */
+  it("never grows a whisper-derived member", () => {
+    for (const whisper of [
+      { binaryPath: "", modelPath: "" },
+      { binaryPath: "w", modelPath: "" },
+      { binaryPath: "", modelPath: "/m.bin" },
+      { binaryPath: "w", modelPath: "/m.bin" },
+    ]) {
+      const c = capabilitiesFor({ ...base, whisper });
+      expect(c).not.toHaveProperty("transcript");
+      expect(Object.keys(c).sort()).toEqual(["caption", "imageSearch", "rerank"]);
+    }
   });
 });

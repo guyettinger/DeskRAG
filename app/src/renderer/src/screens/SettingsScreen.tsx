@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from "react";
 import type {
   CaptionProvider,
-  Capabilities,
   EnvInfo,
   ImageProvider,
   ModelDownloadProgress,
@@ -29,15 +28,25 @@ interface Props {
  */
 export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
   const [s, setS] = useState<SettingsView | null>(null);
-  const [caps, setCaps] = useState<Capabilities | null>(null);
+  // Availability of the external CLIs (whisper.cpp, ffmpeg) is an ENV fact, not
+  // a capability: capabilities report configured intent, which for transcripts is
+  // now always true because the model is managed.
+  const [env, setEnv] = useState<EnvInfo | null>(null);
   const [saved, setSaved] = useState(false);
   const [visionModels, setVisionModels] = useState<string[]>([]);
   const [download, setDownload] = useState<ModelDownloadProgress | null>(null);
 
+  const refreshEnv = (): void => {
+    void api.system.env().then((e) => {
+      setEnv(e);
+      onEnv(e);
+    });
+  };
+
   const load = (): void => {
     api.settings.get().then(setS);
-    api.settings.capabilities().then(setCaps);
     api.ollama.visionModels().then(setVisionModels);
+    refreshEnv();
   };
   useEffect(load, []);
 
@@ -55,15 +64,14 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
   const patchProviders = async (p: SettingsPatch["providers"]): Promise<void> => {
     const next = await api.settings.set({ providers: p });
     setS(next);
-    setCaps(await api.settings.capabilities());
-    api.system.env().then(onEnv);
+    refreshEnv();
   };
 
   const patchSignals = async (
     patch: Parameters<typeof api.settings.set>[0]["signals"],
   ): Promise<void> => {
     setS(await api.settings.set({ signals: patch }));
-    api.system.env().then(onEnv);
+    refreshEnv();
     flash();
   };
 
@@ -287,13 +295,28 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
       <div className="card">
         <h2>Transcription (local Whisper)</h2>
         <p className="sub">
-          Point to a whisper.cpp binary and a model file to transcribe recorded audio.{" "}
-          {caps?.transcript
-            ? "Configured."
-            : "Not configured — audio is stored but not transcribed."}
+          Recorded audio is transcribed by a local whisper.cpp binary. The model downloads
+          automatically on the first transcript — leave the model path empty to use it.{" "}
+          {env?.whisperConfigured ? "Ready." : "Audio is stored, but not transcribed."}
         </p>
+
+        {/* Installing the binary changes nothing the app notices on its own, so
+            the probe needs a way to be re-run without restarting. */}
+        {env && !env.whisperConfigured && (
+          <div className="banner">
+            <span className="led" /> No whisper.cpp binary found. Install one with{" "}
+            <span className="mono">brew install whisper-cpp</span>, or point the path below at
+            your own build.
+            <button className="btn" style={{ marginLeft: 12 }} onClick={refreshEnv}>
+              Re-check
+            </button>
+          </div>
+        )}
         <div className="form-row">
-          <label>Binary path</label>
+          <div>
+            <label>Binary path</label>
+            <div className="desc">Optional — empty looks up whisper-cli on PATH</div>
+          </div>
           <input
             className="mono"
             type="text"
@@ -303,7 +326,10 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
           />
         </div>
         <div className="form-row">
-          <label>Model path</label>
+          <div>
+            <label>Model path</label>
+            <div className="desc">Optional — empty uses the managed base.en model</div>
+          </div>
           <input
             className="mono"
             type="text"
@@ -346,13 +372,21 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
           />
         </div>
         <div className="form-row">
-          <label>Audio device</label>
+          <div>
+            <label>Audio device</label>
+            <div className="desc">
+              <span className="mono">:default</span> follows macOS Sound. An index like{" "}
+              <span className="mono">:2</span> picks one device — check it with{" "}
+              <span className="mono">ffmpeg -f avfoundation -list_devices true -i ""</span>,
+              since index 0 is often a virtual device that records silence.
+            </div>
+          </div>
           <input
             className="mono"
             type="text"
             value={s.signals.audio.device}
             onChange={(e) => void patchSignals({ audio: { device: e.target.value } })}
-            placeholder=":0"
+            placeholder=":default"
           />
         </div>
         <div className="form-row">

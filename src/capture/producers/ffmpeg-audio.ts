@@ -7,19 +7,30 @@
  * and pushed through ctx.ingestAudio to be persisted verbatim as a blob. The
  * transcript view is (re-)generated from those blobs downstream.
  *
- * Default is mic-only (avfoundation ":0"). Desktop/system audio needs a loopback
+ * Default is mic-only from avfoundation's `:default` — the input macOS Sound is
+ * set to — resolved in start() against the machine's real device table. An
+ * INDEX is not a safe default: index 0 is often a virtual device that records
+ * silence (see resolveAudioInput). Desktop/system audio needs a loopback
  * device (e.g. BlackHole) selected via `device`. Like FfmpegScreenProducer this
  * only spawns a subprocess (no native addon), but it is NOT re-exported from the
  * barrel — import it from this path.
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
+import {
+  DEFAULT_AUDIO_INPUT,
+  listAvfoundationDevices,
+  resolveAudioInput,
+} from "./avfoundation-devices.js";
 import { FrameChunker } from "../frame-chunker.js";
 import { encodeWav } from "./wav.js";
 import type { AudioChunk, CaptureContext, Producer } from "../types.js";
 
 export interface FfmpegAudioOptions {
-  /** avfoundation audio device, e.g. ":0" (default mic) or ":2" (a loopback). */
+  /**
+   * avfoundation audio device. Defaults to `":default"` (whatever macOS Sound
+   * is set to); an index like `":2"` selects a specific one, e.g. a loopback.
+   */
   device?: string;
   /** Which media kind these bytes represent (affects blob.media). */
   media?: "mic" | "desktop_audio";
@@ -46,6 +57,8 @@ export class FfmpegAudioProducer implements Producer {
   private readonly sampleRate: number;
   private readonly channels: number;
   private readonly bytesPerChunk: number;
+  /** avfoundation device validated in start(); see FfmpegAudioOptions.device. */
+  private resolvedDevice: string | undefined;
   /** Monotonic anchor for the first sample; audio time is measured from here. */
   private anchorMono: number | undefined;
   /** PCM bytes emitted so far (drives per-chunk t_mono). */
@@ -67,7 +80,9 @@ export class FfmpegAudioProducer implements Producer {
 
   private args(): string[] {
     if (this.opts.ffmpegArgs) return this.opts.ffmpegArgs;
-    const device = this.opts.device ?? ":0";
+    // Resolved in start(); the last fallback is only reachable when args() is
+    // called without one, which nothing does.
+    const device = this.resolvedDevice ?? this.opts.device ?? DEFAULT_AUDIO_INPUT;
     return [
       "-hide_banner", "-loglevel", "error",
       "-f", "avfoundation", "-i", device,
@@ -79,6 +94,21 @@ export class FfmpegAudioProducer implements Producer {
   start(ctx: CaptureContext): void {
     this.ctx = ctx;
     const onError = this.opts.onError ?? ((m) => console.error(`[ffmpeg-audio] ${m}`));
+
+    // Validate the device against the machine's real table before spawning. The
+    // audio index moves exactly like the screen one does — plugging in an
+    // interface reorders it — and a device that names nothing yields a bare
+    // "Input/output error" that reads as a broken build. Skipped when
+    // `ffmpegArgs` replaces the arg list, since then `device` is unused.
+    if (!this.opts.ffmpegArgs) {
+      const decided = resolveAudioInput(
+        this.opts.device,
+        listAvfoundationDevices({ ffmpegPath: this.opts.ffmpegPath ?? "ffmpeg" }),
+      );
+      if (decided.warning) onError(decided.warning);
+      this.resolvedDevice = decided.input;
+    }
+
     const proc = spawn(this.opts.ffmpegPath ?? "ffmpeg", this.args(), {
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -114,9 +144,33 @@ export class FfmpegAudioProducer implements Producer {
   }
 
   async stop(): Promise<void> {
-    if (this.proc) {
-      this.proc.kill("SIGINT");
+    const proc = this.proc;
+    if (proc) {
       this.proc = undefined;
+      // SIGINT then AWAIT: ffmpeg exits on its own, but bytes still sitting in
+      // the stdout pipe are only delivered while the stream is draining. Not
+      // waiting dropped the tail of every recording — up to a whole chunk.
+      // SIGKILL is the backstop so a wedged ffmpeg cannot hang stopRecording().
+      //
+      // The already-exited check is not redundant: 'close' has then ALREADY
+      // fired, so `once` would never resolve and every such stop would burn the
+      // full timeout. A finite input (a test's lavfi source, or a device that
+      // went away) hits this every time.
+      const alive = proc.exitCode === null && proc.signalCode === null;
+      if (alive) {
+        await new Promise<void>((resolve) => {
+          const done = (): void => {
+            clearTimeout(timer);
+            resolve();
+          };
+          const timer = setTimeout(() => {
+            proc.kill("SIGKILL");
+            done();
+          }, 2000);
+          proc.once("close", done);
+          proc.kill("SIGINT");
+        });
+      }
     }
     // Emit any trailing partial window so short recordings aren't lost.
     const rest = this.chunker.flush();

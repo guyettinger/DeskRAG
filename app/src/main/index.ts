@@ -12,6 +12,7 @@ import { ReplayService } from "./replay-service.js";
 import { SettingsStore, dataDir } from "./settings.js";
 import { registerIpc } from "./ipc.js";
 import { registerScheme, registerProtocol } from "./protocol.js";
+import { ensureToolPath } from "./tool-path.js";
 
 let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -20,6 +21,10 @@ let replay: ReplayService;
 let quitting = false;
 
 registerScheme(); // must precede app.whenReady
+
+// Before anything can spawn: a packaged launch has no Homebrew on PATH, which
+// is what makes ffmpeg (audio + screen) and whisper-cli look missing.
+ensureToolPath();
 
 // In dev the app runs from <repo>/app/out/main; point the AX sidecar env var at
 // the repo's built binary (npm run build:ax) so capture + the env probe find it

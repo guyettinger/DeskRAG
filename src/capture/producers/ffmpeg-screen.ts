@@ -9,19 +9,74 @@
  * ffmpeg does the JPEG encoding, so no in-Node image codec is needed.
  *
  * Set `storeImages: false` to fall back to grayscale-only (pHash/Tier-0 only).
- * Device/input is platform-specific (macOS avfoundation defaults); everything is
- * overridable via `ffmpegArgs`. Not exercised by the unit suite — the testable
+ * Device/input is platform-specific: on macOS the avfoundation display index is
+ * discovered in start() (see `input`), and everything is overridable via
+ * `ffmpegArgs`. Not exercised by the unit suite — the testable
  * parts are FrameChunker and JpegStreamSplitter.
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
 import type { Readable } from "node:stream";
+import { resolveScreenInput } from "./avfoundation-devices.js";
 import { FrameChunker } from "../frame-chunker.js";
 import { JpegStreamSplitter } from "../jpeg-splitter.js";
 import type { CaptureContext, Producer } from "../types.js";
 
+/**
+ * What `start()` will record from, decided before anything is spawned.
+ *
+ * `unavailable` is a real outcome and not an error to paper over: the probe ran,
+ * the machine reported its device table, and the table had no display in it.
+ */
+export type ScreenInput =
+  | { kind: "explicit"; input: string }
+  | { kind: "discovered"; input: string }
+  | { kind: "unavailable"; reason: string };
+
+/**
+ * Pure input decision, so the part that matters is testable without a spawn.
+ *
+ * The probe runs ONLY for a real avfoundation capture. An explicit `input`, an
+ * overridden arg list, or a non-avfoundation input format all mean the caller
+ * already knows what it is recording — a test's lavfi source most of all.
+ *
+ * There is deliberately NO numeric fallback. `"1"` used to be the default, and
+ * on a machine with a camera (or a paired iPhone) that index IS the camera: the
+ * exact thing this discovery exists to prevent. Recording the wrong device
+ * silently is worse than recording nothing loudly.
+ */
+export function screenInputFor(
+  opts: Pick<FfmpegScreenOptions, "input" | "ffmpegArgs" | "inputFormat">,
+  probe: () => string | undefined,
+): ScreenInput {
+  if (opts.input) return { kind: "explicit", input: opts.input };
+  // `"1"` survives only here, where the probe never ran and the value is unused
+  // anyway: `ffmpegArgs` replaces the whole arg list, and a non-avfoundation
+  // format has no device table to look anything up in.
+  if (opts.ffmpegArgs) return { kind: "explicit", input: "1" };
+  if ((opts.inputFormat ?? "avfoundation") !== "avfoundation") {
+    return { kind: "explicit", input: "1" };
+  }
+  const found = probe();
+  if (found) return { kind: "discovered", input: found };
+  return {
+    kind: "unavailable",
+    reason:
+      "no avfoundation screen device found — grant Screen Recording in " +
+      "System Settings > Privacy & Security, then record again",
+  };
+}
+
 export interface FfmpegScreenOptions {
-  /** avfoundation input (macOS screen device index or name), e.g. "1". */
+  /**
+   * avfoundation input (macOS screen device index or name), e.g. "2".
+   *
+   * Leave it unset: the index of "Capture screen 0" differs per machine (it sits
+   * AFTER every camera, so a paired iPhone shifts it), and start() looks it up
+   * with resolveScreenInput(). A hard-coded default used to land on a camera,
+   * which rejects the input framerate outright — "Selected framerate (10.000000)
+   * is not supported by the device" followed by an Input/output error.
+   */
   input?: string;
   /** Frames sampled per second (keep low; the gate drops dupes). */
   fps?: number;
@@ -82,6 +137,8 @@ export class FfmpegScreenProducer implements Producer {
   private readonly storeImages: boolean;
   private readonly recordVideo: boolean;
   private readonly videoFps: number;
+  /** avfoundation input discovered in start(); see FfmpegScreenOptions.input. */
+  private resolvedInput: string | undefined;
   /** Blob id + monotonic start for the video file, set on start(). */
   private video: { blobId: string; path: string; tMonoStart: number } | undefined;
 
@@ -99,7 +156,8 @@ export class FfmpegScreenProducer implements Producer {
   private args(videoPath: string | null): string[] {
     if (this.opts.ffmpegArgs) return this.opts.ffmpegArgs;
     const fps = this.opts.fps ?? 1;
-    const input = this.opts.input ?? "1";
+    // start() refuses to spawn without one, so this is always set by here.
+    const input = this.resolvedInput ?? this.opts.input ?? "1";
     // With video recording the input must run at the video's framerate; the two
     // sampling branches then decimate back to `fps` with their own filter, so
     // the pHash/keyframe pipeline sees exactly the stream it always did.
@@ -166,6 +224,19 @@ export class FfmpegScreenProducer implements Producer {
   async start(ctx: CaptureContext): Promise<void> {
     this.ctx = ctx;
     const onError = this.opts.onError ?? ((m) => console.error(`[ffmpeg-screen] ${m}`));
+
+    // Find the display BEFORE spawning, and before reserving a blob: a session
+    // that cannot see a display records nothing rather than recording a camera,
+    // and a producer that will not spawn must not leave a reserved video path
+    // behind either.
+    const decided = screenInputFor(this.opts, () =>
+      resolveScreenInput(this.opts.ffmpegPath ?? "ffmpeg"),
+    );
+    if (decided.kind === "unavailable") {
+      onError(decided.reason);
+      return;
+    }
+    this.resolvedInput = decided.input;
 
     // Reserve the path before spawning; without a blob store there is nowhere
     // to keep the file, so the video branch is dropped from the arg graph.
