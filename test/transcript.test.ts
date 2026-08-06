@@ -85,6 +85,47 @@ describe("TranscriptRepresenter (transcript view)", () => {
     expect(rec.orphansPruned).toBe(0);
   });
 
+  it("slices a straddling blob's text by timestamp instead of duplicating it across both segments", async () => {
+    const sessionId = ulid();
+    const mk = (t: number, kind: string, data?: unknown): EventInsert => ({
+      id: ulid(), sessionId, tMono: t, kind, ...(data !== undefined ? { data } : {}),
+    });
+    await store.putSession({ id: sessionId, startedAt: 1000, epochMono: 0 });
+    // One boundary at 5000, matching the FakeTranscription synthetic split at
+    // duration/2 below — so each whisper "segment" lands entirely in ONE store
+    // segment, not straddling.
+    await store.putEvents([mk(0, "mouse_move"), mk(5000, "focus_change"), mk(6000, "key_down")]);
+    await store.endSession(sessionId, 9000); // endTMono 8000
+
+    // ONE 10s blob spanning BOTH action segments [0,5000) and [5000,8000).
+    const blob = await blobs.write(sessionId, "mic", Uint8Array.from([1, 2, 3, 4, 5]), {
+      tMonoStart: 0, tMonoEnd: 10_000, codec: "wav",
+    });
+    await store.putBlobs([blob]);
+
+    await new Segmenter(store).segment(sessionId);
+
+    const rep = new TranscriptRepresenter(store, {
+      transcriber: new FakeTranscription({ withTimestamps: true, clipDurationMs: 10_000 }),
+      transcriptEmbedder: fake,
+      blobStore: blobs,
+    });
+    await rep.represent(sessionId);
+
+    const segs = store.getSegmentsBySession(sessionId);
+    const early = segs.find((s) => s.granularity === "action" && s.tMonoStart === 0)!;
+    const late = segs.find((s) => s.granularity === "action" && s.tMonoStart === 5000)!;
+
+    // Full text is "speech[5:<sig>]"; the synthetic split at duration/2=5000ms
+    // lines up exactly with the focus_change boundary, so each store segment
+    // gets only its own half — never both.
+    expect(early.transcript).not.toBeNull();
+    expect(late.transcript).not.toBeNull();
+    expect(early.transcript).not.toBe(late.transcript);
+    expect(late.transcript).not.toContain(early.transcript!);
+    expect(early.transcript).not.toContain(late.transcript!);
+  });
+
   it("reconcile re-embeds a transcript that has text but no vector", async () => {
     const sessionId = ulid();
     await store.putSession({ id: sessionId, startedAt: 0, epochMono: 0 });
