@@ -467,3 +467,50 @@ describe("liftTrace — the final span is inclusive", () => {
     expect(clicks).toHaveLength(2);
   });
 });
+
+/**
+ * Provenance — the session and moment each node and edge came from.
+ *
+ * A node IS a boundary and a boundary carries a `t_mono`, so both facts are in
+ * hand at lift and unrecoverable afterwards: `mergeTrace` folds the node into a
+ * graph and only its `observations` counter survives. This is what makes a
+ * state on the canvas navigable back to the recording that produced it.
+ */
+describe("liftTrace — provenance", () => {
+  const events: TraceEvent[] = [
+    ev(0, "focus_change", undefined, undefined, { app: "Mail", title: "New Message" }),
+    ev(100, "mouse_down", 720, 30, { button: 1 }),
+    ev(140, "mouse_up", 720, 30, { button: 1 }),
+    ev(1000, "focus_change", undefined, undefined, { app: "Mail", title: "Inbox" }),
+    ev(1100, "mouse_down", 250, 250, { button: 1 }),
+    ev(1140, "mouse_up", 250, 250, { button: 1 }),
+  ];
+
+  const lifted = () => liftTrace({ sessionId: "s_prov", events, endTMono: 2000 });
+
+  it("stamps every node with the session and the boundary's own t_mono", () => {
+    const t = lifted();
+    expect(t.nodes.map((n) => n.sources)).toEqual([
+      [{ sessionId: "s_prov", tMono: 0 }],
+      [{ sessionId: "s_prov", tMono: 1000 }],
+      [{ sessionId: "s_prov", tMono: 2000 }],
+    ]);
+  });
+
+  /**
+   * The edge's span is the SAME [start, end) its gestures were filtered from,
+   * so seeking to it lands on the actions rather than on the settled state
+   * either side of them.
+   */
+  it("stamps every edge with the span its actions were recorded in", () => {
+    const t = lifted();
+    expect(t.edges.map((e) => e.sources)).toEqual([
+      [{ sessionId: "s_prov", tMonoStart: 0, tMonoEnd: 1000 }],
+      [{ sessionId: "s_prov", tMonoStart: 1000, tMonoEnd: 2000 }],
+    ]);
+  });
+
+  it("gives each node exactly one source — a lift observes each state once", () => {
+    for (const n of lifted().nodes) expect(n.sources).toHaveLength(1);
+  });
+});

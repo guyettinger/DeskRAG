@@ -17,15 +17,18 @@ const n = (id: string, rank: number): GraphNodeDTO => ({
   rank,
   predicates: [],
   locatable: true,
+  sources: [],
 });
 
 const e = (id: string, from: string, to: string, back = false): GraphEdgeDTO => ({
   id,
   from,
   to,
-  actions: 1,
+  actions: [],
   back,
   provenance: "recorded",
+  observations: 1,
+  sources: [],
 });
 
 const g = (nodes: GraphNodeDTO[], edges: GraphEdgeDTO[]): GraphDTO => ({

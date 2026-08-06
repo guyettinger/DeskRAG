@@ -178,7 +178,19 @@ function InspectButton({
   );
 }
 
-export function SessionPlayer({ detail }: { detail: SessionDetailDTO }): React.JSX.Element {
+export function SessionPlayer({
+  detail,
+  seekToSec,
+}: {
+  detail: SessionDetailDTO;
+  /**
+   * A moment to jump to, in LANE seconds — a `t_mono` offset, the axis the
+   * track rail is drawn in. It is passed straight through to `TrackRail`
+   * rather than converted here: the video's clock runs slightly short of the
+   * session's, and `TrackRail.seek` is the ONE place the two are reconciled.
+   */
+  seekToSec?: number | null;
+}): React.JSX.Element {
   const playerRef = useRef<MediaPlayerInstance>(null);
   const keyframes = detail.keyframes;
   const [openFrame, setOpenFrame] = useState<string | null>(null);
@@ -358,7 +370,13 @@ export function SessionPlayer({ detail }: { detail: SessionDetailDTO }): React.J
         />
       </MediaPlayer>
 
-      <TrackRail sessionId={detail.id} player={playerRef} videoSec={total} onInspect={setOpenFrame} />
+      <TrackRail
+        sessionId={detail.id}
+        player={playerRef}
+        videoSec={total}
+        seekToSec={seekToSec ?? null}
+        onInspect={setOpenFrame}
+      />
 
       <div className="player__meta mono">
         {keyframes.length} keyframes · {detail.segmentCount} segments · {detail.eventCount} events

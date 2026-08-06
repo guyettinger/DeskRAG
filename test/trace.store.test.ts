@@ -118,3 +118,97 @@ describe("graph persistence", () => {
     expect(store.getGraph("g2")).toEqual(graph("g2"));
   });
 });
+
+/**
+ * Provenance — which recording a node/edge came from.
+ *
+ * The sources tables are the only thing in the graph that points OUT of the
+ * graph, so they are the only place a foreign key and a cascade are in play.
+ */
+describe("graph provenance", () => {
+  /** A graph whose sources name real recordings, so the FK is satisfiable. */
+  const sourced = (id: string): Graph => ({
+    ...graph(id),
+    nodes: [
+      { ...graph(id).nodes[0]!, sources: [{ sessionId: "s1", tMono: 1200 }, { sessionId: "s2", tMono: 400 }] },
+      { ...graph(id).nodes[1]!, sources: [{ sessionId: "s1", tMono: 3400 }] },
+    ],
+    edges: [
+      {
+        ...graph(id).edges[0]!,
+        sources: [{ sessionId: "s1", tMonoStart: 1200, tMonoEnd: 3400 }],
+      },
+    ],
+  });
+
+  const putSessions = async (...ids: string[]): Promise<void> => {
+    for (const id of ids) {
+      await store.putSession({ id, startedAt: Date.now(), epochMono: 0 });
+    }
+  };
+
+  it("round-trips node and edge sources in order", async () => {
+    await putSessions("s1", "s2");
+    await store.putGraph(sourced("g1"));
+    expect(store.getGraph("g1")).toEqual(sourced("g1"));
+  });
+
+  it("does not duplicate sources when the same graph is written twice", async () => {
+    await putSessions("s1", "s2");
+    await store.putGraph(sourced("g1"));
+    await store.putGraph(sourced("g1"));
+    const read = store.getGraph("g1")!;
+    expect(read.nodes[0]!.sources).toHaveLength(2);
+    expect(read.edges[0]!.sources).toHaveLength(1);
+  });
+
+  /**
+   * The cascade is the point: evidence pointing at a deleted recording is a
+   * dead link. `observations` is deliberately NOT decremented — it counts what
+   * was seen, and a reader showing 1 of 3 is telling the truth about both.
+   */
+  it("drops a deleted recording's sources and leaves the observation count", async () => {
+    await putSessions("s1", "s2");
+    await store.putGraph(sourced("g1"));
+    await store.deleteSession("s1");
+
+    const read = store.getGraph("g1")!;
+    expect(read.nodes[0]!.sources).toEqual([{ sessionId: "s2", tMono: 400 }]);
+    expect(read.nodes[0]!.observations).toBe(3);
+    // n1 and e0 were observed only by s1, so their evidence is gone entirely.
+    expect(read.nodes[1]!.sources).toBeUndefined();
+    expect(read.edges[0]!.sources).toBeUndefined();
+    expect(read.edges[0]!.observations).toBe(2);
+  });
+
+  /**
+   * A source whose session was deleted between lift and write cannot be
+   * inserted — session_id is a foreign key, and an FK violation aborts the
+   * whole transaction regardless of ON CONFLICT. Dropping it must not cost the
+   * graph.
+   */
+  it("writes the graph even when a source names a recording that is gone", async () => {
+    await putSessions("s2");
+    await store.putGraph(sourced("g1"));
+    const read = store.getGraph("g1")!;
+    expect(read.nodes).toHaveLength(2);
+    expect(read.nodes[0]!.sources).toEqual([{ sessionId: "s2", tMono: 400 }]);
+    expect(read.edges[0]!.sources).toBeUndefined();
+  });
+
+  /** A graph written before the source tables existed reads back unchanged. */
+  it("leaves sources absent, not empty, when a graph has none", async () => {
+    await store.putGraph(graph("g1"));
+    const read = store.getGraph("g1")!;
+    expect("sources" in read.nodes[0]!).toBe(false);
+    expect("sources" in read.edges[0]!).toBe(false);
+  });
+
+  it("keeps two graphs' sources independent", async () => {
+    await putSessions("s1", "s2");
+    await store.putGraph(sourced("g1"));
+    await store.putGraph(sourced("g2"));
+    await store.deleteGraph("g1");
+    expect(store.getGraph("g2")).toEqual(sourced("g2"));
+  });
+});

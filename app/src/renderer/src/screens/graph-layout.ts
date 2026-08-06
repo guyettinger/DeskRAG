@@ -1,6 +1,6 @@
 /**
  * Where every card and wire goes. Pure — no React, no DOM — so it lives in the
- * ROOT suite alongside `plan-view.ts`, for the same reason: it is layout for
+ * ROOT suite alongside `graph-view.ts`, for the same reason: it is layout for
  * data a human reads before authorizing a click, and it has real failure modes.
  *
  * No layout dependency. `@vidstack/react` was worth one because a media player

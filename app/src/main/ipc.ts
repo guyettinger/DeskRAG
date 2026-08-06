@@ -4,17 +4,14 @@
  * the renderer via webContents.send on the event channels.
  */
 
-import { app, ipcMain, type BrowserWindow } from "electron";
+import { ipcMain, type BrowserWindow } from "electron";
 import {
   IPC,
   type PermissionKind,
-  type ReplayArmInput,
-  type ReplayStartInput,
   type SearchInput,
   type SettingsPatch,
 } from "@shared/types";
 import type { DeskRagService } from "./deskrag-service.js";
-import type { ReplayService } from "./replay-service.js";
 import type { SettingsStore } from "./settings.js";
 import { checkAll, request, openSettings } from "./permissions.js";
 import { envInfo } from "./env.js";
@@ -22,7 +19,6 @@ import { envInfo } from "./env.js";
 export function registerIpc(
   service: DeskRagService,
   settings: SettingsStore,
-  replay: ReplayService,
   getWindow: () => BrowserWindow | null,
 ): void {
   const send = (channel: string, payload: unknown): void => {
@@ -53,35 +49,13 @@ export function registerIpc(
   ipcMain.handle(IPC.sessionsReindex, () => service.reindexTraces());
   ipcMain.handle(IPC.sessionsTracks, (_e, sessionId: string) => service.sessionTracks(sessionId));
 
-  replay.onLocation((l) => send(IPC.replayLocationEvent, l));
-  replay.onEvent((e) => send(IPC.replayEvent, e));
+  /**
+   * The Flows screen, in one read-only call. There is deliberately no watch, no
+   * start, and no arm: the executor still exists in the library but nothing in
+   * the app can reach it, which is what keeps `ax-exec` unspawned.
+   */
+  ipcMain.handle(IPC.flowsGraph, () => service.flows());
 
-  ipcMain.handle(IPC.replayGraph, () => replay.graph());
-  ipcMain.handle(IPC.replayWatch, (_e, on: boolean) => replay.watch(on));
-  ipcMain.handle(IPC.replayStart, (_e, input: ReplayStartInput) =>
-    // Injected so ReplayService never touches Electron. Both halves matter: the
-    // run hides to OBSERVE a desktop that is not the reviewer, and shows again
-    // to put a plan in front of a human.
-    replay.start(input, {
-      /*
-       * `win.hide()` is NOT enough on macOS: it hides the window but leaves the
-       * APPLICATION active, so `NSWorkspace.frontmostApplication` still reports
-       * DeskRAG and the run has nothing foreign to observe. `app.hide()` is the
-       * Cmd-H equivalent — it resigns active status and raises the next app,
-       * which is the thing being waited for.
-       */
-      hide: () => {
-        if (process.platform === "darwin") app.hide();
-        else getWindow()?.hide();
-      },
-      show: () => {
-        if (process.platform === "darwin") app.show();
-        getWindow()?.show();
-      },
-    }),
-  );
-  ipcMain.handle(IPC.replayArm, (_e, input: ReplayArmInput) => replay.arm(input));
-  ipcMain.handle(IPC.replayCancel, () => replay.cancel());
   /**
    * Vision-capable models resident on this machine. Sourced from Ollama's
    * /api/tags rather than a hardcoded list: its library now includes

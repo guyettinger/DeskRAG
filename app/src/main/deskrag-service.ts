@@ -55,6 +55,7 @@ import type { SettingsStore } from "./settings.js";
 import { MODELS } from "./models.js";
 import { libUrl } from "./lib-resolve.js";
 import { DEFAULT_GRAPH_ID, indexTrace, rebuildGraph } from "./trace-index.js";
+import { frequentRoutes, toGraphDTO } from "./graph-view.js";
 import {
   ModelFilesMissingError,
   ModelStore,
@@ -65,6 +66,7 @@ import { spawnOnnxWorker } from "./onnx-spawn.js";
 import { TRACK_BUCKETS } from "@shared/types";
 import type {
   Capabilities,
+  FlowsDTO,
   HighlightDTO,
   IndexingProgress,
   ReindexResultDTO,
@@ -1049,5 +1051,29 @@ export class DeskRagService {
    */
   frameBlobId(frameId: string): string | undefined {
     return this.store.getFrame(frameId)?.blobId ?? undefined;
+  }
+
+  /**
+   * The whole Flows screen in one call: the graph, and the routes recorded
+   * through it.
+   *
+   * READ ONLY BY CONSTRUCTION. Nothing here observes or touches the live
+   * desktop — the projection is pure and its only inputs are rows already on
+   * disk, which is what lets the app run without ever spawning `ax-exec`.
+   */
+  flows(): FlowsDTO | null {
+    const graph = this.traceGraph();
+    if (graph === undefined) return null;
+    // One pass over the session list, not a lookup per source: a node observed
+    // by three recordings would otherwise scan the list three times, and the
+    // graph renders every node at once.
+    const startedAt = new Map(this.store.listSessions().map((s) => [s.id, s.startedAt]));
+    return {
+      graph: toGraphDTO(graph, {
+        resolveFrameBlob: (frameId) => this.frameBlobId(frameId),
+        sessionStart: (sessionId) => startedAt.get(sessionId),
+      }),
+      routes: frequentRoutes(graph),
+    };
   }
 }

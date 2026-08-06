@@ -3,7 +3,7 @@
  *
  * `.ts`, never `.tsx`: the ROOT tsconfig sets no `jsx`, so a root test that
  * reaches into a `.tsx` — even only for a type — breaks `npm run typecheck`.
- * `run-log.ts` lives beside `RunLog.tsx` for exactly this reason.
+ * `graph-layout.ts` sits beside `GraphCanvas.tsx` for exactly this reason.
  */
 
 import type {

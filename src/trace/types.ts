@@ -173,6 +173,41 @@ export type ActionKind = Action["kind"];
 /** Whether the AI may intervene here, and how far. Default `select`. */
 export type Intervene = "none" | "select" | "synthesize";
 
+// --- provenance ------------------------------------------------------------
+
+/**
+ * WHICH RECORDING OBSERVED THIS, AND WHERE WITHIN IT.
+ *
+ * A graph accretes across sessions and `mergeTrace` used to record only that a
+ * state had been seen again — `observations += 1` — which made the graph
+ * unreadable backwards: no node could name the recording it came from, so the
+ * one thing the capture pipeline is for (going back and looking) was
+ * unreachable from the artifact that summarizes it.
+ *
+ * `lift.ts` has both facts at the moment it built the node, because a node IS a
+ * boundary and a boundary carries a `t_mono`. Carrying them costs nothing at
+ * lift and is unrecoverable afterwards.
+ *
+ * **`observations` remains the count and is NEVER derived from `sources`.**
+ * They disagree in two legitimate directions: a graph lifted before provenance
+ * existed has observations and no sources at all, and deleting a recording
+ * removes its sources while leaving the count that recording contributed. A
+ * reader that computes one from the other is wrong in both cases; a reader that
+ * shows the difference is telling the truth.
+ */
+export interface NodeSource {
+  sessionId: string;
+  /** The boundary's own `t_mono` — the moment this state was observed. */
+  tMono: number;
+}
+
+/** The span of one recording that produced this edge's actions. */
+export interface EdgeSource {
+  sessionId: string;
+  tMonoStart: number;
+  tMonoEnd: number;
+}
+
 /**
  * A node is both a checkpoint (replay verifies state here) and an intervention
  * point (the AI may alter what happens next). Deliberately the same places: an AI
@@ -184,6 +219,8 @@ export interface TraceNode {
   visual?: { frameBlobId: string; phash: string };
   intervene: Intervene;
   observations: number;
+  /** Absent on a graph lifted before provenance existed. See `NodeSource`. */
+  sources?: NodeSource[];
 }
 
 export interface TraceEdge {
@@ -196,6 +233,8 @@ export interface TraceEdge {
   observations: number;
   outcomes: { attempts: number; successes: number };
   liftWarnings?: string[];
+  /** Absent on a graph lifted before provenance existed. See `EdgeSource`. */
+  sources?: EdgeSource[];
 }
 
 export interface Graph {

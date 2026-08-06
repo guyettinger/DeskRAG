@@ -22,6 +22,13 @@ interface Props {
    * ~1% early — 5px at the right end of the axis. Null without a video.
    */
   videoSec: number | null;
+  /**
+   * A moment to jump to on arrival, in LANE seconds — from the Flows screen,
+   * which knows a state's `t_mono` and nothing about media time. It lands here
+   * rather than in `SessionPlayer` because `seek` below is the only place the
+   * two clocks are reconciled, and there must go on being only one.
+   */
+  seekToSec?: number | null;
   onInspect: (frameId: string) => void;
 }
 
@@ -47,7 +54,13 @@ interface Hover {
  * frame in a 900x600 window and cutting lanes would sacrifice the capture-audit
  * reading to the navigation one.
  */
-export function TrackRail({ sessionId, player, videoSec, onInspect }: Props): React.JSX.Element {
+export function TrackRail({
+  sessionId,
+  player,
+  videoSec,
+  seekToSec,
+  onInspect,
+}: Props): React.JSX.Element {
   const [tracks, setTracks] = useState<SessionTracksDTO | null>(null);
   const [hover, setHover] = useState<Hover | null>(null);
   const [axisWidth, setAxisWidth] = useState(0);
@@ -110,6 +123,28 @@ export function TrackRail({ sessionId, player, videoSec, onInspect }: Props): Re
     const p = player?.current;
     if (p && totalSec > 0) p.currentTime = Math.max(0, (sec / totalSec) * mediaSec);
   };
+
+  /**
+   * A jump from the Flows screen, performed once both clocks are known.
+   *
+   * It cannot run on mount: `videoSec` is `Infinity` until the fragmented MP4
+   * is buffered enough for the provider to report a real duration, and
+   * `totalSec` comes from the tracks fetch. Depending on `mediaSec` is what
+   * makes this fire on the render where both have arrived — the alternative,
+   * sleeping a guessed interval, is the pattern this repo rejects everywhere
+   * it appears.
+   */
+  const seekDone = useRef<number | null>(null);
+  useEffect(() => {
+    if (seekToSec === null || seekToSec === undefined) return;
+    if (!player?.current || totalSec <= 0 || !Number.isFinite(mediaSec) || mediaSec <= 0) return;
+    // Once per requested moment: `player.subscribe` re-renders this component
+    // constantly, and re-seeking on every tick would pin playback in place.
+    if (seekDone.current === seekToSec) return;
+    seekDone.current = seekToSec;
+    seek(seekToSec);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seekToSec, totalSec, mediaSec, player]);
 
   const readout = useMemo(() => {
     if (!tracks || !hover) return null;

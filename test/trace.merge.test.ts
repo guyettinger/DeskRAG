@@ -168,3 +168,65 @@ describe("mergeTrace", () => {
     expect(g2.entry).toBe(g1.entry);
   });
 });
+
+/**
+ * A merge is where a second recording's evidence for a shared state would be
+ * lost: the merged-away node is discarded, so the surviving one has to take its
+ * provenance. Without this the graph can count observations it cannot show you.
+ */
+describe("mergeTrace provenance", () => {
+  /** `typingTrace` with sources, so both halves of a merge carry evidence. */
+  const sourced = (sessionId: string, text: string, at: number): Trace => {
+    const t = typingTrace(sessionId, text);
+    return {
+      ...t,
+      nodes: t.nodes.map((n, i) => ({ ...n, sources: [{ sessionId, tMono: at + i * 1000 }] })),
+      edges: t.edges.map((e) => ({
+        ...e,
+        sources: [{ sessionId, tMonoStart: at, tMonoEnd: at + 1000 }],
+      })),
+    };
+  };
+
+  it("collects both recordings' sources onto the node they merged into", async () => {
+    const g1 = await mergeTrace(undefined, sourced("s1", "alice@example.com", 500));
+    const g2 = await mergeTrace(g1, sourced("s2", "bob@example.com", 9000));
+
+    expect(g2.nodes).toHaveLength(2);
+    expect(g2.nodes[0]!.observations).toBe(2);
+    expect(g2.nodes[0]!.sources).toEqual([
+      { sessionId: "s1", tMono: 500 },
+      { sessionId: "s2", tMono: 9000 },
+    ]);
+  });
+
+  it("collects them onto the merged edge too — the same edge, two recordings", async () => {
+    const g1 = await mergeTrace(undefined, sourced("s1", "alice@example.com", 500));
+    const g2 = await mergeTrace(g1, sourced("s2", "bob@example.com", 9000));
+
+    expect(g2.edges).toHaveLength(1);
+    expect(g2.edges[0]!.observations).toBe(2);
+    expect(g2.edges[0]!.sources).toEqual([
+      { sessionId: "s1", tMonoStart: 500, tMonoEnd: 1500 },
+      { sessionId: "s2", tMonoStart: 9000, tMonoEnd: 10000 },
+    ]);
+  });
+
+  /**
+   * The failure this guards is silent and only appears on the SECOND merge: an
+   * uncopied array is shared with the input graph, so appending to the result
+   * appends to the input as well.
+   */
+  it("does not append to the input graph's source arrays", async () => {
+    const g1 = await mergeTrace(undefined, sourced("s1", "alice@example.com", 500));
+    const before = JSON.stringify(g1);
+    await mergeTrace(g1, sourced("s2", "bob@example.com", 9000));
+    expect(JSON.stringify(g1)).toBe(before);
+    expect(g1.nodes[0]!.sources).toHaveLength(1);
+  });
+
+  it("leaves sources absent when the trace carries none", async () => {
+    const g = await mergeTrace(undefined, typingTrace("s1", "a"));
+    expect(g.nodes[0]!.sources).toBeUndefined();
+  });
+});

@@ -207,6 +207,10 @@ export function liftTrace(input: LiftInput): Trace {
       observations: 1,
       outcomes: { attempts: 0, successes: 0 },
       ...(warnings.length > 0 ? { liftWarnings: warnings } : {}),
+      // The span this edge's actions were recorded in — the same [start, end)
+      // the gestures above were filtered from, so a reader lands on the actions
+      // themselves rather than on the settled state either side of them.
+      sources: [{ sessionId: input.sessionId, tMonoStart: start, tMonoEnd: end }],
     });
   }
 
@@ -259,6 +263,9 @@ function buildNode(id: string, tMono: number, events: readonly TraceEvent[], inp
     ...(visual !== undefined ? { visual } : {}),
     intervene: "select",
     observations: 1,
+    // The boundary's t_mono, which is the whole point: it is the moment this
+    // state was on screen, so it is what a reader seeks the recording to.
+    sources: [{ sessionId: input.sessionId, tMono }],
   };
 }
 

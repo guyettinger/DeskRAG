@@ -1,0 +1,457 @@
+/**
+ * The projection the Flows screen reads: a `Graph` becomes cards, wires, and
+ * the routes recorded through them.
+ *
+ * Pure: no Electron, no Node, no I/O — which is what lets it live in the root
+ * test suite rather than being eyeballed in the running app.
+ */
+
+import {
+  shortId,
+  type EdgeActionDTO,
+  type EdgeSourceDTO,
+  type FlowRouteDTO,
+  type GraphDTO,
+  type GraphEdgeDTO,
+  type GraphNodeDTO,
+  type NodeSourceDTO,
+} from "@shared/types";
+import { isLocatable } from "deskrag";
+import type { Action, Anchor, EdgeSource, Graph, NodeSource, Predicate, TraceNode } from "deskrag";
+
+/**
+ * Roles whose label names a STATE rather than a document. `Sheet` and `Dialog`
+ * are kept in `STABLE_ROLES` for exactly this reason ("Open", "Save"), while
+ * `Window` is excluded because its label is the open file.
+ */
+const HINT_ROLES: ReadonlySet<string> = new Set(["sheet", "dialog"]);
+
+/**
+ * Real data carries roles WITHOUT the `AX` prefix — the Swift sidecar strips it.
+ * Predicate args are already canonical, so this is belt and braces; every
+ * consumer of a role in this repo normalizes, and the one that did not produced
+ * zero predicates from every recording.
+ */
+const canonical = (role: unknown): string =>
+  typeof role === "string" ? role.replace(/^AX/i, "").toLowerCase() : "";
+
+const str = (v: unknown): string | undefined =>
+  typeof v === "string" && v.length > 0 ? v : undefined;
+
+/**
+ * A node's name, from what nodes actually carry.
+ *
+ * There is no `window` predicate to use: `extractPredicates` never emits one and
+ * `Window` is absent from `STABLE_ROLES`, both because a title is document
+ * identity rather than state. Two nodes in one app with no sheet and no focused
+ * element therefore label identically — the id chip on the card separates them,
+ * and inventing a difference would be worse than showing there isn't one.
+ */
+export function labelNode(node: TraceNode): { label: string; app?: string; hint?: string } {
+  const preds: readonly Predicate[] = node.predicates;
+  const appName = str(preds.find((p) => p.kind === "app")?.args["app"]);
+
+  const sheet = preds.find(
+    (p) => p.kind === "ax_exists" && HINT_ROLES.has(canonical(p.args["role"])),
+  );
+  const focus = preds.find((p) => p.kind === "ax_focused");
+  // The URL sits between them: a sheet names a state outright ("Save"), a URL
+  // names WHICH web app you are in — the thing `app` is too coarse to say and
+  // the only way two browser nodes are distinguishable on a card — and a focused
+  // element is the weakest of the three, being wherever the caret happened to be.
+  const url = preds.find((p) => p.kind === "url");
+  const hint =
+    str(sheet?.args["label"]) ?? str(url?.args["prefix"]) ?? str(focus?.args["label"]);
+
+  if (appName === undefined && hint === undefined) {
+    // The full id is a 30-char session-scoped ULID; this label is read in a
+    // 180px card and in the review's route line.
+    return { label: `${shortId(node.id)} — no state` };
+  }
+  const label =
+    appName === undefined ? hint! : hint === undefined ? appName : `${appName} — ${hint}`;
+  return {
+    label,
+    ...(appName !== undefined ? { app: appName } : {}),
+    ...(hint !== undefined ? { hint } : {}),
+  };
+}
+
+/**
+ * BFS distance from the entry, first-seen winning so a merged loop does not
+ * re-rank its target. A node unreachable from the entry ranks 0 rather than
+ * being dropped: an orphan is visible and fixable, an omitted node is not.
+ */
+export function rankNodes(graph: Graph): Map<string, number> {
+  const out = new Map<string, number>();
+  const outgoing = new Map<string, string[]>();
+  for (const e of graph.edges) {
+    const list = outgoing.get(e.from);
+    if (list === undefined) outgoing.set(e.from, [e.to]);
+    else list.push(e.to);
+  }
+
+  const queue: string[] = [];
+  if (graph.nodes.some((n) => n.id === graph.entry)) {
+    out.set(graph.entry, 0);
+    queue.push(graph.entry);
+  }
+  for (let i = 0; i < queue.length; i++) {
+    const id = queue[i]!;
+    const next = (out.get(id) ?? 0) + 1;
+    for (const to of outgoing.get(id) ?? []) {
+      if (out.has(to)) continue;
+      out.set(to, next);
+      queue.push(to);
+    }
+  }
+
+  for (const n of graph.nodes) if (!out.has(n.id)) out.set(n.id, 0);
+  return out;
+}
+
+/**
+ * Resolve a FRAME id to the blob holding its bytes, or undefined.
+ *
+ * `TraceNode.visual.frameBlobId` is named for a blob but `lift.ts` stores
+ * `snap.frameId` in it — a frame id, which `deskrag://frame/<blobId>` cannot
+ * serve, because the protocol looks the id up in the blob table. Every card
+ * rendered a broken image until this was measured in the running app.
+ *
+ * Injected rather than imported so this module stays pure and testable: the
+ * same reason `trace/` takes its world through callbacks.
+ */
+export type ResolveFrameBlob = (frameId: string) => string | undefined;
+
+/**
+ * The id to print on each card: the bare suffix where that is unambiguous, and
+ * widened with a slice of the session ULID where it is not.
+ *
+ * A graph accretes across sessions, so a second recording immediately produces
+ * two nodes whose ids end `:n2`. Measured on the real graph: three cards
+ * labelled "TextEdit" with chips `n2`, `n2`, `n3`. Since the label deliberately
+ * does not distinguish same-app states, the chip was the only thing left that
+ * could — so it has to.
+ */
+export function chipIds(ids: readonly string[]): Map<string, string> {
+  const bySuffix = new Map<string, string[]>();
+  for (const id of ids) {
+    const s = shortId(id);
+    const list = bySuffix.get(s);
+    if (list === undefined) bySuffix.set(s, [id]);
+    else list.push(id);
+  }
+  const out = new Map<string, string>();
+  for (const [suffix, group] of bySuffix) {
+    for (const id of group) {
+      if (group.length === 1) {
+        out.set(id, suffix);
+        continue;
+      }
+      // The ULID's tail is its most-varying part, so a short slice separates
+      // sessions recorded close together.
+      const prefix = id.slice(0, Math.max(0, id.length - suffix.length - 1));
+      out.set(id, prefix.length > 0 ? `${prefix.slice(-4)}:${suffix}` : suffix);
+    }
+  }
+  return out;
+}
+
+/**
+ * When each recording started, by session id. Injected for the same reason
+ * `ResolveFrameBlob` is: this module stays pure, and the store is the caller's
+ * problem. A source whose session is unknown is DROPPED rather than shown with
+ * a fabricated time — it names a recording that is no longer there.
+ */
+export type ResolveSessionStart = (sessionId: string) => number | undefined;
+
+const MS_PER_SEC = 1000;
+
+function toNodeSources(
+  sources: readonly NodeSource[] | undefined,
+  startedAt: ResolveSessionStart,
+): NodeSourceDTO[] {
+  return (sources ?? []).flatMap((s) => {
+    const at = startedAt(s.sessionId);
+    return at === undefined
+      ? []
+      : [{ sessionId: s.sessionId, startedAt: at, atSec: s.tMono / MS_PER_SEC }];
+  });
+}
+
+function toEdgeSources(
+  sources: readonly EdgeSource[] | undefined,
+  startedAt: ResolveSessionStart,
+): EdgeSourceDTO[] {
+  return (sources ?? []).flatMap((s) => {
+    const at = startedAt(s.sessionId);
+    return at === undefined
+      ? []
+      : [
+          {
+            sessionId: s.sessionId,
+            startedAt: at,
+            atSec: s.tMonoStart / MS_PER_SEC,
+            throughSec: s.tMonoEnd / MS_PER_SEC,
+          },
+        ];
+  });
+}
+
+/**
+ * An edge's actions in words, with a typed action's slot samples attached.
+ *
+ * The samples come from the GRAPH's slots, which is where they live — a slot is
+ * shared by every edge that references it, which is exactly what makes two
+ * samples a discovered variable rather than two unrelated constants.
+ */
+function toEdgeActions(actions: readonly Action[], graph: Graph): EdgeActionDTO[] {
+  return actions.map((a) => {
+    const slot = a.kind === "type" ? graph.slots.find((s) => s.name === a.slot) : undefined;
+    return {
+      action: describeAction(a),
+      target: describeTarget(a),
+      ...(slot !== undefined ? { slot: { name: slot.name, samples: [...slot.samples] } } : {}),
+    };
+  });
+}
+
+export interface GraphViewOptions {
+  resolveFrameBlob?: ResolveFrameBlob;
+  sessionStart?: ResolveSessionStart;
+}
+
+export function toGraphDTO(graph: Graph, opts: GraphViewOptions = {}): GraphDTO {
+  const ranks = rankNodes(graph);
+  const chips = chipIds(graph.nodes.map((n) => n.id));
+  const { resolveFrameBlob, sessionStart = (): undefined => undefined } = opts;
+
+  const nodes: GraphNodeDTO[] = graph.nodes.map((n) => {
+    const named = labelNode(n);
+    // No resolver, or a frame with no blob, means NO image — the card degrades
+    // to its text state, which is strictly better than a broken one.
+    const blobId =
+      n.visual === undefined || resolveFrameBlob === undefined
+        ? undefined
+        : resolveFrameBlob(n.visual.frameBlobId);
+    return {
+      id: n.id,
+      label: named.label,
+      chip: chips.get(n.id) ?? shortId(n.id),
+      ...(named.app !== undefined ? { app: named.app } : {}),
+      ...(named.hint !== undefined ? { hint: named.hint } : {}),
+      ...(blobId !== undefined ? { frameBlobId: blobId } : {}),
+      observations: n.observations,
+      predicates: n.predicates.map(describePredicate),
+      locatable: isLocatable(n.predicates),
+      intervene: n.intervene,
+      rank: ranks.get(n.id) ?? 0,
+      sources: toNodeSources(n.sources, sessionStart),
+    };
+  });
+
+  const edges: GraphEdgeDTO[] = graph.edges.map((e) => ({
+    id: e.id,
+    from: e.from,
+    to: e.to,
+    actions: toEdgeActions(e.actions, graph),
+    back: (ranks.get(e.to) ?? 0) <= (ranks.get(e.from) ?? 0),
+    provenance: e.provenance,
+    observations: e.observations,
+    sources: toEdgeSources(e.sources, sessionStart),
+    ...(e.liftWarnings !== undefined ? { liftWarnings: [...e.liftWarnings] } : {}),
+  }));
+
+  return {
+    id: graph.id,
+    entry: graph.entry,
+    nodes,
+    edges,
+    slots: graph.slots.map((s) => ({ name: s.name, samples: [...s.samples] })),
+  };
+}
+
+export const describePredicate = (p: Predicate): string => {
+  const args = Object.entries(p.args)
+    .map(([k, v]) => `${k}=${String(v)}`)
+    .join(", ");
+  return `${p.kind}(${args})`;
+};
+
+/** What the action does, in a reader's words rather than an enum's. */
+export function describeAction(a: Action): string {
+  switch (a.kind) {
+    case "click":
+      return a.count > 1 ? `${a.count}× click` : "click";
+    case "drag":
+      return "drag";
+    case "hover":
+      return `hover ${a.dwellMs}ms`;
+    case "scroll":
+      return "scroll";
+    case "type":
+      return "type";
+    case "chord":
+      return `press ${a.keys.join("+")}`;
+    case "wait":
+      return `wait until ${describePredicate(a.until)}`;
+  }
+}
+
+const describeAnchor = (anchor: Anchor): string => {
+  const ax = anchor.ax;
+  if (ax === undefined) {
+    return `point (${Math.round(anchor.point.x)}, ${Math.round(anchor.point.y)})`;
+  }
+  const parts = [ax.role];
+  if (ax.label !== undefined && ax.label.length > 0) parts.push(`"${ax.label}"`);
+  if (ax.identifier !== undefined && ax.identifier.length > 0) parts.push(`#${ax.identifier}`);
+  return parts.join(" ");
+};
+
+/**
+ * The target as RECORDED — the descriptors lifting captured, never a live
+ * resolution. Nothing here resolves anything against a running desktop, which
+ * is the whole difference between this screen and the one it replaced.
+ */
+export function describeTarget(a: Action): string {
+  switch (a.kind) {
+    case "click":
+    case "hover":
+    case "scroll":
+      return describeAnchor(a.anchor);
+    case "drag":
+      return `${describeAnchor(a.from)} → ${describeAnchor(a.to)}`;
+    case "type":
+      return `slot ${a.slot}`;
+    case "chord":
+    case "wait":
+      return "—";
+  }
+}
+
+// --- flows -----------------------------------------------------------------
+
+/** Hops shown in a route's label before it is elided. */
+const MAX_ROUTE_HOPS = 4;
+
+/**
+ * A ROUTE IS KEYED BY THE STATES IT PASSES THROUGH, NAMED — the sequence of
+ * `labelNode` labels, with consecutive repeats and stateless nodes dropped.
+ *
+ * THE TWO STRICTER KEYS WERE BOTH MEASURED AND BOTH FAILED, on a real graph of
+ * 9 recordings, 17 nodes and 44 edges:
+ *
+ * - **Edge sequence** (the obvious one): 9 routes, every one ×1. Five of those
+ *   recordings were the same task — open Calculator, use it, come back — and
+ *   they differed only in HOW MANY times a button was pressed, so the exact
+ *   edge sequence split them 4/5/6/8 steps apart.
+ * - **Node-id sequence**: also 9 routes, every one ×1, and for a more
+ *   interesting reason. Equivalent states across recordings DO NOT MERGE into
+ *   one node: identity is task-derived, so a Calculator state whose outgoing
+ *   edge targets a different button is a genuinely different node, and
+ *   `matchNode` correctly declines. Node identity therefore cannot express "the
+ *   same place" across recordings at all.
+ *
+ * The label sequence found the repetition the other two missed: 5 routes, one
+ * of them ×5. That is not a loosening for its own sake — a `labelNode` label is
+ * app plus its distinguishing hint (a sheet's name, a URL prefix, the focused
+ * element), which is precisely the granularity at which a person says "I do
+ * this a lot".
+ *
+ * A stateless node contributes nothing and is dropped: a node with no
+ * predicates is vacuously true of every desktop — the UI says exactly that
+ * about such nodes — so it cannot help say which flow this is.
+ *
+ * STILL NEVER A GRAPH TRAVERSAL. Every route is grouped from recordings that
+ * actually happened and `count` counts real sessions, so a graph with no
+ * provenance yields NO routes and the screen says why. What loosening the key
+ * costs is precision of highlight: several distinct paths can share a route, so
+ * `nodeIds`/`edgeIds` are the UNION of what its recordings walked — "these five
+ * recordings all did this, and here is everywhere they went".
+ */
+export function frequentRoutes(graph: Graph): FlowRouteDTO[] {
+  const nodeById = new Map(graph.nodes.map((n) => [n.id, n]));
+  /** Undefined for a node that describes no state, which names no place. */
+  const placeOf = (id: string): string | undefined => {
+    const n = nodeById.get(id);
+    if (n === undefined) return shortId(id);
+    return n.predicates.length === 0 ? undefined : labelNode(n).label;
+  };
+
+  /** session -> the edges it walked, with the moment it walked each. */
+  const walked = new Map<string, { edgeId: string; at: number }[]>();
+  for (const edge of graph.edges) {
+    for (const source of edge.sources ?? []) {
+      const list = walked.get(source.sessionId);
+      const step = { edgeId: edge.id, at: source.tMonoStart };
+      if (list === undefined) walked.set(source.sessionId, [step]);
+      else list.push(step);
+    }
+  }
+
+  const edgeById = new Map(graph.edges.map((e) => [e.id, e]));
+  interface Group {
+    places: string[];
+    nodeIds: string[];
+    edgeIds: string[];
+    sessionIds: string[];
+  }
+  const byKey = new Map<string, Group>();
+
+  for (const [sessionId, steps] of walked) {
+    // A session can walk one edge more than once (a loop), so the order is by
+    // the recorded moment — the graph's own edge order would be wrong.
+    const edgeIds = [...steps].sort((a, b) => a.at - b.at).map((s) => s.edgeId);
+    if (edgeIds.length === 0) continue;
+
+    const nodeIds: string[] = [];
+    for (const edgeId of edgeIds) {
+      const edge = edgeById.get(edgeId);
+      if (edge === undefined) continue;
+      if (nodeIds.length === 0) nodeIds.push(edge.from);
+      nodeIds.push(edge.to);
+    }
+
+    const places: string[] = [];
+    for (const id of nodeIds) {
+      const place = placeOf(id);
+      // Staying in one app across six states is one hop, not six.
+      if (place !== undefined && places[places.length - 1] !== place) places.push(place);
+    }
+    if (places.length === 0) continue;
+
+    const key = places.join(" → ");
+    const existing = byKey.get(key);
+    if (existing === undefined) {
+      byKey.set(key, { places, nodeIds, edgeIds, sessionIds: [sessionId] });
+      continue;
+    }
+    // The union, in first-walked order: these recordings share a shape, not a
+    // path, so the highlight has to show everywhere they actually went.
+    existing.sessionIds.push(sessionId);
+    for (const id of nodeIds) if (!existing.nodeIds.includes(id)) existing.nodeIds.push(id);
+    for (const id of edgeIds) if (!existing.edgeIds.includes(id)) existing.edgeIds.push(id);
+  }
+
+  const routes: FlowRouteDTO[] = [...byKey].map(([id, g]) => ({
+    id,
+    count: g.sessionIds.length,
+    label:
+      g.places.length > MAX_ROUTE_HOPS
+        ? `${g.places.slice(0, MAX_ROUTE_HOPS).join(" → ")} → …`
+        : g.places.join(" → "),
+    nodeIds: g.nodeIds,
+    edgeIds: g.edgeIds,
+    sessionIds: g.sessionIds,
+  }));
+
+  // Most-walked first, then longest — a route walked five times is the
+  // headline, and between two equally-walked routes the longer one says more.
+  // The final tie breaks on the key so the order is stable across reloads
+  // rather than depending on Map iteration of whatever the store returned.
+  routes.sort(
+    (a, b) => b.count - a.count || b.edgeIds.length - a.edgeIds.length || a.id.localeCompare(b.id),
+  );
+  return routes;
+}

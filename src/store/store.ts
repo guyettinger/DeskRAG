@@ -275,6 +275,8 @@ export class DualStore implements Store {
       deleteTraceNodes: db.prepare("DELETE FROM trace_node WHERE graph_id = ?"),
       deleteTraceEdges: db.prepare("DELETE FROM trace_edge WHERE graph_id = ?"),
       deleteTraceSlots: db.prepare("DELETE FROM trace_slot WHERE graph_id = ?"),
+      deleteTraceNodeSources: db.prepare("DELETE FROM trace_node_source WHERE graph_id = ?"),
+      deleteTraceEdgeSources: db.prepare("DELETE FROM trace_edge_source WHERE graph_id = ?"),
       insertTraceNode: db.prepare(
         `INSERT INTO trace_node(id, graph_id, predicates, visual, intervene, observations, ord)
          VALUES (@id, @graphId, @predicates, @visual, @intervene, @observations, @ord)`,
@@ -289,6 +291,15 @@ export class DualStore implements Store {
         `INSERT INTO trace_slot(graph_id, name, samples, ord)
          VALUES (@graphId, @name, @samples, @ord)`,
       ),
+      insertTraceNodeSource: db.prepare(
+        `INSERT INTO trace_node_source(graph_id, node_id, session_id, t_mono, ord)
+         VALUES (@graphId, @nodeId, @sessionId, @tMono, @ord)`,
+      ),
+      insertTraceEdgeSource: db.prepare(
+        `INSERT INTO trace_edge_source(graph_id, edge_id, session_id, t_mono_start, t_mono_end, ord)
+         VALUES (@graphId, @edgeId, @sessionId, @tMonoStart, @tMonoEnd, @ord)`,
+      ),
+      selectSessionIds: db.prepare("SELECT id FROM session"),
       selectTraceGraph: db.prepare("SELECT id, entry_node FROM trace_graph WHERE id = ?"),
       selectTraceGraphs: db.prepare(
         `SELECT g.id, g.created_at,
@@ -299,6 +310,14 @@ export class DualStore implements Store {
       selectTraceNodes: db.prepare("SELECT * FROM trace_node WHERE graph_id = ? ORDER BY ord ASC"),
       selectTraceEdges: db.prepare("SELECT * FROM trace_edge WHERE graph_id = ? ORDER BY ord ASC"),
       selectTraceSlots: db.prepare("SELECT * FROM trace_slot WHERE graph_id = ? ORDER BY ord ASC"),
+      // Whole-graph, then grouped in JS: a per-node query would be one round
+      // trip per card on a screen that renders every node at once.
+      selectTraceNodeSources: db.prepare(
+        "SELECT * FROM trace_node_source WHERE graph_id = ? ORDER BY node_id ASC, ord ASC",
+      ),
+      selectTraceEdgeSources: db.prepare(
+        "SELECT * FROM trace_edge_source WHERE graph_id = ? ORDER BY edge_id ASC, ord ASC",
+      ),
     };
   }
 
@@ -1193,6 +1212,23 @@ export class DualStore implements Store {
         this.stmts.deleteTraceNodes.run(g.id);
         this.stmts.deleteTraceEdges.run(g.id);
         this.stmts.deleteTraceSlots.run(g.id);
+        // The source tables have no FK to trace_node/trace_edge to cascade
+        // from — node ids are graph-scoped, so the parent key is composite —
+        // and re-inserting without clearing would double every source on the
+        // second write of the same graph.
+        this.stmts.deleteTraceNodeSources.run(g.id);
+        this.stmts.deleteTraceEdgeSources.run(g.id);
+
+        // A source whose recording is gone cannot be written: session_id is a
+        // foreign key, and an FK violation aborts the WHOLE transaction
+        // regardless of any ON CONFLICT clause — so one dangling source would
+        // cost the entire graph. Dropping it here is not silent loss: it
+        // applies exactly the rule ON DELETE CASCADE would have applied a
+        // moment later. The window is real — a rebuild lifts every session in
+        // a loop, and a delete can land inside it.
+        const live = new Set(
+          (this.stmts.selectSessionIds.all() as { id: string }[]).map((r) => r.id),
+        );
 
         g.nodes.forEach((n, ord) => {
           this.stmts.insertTraceNode.run({
@@ -1204,6 +1240,17 @@ export class DualStore implements Store {
             observations: n.observations,
             ord,
           });
+          (n.sources ?? [])
+            .filter((s) => live.has(s.sessionId))
+            .forEach((s, sourceOrd) => {
+              this.stmts.insertTraceNodeSource.run({
+                graphId: g.id,
+                nodeId: n.id,
+                sessionId: s.sessionId,
+                tMono: s.tMono,
+                ord: sourceOrd,
+              });
+            });
         });
         g.edges.forEach((e, ord) => {
           this.stmts.insertTraceEdge.run({
@@ -1220,6 +1267,18 @@ export class DualStore implements Store {
             liftWarnings: e.liftWarnings === undefined ? null : JSON.stringify(e.liftWarnings),
             ord,
           });
+          (e.sources ?? [])
+            .filter((s) => live.has(s.sessionId))
+            .forEach((s, sourceOrd) => {
+              this.stmts.insertTraceEdgeSource.run({
+                graphId: g.id,
+                edgeId: e.id,
+                sessionId: s.sessionId,
+                tMonoStart: s.tMonoStart,
+                tMonoEnd: s.tMonoEnd,
+                ord: sourceOrd,
+              });
+            });
         });
         g.slots.forEach((s, ord) => {
           this.stmts.insertTraceSlot.run({
@@ -1240,6 +1299,23 @@ export class DualStore implements Store {
       | undefined;
     if (head === undefined) return undefined;
 
+    // Grouped once, then looked up per node/edge. A graph rendered whole is the
+    // only consumer, so two queries beat 2N.
+    const nodeSources = groupBy(
+      this.stmts.selectTraceNodeSources.all(id) as TraceNodeSourceRow[],
+      (r) => r.node_id,
+      (r) => ({ sessionId: r.session_id, tMono: r.t_mono }),
+    );
+    const edgeSources = groupBy(
+      this.stmts.selectTraceEdgeSources.all(id) as TraceEdgeSourceRow[],
+      (r) => r.edge_id,
+      (r) => ({
+        sessionId: r.session_id,
+        tMonoStart: r.t_mono_start,
+        tMonoEnd: r.t_mono_end,
+      }),
+    );
+
     const nodes = (this.stmts.selectTraceNodes.all(id) as TraceNodeRow[]).map((r) => ({
       id: r.id,
       predicates: JSON.parse(r.predicates) as TraceGraph["nodes"][number]["predicates"],
@@ -1250,6 +1326,11 @@ export class DualStore implements Store {
         : {}),
       intervene: r.intervene as TraceGraph["nodes"][number]["intervene"],
       observations: r.observations,
+      // No rows means no provenance — a graph built before the source tables
+      // existed, or one whose recordings have all been deleted. Absent rather
+      // than empty, so it stays distinguishable from a node that genuinely
+      // observed nothing (which cannot happen, but the shapes should not lie).
+      ...(nodeSources.has(r.id) ? { sources: nodeSources.get(r.id)! } : {}),
     }));
 
     const edges = (this.stmts.selectTraceEdges.all(id) as TraceEdgeRow[]).map((r) => ({
@@ -1264,6 +1345,7 @@ export class DualStore implements Store {
       observations: r.observations,
       outcomes: { attempts: r.attempts, successes: r.successes },
       ...(r.lift_warnings !== null ? { liftWarnings: JSON.parse(r.lift_warnings) as string[] } : {}),
+      ...(edgeSources.has(r.id) ? { sources: edgeSources.get(r.id)! } : {}),
     }));
 
     const slots = (this.stmts.selectTraceSlots.all(id) as TraceSlotRow[]).map((r) => ({
@@ -1321,6 +1403,35 @@ interface TraceEdgeRow {
 interface TraceSlotRow {
   name: string;
   samples: string;
+}
+
+interface TraceNodeSourceRow {
+  node_id: string;
+  session_id: string;
+  t_mono: number;
+}
+
+interface TraceEdgeSourceRow {
+  edge_id: string;
+  session_id: string;
+  t_mono_start: number;
+  t_mono_end: number;
+}
+
+/** Rows already ordered by (key, ord), collected into per-key arrays. */
+function groupBy<Row, Value>(
+  rows: readonly Row[],
+  keyOf: (row: Row) => string,
+  valueOf: (row: Row) => Value,
+): Map<string, Value[]> {
+  const out = new Map<string, Value[]>();
+  for (const row of rows) {
+    const key = keyOf(row);
+    const list = out.get(key);
+    if (list === undefined) out.set(key, [valueOf(row)]);
+    else list.push(valueOf(row));
+  }
+  return out;
 }
 
 interface TraceGraphSummaryRow {

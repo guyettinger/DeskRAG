@@ -19,7 +19,7 @@
     "resolveJsonModule": true,
     "forceConsistentCasingInFileNames": true,
     /*
-     * `test/replay.plan-view.test.ts` imports `app/src/main/plan-view.ts` — a
+     * `test/flows.graph-view.test.ts` imports `app/src/main/graph-view.ts` — a
      * pure projection that belongs in this suite but is written against the
      * app's module names. tsc follows that import, so it needs the same two
      * names the vitest aliases provide. Mirrors `app/tsconfig.node.json`, except

@@ -29,7 +29,6 @@ Optional, per feature — a missing one disables exactly that feature:
 | Screen capture, audio chunks | **`ffmpeg`** on `PATH` |
 | Mouse/keyboard + focused window | **`uiohook-napi`**, **`active-win`** (optionalDependencies) |
 | Accessibility tree | **`swiftc`** (Xcode Command Line Tools) — build the sidecars with `npm run build:ax` |
-| Replay (acting on a trace graph) | the **`ax-exec`** sidecar, from the same `npm run build:ax` |
 | Transcription | a **`whisper.cpp`** binary (`brew install whisper-cpp`) — the model downloads itself |
 | Ollama-backed embeddings/captions | an **Ollama** daemon on localhost |
 

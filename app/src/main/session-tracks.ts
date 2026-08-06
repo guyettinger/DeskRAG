@@ -4,7 +4,7 @@
  * PURE: rows in, DTO out. No store, no filesystem, no Electron — `DeskRagService`
  * performs the reads and hands the results here, which is what keeps every
  * lane's arithmetic in the fast ROOT suite (the same arrangement as
- * `plan-view.ts` and `graph-layout.ts`).
+ * `graph-view.ts` and `graph-layout.ts`).
  *
  * Fifteen lanes, four shapes. A new signal is a builder here plus a line in
  * `buildSessionTracks` — never a new renderer component.
