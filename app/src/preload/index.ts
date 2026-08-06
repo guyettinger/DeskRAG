@@ -63,6 +63,7 @@ const api: DeskRagApi = {
   },
   system: {
     env: () => ipcRenderer.invoke(IPC.systemEnv),
+    reset: () => ipcRenderer.invoke(IPC.systemReset),
   },
 };
 

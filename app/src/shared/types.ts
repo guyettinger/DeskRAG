@@ -607,6 +607,13 @@ export interface DeskRagApi {
   };
   system: {
     env(): Promise<EnvInfo>;
+    /**
+     * Wipes the app data dir (`app.db`, `lance/`, `blobs/`, `models/`,
+     * `settings.json`) and relaunches. A custom Model directory (Settings >
+     * Models) lives outside the app data dir and is never touched. Throws
+     * without deleting anything if a recording is in progress.
+     */
+    reset(): Promise<void>;
   };
 }
 
@@ -655,4 +662,5 @@ export const IPC = {
   modelDownloadEvent: "models:download-event",
   ollamaVisionModels: "ollama:vision-models",
   systemEnv: "system:env",
+  systemReset: "system:reset",
 } as const;

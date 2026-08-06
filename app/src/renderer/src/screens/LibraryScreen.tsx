@@ -30,8 +30,6 @@ export function LibraryScreen({ openAt, onOpened }: Props = {}): React.JSX.Eleme
   const [detail, setDetail] = useState<SessionDetailDTO | null>(null);
   const [confirming, setConfirming] = useState<SessionSummaryDTO | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [reindexing, setReindexing] = useState(false);
-  const [reindexed, setReindexed] = useState<string | null>(null);
 
   const refresh = useCallback(async (): Promise<void> => {
     const list = await api.sessions.list();
@@ -79,33 +77,6 @@ export function LibraryScreen({ openAt, onOpened }: Props = {}): React.JSX.Eleme
     }
   };
 
-  /**
-   * Re-lift every recording into a fresh trace graph. Nothing is re-recorded:
-   * the lift reads the AX snapshots and event stream already on disk, so this is
-   * how a corrected lift rule reaches sessions captured under the old one.
-   * Indexing otherwise runs only when a recording stops.
-   */
-  const reindex = async (): Promise<void> => {
-    setReindexing(true);
-    setError(null);
-    setReindexed(null);
-    try {
-      const r = await api.sessions.reindex();
-      setReindexed(
-        r.sessions === 0
-          ? "Nothing to rebuild — no recording produced any events."
-          : `Rebuilt from ${r.sessions} recording${r.sessions === 1 ? "" : "s"}: ` +
-            `${r.nodes} nodes, ${r.edges} edges, ${r.actions} actions` +
-            (r.variables > 0 ? `, ${r.variables} variables` : "") +
-            (r.skipped > 0 ? ` · ${r.skipped} empty session skipped` : ""),
-      );
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setReindexing(false);
-    }
-  };
-
   if (!sessions) return <div className="spinner" />;
 
   return (
@@ -117,24 +88,7 @@ export function LibraryScreen({ openAt, onOpened }: Props = {}): React.JSX.Eleme
           Every session you have captured. Play one back — the scrubber is divided at the
           keyframes that were indexed and searched.
         </p>
-        {sessions.length > 0 && (
-          <div className="page__head-actions">
-            <button className="btn ghost" onClick={() => void reindex()} disabled={reindexing}>
-              {reindexing ? "Rebuilding…" : "Rebuild trace graph"}
-            </button>
-            <span className="hint">
-              Re-lifts every recording. Nothing is re-recorded, and no video or keyframe is
-              touched.
-            </span>
-          </div>
-        )}
       </div>
-
-      {reindexed && (
-        <div className="banner" style={{ marginTop: 16 }}>
-          <span className="led" /> {reindexed}
-        </div>
-      )}
 
       {error && (
         <div className="banner" style={{ marginTop: 16 }}>

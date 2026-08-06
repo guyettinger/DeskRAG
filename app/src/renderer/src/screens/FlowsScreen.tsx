@@ -55,7 +55,7 @@ export function FlowsScreen({ onOpenRecording }: Props): React.JSX.Element {
       <div className="page flows">
         <p className="muted">
           No trace graph yet. Record a session — or, if you have recordings already, rebuild the
-          graph from the Library.
+          graph from Settings.
         </p>
       </div>
     );
@@ -97,7 +97,7 @@ export function FlowsScreen({ onOpenRecording }: Props): React.JSX.Element {
         )}
         {needsRebuild && (
           <span className="flows__warn">
-            Built before recordings were tracked — rebuild the trace graph from the Library to link
+            Built before recordings were tracked — rebuild the trace graph from Settings to link
             these states back to their sessions.
           </span>
         )}

@@ -35,6 +35,13 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
   const [saved, setSaved] = useState(false);
   const [visionModels, setVisionModels] = useState<string[]>([]);
   const [download, setDownload] = useState<ModelDownloadProgress | null>(null);
+  const [reindexing, setReindexing] = useState(false);
+  const [reindexed, setReindexed] = useState<string | null>(null);
+  const [reindexError, setReindexError] = useState<string | null>(null);
+  const [resetConfirming, setResetConfirming] = useState(false);
+  const [resetConfirmText, setResetConfirmText] = useState("");
+  const [resetting, setResetting] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
 
   const refreshEnv = (): void => {
     void api.system.env().then((e) => {
@@ -73,6 +80,51 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
     setS(await api.settings.set({ signals: patch }));
     refreshEnv();
     flash();
+  };
+
+  /**
+   * Re-lift every recording into a fresh trace graph. Nothing is re-recorded:
+   * the lift reads the AX snapshots and event stream already on disk, so this is
+   * how a corrected lift rule reaches sessions captured under the old one.
+   * Indexing otherwise runs only when a recording stops.
+   */
+  const reindex = async (): Promise<void> => {
+    setReindexing(true);
+    setReindexError(null);
+    setReindexed(null);
+    try {
+      const r = await api.sessions.reindex();
+      setReindexed(
+        r.sessions === 0
+          ? "Nothing to rebuild — no recording produced any events."
+          : `Rebuilt from ${r.sessions} recording${r.sessions === 1 ? "" : "s"}: ` +
+            `${r.nodes} nodes, ${r.edges} edges, ${r.actions} actions` +
+            (r.variables > 0 ? `, ${r.variables} variables` : "") +
+            (r.skipped > 0 ? ` · ${r.skipped} empty session skipped` : ""),
+      );
+    } catch (e) {
+      setReindexError(String(e));
+    } finally {
+      setReindexing(false);
+    }
+  };
+
+  /**
+   * Wipes the app data dir and relaunches — every recording, the trace graph,
+   * the search index, and downloaded model weights are gone, and settings
+   * return to defaults. The main process closes the store before deleting
+   * anything, so this either resolves after a relaunch or throws with nothing
+   * touched (a recording in progress).
+   */
+  const resetApp = async (): Promise<void> => {
+    setResetting(true);
+    setResetError(null);
+    try {
+      await api.system.reset();
+    } catch (e) {
+      setResetError(String(e));
+      setResetting(false);
+    }
   };
 
   const p = s.providers;
@@ -400,6 +452,107 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
           />
         </div>
       </div>
+
+      <div className="card">
+        <h2>Maintenance</h2>
+        <p className="sub">Housekeeping for what has been recorded and downloaded on this machine.</p>
+        <div className="form-row">
+          <div>
+            <label>Trace graph</label>
+            <div className="desc">
+              Re-lifts every recording into a fresh trace graph. Nothing is re-recorded, and no
+              video or keyframe is touched. Needed after a lift-rule change, or if the Flows
+              screen says the graph was built before recordings were tracked.
+            </div>
+          </div>
+          <button className="btn ghost" onClick={() => void reindex()} disabled={reindexing}>
+            {reindexing ? "Rebuilding…" : "Rebuild trace graph"}
+          </button>
+        </div>
+
+        {reindexed && (
+          <div className="banner" style={{ marginTop: 16 }}>
+            <span className="led" /> {reindexed}
+          </div>
+        )}
+
+        {reindexError && (
+          <div className="banner" style={{ marginTop: 16 }}>
+            <span className="led" /> {reindexError}
+          </div>
+        )}
+
+        <div className="form-row">
+          <div>
+            <label>Reset application</label>
+            <div className="desc">
+              Deletes every recording, the trace graph, the search index, and downloaded model
+              weights, and returns settings to their defaults. A custom Model directory (above)
+              lives outside the app data dir and is not touched. The app relaunches once it's
+              done. This cannot be undone.
+            </div>
+          </div>
+          <button
+            className="btn danger"
+            onClick={() => {
+              setResetConfirmText("");
+              setResetError(null);
+              setResetConfirming(true);
+            }}
+          >
+            Reset application…
+          </button>
+        </div>
+      </div>
+
+      {resetConfirming && (
+        <div
+          className="overlay"
+          onClick={() => !resetting && setResetConfirming(false)}
+        >
+          <div className="confirm" onClick={(e) => e.stopPropagation()}>
+            <h3>Reset DeskRAG to its default state?</h3>
+            <p className="confirm__warn">
+              Every recording, the trace graph, the search index, and any downloaded model
+              weights are deleted permanently. Settings return to their defaults. The app then
+              relaunches.
+            </p>
+            <p className="mono">Type RESET to confirm.</p>
+            <input
+              className="mono"
+              type="text"
+              value={resetConfirmText}
+              onChange={(e) => setResetConfirmText(e.target.value)}
+              placeholder="RESET"
+              disabled={resetting}
+              autoFocus
+            />
+
+            {resetError && (
+              <div className="banner">
+                <span className="led" /> {resetError}
+              </div>
+            )}
+
+            <div className="confirm__actions">
+              <button
+                className="btn ghost"
+                onClick={() => setResetConfirming(false)}
+                disabled={resetting}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn danger"
+                disabled={resetConfirmText !== "RESET" || resetting}
+                onClick={() => void resetApp()}
+              >
+                {resetting ? "Resetting…" : "Reset everything"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

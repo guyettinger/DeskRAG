@@ -37,7 +37,7 @@ export function RouteList({
       {routes.length === 0 ? (
         <p className="routes__empty muted">
           {needsRebuild
-            ? "This graph was built before recordings were tracked. Rebuild it from the Library " +
+            ? "This graph was built before recordings were tracked. Rebuild it from Settings " +
               "and the paths you took will appear here."
             : "No recorded paths yet. Record a session, then record it again — a route you take " +
               "twice is what makes it a flow."}
