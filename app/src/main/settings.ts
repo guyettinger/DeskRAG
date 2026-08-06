@@ -16,6 +16,8 @@ import type {
   SignalConfig,
   ProviderSettingsView,
 } from "@shared/types";
+import { DEFAULT_AUDIO_INPUT } from "deskrag";
+import { DEFAULT_WHISPER_BIN, resolveWhisperBinary } from "./whisper.js";
 
 interface PersistedSettings {
   providers: ProviderSettingsView;
@@ -32,16 +34,48 @@ const DEFAULTS: PersistedSettings = {
     captionProvider: "none",
     rerankProvider: "none",
     localModels: { dir: "" },
-    whisper: { binaryPath: "whisper-cli", modelPath: "" },
+    // Empty modelPath means "use the managed download" (MODELS.whisper), not
+    // "disabled" — set it only to point at your own GGML file.
+    whisper: { binaryPath: DEFAULT_WHISPER_BIN, modelPath: "" },
   },
   signals: {
     screen: { enabled: true, fps: 1, imageMaxWidth: 1280 },
     input: { enabled: true },
     activeWin: { enabled: true },
-    audio: { enabled: false, device: ":0", chunkSeconds: 10 },
+    // On by default: mic audio is the only source of transcripts, and the model
+    // it feeds is now downloaded automatically, so leaving it off made
+    // transcription unreachable without hand-editing settings.json.
+    //
+    // The device is `:default` — the input macOS Sound is set to — and NOT an
+    // index. See LEGACY_AUDIO_DEVICE below for what the index cost.
+    audio: { enabled: true, device: DEFAULT_AUDIO_INPUT, chunkSeconds: 10 },
     ax: { enabled: false },
   },
 };
+
+/**
+ * The audio device DEFAULTS used to carry. It is an index into a table that is
+ * different on every Mac, and index 0 is frequently not a microphone: measured
+ * on a real machine it was "Virtual Desktop Mic", which recorded **digital
+ * silence at -91 dB** for an entire session while the built-in mic sat at index
+ * 1. No error, no warning, just an empty transcript.
+ */
+const LEGACY_AUDIO_DEVICE = ":0";
+
+/**
+ * A persisted `":0"` is migrated to `":default"`, and nothing else is touched.
+ *
+ * This rewrites a stored value, which is normally off-limits — justified here
+ * because `":0"` cannot be a deliberate choice: it is exactly the string the old
+ * DEFAULTS wrote, and the audio signal shipped DISABLED until the same change
+ * that turned it on, so no one ever recorded with a device they had picked. A
+ * value the user actually typed differs from this one and is preserved.
+ */
+export function audioDeviceFor(device: string | undefined): string {
+  const raw = (device ?? "").trim();
+  if (raw.length === 0 || raw === LEGACY_AUDIO_DEVICE) return DEFAULT_AUDIO_INPUT;
+  return raw;
+}
 
 /**
  * The allowed value of each provider field. A persisted value outside its set —
@@ -80,7 +114,15 @@ export class SettingsStore {
       const providers: ProviderSettingsView = {
         ...DEFAULTS.providers,
         ...raw.providers,
-        whisper: { ...DEFAULTS.providers.whisper, ...raw.providers?.whisper },
+        // A blank binaryPath is normalized back to the default rather than
+        // carried forward: it is what you get by clearing the field in Settings,
+        // and a persisted "" used to read as "no whisper" — which turned the
+        // transcribe stage off and with it the automatic model download.
+        whisper: {
+          ...DEFAULTS.providers.whisper,
+          ...raw.providers?.whisper,
+          binaryPath: resolveWhisperBinary(raw.providers?.whisper?.binaryPath),
+        },
         localModels: { ...DEFAULTS.providers.localModels, ...raw.providers?.localModels },
       };
       for (const key of Object.keys(PROVIDER_VALUES) as ProviderKey[]) {
@@ -96,7 +138,11 @@ export class SettingsStore {
           screen: { ...DEFAULTS.signals.screen, ...raw.signals?.screen },
           input: { ...DEFAULTS.signals.input, ...raw.signals?.input },
           activeWin: { ...DEFAULTS.signals.activeWin, ...raw.signals?.activeWin },
-          audio: { ...DEFAULTS.signals.audio, ...raw.signals?.audio },
+          audio: {
+            ...DEFAULTS.signals.audio,
+            ...raw.signals?.audio,
+            device: audioDeviceFor(raw.signals?.audio?.device),
+          },
           ax: { ...DEFAULTS.signals.ax, ...raw.signals?.ax },
         },
       };
@@ -119,6 +165,10 @@ export class SettingsStore {
       // silently blank a sibling field.
       const { whisper, localModels, ...rest } = patch.providers;
       this.settings.providers = { ...this.settings.providers, ...rest };
+      // NOT normalized here, unlike load(): this runs on every keystroke in the
+      // Settings field, and snapping a cleared box back to "whisper-cli"
+      // mid-edit would fight the typist. An empty value is resolved at spawn
+      // time instead (resolveWhisperBinary), so it is never "off".
       if (whisper) {
         this.settings.providers.whisper = { ...this.settings.providers.whisper, ...whisper };
       }

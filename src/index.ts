@@ -87,6 +87,20 @@ export {
   FfmpegScreenProducer,
   type FfmpegScreenOptions,
 } from "./capture/producers/ffmpeg-screen.js";
+export {
+  DEFAULT_AUDIO_INPUT,
+  listAvfoundationDevices,
+  parseAvfoundationDevices,
+  resetDeviceCache,
+  resolveAudioInput,
+  resolveScreenInput,
+  screenDeviceIndex,
+  type AudioInputResolution,
+  type AvfDevice,
+  type AvfDevices,
+  type DeviceProbe,
+  type ListDevicesOptions,
+} from "./capture/producers/avfoundation-devices.js";
 
 /** Audio capture (`child_process` only, like the screen producer) + a WAV helper. */
 export {

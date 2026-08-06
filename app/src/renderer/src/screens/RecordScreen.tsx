@@ -45,7 +45,7 @@ const SIGNALS: SignalDef[] = [
       !e.ffmpegAvailable
         ? { ok: false, note: "ffmpeg not found on PATH" }
         : !e.whisperConfigured
-          ? { ok: true, note: "recorded, but set a Whisper model in Settings to transcribe" }
+          ? { ok: true, note: "recorded, but whisper-cli not found — install it to transcribe" }
           : null,
   },
   {

@@ -4,8 +4,23 @@
 
 - **Node ≥ 20**, macOS (native capture is macOS-focused today).
 - Native npm modules build on install: `better-sqlite3`, `@lancedb/lancedb`, `sharp` (image crops).
-- **macOS permissions** for live capture: Screen Recording, Accessibility, and Input
-  Monitoring — granted to the launching process (for the app in dev, that's Electron).
+- **macOS permissions** for live capture: Screen Recording, Accessibility, Input
+  Monitoring, and Microphone — granted to the launching process (for the app in dev,
+  that's Electron). Audio is read by a *child* `ffmpeg`, so the grant has to belong to
+  the bundle; a packaged build gets there via `NSMicrophoneUsageDescription` plus the
+  `com.apple.security.device.audio-input` entitlement in `app/build/entitlements.mac.plist`.
+  **Those entitlements only apply to a *signed* build** — without an Apple Developer
+  signing identity electron-builder skips signing, and the packaged app cannot record
+  audio however the plist reads. Check the built app, not the config:
+  `codesign -d --entitlements - app/dist-app/mac*/DeskRAG.app`.
+- **Screen Recording is what makes the display visible to `ffmpeg` at all.** macOS hides
+  the `Capture screen` avfoundation devices until it is granted, and DeskRAG refuses to
+  record rather than falling back to a device index that would be a camera. Grant it,
+  then press Record again — no restart needed.
+- **The microphone follows your macOS Sound setting** (avfoundation `:default`). Set a
+  specific one in Settings only if you need to; an index like `:2` is per-machine, and
+  index 0 is often a *virtual* device that records silence with no error at all. List
+  yours with `ffmpeg -f avfoundation -list_devices true -i ""`.
 
 Optional, per feature — a missing one disables exactly that feature:
 
@@ -15,7 +30,7 @@ Optional, per feature — a missing one disables exactly that feature:
 | Mouse/keyboard + focused window | **`uiohook-napi`**, **`active-win`** (optionalDependencies) |
 | Accessibility tree | **`swiftc`** (Xcode Command Line Tools) — build the sidecars with `npm run build:ax` |
 | Replay (acting on a trace graph) | the **`ax-exec`** sidecar, from the same `npm run build:ax` |
-| Transcription | a **`whisper.cpp`** binary + a `ggml-*.bin` model on disk |
+| Transcription | a **`whisper.cpp`** binary (`brew install whisper-cpp`) — the model downloads itself |
 | Ollama-backed embeddings/captions | an **Ollama** daemon on localhost |
 
 ## Install

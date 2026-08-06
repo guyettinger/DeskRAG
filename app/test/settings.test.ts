@@ -22,6 +22,11 @@ function seed(providers: Record<string, unknown>): void {
   writeFileSync(join(dir, "settings.json"), JSON.stringify({ providers }), "utf8");
 }
 
+function seedSignals(signals: Record<string, unknown>): void {
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "settings.json"), JSON.stringify({ signals }), "utf8");
+}
+
 describe("defaults", () => {
   it("ships with every optional model off", () => {
     const p = new SettingsStore(dir).view().providers;
@@ -35,6 +40,46 @@ describe("defaults", () => {
 
   it("exposes no key field at all — there is nothing to hold", () => {
     expect(new SettingsStore(dir).view().providers).not.toHaveProperty("keys");
+  });
+
+  /**
+   * `:0` is an INDEX into a per-machine table, and on a real Mac index 0 was
+   * "Virtual Desktop Mic" — a full session of digital silence at -91 dB with no
+   * error anywhere, just an empty transcript. `:default` is whatever macOS Sound
+   * is set to, which is the answer the user already gave the system.
+   */
+  it("records from the system default input, never index 0", () => {
+    expect(new SettingsStore(dir).view().signals.audio.device).toBe(":default");
+  });
+
+  // Safe to rewrite because it cannot be a deliberate choice: it is exactly the
+  // string the old DEFAULTS wrote, and audio shipped disabled until the same
+  // change that turned it on.
+  it("migrates the legacy :0 that no one chose", () => {
+    seedSignals({ audio: { enabled: true, device: ":0", chunkSeconds: 10 } });
+    const audio = new SettingsStore(dir).view().signals.audio;
+    expect(audio.device).toBe(":default");
+    expect(audio.chunkSeconds).toBe(10); // siblings untouched
+  });
+
+  it("keeps a device the user actually picked", () => {
+    seedSignals({ audio: { enabled: true, device: ":2", chunkSeconds: 10 } });
+    expect(new SettingsStore(dir).view().signals.audio.device).toBe(":2");
+  });
+
+  // A persisted "" is what clearing the Settings field leaves behind, and it
+  // used to read as "no whisper": the transcribe stage was skipped, so the
+  // managed model — which only that stage fetches — never downloaded.
+  it("restores the default whisper binary when the persisted one is blank", () => {
+    seed({ whisper: { binaryPath: "", modelPath: "" } });
+    expect(new SettingsStore(dir).view().providers.whisper.binaryPath).toBe("whisper-cli");
+  });
+
+  it("keeps an explicitly set whisper binary", () => {
+    seed({ whisper: { binaryPath: "/opt/w/whisper-cli", modelPath: "" } });
+    expect(new SettingsStore(dir).view().providers.whisper.binaryPath).toBe(
+      "/opt/w/whisper-cli",
+    );
   });
 });
 

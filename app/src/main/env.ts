@@ -8,6 +8,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import type { EnvInfo } from "@shared/types";
 import type { DeskRagService } from "./deskrag-service.js";
+import { whisperAvailable } from "./whisper.js";
 
 function commandExists(cmd: string): boolean {
   try {
@@ -25,12 +26,14 @@ export function envInfo(service: DeskRagService): EnvInfo {
   const onDiskOrPath = (bin: string): boolean =>
     bin.includes("/") ? existsSync(bin) : commandExists(bin);
   const axBin = process.env.ERAG_AX_BIN ?? "ax-dump";
-  const whisperBin = settings.providers.whisper.binaryPath;
   return {
     platform: process.platform,
     ffmpegAvailable: commandExists("ffmpeg"),
     axSidecarAvailable: onDiskOrPath(axBin),
-    whisperConfigured: Boolean(settings.providers.whisper.modelPath) && onDiskOrPath(whisperBin),
+    // Only the BINARY is probed: the GGML model is managed (MODELS.whisper) and
+    // downloaded on first transcribe, so an empty modelPath is not a misconfig.
+    // An empty binaryPath is not one either — it resolves to "whisper-cli".
+    whisperConfigured: whisperAvailable(settings.providers.whisper.binaryPath),
     dataDir: service.dataDir,
   };
 }

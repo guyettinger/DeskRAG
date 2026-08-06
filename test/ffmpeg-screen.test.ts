@@ -8,7 +8,10 @@ import { BlobStore } from "../src/store/blob-store.js";
 import { MonotonicClock } from "../src/timeline/clock.js";
 import { CaptureSession } from "../src/capture/session.js";
 import { KeyframeGate } from "../src/capture/keyframe.js";
-import { FfmpegScreenProducer } from "../src/capture/producers/ffmpeg-screen.js";
+import {
+  FfmpegScreenProducer,
+  screenInputFor,
+} from "../src/capture/producers/ffmpeg-screen.js";
 
 const hasFfmpeg = (() => {
   try {
@@ -186,5 +189,40 @@ describe("FfmpegScreenProducer.args", () => {
 
     expect(a.join(" ")).not.toContain("split");
     expect(a[a.length - 1]).toBe("pipe:1");
+  });
+});
+
+describe("screenInputFor", () => {
+  const never = (): string | undefined => {
+    throw new Error("probe must not run");
+  };
+
+  it("discovers the display index instead of assuming one", () => {
+    expect(screenInputFor({}, () => "2")).toEqual({ kind: "discovered", input: "2" });
+  });
+
+  /**
+   * The whole point. `"1"` was the default, and on a machine with a camera — or
+   * a paired iPhone — that index IS the camera. Falling back to it after the
+   * probe came up empty records the wrong device silently, which is strictly
+   * worse than recording nothing loudly.
+   */
+  it("refuses to fall back to an index when the probe found no display", () => {
+    const r = screenInputFor({}, () => undefined);
+    expect(r.kind).toBe("unavailable");
+    expect(JSON.stringify(r)).not.toContain('"1"');
+    if (r.kind === "unavailable") expect(r.reason).toContain("Screen Recording");
+  });
+
+  it("does not probe when the caller already named an input", () => {
+    expect(screenInputFor({ input: "testsrc=size=64x48" }, never)).toEqual({
+      kind: "explicit",
+      input: "testsrc=size=64x48",
+    });
+  });
+
+  it("does not probe for an overridden arg list or a foreign input format", () => {
+    expect(screenInputFor({ ffmpegArgs: ["-f", "lavfi"] }, never).kind).toBe("explicit");
+    expect(screenInputFor({ inputFormat: "lavfi" }, never).kind).toBe("explicit");
   });
 });
