@@ -4,9 +4,29 @@ import { api, formatBytes, timecode, wallClock } from "../api.js";
 import { GhostLottie } from "../brand/GhostLottie.js";
 import { SessionPlayer } from "./SessionPlayer.js";
 
-export function LibraryScreen(): React.JSX.Element {
+interface Props {
+  /**
+   * A jump from the Flows screen: open this recording at this moment.
+   *
+   * `atSec` is LANE seconds — a `t_mono` offset — which is the axis the track
+   * rail is drawn in. It is NOT media time: the encoded video runs about 1%
+   * short of the span it covers, and `TrackRail.seek` is the one place the two
+   * clocks are reconciled.
+   */
+  openAt?: { sessionId: string; atSec: number } | null;
+  /** Consumed — clear it, or picking another recording would re-seek. */
+  onOpened?: () => void;
+}
+
+export function LibraryScreen({ openAt, onOpened }: Props = {}): React.JSX.Element {
   const [sessions, setSessions] = useState<SessionSummaryDTO[] | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  /**
+   * The moment to seek to once the player is ready, held separately from
+   * `openAt` so the jump survives the selection change that triggers the
+   * detail fetch — and so it can be cleared the instant it is handed over.
+   */
+  const [seekTo, setSeekTo] = useState<number | null>(null);
   const [detail, setDetail] = useState<SessionDetailDTO | null>(null);
   const [confirming, setConfirming] = useState<SessionSummaryDTO | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -22,6 +42,16 @@ export function LibraryScreen(): React.JSX.Element {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // A jump arrives as a prop, so it has to be turned into local state exactly
+  // once. `onOpened` clears it upstream; `seekTo` carries it the rest of the
+  // way down to the rail, which is the only thing that knows both clocks.
+  useEffect(() => {
+    if (!openAt) return;
+    setSelected(openAt.sessionId);
+    setSeekTo(openAt.atSec);
+    onOpened?.();
+  }, [openAt, onOpened]);
 
   useEffect(() => {
     if (!selected) {
@@ -125,7 +155,12 @@ export function LibraryScreen(): React.JSX.Element {
               <div
                 key={s.id}
                 className={`sessioncard${selected === s.id ? " is-active" : ""}`}
-                onClick={() => setSelected(s.id)}
+                onClick={() => {
+                  setSelected(s.id);
+                  // Picking a recording by hand starts at its beginning: the
+                  // pending seek belonged to the jump, not to this list.
+                  setSeekTo(null);
+                }}
                 role="button"
                 tabIndex={0}
                 onKeyDown={(e) => e.key === "Enter" && setSelected(s.id)}
@@ -163,7 +198,7 @@ export function LibraryScreen(): React.JSX.Element {
             {detail ? (
               <>
                 <StageHead detail={detail} />
-                <SessionPlayer key={detail.id} detail={detail} />
+                <SessionPlayer key={detail.id} detail={detail} seekToSec={seekTo} />
               </>
             ) : (
               <div className="spinner" />

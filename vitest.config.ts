@@ -6,7 +6,7 @@ const here = (p: string): string => fileURLToPath(new URL(p, import.meta.url));
 export default defineConfig({
   resolve: {
     alias: {
-      // `app/src/main/plan-view.ts` is a pure projection and belongs in the
+      // `app/src/main/graph-view.ts` is a pure projection and belongs in the
       // suite, but it is written against the app's module names. Aliasing them
       // here is cheaper than duplicating the DTOs into `src/`.
       "@shared": here("./app/src/shared"),

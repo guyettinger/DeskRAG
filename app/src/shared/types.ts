@@ -388,7 +388,12 @@ export interface SearchInput {
   imageBytes?: Uint8Array;
 }
 
-// --- replay (the plan review surface) ---------------------------------------
+// --- flows (the graph exploration surface) ----------------------------------
+//
+// THIS SURFACE READS; IT NEVER ACTS. The executor still exists in the library
+// (`src/replay/`) and is deliberately not wired to anything here: there is no
+// plan DTO, no arm channel, and no live observation of the desktop, which is
+// what lets the app run without ever spawning `ax-exec`.
 
 /**
  * Trace ids are session-scoped — `01KYX6DDK2PFXFDAX0XB3PH1DM:n3` — so every one
@@ -398,11 +403,34 @@ export interface SearchInput {
  * Suffixes CAN repeat across sessions in an accreted graph, so this is a display
  * aid and never an identifier: position on the canvas and the tooltip are what
  * actually distinguish two nodes. It lives here because both processes need the
- * same rule — main labels nodes, the renderer labels edges in the review.
+ * same rule — main labels nodes, the renderer labels routes and edges.
  */
 export function shortId(id: string): string {
   const colon = id.lastIndexOf(":");
   return colon < 0 ? id : id.slice(colon + 1);
+}
+
+/**
+ * One recording that observed a state, and where within it.
+ *
+ * `atSec` is **lane seconds** — the `t_mono` offset the track rail's axis is
+ * drawn in — NOT media seconds. The encoded video runs about 1% short of the
+ * session span it covers, so the two clocks meet only as a fraction; `TrackRail`
+ * converts at exactly one place and nothing outside it may do the division.
+ */
+export interface NodeSourceDTO {
+  sessionId: string;
+  /** Wall clock, for naming the recording. Display only, as everywhere. */
+  startedAt: number;
+  atSec: number;
+}
+
+/** As `NodeSourceDTO`, for the span an edge's actions were recorded in. */
+export interface EdgeSourceDTO {
+  sessionId: string;
+  startedAt: number;
+  atSec: number;
+  throughSec: number;
 }
 
 export interface GraphNodeDTO {
@@ -440,18 +468,47 @@ export interface GraphNodeDTO {
    */
   locatable: boolean;
   intervene: "none" | "select" | "synthesize";
-  /** BFS distance from the graph entry. The canvas's column. */
+  /** BFS distance from the graph entry. The canvas's row. */
   rank: number;
+  /**
+   * The recordings this state was observed in, newest observation last.
+   *
+   * MAY BE SHORTER THAN `observations`, in two legitimate ways: a graph built
+   * before provenance was captured has none at all, and deleting a recording
+   * removes its sources while leaving the count it contributed. Never derive
+   * one from the other — show the difference.
+   */
+  sources: NodeSourceDTO[];
+}
+
+/** One action on an edge, in a reader's words rather than an enum's. */
+export interface EdgeActionDTO {
+  /** "3× click", "type", "press cmd+a", "wait until app(TextEdit)". */
+  action: string;
+  /** The RECORDED descriptors: `Button "Send"`, `#save-btn`, or a point. */
+  target: string;
+  /**
+   * For a `type` action: the slot and every value recorded into it. Two samples
+   * is a discovered variable — the thing recording a task twice produces — and
+   * this edge is the one place that fact is about something specific.
+   */
+  slot?: { name: string; samples: string[] };
 }
 
 export interface GraphEdgeDTO {
   id: string;
   from: string;
   to: string;
-  actions: number;
+  actions: EdgeActionDTO[];
   /** To an equal or lower rank — a loop a merge produced, not a mistake. */
   back: boolean;
   provenance: "recorded" | "synthesized";
+  /** How many recordings walked this edge. The canvas's wire weight. */
+  observations: number;
+  /** See `GraphNodeDTO.sources` — same caveat about the count. */
+  sources: EdgeSourceDTO[];
+  /** What lifting could not do here, e.g. a dropped wait. */
+  liftWarnings?: string[];
 }
 
 export interface GraphDTO {
@@ -463,139 +520,36 @@ export interface GraphDTO {
 }
 
 /**
- * How close a recorded node came to holding, when none did.
+ * A FLOW: one recording's own path through the graph, and every recording that
+ * took exactly that path.
  *
- * `locateNode` answers only yes/no/ambiguous, which turns a failure into a dead
- * end. Locating is a SUBSET check — every one of a node's predicates must hold —
- * so "how many held, and which did not" is the whole diagnosis, and it is
- * computed with the locator's own `verifyNode` rather than a lookalike.
+ * Deliberately NOT a graph traversal. A merged graph composes paths no single
+ * recording ever walked, and listing those as "your common flows" would be the
+ * same category error the IR rejects elsewhere — variation comes from recording
+ * a task twice, not from something inventing it. So a route is keyed by the
+ * ordered edge-id sequence a session actually produced, and two recordings of
+ * one task merge onto the same edges and become one route with `count: 2`.
+ *
+ * A graph with no provenance therefore yields NO routes, never a synthesized
+ * one. The screen says so and points at the rebuild.
  */
-export interface NearestNodeDTO {
-  nodeId: string;
-  label: string;
-  held: number;
-  total: number;
-  /** Predicates that did not hold, already human-readable. Truncated. */
-  missing: string[];
-  /** How many more beyond `missing`. */
-  more: number;
-}
-
-/** Where the live desktop is, as far as the locator can tell. */
-export interface LocationDTO {
-  nodeId?: string;
-  candidates: number;
-  ambiguous: boolean;
-  /** Best near-misses, most-held first. Only when nothing located. */
-  nearest?: NearestNodeDTO[];
-  app?: string;
-  /** From AxObservation.windowTitle — the one place a title is legitimate. */
-  window?: string;
-  /**
-   * Age of the last FOREIGN observation. Set while DeskRAG itself is frontmost,
-   * because then the observation describes the reviewer, not the desktop.
-   */
-  staleMs?: number;
-}
-
-export type PlanStepDTO =
-  | { kind: "handoff"; app: string }
-  | {
-      kind: "action";
-      edgeId: string;
-      /** "click", "type", "wait until app(TextEdit)" — already human. */
-      action: string;
-      /** Described from the RECORDED descriptors, never from the resolution. */
-      target: string;
-      layer?: string;
-      confidence?: number;
-      slot?: { name: string; value: string };
-    }
-  | { kind: "repair"; edgeId: string; app: string; launch: boolean; reason: string }
-  | { kind: "superseded"; edgeId: string; action: string; reason: string };
-
-export interface PlanDTO {
+export interface FlowRouteDTO {
+  /** The joined edge-id sequence — stable across reloads, and its own key. */
   id: string;
-  /** 1-based. There is deliberately no total: the loop does not know one. */
-  segment: number;
-  from: string;
-  to: string;
-  fromLabel: string;
-  toLabel: string;
-  steps: PlanStepDTO[];
-  blockers: { reason: string; scope: "segment" | "remainder" }[];
-  brittleness: {
-    edgeId: string;
-    axRate: number;
-    belowFloor: boolean;
-    bound: "measured" | "upper";
-  }[];
-  cut?: {
-    resumeAt: string;
-    edgeId: string;
-    attempts: { layer: string; rejected: string }[];
-  };
-  remainder: {
-    edgeId: string;
-    toNodeId: string;
-    actions: {
-      kind: string;
-      descriptors?: string[];
-      /** Provenance. Never presented as a target. */
-      recordedPoint?: { x: number; y: number };
-      slot?: string;
-    }[];
-    repairs: { app: string; launch: boolean }[];
-  }[];
-  drift?: { expected: string; observed: string };
+  /** Recordings that walked exactly this sequence. */
+  count: number;
+  /** "TextEdit → Google Chrome → github.com/user/repo", from the node labels. */
+  label: string;
+  /** For highlighting the route on the canvas. */
+  nodeIds: string[];
+  edgeIds: string[];
+  sessionIds: string[];
 }
 
-/**
- * Why the run ended. `declined` covers both a user's Cancel and a failed focus
- * handoff — `executeRun` reports any false `arm` as "declined" — so the service
- * distinguishes them here rather than leaving the panel to guess.
- */
-export type ReplayStopReason =
-  | "cancelled"
-  | "handoff-failed"
-  /** DeskRAG never stopped being frontmost, so the run had nothing to observe. */
-  | "observe-blocked"
-  | "not-located"
-  | "no-path"
-  | "no-progress"
-  | "max-segments"
-  | "failed";
-
-export type RunEventDTO =
-  | { type: "segment-planned"; plan: PlanDTO }
-  | { type: "armed"; segment: number; app?: string }
-  | {
-      type: "segment-done";
-      segment: number;
-      completed: boolean;
-      /**
-       * `step` indexes the RENDERED `PlanDTO.steps`, NOT the library's plan.
-       * The DTO prepends a handoff step whenever the `from` node carries an
-       * `app` predicate, so the raw index from `execute.ts` is one short.
-       * `replay-service.report` converts it with `failedStepIndex`; absent when
-       * the segment refused to start (raw -1), because then no step ran.
-       */
-      failure?: { step: number; reason: string };
-      telemetry: { edgeId: string; layer: string; confidence: number }[];
-    }
-  | { type: "stopped"; reached: boolean; reason?: ReplayStopReason; detail?: string };
-
-export interface ReplayStartInput {
-  goalNodeId: string;
-  slotBindings?: Record<string, string>;
-  allowLaunch?: boolean;
-}
-
-export interface ReplayArmInput {
-  segment: number;
-  approve: boolean;
-  /** Accepts brittleness only. Blockers have no override and never will. */
-  override?: boolean;
+export interface FlowsDTO {
+  graph: GraphDTO;
+  /** Most-walked first. Empty when the graph carries no provenance. */
+  routes: FlowRouteDTO[];
 }
 
 export interface DeskRagApi {
@@ -632,15 +586,12 @@ export interface DeskRagApi {
     /** Every recorded signal, bucketed onto the session's own time axis. */
     tracks(sessionId: string): Promise<SessionTracksDTO | null>;
   };
-  replay: {
-    graph(): Promise<GraphDTO | null>;
-    /** Spawns/kills the ax-exec sidecar AND starts/stops the poller. */
-    watch(on: boolean): Promise<void>;
-    start(input: ReplayStartInput): Promise<void>;
-    arm(input: ReplayArmInput): Promise<void>;
-    cancel(): Promise<void>;
-    onEvent(cb: (e: RunEventDTO) => void): () => void;
-    onLocation(cb: (l: LocationDTO) => void): () => void;
+  /**
+   * READ ONLY, and that is the whole of it. One call, no subscriptions, no
+   * sidecar, nothing that observes or touches the live desktop.
+   */
+  flows: {
+    graph(): Promise<FlowsDTO | null>;
   };
   models: {
     /** Fires while weights download; may start from a search, not just indexing. */
@@ -700,13 +651,7 @@ export const IPC = {
   sessionsRemove: "sessions:remove",
   sessionsReindex: "sessions:reindex",
   sessionsTracks: "sessions:tracks",
-  replayGraph: "replay:graph",
-  replayWatch: "replay:watch",
-  replayStart: "replay:start",
-  replayArm: "replay:arm",
-  replayCancel: "replay:cancel",
-  replayEvent: "replay:event",
-  replayLocationEvent: "replay:location-event",
+  flowsGraph: "flows:graph",
   modelDownloadEvent: "models:download-event",
   ollamaVisionModels: "ollama:vision-models",
   systemEnv: "system:env",

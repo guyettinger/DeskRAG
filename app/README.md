@@ -7,10 +7,10 @@
 An Electron desktop app over the [DeskRAG](../README.md) library: pick your local
 models, grant macOS permissions, toggle capture signals, record an experience, then
 play it back with the index on the timeline — search your sessions as a contact
-sheet of keyframes and drill into any hit, or replay a recorded task against the
-live desktop.
+sheet of keyframes and drill into any hit, or read the graph of the flows you take
+and jump from any state straight back to the moment you were in it.
 
-- **electron-vite + React + TypeScript.** Five screens: Record, Library, Replay,
+- **electron-vite + React + TypeScript.** Five screens: Record, Library, Flows,
   Search, Settings.
 - **Fully local.** Every model runs on this machine — an Ollama daemon on
   localhost, or ONNX in-process. There is no cloud provider and no API key
@@ -78,44 +78,52 @@ is no query and the AX locator is the only overlay.
 
 ![Detail view](../docs/images/detail.png)
 
-### Replay
+### Flows
 
-The other direction: instead of recalling a session, **re-run** one. Indexing lifts
-every recording into a **trace graph** — nodes are states verified against the
-accessibility tree, edges are the actions you actually performed — and every session
-merges into the same graph, so recording a task a second time branches it or fills in
-a variable rather than starting a disconnected chain.
+The other direction: instead of recalling one session, see the **shape of what you
+do**. Indexing lifts every recording into a **trace graph** — nodes are states
+verified against the accessibility tree, edges are the actions you actually performed
+— and every session merges into the same graph, so recording a task a second time
+branches it or fills in a variable rather than starting a disconnected chain.
+
+The left column lists your **flows**, most-walked first. A flow is one recording's own
+path through the graph, keyed by the states it passed through: record the same task
+five times and it is one row reading `×5`, not five rows. It is deliberately **not** an
+enumeration of paths through the graph — a merged graph composes routes nobody ever
+walked, and presenting those as your common flows would be a fabrication. So a graph
+with no provenance shows no flows at all, and says why.
+
+Selecting a flow frames it on the canvas and dims everything else. Wires are weighted
+by how many recordings walked them, so a worn path looks worn. Clicking a wire opens
+the actions it recorded, in words, with the values typed into each slot — two different
+values is a **discovered variable**, which is what recording a task twice produces.
+
+**Every state and every action links back to its recordings.** That is the point of the
+screen: the drawer lists each session that observed it with the timecode, and clicking
+one opens the Library at exactly that moment. `observations` and the number of links can
+legitimately disagree — a recording you deleted leaves the count it contributed — and
+the drawer says so rather than showing a quietly short list.
 
 **Rebuild trace graph** in the Library discards the graph and re-lifts every
 recording, oldest first — needed after a change to how identity is derived, since a
-stored node keeps the shape it was written with. It has to be a whole rebuild rather
-than a re-lift of one session: a graph *accretes*, so folding a session into a graph
-that already contains it would count it twice and inflate the very evidence used to
-choose a route. Nothing is re-recorded — lifting re-reads the accessibility snapshots
-and the event stream already on disk, so no video or keyframe is touched.
+stored node keeps the shape it was written with, **and required once for a graph built
+before provenance was captured**, which otherwise has no flows and no recording links.
+It has to be a whole rebuild rather than a re-lift of one session: a graph *accretes*,
+so folding a session into a graph that already contains it would count it twice and
+inflate the very evidence used to weight a route. Nothing is re-recorded — lifting
+re-reads the accessibility snapshots and the event stream already on disk, so no video
+or keyframe is touched.
 
-The screen is **two modes**, not a split. *Browse* is the graph plus a bottom drawer:
-pick a node as the goal, fill any slots the route needs, and press Run. *Review* is
-the route and the run log. A chip in the bar reports where you are on the graph right
-now, polled live — and because looking at this screen makes DeskRAG frontmost, that
-reading is of the last *other* application seen, labelled with its age.
+Nodes that cannot be told apart are marked, because it explains why a graph looks
+redundant: an identity of only `app` is satisfied by every state in that application,
+and a node with no predicates at all is vacuously true of any desktop.
 
-Locating fails more often than it succeeds, so failure is a first-class view: the
-drawer names the nearest recorded states, how many of their predicates held, and
-exactly which ones didn't. Nodes that can never be located are marked — an identity
-of only `app` is satisfied by every state in that application, and a node with no
-predicates at all is vacuously true of any desktop.
+**This screen reads and never acts.** The trace graph is also an executable IR — the
+library's `src/replay/` resolves it against a live accessibility tree and posts real
+CGEvents — but none of that is wired to the app. There is no plan, no arming, and no
+observation of the desktop, which is why DeskRAGApp never starts `ax-exec` at all.
 
-**Nothing is posted from a plan you haven't reviewed at exact resolution.** Plans are
-dry-run by default; arming is a separate click, per segment. A plan *stops* where
-resolution stops working and discloses the rest as an unresolved remainder — bulleted,
-never numbered, because a step number would be a claim of authorization. Unmet
-preconditions that no action can establish are blockers and cannot be overridden;
-brittleness can be, explicitly. Before acting the app hides itself and confirms it has
-resigned frontmost, since the reviewer is an application too and its own window would
-otherwise be sitting over the coordinates about to be clicked.
-
-![Replay screen](../docs/images/replay.png)
+![Flows screen](../docs/images/flows.png)
 
 ### Settings
 
@@ -186,13 +194,12 @@ Each is best-effort — a missing one only disables its signal:
 | --- | --- |
 | Screen, Microphone | `ffmpeg` on `PATH` |
 | Accessibility tree | the `ax-dump` sidecar — build with `npm run build:ax` (repo root) |
-| Replay | the `ax-exec` sidecar — same `npm run build:ax` |
 | Transcripts | a `whisper.cpp` binary + model, set in **Settings → Transcription** |
 
-> `ax-exec` is a **separate binary from `ax-dump`, deliberately**. `ax-dump` is
-> read-only, and two of its modes need no permission at all; folding actuation into
-> it would mean every accessibility read was performed by something that can also
-> click. `ax-exec` refuses to start without a plan id, so a bare invocation is inert.
+> The app needs **only `ax-dump`**, which is read-only and two of whose modes need no
+> permission at all. `npm run build:ax` also builds `ax-exec`, the binary that can
+> click — that one belongs to the library's executor and the read-only probe script,
+> and nothing in DeskRAGApp spawns it.
 
 ## Run
 

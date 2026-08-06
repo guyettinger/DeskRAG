@@ -2,19 +2,19 @@ import React, { useEffect, useState } from "react";
 import type { EnvInfo, RecordingStatus } from "@shared/types";
 import { api } from "./api.js";
 import { GhostMark } from "./brand/GhostMark.js";
-import { IconLibrary, IconRecord, IconReplay, IconSearch, IconSettings } from "./icons.js";
+import { IconFlows, IconLibrary, IconRecord, IconSearch, IconSettings } from "./icons.js";
 import { LibraryScreen } from "./screens/LibraryScreen.js";
 import { RecordScreen } from "./screens/RecordScreen.js";
-import { ReplayScreen } from "./screens/ReplayScreen.js";
+import { FlowsScreen } from "./screens/FlowsScreen.js";
 import { SearchScreen } from "./screens/SearchScreen.js";
 import { SettingsScreen } from "./screens/SettingsScreen.js";
 
-type Route = "record" | "library" | "replay" | "search" | "settings";
+type Route = "record" | "library" | "flows" | "search" | "settings";
 
 const NAV: { id: Route; label: string; Icon: typeof IconRecord }[] = [
   { id: "record", label: "Record", Icon: IconRecord },
   { id: "library", label: "Library", Icon: IconLibrary },
-  { id: "replay", label: "Replay", Icon: IconReplay },
+  { id: "flows", label: "Flows", Icon: IconFlows },
   { id: "search", label: "Search", Icon: IconSearch },
   { id: "settings", label: "Settings", Icon: IconSettings },
 ];
@@ -22,15 +22,30 @@ const NAV: { id: Route; label: string; Icon: typeof IconRecord }[] = [
 const TITLES: Record<Route, string> = {
   record: "Recorder",
   library: "Library",
-  replay: "Replay",
+  flows: "Flows",
   search: "Experience Search",
   settings: "Settings",
 };
+
+/**
+ * Where a cross-screen jump is going. The Flows screen's whole payoff is
+ * getting from a state on the canvas to the recording it came from, and the
+ * Library is where recordings are watched — so the route carries the
+ * destination with it.
+ *
+ * `atSec` is LANE seconds (a `t_mono` offset), not media seconds. `TrackRail`
+ * is the one place that converts; see its `seek`.
+ */
+export interface OpenAt {
+  sessionId: string;
+  atSec: number;
+}
 
 export function App(): React.JSX.Element {
   const [route, setRoute] = useState<Route>("record");
   const [status, setStatus] = useState<RecordingStatus>({ state: "idle", activeSignals: [] });
   const [env, setEnv] = useState<EnvInfo | null>(null);
+  const [openAt, setOpenAt] = useState<OpenAt | null>(null);
 
   useEffect(() => {
     api.recording.status().then(setStatus);
@@ -90,8 +105,20 @@ export function App(): React.JSX.Element {
 
         <main className="content">
           {route === "record" && <RecordScreen status={status} env={env} />}
-          {route === "library" && <LibraryScreen />}
-          {route === "replay" && <ReplayScreen />}
+          {/* `openAt` is cleared BY the Library once it has acted on it.
+              Leaving it set would re-seek every time the user picked a
+              different recording from the list. */}
+          {route === "library" && (
+            <LibraryScreen openAt={openAt} onOpened={() => setOpenAt(null)} />
+          )}
+          {route === "flows" && (
+            <FlowsScreen
+              onOpenRecording={(sessionId, atSec) => {
+                setOpenAt({ sessionId, atSec });
+                setRoute("library");
+              }}
+            />
+          )}
           {route === "search" && <SearchScreen />}
           {route === "settings" && <SettingsScreen onEnv={setEnv} />}
         </main>

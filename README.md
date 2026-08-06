@@ -19,12 +19,16 @@ on the desktop we read real UI structure from the **accessibility tree**, giving
 labeled region proposals — grounded bounding boxes and roles that video systems must
 infer.
 
-Recordings don't stay read-only. Each one is lifted into a **trace graph** — states
+Recordings don't stay a pile of video. Each one is lifted into a **trace graph** — states
 verified against the accessibility tree, edges of the actions you actually performed —
-which DeskRAG can **replay** against the live desktop. Recording a task twice is what
-discovers its variable parts, so the variation comes from what you did rather than
-from a model inventing it. Plans are dry-run by default and arming is an explicit
-per-segment approval: nothing is posted from a plan you haven't reviewed.
+and the **Flows** screen is where you read it: the routes you take repeatedly, weighted by
+how often you took them, with one click from any state back to the recording and the exact
+moment it happened. Recording a task twice is what reveals it as a flow at all, so what
+shows up is what you did rather than what a model inferred.
+
+The graph is also an executable IR — `src/replay/` turns it into a plan and posts real
+CGEvents — but **that executor is not wired to the app**: nothing in DeskRAGApp observes or
+acts on the live desktop, and it never starts a process capable of clicking.
 
 **Every model runs on your machine.** There is no cloud provider, no API key, and no
 network call to anything but a daemon on localhost — the privacy claim is structural,
@@ -46,7 +50,7 @@ permissions, and how it's wired.
 </tr>
 <tr>
 <td width="50%"><img src="docs/images/detail.png" alt="Detail view"><br><strong>Detail</strong> — pick an accessibility node to locate it on the frame.</td>
-<td width="50%"><img src="docs/images/replay.png" alt="Replay screen"><br><strong>Replay</strong> — the trace graph, and a plan you approve before anything is posted.</td>
+<td width="50%"><img src="docs/images/flows.png" alt="Flows screen"><br><strong>Flows</strong> — the paths you take, and one click back to the recording.</td>
 </tr>
 </table>
 

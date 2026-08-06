@@ -69,12 +69,18 @@ export const IconNextKeyframe = (p: P): React.JSX.Element => (
   </svg>
 );
 
-/* A play head inside a return arc — "do that recorded thing again". */
-export const IconReplay = (p: P): React.JSX.Element => (
+/* One path that branches into two, with a node at each fork and each end —
+   "the shapes your work takes". Deliberately NOT the old play-in-an-arc: this
+   screen explores recorded behavior and never replays it. */
+export const IconFlows = (p: P): React.JSX.Element => (
   <svg {...base} {...p}>
-    <path d="M20 12a8 8 0 1 1-2.34-5.66" />
-    <path d="M20 3.2v3.8h-3.8" />
-    <path d="M10.4 9.4l4.6 2.6-4.6 2.6z" fill="currentColor" stroke="none" />
+    <circle cx="5" cy="6" r="2" />
+    <circle cx="13" cy="12" r="2" />
+    <circle cx="19" cy="6" r="2" />
+    <circle cx="19" cy="18" r="2" />
+    <path d="M6.6 7.4 11.4 10.6" />
+    <path d="M14.6 10.6 17.4 7.4" />
+    <path d="M14.6 13.4 17.4 16.6" />
   </svg>
 );
 

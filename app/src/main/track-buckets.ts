@@ -4,7 +4,7 @@
  * re-derived in fifteen lane builders.
  *
  * PURE: no store, no filesystem, no Electron, no DTOs. Tested in the ROOT
- * vitest suite alongside `plan-view.ts` and `graph-layout.ts`.
+ * vitest suite alongside `graph-view.ts` and `graph-layout.ts`.
  */
 
 /**

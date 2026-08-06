@@ -162,6 +162,43 @@ CREATE TABLE IF NOT EXISTS trace_edge (
 CREATE INDEX IF NOT EXISTS idx_trace_edge_graph ON trace_edge(graph_id, ord);
 CREATE INDEX IF NOT EXISTS idx_trace_edge_from ON trace_edge(graph_id, from_node);
 
+-- WHICH RECORDINGS A NODE/EDGE CAME FROM, and where within them.
+--
+-- Separate TABLES rather than columns on trace_node/trace_edge, for the reason
+-- every schema change here is: the schema is CREATE TABLE IF NOT EXISTS with no
+-- migration step, so a new column would never reach an existing install while a
+-- new table is simply created empty. An existing graph therefore has no
+-- provenance until it is rebuilt, and that state must stay legible rather than
+-- looking like data loss.
+--
+-- session_id CASCADES ON PURPOSE. Provenance exists to be navigated back to, so
+-- evidence pointing at a deleted recording is a dead link, not a record. The
+-- consequence is that a node's source count can fall BELOW its observations
+-- count, which is why the two are never derived from one another: observations
+-- counts what was seen, sources names what can still be looked at.
+CREATE TABLE IF NOT EXISTS trace_node_source (
+  graph_id    TEXT NOT NULL REFERENCES trace_graph(id) ON DELETE CASCADE,
+  node_id     TEXT NOT NULL,
+  session_id  TEXT NOT NULL REFERENCES session(id) ON DELETE CASCADE,
+  t_mono      REAL NOT NULL,           -- the boundary's own t_mono
+  ord         INTEGER NOT NULL,        -- preserves observation order on read
+  PRIMARY KEY (graph_id, node_id, ord)
+);
+CREATE INDEX IF NOT EXISTS idx_trace_node_source ON trace_node_source(graph_id, node_id);
+CREATE INDEX IF NOT EXISTS idx_trace_node_source_session ON trace_node_source(session_id);
+
+CREATE TABLE IF NOT EXISTS trace_edge_source (
+  graph_id      TEXT NOT NULL REFERENCES trace_graph(id) ON DELETE CASCADE,
+  edge_id       TEXT NOT NULL,
+  session_id    TEXT NOT NULL REFERENCES session(id) ON DELETE CASCADE,
+  t_mono_start  REAL NOT NULL,
+  t_mono_end    REAL NOT NULL,
+  ord           INTEGER NOT NULL,
+  PRIMARY KEY (graph_id, edge_id, ord)
+);
+CREATE INDEX IF NOT EXISTS idx_trace_edge_source ON trace_edge_source(graph_id, edge_id);
+CREATE INDEX IF NOT EXISTS idx_trace_edge_source_session ON trace_edge_source(session_id);
+
 -- AX snapshots. Supersedes frame_ax, which stays readable for sessions recorded
 -- before this table existed (there is no migration mechanism: every table is
 -- CREATE TABLE IF NOT EXISTS, so an existing table's shape can never change).

@@ -51,8 +51,21 @@ export async function mergeTrace(
       ? { id: trace.sessionId, nodes: [], edges: [], slots: [], entry: "" }
       : {
           id: graph.id,
-          nodes: graph.nodes.map((n) => ({ ...n, predicates: [...n.predicates] })),
-          edges: graph.edges.map((e) => ({ ...e, actions: [...e.actions], outcomes: { ...e.outcomes } })),
+          // `sources` is copied for the same reason `predicates` and `actions`
+          // are: this function must not mutate its input, and appending to a
+          // shared array reference below would do exactly that — silently, and
+          // only on the second merge.
+          nodes: graph.nodes.map((n) => ({
+            ...n,
+            predicates: [...n.predicates],
+            ...(n.sources !== undefined ? { sources: [...n.sources] } : {}),
+          })),
+          edges: graph.edges.map((e) => ({
+            ...e,
+            actions: [...e.actions],
+            outcomes: { ...e.outcomes },
+            ...(e.sources !== undefined ? { sources: [...e.sources] } : {}),
+          })),
           slots: graph.slots.map((s) => ({ ...s, samples: [...s.samples] })),
           entry: graph.entry,
         };
@@ -64,9 +77,19 @@ export async function mergeTrace(
     if (result.nodeId !== undefined) {
       const existing = next.nodes.find((n) => n.id === result.nodeId)!;
       existing.observations += 1;
+      // The merged-away node keeps its id but not its provenance, so the
+      // surviving node has to take it: this is the only place the second
+      // recording's evidence for a shared state can be kept at all.
+      if (tn.sources !== undefined) {
+        existing.sources = [...(existing.sources ?? []), ...tn.sources];
+      }
       idMap.set(tn.id, existing.id);
     } else {
-      const fresh: TraceNode = { ...tn, predicates: [...tn.predicates] };
+      const fresh: TraceNode = {
+        ...tn,
+        predicates: [...tn.predicates],
+        ...(tn.sources !== undefined ? { sources: [...tn.sources] } : {}),
+      };
       next.nodes.push(fresh);
       idMap.set(tn.id, fresh.id);
     }
@@ -86,6 +109,9 @@ export async function mergeTrace(
       if (te.liftWarnings !== undefined) {
         existing.liftWarnings = [...(existing.liftWarnings ?? []), ...te.liftWarnings];
       }
+      if (te.sources !== undefined) {
+        existing.sources = [...(existing.sources ?? []), ...te.sources];
+      }
     } else {
       next.edges.push({
         ...te,
@@ -93,6 +119,7 @@ export async function mergeTrace(
         to,
         actions: [...te.actions],
         outcomes: { ...te.outcomes },
+        ...(te.sources !== undefined ? { sources: [...te.sources] } : {}),
       });
     }
   }

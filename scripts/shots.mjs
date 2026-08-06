@@ -10,15 +10,15 @@
  *   - `npm run app:install` has been run once.
  *   - **Quit any running dev instance first.** This launches a second app that
  *     opens the same DualStore / LanceDB data dir, and LanceDB will not share it.
- *   - Real recorded sessions in the data dir, or the Library/Replay/Search shots
- *     will capture empty states (the script warns rather than failing). Replay
+ *   - Real recorded sessions in the data dir, or the Library/Flows/Search shots
+ *     will capture empty states (the script warns rather than failing). Flows
  *     additionally needs a session that reached the Trace stage, since the graph
- *     is what it draws.
+ *     is what it draws — and a graph REBUILT since provenance was added, or the
+ *     routes column is empty and the screen shows its rebuild banner instead.
  *
- * Note: visiting the Replay screen starts `replay:watch`, so the `ax-exec`
- * sidecar is alive for that shot. It only ever `dump`s here — this script never
- * clicks Run, and arming is a separate explicit gate — but it is why the run may
- * ask for Accessibility permission.
+ * Nothing here spawns `ax-exec`. The Flows screen reads the stored graph and
+ * never observes the live desktop, so unlike the Replay screen it replaced,
+ * this run cannot ask for Accessibility permission.
  *
  * Usage: npm run gen:shots     (builds the library + app, then runs this)
  */
@@ -77,17 +77,18 @@ const SHOTS = [
     },
   },
   {
-    id: "replay",
-    nav: "Replay",
-    // `.replay` is the screen either way; without a trace graph it renders one
+    id: "flows",
+    nav: "Flows",
+    // `.flows` is the screen either way; without a trace graph it renders one
     // line of prose instead of a stage, which is a legitimate empty state.
-    settle: ".replay",
-    ready: ".gcanvas, .replay .muted",
+    settle: ".flows",
+    ready: ".gcanvas, .flows .muted",
     // Select a node so the drawer is open — the graph alone doesn't show what
-    // the screen is FOR. Two filters, both about having something to show:
-    // `.is-unlocatable` marks a node whose identity is only `app` or empty, so a
-    // locatable one is what carries predicates and a Run button; and a node with
-    // a keyframe fills the drawer's thumbnail, which `--none` nodes leave blank.
+    // the screen is FOR, which is getting from a state back to its recordings.
+    // Two filters, both about having something to show: `.is-unlocatable` marks
+    // a node whose identity is only `app` or empty, so a locatable one is what
+    // carries predicates; and a node with a keyframe fills the drawer's
+    // thumbnail, which `--none` nodes leave blank.
     pick: ".gnode:not(.is-unlocatable):has(.gnode__shot:not(.gnode__shot--none))",
   },
   {

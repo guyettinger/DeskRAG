@@ -9,13 +9,9 @@ import {
   IPC,
   type DeskRagApi,
   type IndexingProgress,
-  type LocationDTO,
   type ModelDownloadProgress,
   type PermissionKind,
   type RecordingStatus,
-  type ReplayArmInput,
-  type ReplayStartInput,
-  type RunEventDTO,
   type SearchInput,
   type SettingsPatch,
 } from "@shared/types";
@@ -55,14 +51,8 @@ const api: DeskRagApi = {
     reindex: () => ipcRenderer.invoke(IPC.sessionsReindex),
     tracks: (sessionId: string) => ipcRenderer.invoke(IPC.sessionsTracks, sessionId),
   },
-  replay: {
-    graph: () => ipcRenderer.invoke(IPC.replayGraph),
-    watch: (on: boolean) => ipcRenderer.invoke(IPC.replayWatch, on),
-    start: (input: ReplayStartInput) => ipcRenderer.invoke(IPC.replayStart, input),
-    arm: (input: ReplayArmInput) => ipcRenderer.invoke(IPC.replayArm, input),
-    cancel: () => ipcRenderer.invoke(IPC.replayCancel),
-    onEvent: (cb: (e: RunEventDTO) => void) => subscribe(IPC.replayEvent, cb),
-    onLocation: (cb: (l: LocationDTO) => void) => subscribe(IPC.replayLocationEvent, cb),
+  flows: {
+    graph: () => ipcRenderer.invoke(IPC.flowsGraph),
   },
   models: {
     onDownload: (cb: (p: ModelDownloadProgress) => void) =>
