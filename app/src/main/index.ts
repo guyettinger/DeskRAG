@@ -6,7 +6,7 @@
 
 import { app, BrowserWindow, Tray, Menu, nativeImage } from "electron";
 import { join } from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { DeskRagService } from "./deskrag-service.js";
 import { SettingsStore, dataDir } from "./settings.js";
 import { registerIpc } from "./ipc.js";
@@ -16,7 +16,26 @@ import { ensureToolPath } from "./tool-path.js";
 let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let service: DeskRagService;
+let dir: string;
 let quitting = false;
+
+/**
+ * Wipes the app data dir and relaunches. `DualStore`/LanceDB are opened once at
+ * startup and nothing else in the app re-opens them live, so a relaunch is the
+ * safe way back to a clean process rather than re-opening in place. A recording
+ * in progress is refused before anything is touched, the same guard
+ * `reindexTraces`/`removeSession` use.
+ */
+async function resetApp(): Promise<void> {
+  if (service.status().state !== "idle") {
+    throw new Error("Stop the current recording before resetting.");
+  }
+  quitting = true;
+  service.close();
+  rmSync(dir, { recursive: true, force: true });
+  app.relaunch();
+  app.exit(0);
+}
 
 registerScheme(); // must precede app.whenReady
 
@@ -136,13 +155,13 @@ function createTray(): void {
 }
 
 app.whenReady().then(async () => {
-  const dir = dataDir();
+  dir = dataDir();
   const settings = new SettingsStore(dir);
   service = new DeskRagService(dir, settings);
   await service.open();
 
   registerProtocol(service);
-  registerIpc(service, settings, () => win);
+  registerIpc(service, settings, () => win, resetApp);
   service.onState(() => rebuildTray());
 
   // An unpackaged macOS dev run shows Electron's own dock icon otherwise.

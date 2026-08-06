@@ -283,22 +283,6 @@ a:focus-visible {
   max-width: 62ch;
 }
 
-/* An action that belongs to the whole page rather than to a row, with the
-   caveat that makes it safe to press sitting beside it rather than in a modal:
-   rebuilding touches no video, no keyframe, and no recording. */
-.page__head-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 14px;
-  flex-wrap: wrap;
-}
-.page__head-actions .hint {
-  color: var(--muted);
-  font-size: 12px;
-  max-width: 46ch;
-}
-
 /* ---- record transport --------------------------------------------------- */
 
 .transport {

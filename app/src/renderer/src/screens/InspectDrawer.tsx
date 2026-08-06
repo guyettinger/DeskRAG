@@ -55,7 +55,7 @@ function Recordings({
       {sources.length === 0 ? (
         <p className="muted">
           {observations > 0
-            ? "No recordings are linked to this yet — rebuild the trace graph from the Library " +
+            ? "No recordings are linked to this yet — rebuild the trace graph from Settings " +
               "to link states back to the sessions they came from."
             : "Never observed."}
         </p>

@@ -20,6 +20,7 @@ export function registerIpc(
   service: DeskRagService,
   settings: SettingsStore,
   getWindow: () => BrowserWindow | null,
+  resetApp: () => Promise<void>,
 ): void {
   const send = (channel: string, payload: unknown): void => {
     getWindow()?.webContents.send(channel, payload);
@@ -68,4 +69,5 @@ export function registerIpc(
   });
 
   ipcMain.handle(IPC.systemEnv, () => envInfo(service));
+  ipcMain.handle(IPC.systemReset, () => resetApp());
 }
