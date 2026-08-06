@@ -14,8 +14,9 @@ import type { Store, SegmentInsert } from "../store/types.js";
 import { computeBoundaries } from "./boundaries.js";
 import { windowSegments } from "./windowing.js";
 import {
+  DEFAULT_BURST_GAP_MS,
   DEFAULT_DWELL_GAP_MS,
-  DEFAULT_GRANULARITIES,
+  resolveGranularities,
   type Boundary,
   type GranularityConfig,
   type SegmenterOptions,
@@ -36,14 +37,16 @@ export interface SegmentResult {
  */
 export class Segmenter {
   private readonly dwellGapMs: number;
-  private readonly granularities: GranularityConfig[];
+  private readonly burstGapMs: number;
+  private readonly granularitiesOverride: GranularityConfig[] | undefined;
 
   constructor(
     private readonly store: Store,
     opts: SegmenterOptions = {},
   ) {
     this.dwellGapMs = opts.dwellGapMs ?? DEFAULT_DWELL_GAP_MS;
-    this.granularities = opts.granularities ?? DEFAULT_GRANULARITIES;
+    this.burstGapMs = opts.burstGapMs ?? DEFAULT_BURST_GAP_MS;
+    this.granularitiesOverride = opts.granularities;
   }
 
   async segment(sessionId: string): Promise<SegmentResult> {
@@ -52,11 +55,12 @@ export class Segmenter {
     const events = this.store.getEventsBySession(sessionId);
 
     const endTMono = this.deriveEnd(session.startedAt, session.endedAt, events);
-    const boundaries = computeBoundaries(events, endTMono, this.dwellGapMs);
+    const boundaries = computeBoundaries(events, endTMono, this.dwellGapMs, this.burstGapMs);
+    const granularities = this.granularitiesOverride ?? resolveGranularities(endTMono);
 
     const all: SegmentInsert[] = [];
     const byGranularity: Record<string, string[]> = {};
-    for (const g of this.granularities) {
+    for (const g of granularities) {
       const segs = windowSegments(sessionId, g, boundaries, ulid);
       byGranularity[g.name] = segs.map((s) => s.id);
       all.push(...segs);

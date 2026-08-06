@@ -19,8 +19,16 @@ export function windowSegments(
   mintId: () => string,
 ): SegmentInsert[] {
   if (boundaries.length === 0) return [];
-  const start0 = boundaries[0]!.tMono;
-  const end = boundaries[boundaries.length - 1]!.tMono;
+  const effective = g.cutReasons
+    ? boundaries.filter(
+        (b) =>
+          b.reason === "session_start" ||
+          b.reason === "session_end" ||
+          g.cutReasons!.includes(b.reason),
+      )
+    : boundaries;
+  const start0 = effective[0]!.tMono;
+  const end = effective[effective.length - 1]!.tMono;
   if (end <= start0) return [];
 
   const segs: SegmentInsert[] = [];
@@ -35,9 +43,9 @@ export function windowSegments(
     });
 
   if (g.boundaryAware) {
-    for (let i = 0; i < boundaries.length - 1; i++) {
-      const b0 = boundaries[i]!;
-      const b1 = boundaries[i + 1]!;
+    for (let i = 0; i < effective.length - 1; i++) {
+      const b0 = effective[i]!;
+      const b1 = effective[i + 1]!;
       let start = b0.tMono;
       let first = true;
       while (start < b1.tMono) {

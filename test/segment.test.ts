@@ -7,7 +7,11 @@ import { DualStore } from "../src/store/store.js";
 import { Segmenter } from "../src/segment/segmenter.js";
 import { computeBoundaries } from "../src/segment/boundaries.js";
 import { windowSegments } from "../src/segment/windowing.js";
-import type { Boundary, GranularityConfig } from "../src/segment/types.js";
+import {
+  resolveGranularities,
+  type Boundary,
+  type GranularityConfig,
+} from "../src/segment/types.js";
 import type { EventInsert } from "../src/store/types.js";
 
 const ev = (tMono: number, kind: string): { tMono: number; kind: string } => ({ tMono, kind });
@@ -136,6 +140,65 @@ describe("windowSegments", () => {
       [150, 250],
     ]);
     expect(segs.every((s) => s.boundaryReason === "window")).toBe(true);
+  });
+
+  it("ignores boundaries outside cutReasons (task-style filtering)", () => {
+    const taskLike: GranularityConfig = {
+      name: "task",
+      targetMs: 100_000,
+      strideMs: 50_000,
+      boundaryAware: true,
+      cutReasons: ["focus_change", "bookmark"],
+    };
+    const bounds: Boundary[] = [
+      { tMono: 0, reason: "session_start" },
+      { tMono: 2000, reason: "burst_gap" }, // filtered out — not in cutReasons
+      { tMono: 5000, reason: "focus_change" }, // kept
+      { tMono: 8000, reason: "session_end" },
+    ];
+    const segs = windowSegments("s", taskLike, bounds, ulid);
+    expect(segs.map((s) => [s.tMonoStart, s.tMonoEnd, s.boundaryReason])).toEqual([
+      [0, 5000, "session_start"],
+      [5000, 8000, "focus_change"],
+    ]);
+  });
+
+  it("an undefined cutReasons keeps every boundary (today's behavior)", () => {
+    const bounds: Boundary[] = [
+      { tMono: 0, reason: "session_start" },
+      { tMono: 2000, reason: "burst_gap" },
+      { tMono: 8000, reason: "session_end" },
+    ];
+    const segs = windowSegments("s", action, bounds, ulid); // `action` has no cutReasons
+    expect(segs.map((s) => [s.tMonoStart, s.tMonoEnd, s.boundaryReason])).toEqual([
+      [0, 2000, "session_start"],
+      [2000, 8000, "burst_gap"],
+    ]);
+  });
+});
+
+describe("resolveGranularities", () => {
+  it("keeps action fixed and scales task's window to session length, floored at 30s", () => {
+    const gs = resolveGranularities(8000); // 8s session
+    const action = gs.find((g) => g.name === "action")!;
+    const task = gs.find((g) => g.name === "task")!;
+    expect(action.targetMs).toBe(10_000);
+    expect(task.targetMs).toBe(30_000); // clamp(4000, 30_000, 180_000) -> floor
+    expect(task.strideMs).toBe(15_000);
+  });
+
+  it("caps task's window at 180s for a long session", () => {
+    const gs = resolveGranularities(1_000_000); // ~16.7 minutes
+    const task = gs.find((g) => g.name === "task")!;
+    expect(task.targetMs).toBe(180_000);
+    expect(task.strideMs).toBe(90_000);
+  });
+
+  it("scales smoothly between the floor and the ceiling", () => {
+    const gs = resolveGranularities(200_000); // 200s session -> raw 100s, within bounds
+    const task = gs.find((g) => g.name === "task")!;
+    expect(task.targetMs).toBe(100_000);
+    expect(task.strideMs).toBe(50_000);
   });
 });
 

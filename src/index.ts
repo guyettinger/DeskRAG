@@ -119,8 +119,10 @@ export { Segmenter, type SegmentResult } from "./segment/segmenter.js";
 export { computeBoundaries } from "./segment/boundaries.js";
 export { windowSegments } from "./segment/windowing.js";
 export {
-  DEFAULT_GRANULARITIES,
+  BASE_GRANULARITIES,
+  resolveGranularities,
   DEFAULT_DWELL_GAP_MS,
+  DEFAULT_BURST_GAP_MS,
   type Boundary,
   type BoundaryReason,
   type GranularityConfig,
