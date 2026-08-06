@@ -9,7 +9,8 @@
 export type BoundaryReason =
   | "session_start"
   | "focus_change" // app/window focus changed
-  | "dwell_gap" // activity resumed after a long input-idle gap
+  | "dwell_gap" // activity resumed after a long input-idle gap (any event, including mouse_move)
+  | "burst_gap" // activity resumed after a shorter gap between MEANINGFUL input (click/key/scroll)
   | "bookmark" // explicit user hotkey marker
   | "session_end"
   | "window"; // time-driven subdivision inside a span (no semantic boundary)
@@ -46,6 +47,7 @@ export const DEFAULT_GRANULARITIES: GranularityConfig[] = [
 ];
 
 export const DEFAULT_DWELL_GAP_MS = 3_000;
+export const DEFAULT_BURST_GAP_MS = 1_500;
 
 /** Minimal event shape the boundary detector needs (EventRow is compatible). */
 export interface SegEvent {

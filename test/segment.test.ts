@@ -47,6 +47,49 @@ describe("computeBoundaries", () => {
       { tMono: 10_000, reason: "session_end" },
     ]);
   });
+
+  it("marks a burst gap on a pause between meaningful input events, ignoring mouse_move in between", () => {
+    const b = computeBoundaries(
+      [
+        ev(0, "mouse_down"),
+        ev(200, "mouse_move"),
+        ev(400, "mouse_move"),
+        ev(1900, "mouse_move"), // mouse keeps moving through the pause
+        ev(2000, "key_down"),   // 2000ms since the last MEANINGFUL event (mouse_down at 0)
+      ],
+      5000,
+      3000, // dwellGapMs — no all-events gap here is big enough to fire dwell_gap
+      1500, // burstGapMs
+    );
+    expect(b).toEqual([
+      { tMono: 0, reason: "session_start" },
+      { tMono: 2000, reason: "burst_gap" },
+      { tMono: 5000, reason: "session_end" },
+    ]);
+  });
+
+  it("does not fire burst_gap on continuous mouse_move alone", () => {
+    const b = computeBoundaries(
+      [ev(0, "mouse_move"), ev(1000, "mouse_move"), ev(2000, "mouse_move")],
+      3000,
+      3000,
+      1500,
+    );
+    expect(b).toEqual([
+      { tMono: 0, reason: "session_start" },
+      { tMono: 3000, reason: "session_end" },
+    ]);
+  });
+
+  it("prefers focus_change over a burst_gap when they land on the same t_mono", () => {
+    const b = computeBoundaries(
+      [ev(0, "key_down"), ev(2000, "key_down"), ev(2000, "focus_change")],
+      5000,
+      3000,
+      1500,
+    );
+    expect(b[1]).toEqual({ tMono: 2000, reason: "focus_change" });
+  });
 });
 
 describe("windowSegments", () => {
