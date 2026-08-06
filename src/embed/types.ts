@@ -15,6 +15,7 @@
  */
 export type View =
   | "caption" // VLM visual-semantic summary text
+  | "app_caption" // VLM summary of the focused app window only (crop of `caption`'s frame)
   | "digest" // templated structured-event text
   | "transcript" // STT text (mic + desktop audio)
   | "behavior" // numeric input-dynamics feature vector
@@ -24,6 +25,7 @@ export type View =
 
 export const VIEWS: readonly View[] = [
   "caption",
+  "app_caption",
   "digest",
   "transcript",
   "behavior",

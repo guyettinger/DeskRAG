@@ -55,6 +55,15 @@ CREATE TABLE IF NOT EXISTS segment (
 );
 CREATE INDEX IF NOT EXISTS idx_segment_session ON segment(session_id, granularity, t_mono_start);
 
+-- The focused-app-window caption (app_caption view) — a SEPARATE table, not a
+-- column on segment, because segment's shape is frozen: CREATE TABLE IF NOT
+-- EXISTS with no migration step means a new column would never reach an
+-- existing install. Same pattern as ax_snapshot/trace_node_source.
+CREATE TABLE IF NOT EXISTS segment_app_caption (
+  segment_id  TEXT PRIMARY KEY REFERENCES segment(id) ON DELETE CASCADE,
+  text        TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS frame (
   id            TEXT PRIMARY KEY,
   session_id    TEXT NOT NULL REFERENCES session(id) ON DELETE CASCADE,
