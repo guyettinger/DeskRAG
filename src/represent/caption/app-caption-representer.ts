@@ -1,59 +1,67 @@
 /**
- * CaptionRepresenter (view 2) — the visual-semantic summary. For each segment,
- * sample a few of its keyframes, caption them with a VLM (passing the structured
- * digest as context), persist the caption text, and embed it into the caption
- * space. Mirrors the digest/behavior Representer: updateSegment (text -> SQLite)
- * BEFORE putSegmentVectors (vector -> Lance), so reconcile can re-embed a caption
- * from the persisted text after a crash.
+ * AppCaptionRepresenter (app_caption view) — the focused-window visual summary,
+ * a SECOND signal alongside the whole-desktop caption (CaptionRepresenter). For
+ * each segment, sample keyframes the same way CaptionRepresenter does, crop
+ * each to the focused window's bounds (resolved from focus_change events,
+ * latest at-or-before the frame's t_mono), caption the crops, and persist.
  *
- * The caption becomes a Tier-1 text view: a TextViewSearcher(captionEmbedder,
- * "caption") lets NL queries hit it directly.
+ * A frame with no resolvable window bounds is dropped from the sample — never
+ * falls back to the full frame, which would silently turn this into a copy of
+ * `caption`. If no sampled frame in a segment has bounds, that segment gets no
+ * app_caption row at all, the same "absence is meaningful" rule the rest of
+ * the pipeline follows.
  */
 
 import type { CaptionProvider, EmbeddingProvider } from "../../embed/types.js";
 import { namespaceFor } from "../../embed/types.js";
 import type { BlobStore } from "../../store/blob-store.js";
-import type { SegmentVectorInsert, Store } from "../../store/types.js";
+import type { EventRow, FrameRow, SegmentVectorInsert, Store } from "../../store/types.js";
+import type { RegionCropper } from "../regions/cropper.js";
+import type { Box } from "../regions/geometry.js";
 import { sample } from "../sample.js";
+import { resolveFocusBounds } from "./focus-bounds.js";
 
-export interface CaptionRepresenterOptions {
+export interface AppCaptionRepresenterOptions {
   captioner: CaptionProvider;
   captionEmbedder: EmbeddingProvider;
   blobStore: BlobStore;
+  cropper: RegionCropper;
   /** Keyframes sampled per segment for captioning. */
   maxFramesPerSegment?: number;
 }
 
-export interface CaptionRepresentResult {
+export interface AppCaptionRepresentResult {
   segmentCount: number;
   captionedCount: number;
   namespace: string;
 }
 
-export class CaptionRepresenter {
+export class AppCaptionRepresenter {
   private readonly captioner: CaptionProvider;
   private readonly captionEmbedder: EmbeddingProvider;
   private readonly blobStore: BlobStore;
+  private readonly cropper: RegionCropper;
   private readonly maxFrames: number;
   readonly namespace: string;
   private spaceReady = false;
 
   constructor(
     private readonly store: Store,
-    opts: CaptionRepresenterOptions,
+    opts: AppCaptionRepresenterOptions,
   ) {
     this.captioner = opts.captioner;
     this.captionEmbedder = opts.captionEmbedder;
     this.blobStore = opts.blobStore;
+    this.cropper = opts.cropper;
     this.maxFrames = opts.maxFramesPerSegment ?? 3;
-    this.namespace = namespaceFor("caption", this.captionEmbedder);
+    this.namespace = namespaceFor("app_caption", this.captionEmbedder);
   }
 
   async ensureSpace(): Promise<void> {
     if (this.spaceReady) return;
     await this.store.registerVectorSpace({
       namespace: this.namespace,
-      view: "caption",
+      view: "app_caption",
       providerId: this.captionEmbedder.id,
       model: this.captionEmbedder.model,
       dimensions: this.captionEmbedder.dimensions,
@@ -62,7 +70,7 @@ export class CaptionRepresenter {
     this.spaceReady = true;
   }
 
-  async represent(sessionId: string): Promise<CaptionRepresentResult> {
+  async represent(sessionId: string): Promise<AppCaptionRepresentResult> {
     await this.ensureSpace();
     const segments = this.store.getSegmentsBySession(sessionId);
     const frames = this.store.getFramesBySession(sessionId);
@@ -70,6 +78,9 @@ export class CaptionRepresenter {
       return { segmentCount: 0, captionedCount: 0, namespace: this.namespace };
     }
     const sessionEnd = Math.max(...segments.map((s) => s.tMonoEnd), 0);
+    const focusEvents: EventRow[] = this.store
+      .getEventsBySession(sessionId)
+      .filter((e) => e.kind === "focus_change");
 
     const captions: string[] = [];
     const segIds: string[] = [];
@@ -81,18 +92,26 @@ export class CaptionRepresenter {
           f.tMono >= seg.tMonoStart &&
           (inclusiveRight ? f.tMono <= seg.tMonoEnd : f.tMono < seg.tMonoEnd),
       );
-      if (segFrames.length === 0) continue; // no keyframes to caption
+      if (segFrames.length === 0) continue;
 
-      const chosen = sample(segFrames, this.maxFrames);
-      const bytes: Uint8Array[] = [];
-      for (const f of chosen) {
-        const blob = this.store.getBlob(f.blobId!);
-        if (blob) bytes.push(await this.blobStore.read(blob));
+      const withBounds: { frame: FrameRow; bounds: Box }[] = [];
+      for (const frame of sample(segFrames, this.maxFrames)) {
+        const bounds = resolveFocusBounds(focusEvents, frame.tMono);
+        if (bounds) withBounds.push({ frame, bounds });
       }
-      if (bytes.length === 0) continue;
+      if (withBounds.length === 0) continue; // never fall back to the full frame
 
-      const caption = await this.captioner.caption(bytes, seg.digest ?? undefined);
-      await this.store.updateSegment(seg.id, { caption }); // SQLite text first
+      const crops: Uint8Array[] = [];
+      for (const { frame, bounds } of withBounds) {
+        const blob = this.store.getBlob(frame.blobId!);
+        if (!blob) continue;
+        const image = await this.blobStore.read(blob);
+        crops.push(await this.cropper.crop(image, frame.width, frame.height, bounds));
+      }
+      if (crops.length === 0) continue;
+
+      const caption = await this.captioner.caption(crops, seg.digest ?? undefined);
+      await this.store.updateSegmentAppCaption(seg.id, caption); // SQLite text first
       captions.push(caption);
       segIds.push(seg.id);
     }

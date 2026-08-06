@@ -206,6 +206,11 @@ export {
   type CaptionRepresenterOptions,
   type CaptionRepresentResult,
 } from "./represent/caption/caption-representer.js";
+export {
+  AppCaptionRepresenter,
+  type AppCaptionRepresenterOptions,
+  type AppCaptionRepresentResult,
+} from "./represent/caption/app-caption-representer.js";
 export { FakeCaptionProvider } from "./represent/caption/fake.js";
 /**
  * Local VLM captioner. Barrel-safe (plain fetch); `listVisionModels` is what the
