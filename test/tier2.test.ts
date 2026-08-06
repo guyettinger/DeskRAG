@@ -81,11 +81,14 @@ describe("Tier 2: frame association + image embedding + scoped retrieval", () =>
     const segs = store.getSegmentsBySession(sessionId);
     const early = segs.find((s) => s.granularity === "action" && s.tMonoStart === 0)!;
     const late = segs.find((s) => s.granularity === "action" && s.tMonoStart === 5000)!;
-    const task = segs.find((s) => s.granularity === "task")!;
+    const earlyTask = segs.find((s) => s.granularity === "task" && s.tMonoStart === 0)!;
+    const lateTask = segs.find((s) => s.granularity === "task" && s.tMonoStart === 5000)!;
 
-    // frame A (t=1000) -> early action + task; frame B (t=6000) -> late action + task.
-    expect(new Set(store.getFrame(frameA)!.segmentIds)).toEqual(new Set([early.id, task.id]));
-    expect(new Set(store.getFrame(frameB)!.segmentIds)).toEqual(new Set([late.id, task.id]));
+    // frame A (t=1000) -> early action + early task; frame B (t=6000) -> late action + late task.
+    // (task now splits at the same focus_change action does, so it is no
+    // longer one segment shared by both frames.)
+    expect(new Set(store.getFrame(frameA)!.segmentIds)).toEqual(new Set([early.id, earlyTask.id]));
+    expect(new Set(store.getFrame(frameB)!.segmentIds)).toEqual(new Set([late.id, lateTask.id]));
   });
 
   it("excludes an exact visual match that falls outside the Tier-1 segment scope", async () => {

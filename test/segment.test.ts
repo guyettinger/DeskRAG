@@ -234,10 +234,10 @@ describe("Segmenter (integration)", () => {
     const result = await new Segmenter(store).segment(sessionId);
     expect(result.endTMono).toBe(8000);
     expect(result.byGranularity.action).toHaveLength(2);
-    expect(result.byGranularity.task).toHaveLength(1);
+    expect(result.byGranularity.task).toHaveLength(2); // was 1 — task now cuts at focus_change too
 
     const segs = store.getSegmentsBySession(sessionId);
-    expect(segs).toHaveLength(3);
+    expect(segs).toHaveLength(4); // was 3
 
     const actions = segs.filter((s) => s.granularity === "action");
     expect(actions.map((s) => [s.tMonoStart, s.tMonoEnd, s.boundaryReason])).toEqual([
@@ -245,7 +245,10 @@ describe("Segmenter (integration)", () => {
       [5000, 8000, "focus_change"],
     ]);
     const tasks = segs.filter((s) => s.granularity === "task");
-    expect(tasks.map((s) => [s.tMonoStart, s.tMonoEnd])).toEqual([[0, 8000]]);
+    expect(tasks.map((s) => [s.tMonoStart, s.tMonoEnd, s.boundaryReason])).toEqual([
+      [0, 5000, "session_start"],
+      [5000, 8000, "focus_change"],
+    ]);
 
     // represent/ fills these later; they're empty now.
     expect(actions[0]!.transcript).toBeNull();

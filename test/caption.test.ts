@@ -73,8 +73,9 @@ describe("CaptionRepresenter (view 2)", () => {
     const result = await rep.represent(sessionId);
 
     expect(result.namespace).toBe("caption:fake:m:8");
-    // Every segment (2 actions + 1 task) contains a keyframe -> all captioned.
-    expect(result.captionedCount).toBe(3);
+    // Every segment (2 actions + 2 tasks, now that task splits at the same
+    // focus_change action does) contains a keyframe -> all captioned.
+    expect(result.captionedCount).toBe(4);
 
     const segs = store.getSegmentsBySession(sessionId);
     expect(segs.every((s) => s.caption !== null)).toBe(true);
