@@ -94,6 +94,7 @@ export interface ModelDownloadProgress {
 export interface Capabilities {
   imageSearch: boolean;
   caption: boolean;
+  appCaption: boolean;
   rerank: boolean;
 }
 

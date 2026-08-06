@@ -30,6 +30,7 @@ import {
   Representer,
   FrameRepresenter,
   CaptionRepresenter,
+  AppCaptionRepresenter,
   RegionRepresenter,
   TranscriptRepresenter,
   StoredAxProvider,
@@ -113,6 +114,7 @@ export function capabilitiesFor(p: ProviderSettingsView): Capabilities {
   return {
     imageSearch: p.imageProvider !== "none",
     caption: p.captionProvider !== "none",
+    appCaption: p.captionProvider !== "none",
     rerank: p.rerankProvider !== "none",
     // No transcript member, deliberately — see Capabilities in shared/types.ts.
   };
@@ -580,6 +582,21 @@ export class DeskRagService {
             blobStore: this.blobs,
           }).represent(sessionId),
       });
+      stages.push({
+        name: "App captions",
+        // Needs a cropper too (sharp), unlike the whole-frame caption stage —
+        // skip entirely rather than write nothing useful when it's unavailable.
+        run: async () => {
+          const cropper = await this.loadCropper();
+          if (!cropper) return;
+          await new AppCaptionRepresenter(this.store, {
+            captioner: prov.captioner!,
+            captionEmbedder: prov.textEmbedder,
+            blobStore: this.blobs,
+            cropper,
+          }).represent(sessionId);
+        },
+      });
     }
     // Regions run under EVERY image configuration, including none. Proposal is
     // geometry + the AX tree; only the crops need a model. Gating the whole stage
@@ -695,7 +712,7 @@ export class DeskRagService {
     // unregistered namespace, and caption/transcript are absent by default.
     const registered = new Set(this.store.listVectorSpaces().map((s) => s.namespace));
     const searchers: ViewSearcher[] = [];
-    for (const view of ["digest", "caption", "transcript"] as const) {
+    for (const view of ["digest", "caption", "app_caption", "transcript"] as const) {
       const s = new TextViewSearcher(prov.textEmbedder, view);
       if (registered.has(s.namespace)) searchers.push(s);
     }
@@ -733,12 +750,18 @@ export class DeskRagService {
     // that before searching, or an empty result over a full library is
     // indistinguishable from "nothing matched".
     const registered = new Set(this.store.listVectorSpaces().map((s) => s.namespace));
-    const hasCurrentTextSpace = (["digest", "caption", "transcript"] as const).some((view) =>
-      registered.has(new TextViewSearcher(prov.textEmbedder, view).namespace),
+    const hasCurrentTextSpace = (["digest", "caption", "app_caption", "transcript"] as const).some(
+      (view) => registered.has(new TextViewSearcher(prov.textEmbedder, view).namespace),
     );
     const hasAnyTextSpace = this.store
       .listVectorSpaces()
-      .some((s) => s.view === "digest" || s.view === "caption" || s.view === "transcript");
+      .some(
+        (s) =>
+          s.view === "digest" ||
+          s.view === "caption" ||
+          s.view === "app_caption" ||
+          s.view === "transcript",
+      );
 
     const retriever = this.buildRetriever(prov);
     const { frames } = await retriever.retrieve({
