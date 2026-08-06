@@ -14,7 +14,8 @@ import { KeyframeGate } from "../src/capture/keyframe.js";
 import { FakeEmbeddingProvider } from "../src/embed/fake.js";
 import { Tier1Retriever } from "../src/retrieve/retriever.js";
 import { TextViewSearcher } from "../src/retrieve/searchers.js";
-import type { EventInsert } from "../src/store/types.js";
+import { resolveFocusBounds } from "../src/represent/caption/focus-bounds.js";
+import type { EventInsert, EventRow } from "../src/store/types.js";
 
 function grad(reverse = false): Uint8Array {
   const g = new Uint8Array(72);
@@ -92,5 +93,33 @@ describe("CaptionRepresenter (view 2)", () => {
     const rec = await store.reconcile();
     expect(rec.missing).toHaveLength(0);
     expect(rec.orphansPruned).toBe(0);
+  });
+});
+
+describe("resolveFocusBounds", () => {
+  const mkEvent = (tMono: number, bounds?: { x: number; y: number; w: number; h: number }): EventRow => ({
+    id: "e", sessionId: "s", tMono, kind: "focus_change", x: null, y: null,
+    data: bounds ? { app: "X", bounds } : { app: "X" },
+  });
+
+  it("returns the latest bounds at-or-before tMono", () => {
+    const events = [mkEvent(0, { x: 1, y: 1, w: 1, h: 1 }), mkEvent(5000, { x: 9, y: 9, w: 9, h: 9 })];
+    expect(resolveFocusBounds(events, 4999)).toEqual({ x: 1, y: 1, w: 1, h: 1 });
+    expect(resolveFocusBounds(events, 5000)).toEqual({ x: 9, y: 9, w: 9, h: 9 });
+  });
+
+  it("returns undefined when no focus_change with bounds precedes tMono", () => {
+    expect(resolveFocusBounds([mkEvent(5000, { x: 9, y: 9, w: 9, h: 9 })], 1000)).toBeUndefined();
+    expect(resolveFocusBounds([], 1000)).toBeUndefined();
+  });
+
+  it("skips a focus_change with no bounds, keeping the last one that had them", () => {
+    const events = [mkEvent(0, { x: 1, y: 1, w: 1, h: 1 }), mkEvent(2000)]; // no bounds at 2000
+    expect(resolveFocusBounds(events, 3000)).toEqual({ x: 1, y: 1, w: 1, h: 1 });
+  });
+
+  it("tolerates out-of-order input (sorts defensively)", () => {
+    const events = [mkEvent(5000, { x: 9, y: 9, w: 9, h: 9 }), mkEvent(0, { x: 1, y: 1, w: 1, h: 1 })];
+    expect(resolveFocusBounds(events, 5000)).toEqual({ x: 9, y: 9, w: 9, h: 9 });
   });
 });
