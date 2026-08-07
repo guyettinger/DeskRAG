@@ -10,11 +10,15 @@ import { Representer } from "../src/represent/representer.js";
 import { CaptionRepresenter } from "../src/represent/caption/caption-representer.js";
 import { FakeCaptionProvider } from "../src/represent/caption/fake.js";
 import { FrameIngestor, type SampledFrame } from "../src/capture/frame-ingest.js";
-import { KeyframeGate } from "../src/capture/keyframe.js";
+import { KeyframeBudget } from "../src/capture/keyframe-budget.js";
 import { FakeEmbeddingProvider } from "../src/embed/fake.js";
 import { Tier1Retriever } from "../src/retrieve/retriever.js";
 import { TextViewSearcher } from "../src/retrieve/searchers.js";
-import type { EventInsert } from "../src/store/types.js";
+import { resolveFocusBounds } from "../src/represent/caption/focus-bounds.js";
+import { AppCaptionRepresenter } from "../src/represent/caption/app-caption-representer.js";
+import type { RegionCropper } from "../src/represent/regions/cropper.js";
+import type { Box } from "../src/represent/regions/geometry.js";
+import type { EventInsert, EventRow } from "../src/store/types.js";
 
 function grad(reverse = false): Uint8Array {
   const g = new Uint8Array(72);
@@ -55,7 +59,7 @@ describe("CaptionRepresenter (view 2)", () => {
     ]);
     await store.endSession(sessionId, 9000);
 
-    const ing = new FrameIngestor(store, sessionId, new KeyframeGate({ hammingThreshold: 1 }), blobs);
+    const ing = new FrameIngestor(store, sessionId, new KeyframeBudget({ minIntervalMs: 0 }), blobs);
     const frame = (t: number, gray: Uint8Array, img: Uint8Array): SampledFrame => ({
       tMono: t, width: 100, height: 100, gray, grayW: 9, grayH: 8, image: { bytes: img, codec: "png" },
     });
@@ -73,12 +77,20 @@ describe("CaptionRepresenter (view 2)", () => {
     const result = await rep.represent(sessionId);
 
     expect(result.namespace).toBe("caption:fake:m:8");
-    // Every segment (2 actions + 1 task) contains a keyframe -> all captioned.
-    expect(result.captionedCount).toBe(3);
+    // Each frame is a scene_change boundary, so segmentation is now
+    //   action [0,1000) [1000,5000) [5000,6000) [6000,8000]   (4)
+    //   task   [0,5000) [5000,8000]                           (2)
+    // and only the four holding a keyframe (t=1000 or t=6000) get captioned —
+    // the action spans at 0 and 5000 hold none.
+    expect(result.captionedCount).toBe(4);
 
     const segs = store.getSegmentsBySession(sessionId);
-    expect(segs.every((s) => s.caption !== null)).toBe(true);
-    const late = segs.find((s) => s.granularity === "action" && s.tMonoStart === 5000)!;
+    expect(segs).toHaveLength(6);
+    expect(segs.filter((s) => s.caption !== null)).toHaveLength(4);
+    // The captioned segment whose digest names Slack is the task span: the
+    // action span carrying the focus change is bracketed by it and the next
+    // scene change, so it holds no frame in this synthetic schedule.
+    const late = segs.find((s) => s.granularity === "task" && s.tMonoStart === 5000)!;
     expect(late.caption).toContain("Slack"); // context (digest) flowed into the caption
 
     // The caption is a Tier-1 view: querying its exact text ranks the segment #1.
@@ -88,6 +100,121 @@ describe("CaptionRepresenter (view 2)", () => {
     expect(hit.segments[0]!.perView[0]!.view).toBe("caption");
 
     // Enrich path is consistent — nothing missing or orphaned.
+    const rec = await store.reconcile();
+    expect(rec.missing).toHaveLength(0);
+    expect(rec.orphansPruned).toBe(0);
+  });
+});
+
+describe("resolveFocusBounds", () => {
+  const mkEvent = (tMono: number, bounds?: { x: number; y: number; w: number; h: number }): EventRow => ({
+    id: "e", sessionId: "s", tMono, kind: "focus_change", x: null, y: null,
+    data: bounds ? { app: "X", bounds } : { app: "X" },
+  });
+
+  it("returns the latest bounds at-or-before tMono", () => {
+    const events = [mkEvent(0, { x: 1, y: 1, w: 1, h: 1 }), mkEvent(5000, { x: 9, y: 9, w: 9, h: 9 })];
+    expect(resolveFocusBounds(events, 4999)).toEqual({ x: 1, y: 1, w: 1, h: 1 });
+    expect(resolveFocusBounds(events, 5000)).toEqual({ x: 9, y: 9, w: 9, h: 9 });
+  });
+
+  it("returns undefined when no focus_change with bounds precedes tMono", () => {
+    expect(resolveFocusBounds([mkEvent(5000, { x: 9, y: 9, w: 9, h: 9 })], 1000)).toBeUndefined();
+    expect(resolveFocusBounds([], 1000)).toBeUndefined();
+  });
+
+  it("skips a focus_change with no bounds, keeping the last one that had them", () => {
+    const events = [mkEvent(0, { x: 1, y: 1, w: 1, h: 1 }), mkEvent(2000)]; // no bounds at 2000
+    expect(resolveFocusBounds(events, 3000)).toEqual({ x: 1, y: 1, w: 1, h: 1 });
+  });
+
+  it("tolerates out-of-order input (sorts defensively)", () => {
+    const events = [mkEvent(5000, { x: 9, y: 9, w: 9, h: 9 }), mkEvent(0, { x: 1, y: 1, w: 1, h: 1 })];
+    expect(resolveFocusBounds(events, 5000)).toEqual({ x: 9, y: 9, w: 9, h: 9 });
+  });
+});
+
+describe("AppCaptionRepresenter (app_caption view)", () => {
+  let dir: string;
+  let store: DualStore;
+  let blobs: BlobStore;
+  const fake = new FakeEmbeddingProvider({ id: "fake", model: "m", dimensions: 8 });
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), "erag-appcap-"));
+    store = await DualStore.open(join(dir, "meta.sqlite"), join(dir, "lance"));
+    blobs = new BlobStore(join(dir, "blobs"));
+  });
+  afterEach(() => {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("captions the focused window's crop (using the resolved bounds), and skips a segment with no resolvable bounds — never falling back to the full frame", async () => {
+    const sessionId = ulid();
+    const mk = (t: number, kind: string, data?: unknown): EventInsert => ({
+      id: ulid(), sessionId, tMono: t, kind, ...(data !== undefined ? { data } : {}),
+    });
+    await store.putSession({ id: sessionId, startedAt: 1000, epochMono: 0 });
+    await store.putEvents([
+      mk(0, "mouse_move"),
+      // Bounds arrive with the focus_change at 5000 — the EARLY segment's
+      // frame (t=1000, before this event) has no prior focus_change at all.
+      mk(5000, "focus_change", { app: "Calculator", bounds: { x: 10, y: 20, w: 300, h: 200 } }),
+      mk(6000, "key_down"),
+    ]);
+    await store.endSession(sessionId, 9000);
+
+    const ing = new FrameIngestor(store, sessionId, new KeyframeBudget({ minIntervalMs: 0 }), blobs);
+    const frame = (t: number, gray: Uint8Array, img: Uint8Array): SampledFrame => ({
+      tMono: t, width: 1000, height: 1000, gray, grayW: 9, grayH: 8, image: { bytes: img, codec: "png" },
+    });
+    await ing.ingest(frame(1000, grad(false), Uint8Array.from([1, 2, 3])));
+    await ing.ingest(frame(6000, grad(true), Uint8Array.from([9, 8, 7])));
+
+    await new Segmenter(store).segment(sessionId);
+    await new Representer(store, { digestEmbedder: fake }).represent(sessionId);
+    await new CaptionRepresenter(store, {
+      captioner: new FakeCaptionProvider(),
+      captionEmbedder: fake,
+      blobStore: blobs,
+    }).represent(sessionId);
+
+    const seenBoxes: Box[] = [];
+    const cropper: RegionCropper = {
+      async crop(_img, _fw, _fh, box) {
+        seenBoxes.push(box);
+        // A different byte LENGTH than the whole-frame crop (3 bytes, from
+        // ing.ingest above) so FakeCaptionProvider's length-based signature
+        // actually distinguishes app_caption from caption in this test.
+        return Uint8Array.from([1, 2, 3, 4, 5]);
+      },
+    };
+    const rep = new AppCaptionRepresenter(store, {
+      captioner: new FakeCaptionProvider(),
+      captionEmbedder: fake,
+      blobStore: blobs,
+      cropper,
+    });
+    const result = await rep.represent(sessionId);
+    expect(result.namespace).toBe("app_caption:fake:m:8");
+
+    const segs = store.getSegmentsBySession(sessionId);
+    // Each frame is a scene_change boundary, so the action span holding a frame
+    // STARTS at that frame: [1000,5000) holds t=1000, [6000,8000] holds t=6000.
+    const early = segs.find((s) => s.granularity === "action" && s.tMonoStart === 1000)!;
+    const late = segs.find((s) => s.granularity === "action" && s.tMonoStart === 6000)!;
+
+    // Early segment's only frame (t=1000) precedes any focus_change with
+    // bounds -> no app_caption at all, never a copy of the whole-frame caption.
+    expect(early.caption).not.toBeNull(); // the whole-frame caption still exists
+    expect(store.getAppCaption(early.id)).toBeUndefined();
+
+    // Late segment's frame (t=6000) resolves to the Calculator bounds.
+    expect(store.getAppCaption(late.id)).toBeDefined();
+    expect(store.getAppCaption(late.id)).not.toBe(late.caption);
+    expect(seenBoxes).toContainEqual({ x: 10, y: 20, w: 300, h: 200 });
+
     const rec = await store.reconcile();
     expect(rec.missing).toHaveLength(0);
     expect(rec.orphansPruned).toBe(0);

@@ -74,6 +74,15 @@ export interface LiftInput {
   /** The keyboard layout in force at `tMono`, for character resolution. */
   keymapAt?(tMono: number): Keymap | undefined;
   dwellGapMs?: number;
+  /**
+   * Defaults to effectively disabled (never fires), UNLIKE Segmenter's default.
+   * A burst_gap boundary here would split a span with no "wait" emitted for it
+   * (the check below matches `dwell_gap` specifically), silently losing the
+   * pause instead of capturing it as the intra-span idle gesture groupGestures
+   * already handles. Trace deliberately keeps ONLY dwell_gap/focus_change/
+   * bookmark as real boundaries — see the comment above the dwell_gap check.
+   */
+  burstGapMs?: number;
   gestures?: GestureOptions;
   /** Defaults to `sessionId`. Ids are `${prefix}:n0`, `${prefix}:e0`, ... */
   idPrefix?: string;
@@ -128,7 +137,12 @@ export function liftTrace(input: LiftInput): Trace {
   const prefix = input.idPrefix ?? input.sessionId;
   const sorted = [...input.events].sort((a, b) => a.tMono - b.tMono);
   const events = input.keymapAt !== undefined ? resolveKeys(sorted, input.keymapAt) : sorted;
-  const boundaries = computeBoundaries(events, input.endTMono, input.dwellGapMs);
+  const boundaries = computeBoundaries(
+    events,
+    input.endTMono,
+    input.dwellGapMs,
+    input.burstGapMs ?? Number.POSITIVE_INFINITY,
+  );
 
   const nodes: TraceNode[] = boundaries.map((b, i) =>
     buildNode(`${prefix}:n${i}`, b.tMono, events, input),

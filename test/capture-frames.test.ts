@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DualStore } from "../src/store/store.js";
 import { MonotonicClock } from "../src/timeline/clock.js";
 import { CaptureSession } from "../src/capture/session.js";
-import { KeyframeGate } from "../src/capture/keyframe.js";
+import { KeyframeBudget } from "../src/capture/keyframe-budget.js";
 import type { CaptureContext, Producer } from "../src/capture/types.js";
 import type { SampledFrame } from "../src/capture/frame-ingest.js";
 
@@ -46,14 +46,17 @@ describe("CaptureSession frame ingestion", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("routes producer frames through the gate into Tier-0-searchable keyframes", async () => {
+  it("routes producer frames through the budget into Tier-0-searchable keyframes", async () => {
     let mono = 0;
     const clock = MonotonicClock.start(() => mono++, () => 1000);
     const session = new CaptureSession(store, {
       clock,
-      keyframeGate: new KeyframeGate({ hammingThreshold: 10 }),
+      keyframeBudget: new KeyframeBudget({ minIntervalMs: 0 }),
     });
-    // gradient, identical (dup, dropped), reversed (distinct) -> 2 keyframes.
+    // All three are kept: near-duplicate rejection is ffmpeg's job now
+    // (mpdecimate), and at minIntervalMs 0 the budget rejects nothing. What
+    // this asserts is the ROUTE — producer -> CaptureSession -> FrameIngestor
+    // -> a frame row that Tier-0 can find.
     session.addProducer(
       new SyntheticFrameProducer([gradient(false), gradient(false), gradient(true)]),
     );
@@ -61,10 +64,10 @@ describe("CaptureSession frame ingestion", () => {
     const sessionId = await session.start();
     await session.stop();
 
-    // Two keyframes kept; both findable by pHash, the near one distinct from far.
-    const all = store.phashPrefilter(0n, 64);
-    expect(all).toHaveLength(2);
-    expect(store.phashPrefilter(0n, 5)).toHaveLength(1); // only the gradient(false) frame
+    expect(store.phashPrefilter(0n, 64)).toHaveLength(3);
+    // The two gradient(false) frames hash identically; gradient(true) is 64
+    // bits away, so a radius of 5 separates them.
+    expect(store.phashPrefilter(0n, 5)).toHaveLength(2);
     expect(store.getSession(sessionId)!.endedAt).not.toBeNull();
   });
 });

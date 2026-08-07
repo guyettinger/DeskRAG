@@ -19,6 +19,7 @@ describe("capabilitiesFor", () => {
     expect(capabilitiesFor(base)).toEqual({
       imageSearch: false,
       caption: false,
+      appCaption: false,
       rerank: false,
     });
   });
@@ -30,13 +31,14 @@ describe("capabilitiesFor", () => {
       captionProvider: "ollama",
       rerankProvider: "onnx",
     });
-    expect(c).toEqual({ imageSearch: true, caption: true, rerank: true });
+    expect(c).toEqual({ imageSearch: true, caption: true, appCaption: true, rerank: true });
   });
 
   it("keeps the three provider capabilities independent", () => {
     expect(capabilitiesFor({ ...base, imageProvider: "colsmol" })).toEqual({
       imageSearch: true,
       caption: false,
+      appCaption: false,
       rerank: false,
     });
   });
@@ -58,7 +60,7 @@ describe("capabilitiesFor", () => {
     ]) {
       const c = capabilitiesFor({ ...base, whisper });
       expect(c).not.toHaveProperty("transcript");
-      expect(Object.keys(c).sort()).toEqual(["caption", "imageSearch", "rerank"]);
+      expect(Object.keys(c).sort()).toEqual(["appCaption", "caption", "imageSearch", "rerank"]);
     }
   });
 });

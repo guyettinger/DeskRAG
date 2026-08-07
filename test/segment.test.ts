@@ -7,7 +7,12 @@ import { DualStore } from "../src/store/store.js";
 import { Segmenter } from "../src/segment/segmenter.js";
 import { computeBoundaries } from "../src/segment/boundaries.js";
 import { windowSegments } from "../src/segment/windowing.js";
-import type { Boundary, GranularityConfig } from "../src/segment/types.js";
+import {
+  BASE_GRANULARITIES,
+  resolveGranularities,
+  type Boundary,
+  type GranularityConfig,
+} from "../src/segment/types.js";
 import type { EventInsert } from "../src/store/types.js";
 
 const ev = (tMono: number, kind: string): { tMono: number; kind: string } => ({ tMono, kind });
@@ -46,6 +51,77 @@ describe("computeBoundaries", () => {
       { tMono: 0, reason: "session_start" },
       { tMono: 10_000, reason: "session_end" },
     ]);
+  });
+
+  it("marks a burst gap on a pause between meaningful input events, ignoring mouse_move in between", () => {
+    const b = computeBoundaries(
+      [
+        ev(0, "mouse_down"),
+        ev(200, "mouse_move"),
+        ev(400, "mouse_move"),
+        ev(1900, "mouse_move"), // mouse keeps moving through the pause
+        ev(2000, "key_down"),   // 2000ms since the last MEANINGFUL event (mouse_down at 0)
+      ],
+      5000,
+      3000, // dwellGapMs — no all-events gap here is big enough to fire dwell_gap
+      1500, // burstGapMs
+    );
+    expect(b).toEqual([
+      { tMono: 0, reason: "session_start" },
+      { tMono: 2000, reason: "burst_gap" },
+      { tMono: 5000, reason: "session_end" },
+    ]);
+  });
+
+  it("does not fire burst_gap on continuous mouse_move alone", () => {
+    const b = computeBoundaries(
+      [ev(0, "mouse_move"), ev(1000, "mouse_move"), ev(2000, "mouse_move")],
+      3000,
+      3000,
+      1500,
+    );
+    expect(b).toEqual([
+      { tMono: 0, reason: "session_start" },
+      { tMono: 3000, reason: "session_end" },
+    ]);
+  });
+
+  it("prefers focus_change over a burst_gap when they land on the same t_mono", () => {
+    const b = computeBoundaries(
+      [ev(0, "key_down"), ev(2000, "key_down"), ev(2000, "focus_change")],
+      5000,
+      3000,
+      1500,
+    );
+    expect(b[1]).toEqual({ tMono: 2000, reason: "focus_change" });
+  });
+
+  it("marks a scene change from a kept frame's t_mono", () => {
+    const b = computeBoundaries([ev(0, "mouse_move")], 8000, 3000, 1500, [4000]);
+    expect(b).toEqual([
+      { tMono: 0, reason: "session_start" },
+      { tMono: 4000, reason: "scene_change" },
+      { tMono: 8000, reason: "session_end" },
+    ]);
+  });
+
+  it("prefers focus_change over a scene_change on the same t_mono, and scene_change over a gap", () => {
+    const b = computeBoundaries([ev(0, "key_down"), ev(4000, "focus_change")], 8000, 3000, 1500, [
+      4000, 6000,
+    ]);
+    expect(b[1]).toEqual({ tMono: 4000, reason: "focus_change" });
+    expect(b[2]).toEqual({ tMono: 6000, reason: "scene_change" });
+  });
+
+  it("scene changes do NOT suppress a dwell gap — they are not input", () => {
+    // dwell_gap means "no input at all". A frame arriving mid-gap is the screen
+    // changing by itself, which is precisely NOT the user being active, so it
+    // must not close the gap. This is why scene times are a separate parameter
+    // rather than merged into the event list.
+    const b = computeBoundaries([ev(0, "key_down"), ev(9000, "key_down")], 10_000, 3000, 1500, [
+      4000,
+    ]);
+    expect(b.map((x) => x.reason)).toContain("dwell_gap");
   });
 });
 
@@ -94,6 +170,128 @@ describe("windowSegments", () => {
     ]);
     expect(segs.every((s) => s.boundaryReason === "window")).toBe(true);
   });
+
+  it("ignores boundaries outside cutReasons (task-style filtering)", () => {
+    const taskLike: GranularityConfig = {
+      name: "task",
+      targetMs: 100_000,
+      strideMs: 50_000,
+      boundaryAware: true,
+      cutReasons: ["focus_change", "bookmark"],
+    };
+    const bounds: Boundary[] = [
+      { tMono: 0, reason: "session_start" },
+      { tMono: 2000, reason: "burst_gap" }, // filtered out — not in cutReasons
+      { tMono: 5000, reason: "focus_change" }, // kept
+      { tMono: 8000, reason: "session_end" },
+    ];
+    const segs = windowSegments("s", taskLike, bounds, ulid);
+    expect(segs.map((s) => [s.tMonoStart, s.tMonoEnd, s.boundaryReason])).toEqual([
+      [0, 5000, "session_start"],
+      [5000, 8000, "focus_change"],
+    ]);
+  });
+
+  it("does not emit a bogus trailing window when a boundary-aware span is shorter than targetMs but longer than strideMs", () => {
+    // Found by driving a real recording: task (targetMs 30_000, strideMs
+    // 15_000 once adaptive-resolved) cutting a 16.5s focus_change span used
+    // to emit a second "window" segment that was a near-duplicate of the
+    // first's tail, because the boundaryAware loop kept sliding by strideMs
+    // even after the first window already reached the span's end.
+    const taskLike: GranularityConfig = {
+      name: "task",
+      targetMs: 30_000,
+      strideMs: 15_000,
+      boundaryAware: true,
+      cutReasons: ["focus_change", "bookmark"],
+    };
+    const bounds: Boundary[] = [
+      { tMono: 0, reason: "session_start" },
+      { tMono: 2187, reason: "focus_change" },
+      { tMono: 18692, reason: "focus_change" }, // span length 16_505 < targetMs, > strideMs
+      { tMono: 19101, reason: "session_end" },
+    ];
+    const segs = windowSegments("s", taskLike, bounds, ulid);
+    expect(segs.map((s) => [s.tMonoStart, s.tMonoEnd, s.boundaryReason])).toEqual([
+      [0, 2187, "session_start"],
+      [2187, 18692, "focus_change"],
+      [18692, 19101, "focus_change"],
+    ]);
+  });
+
+  it("an undefined cutReasons keeps every boundary (today's behavior)", () => {
+    const bounds: Boundary[] = [
+      { tMono: 0, reason: "session_start" },
+      { tMono: 2000, reason: "burst_gap" },
+      { tMono: 8000, reason: "session_end" },
+    ];
+    const segs = windowSegments("s", action, bounds, ulid); // `action` has no cutReasons
+    expect(segs.map((s) => [s.tMonoStart, s.tMonoEnd, s.boundaryReason])).toEqual([
+      [0, 2000, "session_start"],
+      [2000, 8000, "burst_gap"],
+    ]);
+  });
+
+  it("subdivide:false emits ONE segment per span, however long", () => {
+    const g: GranularityConfig = {
+      name: "action",
+      targetMs: 10_000,
+      strideMs: 10_000,
+      boundaryAware: true,
+      subdivide: false,
+    };
+    const bounds: Boundary[] = [
+      { tMono: 0, reason: "session_start" },
+      { tMono: 45_000, reason: "session_end" },
+    ];
+    const segs = windowSegments("s", g, bounds, ulid);
+    expect(segs.map((s) => [s.tMonoStart, s.tMonoEnd, s.boundaryReason])).toEqual([
+      [0, 45_000, "session_start"],
+    ]);
+  });
+});
+
+describe("BASE_GRANULARITIES", () => {
+  it("cuts action at visual state change, never at inactivity", () => {
+    const action = BASE_GRANULARITIES.find((g) => g.name === "action")!;
+    expect(action.cutReasons).toEqual(["scene_change", "focus_change", "bookmark"]);
+    expect(action.cutReasons).not.toContain("dwell_gap");
+    expect(action.cutReasons).not.toContain("burst_gap");
+    // A sub-window contains no keyframe, so subdividing by clock reintroduces
+    // exactly the caption-extent defect this design removes.
+    expect(action.subdivide).toBe(false);
+  });
+
+  it("leaves task cutting only at the big semantic switches", () => {
+    const task = BASE_GRANULARITIES.find((g) => g.name === "task")!;
+    expect(task.cutReasons).toEqual(["focus_change", "bookmark"]);
+    expect(task.subdivide).toBeUndefined(); // undefined means subdivide
+  });
+});
+
+describe("resolveGranularities", () => {
+  it("keeps action fixed and scales task's window to session length, floored at 30s", () => {
+    const gs = resolveGranularities(8000); // 8s session
+    const action = gs.find((g) => g.name === "action")!;
+    const task = gs.find((g) => g.name === "task")!;
+    expect(action.targetMs).toBe(10_000);
+    expect(task.targetMs).toBe(30_000); // clamp(4000, 30_000, 180_000) -> floor
+    expect(task.strideMs).toBe(15_000);
+  });
+
+  it("caps task's window at 180s for a long session", () => {
+    const gs = resolveGranularities(1_000_000); // ~16.7 minutes
+    const task = gs.find((g) => g.name === "task")!;
+    expect(task.targetMs).toBe(180_000);
+    expect(task.strideMs).toBe(90_000);
+  });
+
+  it("scales smoothly between the floor and the ceiling", () => {
+    const gs = resolveGranularities(200_000); // 200s session -> raw 100s, within bounds
+    const task = gs.find((g) => g.name === "task")!;
+    expect(task.targetMs).toBe(100_000);
+    expect(task.strideMs).toBe(50_000);
+  });
 });
 
 describe("Segmenter (integration)", () => {
@@ -128,10 +326,10 @@ describe("Segmenter (integration)", () => {
     const result = await new Segmenter(store).segment(sessionId);
     expect(result.endTMono).toBe(8000);
     expect(result.byGranularity.action).toHaveLength(2);
-    expect(result.byGranularity.task).toHaveLength(1);
+    expect(result.byGranularity.task).toHaveLength(2); // was 1 — task now cuts at focus_change too
 
     const segs = store.getSegmentsBySession(sessionId);
-    expect(segs).toHaveLength(3);
+    expect(segs).toHaveLength(4); // was 3
 
     const actions = segs.filter((s) => s.granularity === "action");
     expect(actions.map((s) => [s.tMonoStart, s.tMonoEnd, s.boundaryReason])).toEqual([
@@ -139,7 +337,10 @@ describe("Segmenter (integration)", () => {
       [5000, 8000, "focus_change"],
     ]);
     const tasks = segs.filter((s) => s.granularity === "task");
-    expect(tasks.map((s) => [s.tMonoStart, s.tMonoEnd])).toEqual([[0, 8000]]);
+    expect(tasks.map((s) => [s.tMonoStart, s.tMonoEnd, s.boundaryReason])).toEqual([
+      [0, 5000, "session_start"],
+      [5000, 8000, "focus_change"],
+    ]);
 
     // represent/ fills these later; they're empty now.
     expect(actions[0]!.transcript).toBeNull();

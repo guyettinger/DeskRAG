@@ -94,6 +94,7 @@ export interface ModelDownloadProgress {
 export interface Capabilities {
   imageSearch: boolean;
   caption: boolean;
+  appCaption: boolean;
   rerank: boolean;
 }
 
@@ -319,6 +320,18 @@ export interface TrackLaneDTO {
   id: string;
   title: string;
   shape: TrackShape;
+  /**
+   * Whether this lane's spans may paint their label into the bar.
+   *
+   * `span` lanes ONLY — `mark` and `thumb` lanes carry labels in the DTO but the
+   * renderer has never painted them, and `density` lanes have no label at all.
+   *
+   * Prose lanes are false. Adjacent segments each carrying a caption made the
+   * rail one run-on clipped paragraph; the text lives in the hover card, which
+   * resolves every lane at the cursor at once. Only `apps` is true, and even
+   * then the renderer paints the label only if it fits untruncated.
+   */
+  showLabels: boolean;
   density?: TrackDensityDTO;
   spans?: TrackSpanDTO[];
   marks?: TrackMarkDTO[];

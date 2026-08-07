@@ -78,6 +78,81 @@ export function densityPath(values: readonly (number | null)[], height: number):
   return d;
 }
 
+/**
+ * Average glyph advance for `.tracks__span-label` (11px system stack), in px,
+ * plus its horizontal padding (5px each side).
+ *
+ * A constant rather than a DOM measurement, deliberately: this module is pure
+ * and root-tested, and measuring text would put the rule behind a canvas or a
+ * layout pass. The cost of the approximation is that a borderline label may be
+ * withheld when it would just have fitted, which is the safe direction — the
+ * text is one hover away either way.
+ */
+const LABEL_CH_PX = 6.2;
+const LABEL_PAD_PX = 10;
+
+/**
+ * May this span paint its label into the bar?
+ *
+ * Only when it fits UNTRUNCATED. The rail used to stamp a caption into every
+ * 10s segment and clip it, so adjacent bars read as one run-on paragraph and
+ * every one of them ended in an ellipsis. Nothing truncates now: a label either
+ * fits or it is not drawn.
+ *
+ * It depends on the span's DURATION and never its position, so — like
+ * thumbPlacement — the answer cannot flip under a uniform time shift.
+ */
+export function labelFits(
+  spanSec: number,
+  totalSec: number,
+  axisWidth: number,
+  text: string,
+): boolean {
+  if (totalSec <= 0 || axisWidth <= 0 || text.length === 0) return false;
+  const spanPx = (spanSec / totalSec) * axisWidth;
+  return spanPx >= text.length * LABEL_CH_PX + LABEL_PAD_PX;
+}
+
+export interface SpanRects {
+  /** The visual bar, as percentages — no measurement needed, so it never flashes. */
+  leftPct: number;
+  widthPct: number;
+  /** The hit target in px, padded to `minHitPx`. Null until the axis is measured. */
+  hit: { leftPx: number; widthPx: number } | null;
+}
+
+/**
+ * The bar and its hit target, which are NOT the same rectangle.
+ *
+ * The bar is the signal's true extent, down to a sub-pixel sliver. Widening it
+ * so it can be clicked is exactly the overstatement this rail was rebuilt to
+ * remove — a bar that claims two seconds for an instantaneous click is a lie
+ * told for the mouse's benefit. So the target is a separate transparent rect,
+ * padded to `minHitPx` and centred on the bar. Same principle as the Flows
+ * canvas drawing every wire twice with a fat transparent stroke underneath.
+ *
+ * The target is CLAMPED into the axis: centred on a span at t=0 it would hang
+ * into the title gutter, which is the transport's column.
+ */
+export function spanRects(
+  startSec: number,
+  endSec: number,
+  totalSec: number,
+  axisWidth: number,
+  minHitPx: number,
+): SpanRects {
+  const frac = totalSec > 0 ? 1 / totalSec : 0;
+  const leftPct = startSec * frac * 100;
+  const widthPct = Math.max(0, (endSec - startSec) * frac * 100);
+  if (axisWidth <= 0) return { leftPct, widthPct, hit: null };
+
+  const left = startSec * frac * axisWidth;
+  const width = Math.max(0, (endSec - startSec) * frac * axisWidth);
+  const widthPx = Math.max(width, minHitPx);
+  const leftPx = Math.max(0, Math.min(axisWidth - widthPx, left + width / 2 - widthPx / 2));
+  return { leftPct, widthPct, hit: { leftPx, widthPx } };
+}
+
 function timecodeShort(sec: number): string {
   const s = Math.max(0, Math.floor(sec));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;

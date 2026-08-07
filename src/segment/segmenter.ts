@@ -1,8 +1,8 @@
 /**
  * Segmenter — reads a session's events from the store, detects boundaries, and
  * windows them into overlapping multi-granularity segments, then persists them.
- * Pure event-driven v1; scene-diff / speech-boundary signals plug in later by
- * contributing extra boundaries.
+ * Pure event-driven boundaries plus the session's own keyframes, which are the
+ * visual-state-change signal; speech boundaries plug in later the same way.
  *
  * Segments are relational-only here (transcript/digest/caption/vectors are
  * filled by represent/ downstream), so this uses store.putSegments with no
@@ -14,8 +14,9 @@ import type { Store, SegmentInsert } from "../store/types.js";
 import { computeBoundaries } from "./boundaries.js";
 import { windowSegments } from "./windowing.js";
 import {
+  DEFAULT_BURST_GAP_MS,
   DEFAULT_DWELL_GAP_MS,
-  DEFAULT_GRANULARITIES,
+  resolveGranularities,
   type Boundary,
   type GranularityConfig,
   type SegmenterOptions,
@@ -36,14 +37,16 @@ export interface SegmentResult {
  */
 export class Segmenter {
   private readonly dwellGapMs: number;
-  private readonly granularities: GranularityConfig[];
+  private readonly burstGapMs: number;
+  private readonly granularitiesOverride: GranularityConfig[] | undefined;
 
   constructor(
     private readonly store: Store,
     opts: SegmenterOptions = {},
   ) {
     this.dwellGapMs = opts.dwellGapMs ?? DEFAULT_DWELL_GAP_MS;
-    this.granularities = opts.granularities ?? DEFAULT_GRANULARITIES;
+    this.burstGapMs = opts.burstGapMs ?? DEFAULT_BURST_GAP_MS;
+    this.granularitiesOverride = opts.granularities;
   }
 
   async segment(sessionId: string): Promise<SegmentResult> {
@@ -52,11 +55,23 @@ export class Segmenter {
     const events = this.store.getEventsBySession(sessionId);
 
     const endTMono = this.deriveEnd(session.startedAt, session.endedAt, events);
-    const boundaries = computeBoundaries(events, endTMono, this.dwellGapMs);
+    // A kept frame IS a visual state change — mpdecimate decided that at
+    // capture time and FrameIngestor only wrote a row for frames that survived
+    // it. Passed as bare t_monos, not as events, so boundaries.ts still sees
+    // only SegEvent and `segment/` stays a leaf that knows nothing about frames.
+    const sceneTMonos = this.store.getFramesBySession(sessionId).map((f) => f.tMono);
+    const boundaries = computeBoundaries(
+      events,
+      endTMono,
+      this.dwellGapMs,
+      this.burstGapMs,
+      sceneTMonos,
+    );
+    const granularities = this.granularitiesOverride ?? resolveGranularities(endTMono);
 
     const all: SegmentInsert[] = [];
     const byGranularity: Record<string, string[]> = {};
-    for (const g of this.granularities) {
+    for (const g of granularities) {
       const segs = windowSegments(sessionId, g, boundaries, ulid);
       byGranularity[g.name] = segs.map((s) => s.id);
       all.push(...segs);

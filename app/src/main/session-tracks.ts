@@ -11,6 +11,9 @@
  */
 
 import {
+  DEFAULT_BURST_GAP_MS,
+  DEFAULT_DWELL_GAP_MS,
+  MEANINGFUL_INPUT_KINDS,
   urlPrefix,
   type AxSnapshotRow,
   type EventRow,
@@ -40,6 +43,13 @@ export interface AudioLaneInput {
   blobs: readonly AudioBlobPeaks[];
 }
 
+/** One utterance, projected from a `transcript_clip` row. */
+export interface TranscriptClipInput {
+  tMonoStart: number;
+  tMonoEnd: number;
+  text: string;
+}
+
 export interface LaneInput {
   /** t_mono that offset 0 corresponds to — the video's start when there is one. */
   originMono: number;
@@ -53,6 +63,8 @@ export interface LaneInput {
   keyframes: readonly KeyframeMarkerDTO[];
   regionCounts: ReadonlyMap<string, number>;
   audio: readonly AudioLaneInput[];
+  /** Utterance-level speech. Empty for a session transcribed without timings. */
+  transcriptClips: readonly TranscriptClipInput[];
 }
 
 function secOf(tMono: number, originMono: number): number {
@@ -93,6 +105,7 @@ export function appsLane(input: LaneInput): TrackLaneDTO {
     id: "apps",
     title: "apps",
     shape: "span",
+    showLabels: true,
     spans,
     emptyReason:
       spans.length === 0
@@ -120,6 +133,7 @@ export function webLane(input: LaneInput): TrackLaneDTO {
     id: "web",
     title: "web",
     shape: "mark",
+    showLabels: false,
     marks,
     emptyReason:
       marks.length === 0
@@ -147,6 +161,7 @@ export function markersLane(input: LaneInput): TrackLaneDTO {
     id: "markers",
     title: "markers",
     shape: "mark",
+    showLabels: false,
     marks,
     emptyReason: marks.length === 0 ? "no bookmarks or environment changes recorded" : null,
     warning: null,
@@ -177,6 +192,7 @@ function rateLane(
       id,
       title,
       shape: "density",
+      showLabels: false,
       density: { values, peak, unit },
       emptyReason: secs.length === 0 ? absent : null,
       warning: null,
@@ -237,8 +253,61 @@ export function clicksLane(input: LaneInput): TrackLaneDTO {
     id: "clicks",
     title: "clicks",
     shape: "mark",
+    showLabels: false,
     marks,
     emptyReason: marks.length === 0 ? "no clicks recorded" : null,
+    warning: null,
+  };
+}
+
+/**
+ * Inactivity — the INTENT signal, shown as itself.
+ *
+ * It used to cut `action` segments, which conflated "the user paused" with
+ * "the state changed". Those are different questions and only the second one
+ * segments a recording, so the gaps live here now.
+ *
+ * The rule is imported from the boundary detector rather than restated:
+ * MEANINGFUL_INPUT_KINDS and both gap constants come from `deskrag`, because
+ * two readers of one rule is the drift hazard that already bit ax-dump/ax-exec.
+ */
+export function idleLane(input: LaneInput): TrackLaneDTO {
+  const spans: TrackSpanDTO[] = [];
+  let lastT: number | undefined;
+  let lastMeaningfulT: number | undefined;
+  for (const e of input.events) {
+    const meaningful = MEANINGFUL_INPUT_KINDS.has(e.kind);
+    if (lastT !== undefined && e.tMono - lastT > DEFAULT_DWELL_GAP_MS) {
+      spans.push({
+        startSec: secOf(lastT, input.originMono),
+        endSec: secOf(e.tMono, input.originMono),
+        label: `idle ${((e.tMono - lastT) / 1000).toFixed(1)}s`,
+        tone: "warn",
+      });
+    } else if (
+      // `else`, so a dwell gap is never ALSO reported as a pause: one stretch
+      // of time is one fact, and the stronger name for it wins.
+      meaningful &&
+      lastMeaningfulT !== undefined &&
+      e.tMono - lastMeaningfulT > DEFAULT_BURST_GAP_MS
+    ) {
+      spans.push({
+        startSec: secOf(lastMeaningfulT, input.originMono),
+        endSec: secOf(e.tMono, input.originMono),
+        label: `pause ${((e.tMono - lastMeaningfulT) / 1000).toFixed(1)}s`,
+        tone: "neutral",
+      });
+    }
+    lastT = e.tMono;
+    if (meaningful) lastMeaningfulT = e.tMono;
+  }
+  return {
+    id: "idle",
+    title: "idle",
+    shape: "span",
+    showLabels: false,
+    spans,
+    emptyReason: spans.length === 0 ? "no idle gaps — input was continuous throughout" : null,
     warning: null,
   };
 }
@@ -250,7 +319,9 @@ const BOUNDARY_TONE: Record<string, TrackTone> = {
   session_start: "ok",
   session_end: "ok",
   focus_change: "accent",
+  scene_change: "accent",
   dwell_gap: "warn",
+  burst_gap: "warn",
   bookmark: "ok",
   window: "neutral",
 };
@@ -298,6 +369,7 @@ export function segmentLanes(input: LaneInput): TrackLaneDTO[] {
       id: `seg-${granularity}`,
       title: granularity,
       shape: "span" as const,
+      showLabels: false,
       spans: rows
         .slice()
         .sort((a, b) => a.tMonoStart - b.tMonoStart)
@@ -333,22 +405,60 @@ function presenceLane(
     id,
     title,
     shape: "span",
+    showLabels: false,
     spans,
     emptyReason: spans.length === 0 ? absent : null,
     warning: null,
   };
 }
 
+/**
+ * Speech, at the extent it was actually spoken.
+ *
+ * Clips carry the provider's own timings, so a two-second sentence is a
+ * two-second bar. Without them the only record is the SEGMENT that contained
+ * the speech — which is what this lane used to draw, giving a 10s bar for that
+ * same sentence and repeating the text across every segment the blob touched.
+ * That fallback is kept, because a transcript at the wrong extent still beats
+ * no transcript, but it is DISCLOSED rather than smoothed over — the same rule
+ * `observations` vs `sources` follows on the Flows screen.
+ */
 export function transcriptLane(input: LaneInput): TrackLaneDTO {
+  if (input.transcriptClips.length > 0) {
+    return {
+      id: "transcript",
+      title: "transcript",
+      shape: "span",
+      showLabels: false,
+      spans: input.transcriptClips
+        .slice()
+        .sort((a, b) => a.tMonoStart - b.tMonoStart)
+        .map((c) => ({
+          startSec: secOf(c.tMonoStart, input.originMono),
+          endSec: secOf(c.tMonoEnd, input.originMono),
+          label: c.text,
+          tone: "ok" as TrackTone,
+        })),
+      emptyReason: null,
+      warning: null,
+    };
+  }
   // Hedged deliberately: the store cannot prove retroactively that a provider
   // was absent, only that nothing carries the view.
-  return presenceLane(
+  const fallback = presenceLane(
     input,
     "transcript",
     "transcript",
     (s) => s.transcript,
     "nothing was transcribed — most likely no whisper model was configured when this was indexed",
   );
+  return {
+    ...fallback,
+    warning:
+      fallback.emptyReason === null
+        ? "no utterance timings were recorded — these bars are the SEGMENTS that contain speech, not the speech itself"
+        : null,
+  };
 }
 
 export function captionLane(input: LaneInput): TrackLaneDTO {
@@ -385,6 +495,7 @@ export function axLane(input: LaneInput): TrackLaneDTO {
     id: "ax",
     title: "ax walks",
     shape: "mark",
+    showLabels: false,
     marks,
     emptyReason:
       marks.length === 0
@@ -406,6 +517,7 @@ export function framesLane(input: LaneInput): TrackLaneDTO {
     id: "frames",
     title: "keyframes",
     shape: "thumb",
+    showLabels: false,
     thumbs,
     emptyReason:
       thumbs.length === 0
@@ -474,6 +586,7 @@ export function mouseSpeedLane(input: LaneInput): TrackLaneDTO {
     id: "mouse-speed",
     title: "mouse speed",
     shape: "density",
+    showLabels: false,
     density: { values, peak, unit: "px/s" },
     emptyReason: samples.length === 0 ? "no pointer movement recorded" : null,
     warning: null,
@@ -489,6 +602,7 @@ export function mouseXyLane(input: LaneInput): TrackLaneDTO {
     id: "mouse-xy",
     title: "mouse x/y",
     shape: "density",
+    showLabels: false,
     density: {
       // Already 0–1 by construction, so these are NOT re-normalized: rescaling
       // would make the traces depend on how far the pointer happened to travel
@@ -512,6 +626,7 @@ export function audioLanes(input: LaneInput): TrackLaneDTO[] {
         id: "audio-none",
         title: "audio",
         shape: "density",
+        showLabels: false,
         density: { values: new Array(input.buckets).fill(null), peak: 0, unit: "amplitude" },
         emptyReason: "no audio was captured — the Audio signal was off, or every blob is missing",
         warning: null,
@@ -531,6 +646,7 @@ export function audioLanes(input: LaneInput): TrackLaneDTO[] {
       id: `audio-${a.media}`,
       title: a.media === "mic" ? "audio (mic)" : `audio (${a.media})`,
       shape: "density" as const,
+      showLabels: false,
       // NOT re-normalized: amplitude is already 0–1 against full scale, and
       // rescaling to the loudest moment would make a whisper look like a shout.
       density: { values, peak, unit: "amplitude" },
@@ -569,6 +685,7 @@ export function buildSessionTracks(input: TrackInput): SessionTracksDTO {
       axLane(input),
       typingLane(input),
       clicksLane(input),
+      idleLane(input),
       scrollLane(input),
       mouseSpeedLane(input),
       mouseXyLane(input),

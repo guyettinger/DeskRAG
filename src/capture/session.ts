@@ -14,7 +14,7 @@ import { MonotonicClock } from "../timeline/clock.js";
 import type { Store, EventInsert, Media } from "../store/types.js";
 import { EventBatcher, type BatcherOptions } from "./batcher.js";
 import { FrameIngestor } from "./frame-ingest.js";
-import { KeyframeGate } from "./keyframe.js";
+import { KeyframeBudget } from "./keyframe-budget.js";
 import { AxCapturer } from "./ax/ax-capturer.js";
 import { BoundaryAxTrigger } from "./ax/boundary.js";
 import type { AxSource } from "./ax/types.js";
@@ -27,15 +27,15 @@ export interface CaptureSessionOptions extends BatcherOptions {
   meta?: unknown;
   /** Inject a clock (defaults to a fresh MonotonicClock.start()). */
   clock?: MonotonicClock;
-  /** Keyframe gate for frame producers (defaults to a fresh KeyframeGate). */
-  keyframeGate?: KeyframeGate;
+  /** Keyframe rate limit for frame producers (defaults to a fresh KeyframeBudget). */
+  keyframeBudget?: KeyframeBudget;
   /** Blob store for persisting keyframe images (frame producers with images). */
   blobStore?: BlobStore;
   /**
    * Accessibility source. When set, the AX tree is captured per kept keyframe
-   * AND at boundaries (focus change, bookmark, dwell resume) — pHash gating means
-   * a settled screen yields no keyframes, and settled is exactly when a boundary
-   * fires, so keyframe-only AX has nothing to offer where it matters most.
+   * AND at boundaries (focus change, bookmark, dwell resume) — a settled screen
+   * produces no keyframes, and settled is exactly when a boundary fires, so
+   * keyframe-only AX has nothing to offer where it matters most.
    */
   axSource?: AxSource;
   /** Settle delay before a boundary-triggered AX walk (default 250ms). */
@@ -98,7 +98,7 @@ export class CaptureSession {
     this.ingestor = new FrameIngestor(
       this.store,
       this.sessionId,
-      this.opts.keyframeGate ?? new KeyframeGate(),
+      this.opts.keyframeBudget ?? new KeyframeBudget(),
       this.opts.blobStore,
     );
     this.axCapturer = this.opts.axSource

@@ -1,7 +1,7 @@
 import React from "react";
 import type { TrackLaneDTO } from "@shared/types";
 import { keyframeLabel } from "../api.js";
-import { densityPath, thumbPlacement } from "./track-view.js";
+import { densityPath, labelFits, spanRects, thumbPlacement } from "./track-view.js";
 
 /** Matches `.tracks__plot`'s height, so a one-unit inset is one pixel. */
 const DENSITY_H = 48;
@@ -12,6 +12,11 @@ const DENSITY_H = 48;
  * one constant drives both the CSS width and the placement decision.
  */
 const THUMB_PX = 76;
+/**
+ * Minimum width of a span's HIT target, in px. The bar itself is never widened
+ * — see `spanRects`.
+ */
+const MIN_HIT_PX = 12;
 
 interface Props {
   lane: TrackLaneDTO;
@@ -65,19 +70,33 @@ function LaneBody({ lane, totalSec, axisWidth, onSeek, onInspect }: Props): Reac
   if (lane.shape === "span") {
     return (
       <>
-        {lane.spans?.map((s, i) => (
-          <div
-            key={i}
-            className="tracks__span"
-            data-tone={s.tone}
-            style={{
-              left: pct(s.startSec, totalSec),
-              width: pct(s.endSec - s.startSec, totalSec),
-            }}
-          >
-            <span className="tracks__span-label">{s.label}</span>
-          </div>
-        ))}
+        {lane.spans?.map((s, i) => {
+          const r = spanRects(s.startSec, s.endSec, totalSec, axisWidth, MIN_HIT_PX);
+          // The bar carries the signal's TRUE extent; the hit target is a
+          // separate padded rect, because widening the bar to make it clickable
+          // is the overstatement this rail was rebuilt to remove.
+          const showLabel =
+            lane.showLabels && labelFits(s.endSec - s.startSec, totalSec, axisWidth, s.label);
+          return (
+            <React.Fragment key={i}>
+              <div
+                className="tracks__span"
+                data-tone={s.tone}
+                style={{ left: `${r.leftPct}%`, width: `${r.widthPct}%` }}
+              >
+                {showLabel && <span className="tracks__span-label">{s.label}</span>}
+              </div>
+              <div
+                className="tracks__span-hit"
+                style={
+                  r.hit
+                    ? { left: r.hit.leftPx, width: r.hit.widthPx }
+                    : { left: `${r.leftPct}%`, width: `${r.widthPct}%` }
+                }
+              />
+            </React.Fragment>
+          );
+        })}
       </>
     );
   }

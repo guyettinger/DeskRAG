@@ -15,6 +15,7 @@
  */
 export type View =
   | "caption" // VLM visual-semantic summary text
+  | "app_caption" // VLM summary of the focused app window only (crop of `caption`'s frame)
   | "digest" // templated structured-event text
   | "transcript" // STT text (mic + desktop audio)
   | "behavior" // numeric input-dynamics feature vector
@@ -24,6 +25,7 @@ export type View =
 
 export const VIEWS: readonly View[] = [
   "caption",
+  "app_caption",
   "digest",
   "transcript",
   "behavior",
@@ -99,6 +101,13 @@ export interface CaptionProvider {
 export interface TranscriptionResult {
   /** The recognized speech; empty string when there is no speech / on failure. */
   text: string;
+  /**
+   * Sub-clip timing, when the provider can give it (whisper.cpp's -oj JSON
+   * output; startMs/endMs are relative to the clip passed to transcribe()).
+   * Absent means the caller must treat `text` as one opaque span — the
+   * fallback TranscriptRepresenter.represent() uses for whole-blob attribution.
+   */
+  segments?: { text: string; startMs: number; endMs: number }[];
 }
 
 /**
