@@ -975,12 +975,6 @@ select {
   gap: 8px;
   align-items: center;
 }
-.saved {
-  color: var(--ok);
-  font-size: 12px;
-  font-weight: 600;
-}
-
 .banner {
   display: flex;
   align-items: center;

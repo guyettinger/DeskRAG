@@ -14,7 +14,7 @@ Two packages, two independent installs: **`src/`** is the library (published as 
 npm install            # native modules: better-sqlite3, @lancedb/lancedb, sharp
 npm run typecheck      # tsc --noEmit (strict; run this after edits — it's the primary gate)
 npm test               # vitest run (full suite)
-npx vitest run test/store.crash.test.ts     # a single test file
+npx vitest run test/dual-store.crash.test.ts  # a single test file
 npx vitest run -t "scoped ANN"              # tests matching a name
 npm run test:watch     # vitest watch
 npm run build:ax       # compile BOTH Swift sidecars -> native/ax-dump + native/ax-exec (gitignored)

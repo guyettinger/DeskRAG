@@ -58,7 +58,7 @@ There is no credential any test could want — every provider is local.
 
 ```bash
 npm test                                  # full suite
-npx vitest run test/store.crash.test.ts   # one file
+npx vitest run test/dual-store.crash.test.ts   # one file
 npx vitest run -t "scoped ANN"            # by test name
 npm run test:watch
 ```
@@ -98,6 +98,15 @@ npm run smoke:onnx-electron  # the ONNX allocator crash vitest structurally cann
   empty states with a warning rather than failing. Rail buttons are targeted by
   **label, not index** — inserting a screen renumbers every one below it, and an
   index silently drives the wrong screen instead of failing.
+  - **Configure a caption provider and an image model first, or the shots degrade
+    with no warning at all.** The warning only covers an empty *screen*; a screen
+    that renders fine with data missing is captured as a clean ✓. With
+    `captionProvider: "none"` the Detail view reads "no caption" and the Library
+    chapter title falls back to a timecode; with `imageProvider: "none"` no region
+    rows are written, so Search's highlight badge is 0 and never renders. **Look at
+    the six PNGs after a run** — the script cannot tell a thin store from a rich one.
+  - The Search shot uses a **fixed demo query**, so it needs recorded content that
+    actually matches it; otherwise it captures "No matches".
 - **`smoke:onnx-electron`** is the only thing that reproduces the ONNX allocator
   crashes — they need Chromium's allocator *and* a second run, and vitest gives
   neither. Any change to ORT session options, tile counts, or model exports wants

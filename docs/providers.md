@@ -54,10 +54,15 @@ what keeps the test suite offline and deterministic, and it stays open even wher
 only one local implementation exists. A fake embedder maps identical input to an
 identical vector, which lets tests place exact-match items deterministically.
 
-Adapters that load a native npm module or spawn a subprocess (`onnxruntime-node`,
-`uiohook-napi`, `active-win`, `sharp`, the ffmpeg/Swift sidecars) are **deliberately
-not re-exported from `src/index.ts`** — import them from their own path — so
-importing the package never force-loads native code.
+Adapters that load a **native npm module** (`onnxruntime-node`, `uiohook-napi`,
+`active-win`, `sharp`) are **deliberately not re-exported from `src/index.ts`** —
+import them from their own path — so importing the package never force-loads native
+code.
+
+The line is **native module, not subprocess.** Everything that merely spawns a binary
+*is* exported and always has been — the ffmpeg producers, the Swift sidecar sources
+(`SwiftAxSource`, `SwiftDisplaySource`, `SwiftKeymapSource`) and
+`WhisperCppTranscription` — because importing them loads nothing until they run.
 
 ## Model listings come from the daemon
 
