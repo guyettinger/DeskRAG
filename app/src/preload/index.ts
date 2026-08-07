@@ -49,6 +49,7 @@ const api: DeskRagApi = {
     detail: (sessionId: string) => ipcRenderer.invoke(IPC.sessionsDetail, sessionId),
     remove: (sessionId: string) => ipcRenderer.invoke(IPC.sessionsRemove, sessionId),
     reindex: () => ipcRenderer.invoke(IPC.sessionsReindex),
+    reindexSearch: () => ipcRenderer.invoke(IPC.sessionsReindexSearch),
     tracks: (sessionId: string) => ipcRenderer.invoke(IPC.sessionsTracks, sessionId),
   },
   flows: {

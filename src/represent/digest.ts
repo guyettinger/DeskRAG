@@ -1,19 +1,83 @@
 /**
  * Structured event digest (view 3): a templated, deterministic text summary of a
- * segment's input signals — "app focus: Slack → VS Code. 42 clicks, heavy
- * scrolling, 5 keystrokes. typed in Slack, clicked in VS Code." This text is
- * what gets embedded; the exact prose matters less than that it is STABLE and
- * carries the signal, since the embedding handles fuzzy matching.
+ * segment's signals. This text is what gets embedded, so the exact prose matters
+ * less than that it is STABLE and carries the signal — the embedding handles
+ * fuzzy matching.
+ *
+ * WHAT A PERSON SEARCHES FOR COMES FIRST, tallies last. The digest used to be
+ * tallies only ("42 clicks, heavy scrolling, 5 keystrokes"), written when an
+ * `action` segment was a ~10s window. Since `action` stopped subdividing, a real
+ * action segment averages **945ms** — and measured over 105 real segments, the
+ * tallies alone produced `1 click.` ×33, `mouse movement.` ×16 and `idle
+ * segment` ×15: **61% carrying no discriminative content at all**, as
+ * byte-identical strings that embed to one identical vector whose ANN order is
+ * then arbitrary.
+ *
+ * Four signals that were already on disk and reached no view now do:
+ *  - the focused WINDOW TITLE (`focus_change.title`) — the highest-value text on
+ *    a desktop, and it was being parsed and discarded,
+ *  - the URL (`url_change`),
+ *  - the TEXT ACTUALLY TYPED, resolved from the session's own keymap,
+ *  - the LABEL of what was clicked, resolved from the regions of the keyframe
+ *    that was on screen.
  *
  * Typing/clicking are attributed to whichever app was focused at the time, by
  * walking events in order and tracking the current app from focus_change events.
  */
 
+import type { Keymap } from "../capture/env/types.js";
+import { groupGestures } from "../trace/gestures.js";
+import { resolveKeys } from "../trace/lift.js";
+import type { TraceEvent } from "../trace/types.js";
+
 export interface DigestEvent {
   tMono: number;
   kind: string;
+  x?: number | null;
+  y?: number | null;
   data?: unknown;
 }
+
+/**
+ * The world the digest resolves its richer signals against. Every member is
+ * optional and absence is always the safe degradation — a digest built with no
+ * context is exactly the tally-only digest, never a guess.
+ */
+export interface DigestContext {
+  /**
+   * The keyboard layout in effect at a t_mono. WITHOUT IT NO TYPED TEXT IS
+   * RECOVERED — never a US-QWERTY fallback. uiohook reports a keycode, not a
+   * character, so a static table would fabricate typed content; this is the
+   * same rule `resolveKeys` follows at lift time and the replay executor's
+   * `type` step follows in the other direction.
+   */
+  keymapAt?: (tMono: number) => Keymap | undefined;
+  /**
+   * The focused app/window/URL as of a t_mono — LATEST AT-OR-BEFORE, like every
+   * other environment fact in this pipeline.
+   *
+   * Without it a segment only knows the app if a `focus_change` landed INSIDE
+   * it, and since `action` stopped subdividing the average segment is 945ms and
+   * contains no such event. Measured on real recordings: seeding from the
+   * preceding focus state is what carries the app name — and with it the
+   * "typed in X" attribution — into the segments that merely continue working
+   * in an app rather than switching to it.
+   */
+  focusAt?: (tMono: number) => { app?: string; title?: string; url?: string } | undefined;
+  /**
+   * The label of the UI element at a screen point, as of `tMono`. Injected
+   * rather than read from the store so `represent/digest.ts` stays pure — the
+   * caller resolves it from the regions of the keyframe that was on screen.
+   */
+  labelAt?: (point: { x: number; y: number }, tMono: number) => string | undefined;
+  /**
+   * Cap on typed text carried into the digest. One long typing run would
+   * otherwise swamp the embedding of everything else in the segment.
+   */
+  maxTypedChars?: number;
+}
+
+export const DEFAULT_MAX_TYPED_CHARS = 280;
 
 interface AppTally {
   clicks: number;
@@ -21,17 +85,72 @@ interface AppTally {
   scrolls: number;
 }
 
-function appOf(data: unknown): string | undefined {
-  if (data && typeof data === "object" && "app" in data) {
-    const app = (data as { app?: unknown }).app;
-    if (typeof app === "string" && app.length > 0) return app;
+function stringField(data: unknown, field: string): string | undefined {
+  if (data && typeof data === "object" && field in data) {
+    const v = (data as Record<string, unknown>)[field];
+    if (typeof v === "string" && v.length > 0) return v;
   }
   return undefined;
 }
 
+const appOf = (data: unknown): string | undefined => stringField(data, "app");
+
+/**
+ * `https://github.com/guyettinger/DeskRAG/pull/39` -> the URL plus a bare
+ * `github.com`, so a query naming just the site matches. Kept whole as well:
+ * the path segments are often the most distinctive tokens in a whole session.
+ */
+function urlTerms(url: string): string[] {
+  const terms = [url];
+  const host = /^[a-z][a-z0-9+.-]*:\/\/([^/?#]+)/i.exec(url)?.[1];
+  if (host !== undefined) {
+    const bare = host.replace(/^www\./i, "").replace(/:\d+$/, "");
+    if (bare.length > 0 && bare !== url) terms.push(bare);
+  }
+  return terms;
+}
+
 const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? "" : "s"}`;
 
-export function buildDigest(events: readonly DigestEvent[]): string {
+/** Collapse whitespace and trim, so one run of typing is one clean phrase. */
+const tidy = (s: string) => s.replace(/\s+/g, " ").trim();
+
+/**
+ * Typed text runs within these events, or [] when no layout is known.
+ *
+ * Delegates to `resolveKeys` + `groupGestures` rather than decoding keycodes
+ * here. Two decoders of one keymap is precisely the `ax-dump`/`ax-exec` drift
+ * hazard, and `groupGestures` already owns the rules that make typed text
+ * correct: a command consumes nothing, shift/alt are consumed into the column
+ * choice, Escape and the arrows never become characters, and a key with no
+ * resolved char emits NOTHING rather than a fabricated one.
+ */
+function typedRuns(events: readonly DigestEvent[], keymapAt: (t: number) => Keymap | undefined): string[] {
+  const trace: TraceEvent[] = events.map((e) => ({
+    tMono: e.tMono,
+    kind: e.kind,
+    x: e.x ?? null,
+    y: e.y ?? null,
+    data: e.data ?? null,
+  }));
+  const { gestures } = groupGestures(resolveKeys(trace, keymapAt));
+  return gestures
+    .filter((g): g is Extract<typeof g, { type: "text" }> => g.type === "text")
+    .map((g) => tidy(g.text))
+    .filter((t) => t.length > 0);
+}
+
+/** The segment this digest describes. Per-call, unlike the per-session context. */
+export interface DigestWindow {
+  tMonoStart: number;
+  tMonoEnd: number;
+}
+
+export function buildDigest(
+  events: readonly DigestEvent[],
+  ctx: DigestContext = {},
+  window?: DigestWindow,
+): string {
   const ordered = [...events].sort((a, b) => a.tMono - b.tMono);
 
   let clicks = 0;
@@ -39,8 +158,15 @@ export function buildDigest(events: readonly DigestEvent[]): string {
   let scrolls = 0;
   let moves = 0;
   const appSeq: string[] = [];
+  const titles: string[] = [];
+  const urls: string[] = [];
+  const clicked: string[] = [];
   const perApp = new Map<string, AppTally>();
   let currentApp: string | undefined;
+
+  const push = (list: string[], value: string | undefined) => {
+    if (value !== undefined && !list.includes(value)) list.push(value);
+  };
 
   const tally = (fn: (t: AppTally) => void) => {
     if (currentApp === undefined) return;
@@ -48,6 +174,20 @@ export function buildDigest(events: readonly DigestEvent[]): string {
     fn(t);
     perApp.set(currentApp, t);
   };
+
+  // Seed from the focus state the segment INHERITED. A segment that merely
+  // continues working in an app contains no focus_change of its own, so without
+  // this it would name no app at all — and, since attribution keys on
+  // `currentApp`, would drop its "typed in X" phrase too.
+  const inherited = ctx.focusAt?.(window?.tMonoStart ?? ordered[0]?.tMono ?? 0);
+  if (inherited !== undefined) {
+    if (inherited.app !== undefined && inherited.app.length > 0) {
+      currentApp = inherited.app;
+      appSeq.push(inherited.app);
+    }
+    push(titles, inherited.title);
+    for (const t of urlTerms(inherited.url ?? "")) if (t) push(urls, t);
+  }
 
   for (const ev of ordered) {
     switch (ev.kind) {
@@ -57,11 +197,22 @@ export function buildDigest(events: readonly DigestEvent[]): string {
           currentApp = app;
           if (appSeq[appSeq.length - 1] !== app) appSeq.push(app);
         }
+        // A title is worth carrying even when the app name is missing — it is
+        // the more specific of the two ("PR #39 · DeskRAG" vs "Google Chrome").
+        push(titles, stringField(ev.data, "title"));
+        for (const t of urlTerms(stringField(ev.data, "url") ?? "")) if (t) push(urls, t);
+        break;
+      }
+      case "url_change": {
+        for (const t of urlTerms(stringField(ev.data, "url") ?? "")) if (t) push(urls, t);
         break;
       }
       case "mouse_down":
         clicks++;
         tally((t) => t.clicks++);
+        if (ctx.labelAt && typeof ev.x === "number" && typeof ev.y === "number") {
+          push(clicked, ctx.labelAt({ x: ev.x, y: ev.y }, ev.tMono));
+        }
         break;
       case "key_down":
         keys++;
@@ -77,13 +228,34 @@ export function buildDigest(events: readonly DigestEvent[]): string {
     }
   }
 
-  if (clicks + keys + scrolls + moves === 0 && appSeq.length === 0) {
-    return "idle segment";
-  }
+  const typed = ctx.keymapAt ? typedRuns(ordered, ctx.keymapAt) : [];
 
   const parts: string[] = [];
-  if (appSeq.length > 0) parts.push(`app focus: ${appSeq.join(" → ")}`);
 
+  // Identity first: the app and the window it was showing.
+  if (appSeq.length > 0 || titles.length > 0) {
+    const where =
+      appSeq.length > 0 && titles.length > 0
+        ? `${appSeq.join(" → ")} — ${titles.join(", ")}`
+        : appSeq.length > 0
+          ? appSeq.join(" → ")
+          : titles.join(", ");
+    parts.push(appSeq.length > 1 ? `app focus: ${where}` : where);
+  }
+  if (urls.length > 0) parts.push(urls.join(" "));
+
+  // Then content: what was typed, and what was clicked by name.
+  if (typed.length > 0) {
+    const max = ctx.maxTypedChars ?? DEFAULT_MAX_TYPED_CHARS;
+    let text = typed.join(" ");
+    if (text.length > max) text = `${text.slice(0, max).trimEnd()}…`;
+    parts.push(`typed "${text}"`);
+  }
+  if (clicked.length > 0) {
+    parts.push(clicked.map((l) => `clicked "${l}"`).join(", "));
+  }
+
+  // Then the tallies, unchanged.
   const activity: string[] = [];
   if (clicks > 0) activity.push(plural(clicks, "click"));
   if (scrolls > 0) activity.push(scrolls <= 5 ? "light scrolling" : "heavy scrolling");
@@ -99,5 +271,6 @@ export function buildDigest(events: readonly DigestEvent[]): string {
   }
   if (appPhrases.length > 0) parts.push(appPhrases.join(", "));
 
+  if (parts.length === 0) return "idle segment";
   return `${parts.join(". ")}.`;
 }

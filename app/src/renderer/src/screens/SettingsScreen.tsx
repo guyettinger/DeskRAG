@@ -36,6 +36,7 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
   const [visionModels, setVisionModels] = useState<string[]>([]);
   const [download, setDownload] = useState<ModelDownloadProgress | null>(null);
   const [reindexing, setReindexing] = useState(false);
+  const [searchReindexing, setSearchReindexing] = useState(false);
   const [reindexed, setReindexed] = useState<string | null>(null);
   const [reindexError, setReindexError] = useState<string | null>(null);
   const [resetConfirming, setResetConfirming] = useState(false);
@@ -106,6 +107,33 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
       setReindexError(String(e));
     } finally {
       setReindexing(false);
+    }
+  };
+
+  /**
+   * Re-runs the search-side stages over every recording. Distinct from the
+   * trace rebuild above: what a recording is FINDABLE by is decided by the code
+   * that indexed it, so a recording made before the digest carried window
+   * titles, typed text and clicked labels stays unfindable by any of them until
+   * this runs. It also writes the frame↔segment links that text-only search
+   * recalls frames through — without an image provider configured, older
+   * recordings have none and return no results at all.
+   */
+  const reindexSearch = async (): Promise<void> => {
+    setSearchReindexing(true);
+    setReindexError(null);
+    setReindexed(null);
+    try {
+      const r = await api.sessions.reindexSearch();
+      setReindexed(
+        r.sessions === 0
+          ? "Nothing to re-index — no recordings yet."
+          : `Re-indexed ${r.sessions} recording${r.sessions === 1 ? "" : "s"}: ${r.segments} segments.`,
+      );
+    } catch (e) {
+      setReindexError(String(e));
+    } finally {
+      setSearchReindexing(false);
     }
   };
 
@@ -458,6 +486,26 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
         <p className="sub">Housekeeping for what has been recorded and downloaded on this machine.</p>
         <div className="form-row">
           <div>
+            <label>Search index</label>
+            <div className="desc">
+              Re-links keyframes to segments, rebuilds every digest, and rewrites the text index,
+              for every recording already on disk. Nothing is re-recorded and no video, keyframe,
+              caption or transcript is touched. Needed for anything recorded before the digest
+              carried window titles, typed text and clicked labels — and required for text search
+              to return anything at all from a recording indexed with no image provider.
+            </div>
+          </div>
+          <button
+            className="btn ghost"
+            onClick={() => void reindexSearch()}
+            disabled={searchReindexing || reindexing}
+          >
+            {searchReindexing ? "Re-indexing…" : "Rebuild search index"}
+          </button>
+        </div>
+
+        <div className="form-row">
+          <div>
             <label>Trace graph</label>
             <div className="desc">
               Re-lifts every recording into a fresh trace graph. Nothing is re-recorded, and no
@@ -465,7 +513,11 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
               screen says the graph was built before recordings were tracked.
             </div>
           </div>
-          <button className="btn ghost" onClick={() => void reindex()} disabled={reindexing}>
+          <button
+            className="btn ghost"
+            onClick={() => void reindex()}
+            disabled={reindexing || searchReindexing}
+          >
             {reindexing ? "Rebuilding…" : "Rebuild trace graph"}
           </button>
         </div>

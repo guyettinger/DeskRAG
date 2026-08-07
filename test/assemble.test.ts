@@ -7,6 +7,7 @@ import { DualStore } from "../src/store/store.js";
 import { BlobStore } from "../src/store/blob-store.js";
 import { Segmenter } from "../src/segment/segmenter.js";
 import { Representer } from "../src/represent/representer.js";
+import { associateFrames } from "../src/represent/frame-segments.js";
 import { FrameRepresenter } from "../src/represent/frame-representer.js";
 import { RegionRepresenter } from "../src/represent/regions/region-representer.js";
 import { FrameIngestor, type SampledFrame } from "../src/capture/frame-ingest.js";
@@ -138,5 +139,77 @@ describe("Retriever (assembly capstone)", () => {
     expect(res.frames.every((f) => f.highlights.length === 0)).toBe(true);
     // the frame in the top-scoring segment sorts first
     expect(res.frames[0]!.frameId).toBe(frameB);
+  });
+
+  /**
+   * The DEFAULT app configuration: no image provider at all. Every other case
+   * here builds the Retriever with one and runs FrameRepresenter, which is
+   * exactly why this shipped broken — frame↔segment links were written only by
+   * the image stages, so text-only recall (which finds frames purely by segment
+   * membership) returned nothing over a fully indexed library.
+   */
+  it("text-only, NO image provider: frames are still recalled via segment membership", async () => {
+    const sessionId = ulid();
+    const mk = (t: number, kind: string, x?: number, y?: number, data?: unknown): EventInsert => ({
+      id: ulid(), sessionId, tMono: t, kind,
+      ...(x !== undefined ? { x } : {}), ...(y !== undefined ? { y } : {}), ...(data !== undefined ? { data } : {}),
+    });
+    await store.putSession({ id: sessionId, startedAt: 1000, epochMono: 0 });
+    await store.putEvents([
+      mk(0, "mouse_move", 0, 0),
+      mk(5000, "focus_change", undefined, undefined, { app: "Slack", title: "general" }),
+      mk(6000, "mouse_down", 500, 500),
+    ]);
+    await store.endSession(sessionId, 9000);
+
+    const ing = new FrameIngestor(store, sessionId, new KeyframeBudget({ minIntervalMs: 0 }), blobs);
+    const frame = (t: number, gray: Uint8Array, image: Uint8Array): SampledFrame => ({
+      tMono: t, width: 1920, height: 1080, gray, grayW: 9, grayH: 8, image: { bytes: image, codec: "png" },
+    });
+    await ing.ingest(frame(1000, grad(false), imgA));
+    const b = await ing.ingest(frame(6000, grad(true), imgB));
+
+    // Exactly the always-on stages, in order — no FrameRepresenter, no regions.
+    await new Segmenter(store).segment(sessionId);
+    await associateFrames(store, sessionId);
+    await new Representer(store, { digestEmbedder: fake, behavior }).represent(sessionId);
+
+    const late = store
+      .getSegmentsBySession(sessionId)
+      .find((s) => s.granularity === "action" && s.tMonoStart === 6000)!;
+
+    // Neither imageEmbedder nor patchEmbedder — the default install.
+    const res = await new Retriever(store, {
+      searchers: [new TextViewSearcher(fake, "digest"), new BehaviorViewSearcher(behavior)],
+    }).retrieve({ text: late.digest! });
+
+    expect(res.segments[0]!.segmentId).toBe(late.id);
+    expect(res.frames.length).toBeGreaterThan(0);
+    expect(res.frames.map((f) => f.frameId)).toContain(b.frameId!);
+  });
+
+  it("associateFrames links a frame to BOTH its action and its task segment", async () => {
+    const sessionId = ulid();
+    await store.putSession({ id: sessionId, startedAt: 1000, epochMono: 0 });
+    await store.putEvents([
+      { id: ulid(), sessionId, tMono: 5000, kind: "focus_change", data: { app: "Slack" } },
+    ]);
+    await store.endSession(sessionId, 9000);
+    const ing = new FrameIngestor(store, sessionId, new KeyframeBudget({ minIntervalMs: 0 }), blobs);
+    const a = await ing.ingest({
+      tMono: 6000, width: 1920, height: 1080, gray: grad(true), grayW: 9, grayH: 8,
+      image: { bytes: imgB, codec: "png" },
+    });
+    await new Segmenter(store).segment(sessionId);
+
+    expect(await associateFrames(store, sessionId)).toBe(1);
+    const granularities = store
+      .getFrame(a.frameId!)!
+      .segmentIds.map((id) => store.getSegment(id)!.granularity);
+    expect(new Set(granularities)).toEqual(new Set(["action", "task"]));
+
+    // Idempotent: the image stages associate too, and re-indexing re-runs this.
+    expect(await associateFrames(store, sessionId)).toBe(1);
+    expect(store.getFrame(a.frameId!)!.segmentIds.length).toBe(granularities.length);
   });
 });

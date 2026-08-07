@@ -28,6 +28,22 @@ export interface ViewSearcher {
   queryVector(q: Query): Promise<Float32Array | null>;
 }
 
+/**
+ * The lexical half of Tier 1 — segment ids for a text query, BEST FIRST.
+ *
+ * Not a `ViewSearcher`: it produces no vector and belongs to no vector space.
+ * It contributes one more ranked list to the same RRF, which is exactly what
+ * makes hybrid dense+sparse retrieval free here — fusion by rank needs no
+ * commensurable scores. Dense views are weakest on rare literal tokens (a
+ * filename, an error string, a URL), which is where an inverted index is
+ * strongest.
+ */
+export interface LexicalSearcher {
+  /** Stable label for this list's contribution, e.g. "lexical". */
+  readonly key: string;
+  search(q: Query, limit: number): string[];
+}
+
 /** One view's contribution to a fused hit (provenance for scoring/rerank). */
 export interface PerViewHit {
   namespace: string;
@@ -42,6 +58,12 @@ export interface SegmentHit {
   /** Fused RRF score. */
   score: number;
   perView: PerViewHit[];
+  /**
+   * 1-based rank in the lexical list, when one contributed. Kept separate from
+   * `perView` rather than widening `PerViewHit.view`, which is the vector-view
+   * enum — a lexical match belongs to no vector space.
+   */
+  lexicalRank?: number;
   /** Hydrated segment row (t_mono range, digest, ...), if it still exists. */
   segment?: SegmentRow;
 }
@@ -79,6 +101,8 @@ export interface Tier1Options {
   perViewK?: number;
   /** Fused segments to return. */
   topN?: number;
+  /** Optional lexical lane fused alongside the dense views (hybrid retrieval). */
+  lexical?: LexicalSearcher;
 }
 
 /** Relative weights for the assembled frame score (w1·frame + w2·region + w3·segment). */

@@ -11,7 +11,12 @@ import { FakeEmbeddingProvider } from "../src/embed/fake.js";
 import { reciprocalRankFusion } from "../src/retrieve/rrf.js";
 import { Tier1Retriever } from "../src/retrieve/retriever.js";
 import type { EmbedOptions, EmbeddingProvider } from "../src/embed/types.js";
-import { BehaviorViewSearcher, TextViewSearcher } from "../src/retrieve/searchers.js";
+import {
+  BehaviorViewSearcher,
+  LexicalSegmentSearcher,
+  TextViewSearcher,
+} from "../src/retrieve/searchers.js";
+import { indexSegmentText } from "../src/represent/segment-text.js";
 import type { EventInsert } from "../src/store/types.js";
 
 describe("reciprocalRankFusion", () => {
@@ -166,5 +171,128 @@ describe("TextViewSearcher role", () => {
     };
     expect(await new TextViewSearcher(probe, "digest").queryVector({})).toBeNull();
     expect(seen.length).toBe(0);
+  });
+});
+
+/**
+ * The lexical lane. Every text view is dense-only, so a rare literal token —
+ * the case a person is MOST certain about — had no exact-match route at all.
+ */
+describe("LexicalSegmentSearcher + segment_fts", () => {
+  let dir: string;
+  let store: DualStore;
+  const digestEmbedder = new FakeEmbeddingProvider({ id: "fake", model: "m", dimensions: 8 });
+  const behavior = new BehaviorFeatureExtractor();
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), "erag-fts-"));
+    store = await DualStore.open(join(dir, "meta.sqlite"), join(dir, "lance"));
+  });
+  afterEach(() => {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  async function seed(): Promise<{ sessionId: string; segs: string[] }> {
+    const sessionId = ulid();
+    await store.putSession({ id: sessionId, startedAt: 1000, epochMono: 0 });
+    await store.putEvents([
+      { id: ulid(), sessionId, tMono: 0, kind: "mouse_move" },
+      { id: ulid(), sessionId, tMono: 5000, kind: "focus_change", data: { app: "Slack" } },
+    ]);
+    await store.endSession(sessionId, 9000);
+    await new Segmenter(store).segment(sessionId);
+    const segs = store.getSegmentsBySession(sessionId).map((s) => s.id);
+    return { sessionId, segs };
+  }
+
+  it("indexes a segment's views together and matches an exact literal", async () => {
+    const { sessionId, segs } = await seed();
+    await store.updateSegment(segs[0]!, { digest: "Terminal — zsh" });
+    await store.updateSegment(segs[0]!, { transcript: "the build broke on ENOTDIR again" });
+    await store.updateSegment(segs[1]!, { digest: "Calculator — Calculator. 1 click." });
+    indexSegmentText(store, sessionId);
+
+    expect(store.ftsSegments("ENOTDIR", 10)).toEqual([segs[0]]);
+    expect(store.ftsSegments("Calculator", 10)).toEqual([segs[1]]);
+  });
+
+  it("survives a natural-language query full of FTS5 syntax characters", async () => {
+    const { sessionId, segs } = await seed();
+    await store.updateSegment(segs[0]!, { digest: "Chrome. https://github.com/x/y. clicked" });
+    indexSegmentText(store, sessionId);
+    // ':' '/' '.' '→' are all MATCH syntax; unsanitized this throws rather than
+    // simply not matching, which would take the whole search down.
+    expect(() => store.ftsSegments("what was that github.com PR → the one I opened?", 10)).not.toThrow();
+    expect(store.ftsSegments("github.com", 10)).toEqual([segs[0]]);
+  });
+
+  it("is idempotent — re-indexing does not duplicate or stale a row", async () => {
+    const { sessionId, segs } = await seed();
+    await store.updateSegment(segs[0]!, { digest: "quarterly budget spreadsheet" });
+    indexSegmentText(store, sessionId);
+    indexSegmentText(store, sessionId);
+    expect(store.ftsSegments("quarterly", 10)).toEqual([segs[0]]);
+
+    // A view whose text changed must stop answering with the old text.
+    await store.updateSegment(segs[0]!, { digest: "annual budget spreadsheet" });
+    indexSegmentText(store, sessionId);
+    expect(store.ftsSegments("quarterly", 10)).toEqual([]);
+    expect(store.ftsSegments("annual", 10)).toEqual([segs[0]]);
+  });
+
+  it("fuses into Tier 1 as a peer list, lifting a segment the dense views miss", async () => {
+    const { sessionId, segs } = await seed();
+    await new Representer(store, { digestEmbedder, behavior }).represent(sessionId);
+    // A literal that appears in NO digest the embedder saw — only in a caption.
+    const needle = segs[segs.length - 1]!;
+    await store.updateSegment(needle, { caption: "the ENOTDIR stack trace" });
+    indexSegmentText(store, sessionId);
+
+    const withLexical = new Tier1Retriever(
+      store,
+      [new TextViewSearcher(digestEmbedder, "digest")],
+      { lexical: new LexicalSegmentSearcher(store) },
+    );
+    const res = await withLexical.retrieve({ text: "ENOTDIR" });
+    const hit = res.segments.find((s) => s.segmentId === needle);
+    expect(hit).toBeDefined();
+    expect(hit!.lexicalRank).toBe(1);
+
+    // Without the lane the same query cannot reach it by that term.
+    const dense = new Tier1Retriever(store, [new TextViewSearcher(digestEmbedder, "digest")]);
+    expect((await dense.retrieve({ text: "ENOTDIR" })).segments.every((s) => s.lexicalRank === undefined)).toBe(true);
+  });
+
+  /**
+   * The hazard that had to be fixed before any re-index path could exist:
+   * `putSegmentVectors` is a bare Lance add, so re-running a represent stage
+   * leaves TWO vectors under one id. Neither is an orphan — both have a live
+   * SQLite row — so `reconcile()` can never prune the duplicate.
+   */
+  it("replaceSegmentVectors leaves exactly one vector per id after two runs", async () => {
+    const { sessionId } = await seed();
+    // Two identical represent passes, as a re-index performs.
+    await new Representer(store, { digestEmbedder, behavior }).represent(sessionId);
+    await new Representer(store, { digestEmbedder, behavior }).represent(sessionId);
+
+    const segs = store.getSegmentsBySession(sessionId);
+    const ns = new TextViewSearcher(digestEmbedder, "digest").namespace;
+    const [vec] = await digestEmbedder.embed([segs[0]!.digest!], { role: "query" });
+    // Ask for far more neighbors than there are segments: any duplicate row
+    // would come back as a second hit carrying the same id.
+    const hits = await store.searchSegments(ns, vec!, segs.length * 4);
+    expect(hits.length).toBe(segs.length);
+    expect(new Set(hits.map((h) => h.id)).size).toBe(hits.length);
+  });
+
+  it("deleting a recording clears its lexical rows — FTS has no foreign key", async () => {
+    const { sessionId, segs } = await seed();
+    await store.updateSegment(segs[0]!, { digest: "ENOTDIR" });
+    indexSegmentText(store, sessionId);
+    expect(store.ftsSegments("ENOTDIR", 10)).toEqual([segs[0]]);
+
+    await store.deleteSession(sessionId);
+    expect(store.ftsSegments("ENOTDIR", 10)).toEqual([]);
   });
 });

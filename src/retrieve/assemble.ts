@@ -28,6 +28,7 @@ import type {
   AssembledResult,
   FrameHit,
   FrameResult,
+  LexicalSearcher,
   Query,
   RegionHit,
   RetrieverWeights,
@@ -99,6 +100,12 @@ export class Retriever {
        */
       imageEmbedder?: ImageEmbeddingProvider;
       patchEmbedder?: MultiVectorProvider;
+      /**
+       * Optional lexical lane fused into Tier 1 alongside the dense views.
+       * Needs no provider, so unlike everything else here it is always
+       * available — see LexicalSegmentSearcher.
+       */
+      lexical?: LexicalSearcher;
     },
     opts: RetrieverOptions = {},
   ) {
@@ -107,7 +114,10 @@ export class Retriever {
         "Retriever takes imageEmbedder OR patchEmbedder, not both — they index different spaces.",
       );
     }
-    this.tier1 = new Tier1Retriever(store, config.searchers, opts.tier1);
+    this.tier1 = new Tier1Retriever(store, config.searchers, {
+      ...opts.tier1,
+      ...(config.lexical ? { lexical: config.lexical } : {}),
+    });
     if (config.imageEmbedder) {
       this.tier2 = new Tier2Retriever(store, config.imageEmbedder, {
         ...(opts.frameTopN !== undefined ? { topN: opts.frameTopN } : {}),

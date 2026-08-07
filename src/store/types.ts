@@ -403,6 +403,13 @@ export interface Store {
   getTranscriptClipsBySession(sessionId: string): TranscriptClipRow[];
   /** Add segment vectors, after their source text is already committed to SQLite. */
   putSegmentVectors(rows: SegmentVectorInsert[]): Promise<void>;
+  /**
+   * Replace segment vectors by id. `putSegmentVectors` is a bare add, so
+   * re-running a represent stage would leave TWO vectors under one id — and
+   * neither is an orphan, so reconcile() cannot clean it up. Any path that may
+   * run twice over the same segments must use this.
+   */
+  replaceSegmentVectors(rows: SegmentVectorInsert[]): Promise<void>;
 
   // enrich existing frames (Tier-2 represent/): association first (SQLite frame_segment),
   // then the frame_image vector (Lance) with segment_ids denormalized.
@@ -533,6 +540,14 @@ export interface Store {
   ): Promise<SearchHit[]>;
   /** Tier 3's text half: FTS5 over stored AX role/label, so regions are searchable by UI role. */
   ftsRegions(query: string, limit?: number): string[];
+  /**
+   * Tier 1's LEXICAL half: FTS5 over a segment's combined view text, best first
+   * (bm25). Fused into the same RRF as the dense views — a rare literal token is
+   * exactly where an embedding is weakest and an inverted index is strongest.
+   */
+  ftsSegments(query: string, limit?: number): string[];
+  /** Replace one segment's lexical index entry. Idempotent; empty text writes no row. */
+  indexSegmentText(segmentId: string, text: string): void;
 
   // reconciliation (SQLite is truth)
 

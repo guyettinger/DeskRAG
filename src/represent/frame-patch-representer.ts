@@ -18,6 +18,7 @@ import type { MultiVectorProvider } from "../embed/types.js";
 import { namespaceFor } from "../embed/types.js";
 import type { BlobStore } from "../store/blob-store.js";
 import type { Store } from "../store/types.js";
+import { segmentIdsForFrame, sessionEndOf } from "./frame-segments.js";
 
 export interface FramePatchRepresenterOptions {
   patchEmbedder: MultiVectorProvider;
@@ -71,22 +72,12 @@ export class FramePatchRepresenter {
     if (frames.length === 0) {
       return { frameCount: 0, embeddedCount: 0, namespace: this.namespace };
     }
-    const sessionEnd = Math.max(...segments.map((s) => s.tMonoEnd), 0);
+    const sessionEnd = sessionEndOf(segments);
 
     let embedded = 0;
     let processed = 0;
     for (const frame of frames) {
-      // Half-open segments, except the last one which owns its right edge —
-      // otherwise a frame landing exactly on the session end belongs nowhere.
-      const segmentIds = segments
-        .filter((s) => {
-          const inclusiveRight = s.tMonoEnd === sessionEnd;
-          return (
-            frame.tMono >= s.tMonoStart &&
-            (inclusiveRight ? frame.tMono <= s.tMonoEnd : frame.tMono < s.tMonoEnd)
-          );
-        })
-        .map((s) => s.id);
+      const segmentIds = segmentIdsForFrame(frame, segments, sessionEnd);
 
       // SQLite association first (idempotent), matching the write-order rule.
       await this.store.associateFrameSegments(frame.id, segmentIds);

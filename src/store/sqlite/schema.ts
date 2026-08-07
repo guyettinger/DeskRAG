@@ -133,6 +133,25 @@ CREATE VIRTUAL TABLE IF NOT EXISTS region_fts USING fts5(
   region_id UNINDEXED, label, role
 );
 
+-- Tier-1's LEXICAL half. Every text view (digest, caption, app_caption,
+-- transcript) is dense-only, so a rare literal token — a filename, an error
+-- string, a URL, a proper noun — has no exact-match route at all: embeddings are
+-- weakest on exactly the terms a person is most certain about. RRF fuses by
+-- RANK, so this list drops in beside the dense views with no scale problem;
+-- hybrid dense+sparse is the canonical use of the fusion already in place.
+--
+-- Standalone FTS5, mirroring region_fts: segment_id UNINDEXED so a MATCH reads
+-- back without a rowid join to a TEXT-keyed table. One row per segment, holding
+-- the concatenation of every text view — it is a lexical index, not a record;
+-- the views themselves remain the source of truth.
+--
+-- A new TABLE is the sanctioned schema move here (CREATE ... IF NOT EXISTS runs
+-- on every open, so this appears on databases that predate it), which is exactly
+-- how transcript_clip and ax_snapshot arrived.
+CREATE VIRTUAL TABLE IF NOT EXISTS segment_fts USING fts5(
+  segment_id UNINDEXED, text
+);
+
 -- Registry of which Lance tables (namespaces) exist. One row per namespace.
 CREATE TABLE IF NOT EXISTS vector_space (
   namespace          TEXT PRIMARY KEY,   -- view:provider:model:dims

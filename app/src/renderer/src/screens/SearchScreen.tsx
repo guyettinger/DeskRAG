@@ -12,6 +12,7 @@ export function SearchScreen(): React.JSX.Element {
   const [error, setError] = useState<string | null>(null);
   /** Prior recordings live in a namespace the current provider cannot read. */
   const [staleProvider, setStaleProvider] = useState(false);
+  const [unlinked, setUnlinked] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
   const [caps, setCaps] = useState<Capabilities | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -28,6 +29,7 @@ export function SearchScreen(): React.JSX.Element {
       const r = await api.search.query({ text: text.trim() });
       setResults(r.frames);
       setStaleProvider(Boolean(r.indexedUnderDifferentProvider));
+      setUnlinked(r.segmentsMatchedButNoFrames ?? 0);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -43,6 +45,7 @@ export function SearchScreen(): React.JSX.Element {
       const r = await api.search.query({ imageBytes: bytes });
       setResults(r.frames);
       setStaleProvider(Boolean(r.indexedUnderDifferentProvider));
+      setUnlinked(r.segmentsMatchedButNoFrames ?? 0);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -125,6 +128,18 @@ export function SearchScreen(): React.JSX.Element {
                   <p>
                     These recordings were indexed by another embedding model. Switch back in
                     Settings, or record a new session to index with the current one.
+                  </p>
+                </>
+              ) : unlinked > 0 ? (
+                <>
+                  {/* The query DID match. Nothing came back because no keyframe
+                      is linked to any matching segment, which is an index
+                      defect with a specific remedy — not an empty library. */}
+                  <h3>Matched, but the index is incomplete</h3>
+                  <p>
+                    {unlinked} segment{unlinked === 1 ? "" : "s"} matched, but no keyframe is
+                    linked to any of them. Recordings indexed before this was fixed have no such
+                    links. Run <strong>Settings &rarr; Rebuild search index</strong>.
                   </p>
                 </>
               ) : (

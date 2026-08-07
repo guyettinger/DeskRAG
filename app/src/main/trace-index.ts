@@ -34,13 +34,13 @@ import {
 export const DEFAULT_GRAPH_ID = "default";
 
 /** A `t_mono`-stamped environment fact, newest-last. */
-interface Timeline<T> {
+export interface Timeline<T> {
   tMono: number;
   value: T;
 }
 
 /** Latest at-or-before `tMono`, or undefined if nothing precedes it. */
-function latestAt<T>(timeline: readonly Timeline<T>[], tMono: number): T | undefined {
+export function latestAt<T>(timeline: readonly Timeline<T>[], tMono: number): T | undefined {
   let found: T | undefined;
   for (const entry of timeline) {
     if (entry.tMono > tMono) break;
@@ -52,8 +52,12 @@ function latestAt<T>(timeline: readonly Timeline<T>[], tMono: number): T | undef
 const asRecord = (d: unknown): Record<string, unknown> =>
   d !== null && typeof d === "object" ? (d as Record<string, unknown>) : {};
 
-/** Build the environment timelines from the session's own event stream. */
-function environmentOf(events: readonly TraceEvent[]): {
+/**
+ * Build the environment timelines from the session's own event stream. Exported
+ * because the digest resolves typed text against the SAME keymap timeline —
+ * building a second one is how the two would come to disagree.
+ */
+export function environmentOf(events: readonly TraceEvent[]): {
   keymaps: Timeline<Keymap>[];
   displays: Timeline<DisplayInfo[]>[];
   bounds: Timeline<{ x: number; y: number; w: number; h: number }>[];

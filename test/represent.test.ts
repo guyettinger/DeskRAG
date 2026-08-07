@@ -47,6 +47,84 @@ describe("buildDigest", () => {
   it("summarizes activity even with no app context", () => {
     expect(buildDigest([{ tMono: 0, kind: "key_down" }])).toBe("1 keystroke.");
   });
+
+  /**
+   * The signals that were on disk and reached no view. Tallies alone left 61% of
+   * real action segments carrying `1 click.` / `mouse movement.` / `idle
+   * segment` — byte-identical strings that embed to one vector.
+   */
+  it("carries the window title, which was parsed and thrown away", () => {
+    const d = buildDigest([
+      { tMono: 0, kind: "focus_change", data: { app: "Google Chrome", title: "PR #39 · DeskRAG" } },
+      { tMono: 1, kind: "mouse_down" },
+    ]);
+    expect(d).toContain("Google Chrome");
+    expect(d).toContain("PR #39 · DeskRAG");
+  });
+
+  it("carries the URL and its bare host, so a query naming just the site matches", () => {
+    const d = buildDigest([
+      { tMono: 0, kind: "url_change", data: { url: "https://github.com/guyettinger/DeskRAG/pull/39" } },
+    ]);
+    expect(d).toContain("https://github.com/guyettinger/DeskRAG/pull/39");
+    expect(d).toContain("github.com");
+  });
+
+  /**
+   * Keymap entries are keyed by macOS VIRTUAL keycode; an event carries a
+   * uiohook SCANCODE, which `resolveChar` translates first (30 -> vk 0 -> "a").
+   * Getting that backwards silently yields no characters at all, which is the
+   * same shape of failure a session recorded with no keymap produces.
+   */
+  const KEYMAP = {
+    layoutId: "com.apple.keylayout.US",
+    entries: {
+      0: ["a", "A", "å", "Å"],
+      1: ["s", "S", "ß", "Í"],
+      4: ["h", "H", "˙", "Ó"],
+    } as Record<number, [string, string, string, string]>,
+  };
+  const key = (tMono: number, scancode: number): DigestEvent => ({
+    tMono, kind: "key_down", data: { keycode: scancode, modifiers: [] },
+  });
+
+  it("carries the text actually typed, resolved from the session's own keymap", () => {
+    const evs: DigestEvent[] = [
+      { tMono: 0, kind: "focus_change", data: { app: "TextEdit", title: "Untitled" } },
+      key(10, 35), // h
+      key(20, 30), // a
+      key(30, 31), // s
+    ];
+    expect(buildDigest(evs, { keymapAt: () => KEYMAP })).toContain('typed "has"');
+  });
+
+  it("emits NO typed text without a keymap — never a US-QWERTY guess", () => {
+    const d = buildDigest([key(10, 35), key(20, 30)]);
+    expect(d).not.toContain('typed "');
+    expect(d).toContain("2 keystrokes"); // the tally still records that keys happened
+  });
+
+  it("caps typed text so one long run cannot swamp the segment's embedding", () => {
+    const evs: DigestEvent[] = [];
+    for (let i = 0; i < 500; i++) evs.push(key(i, 30));
+    const d = buildDigest(evs, { keymapAt: () => KEYMAP, maxTypedChars: 20 });
+    expect(d).toContain("…");
+    expect(d.length).toBeLessThan(200);
+  });
+
+  it("names what was clicked, from the labels of the regions under the point", () => {
+    const d = buildDigest(
+      [
+        { tMono: 0, kind: "focus_change", data: { app: "Calculator" } },
+        { tMono: 10, kind: "mouse_down", x: 100, y: 200 },
+        { tMono: 20, kind: "mouse_down", x: 400, y: 500 },
+      ],
+      { labelAt: (p) => (p.x === 100 ? "All Clear" : undefined) },
+    );
+    expect(d).toContain('clicked "All Clear"');
+    // The unlabelled click contributes nothing rather than an empty quote.
+    expect(d).not.toContain('clicked ""');
+  });
 });
 
 describe("BehaviorFeatureExtractor", () => {
