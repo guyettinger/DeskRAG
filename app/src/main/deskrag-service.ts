@@ -511,10 +511,17 @@ export class DeskRagService {
   async stopRecording(): Promise<RecordingStatus> {
     if (this.state.state !== "recording" || !this.session) return this.state;
     const sessionId = this.state.sessionId!;
-    await this.session.stop();
+    const session = this.session;
+    // Claim the transition SYNCHRONOUSLY, before the first await: a second
+    // concurrent call racing in behind this one must see state !== "recording"
+    // immediately, or it passes the guard above too and calls index() twice —
+    // measured on a real recording as 28 segment rows (14 duplicated) from one
+    // session, because Segmenter.segment() has no dedup and just re-inserts.
     this.session = undefined;
     this.state = { state: "indexing", sessionId, activeSignals: this.state.activeSignals };
     this.emitState();
+
+    await session.stop();
 
     try {
       await this.index(sessionId);
