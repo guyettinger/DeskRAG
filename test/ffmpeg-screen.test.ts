@@ -7,7 +7,7 @@ import { DualStore } from "../src/store/store.js";
 import { BlobStore } from "../src/store/blob-store.js";
 import { MonotonicClock } from "../src/timeline/clock.js";
 import { CaptureSession } from "../src/capture/session.js";
-import { KeyframeGate } from "../src/capture/keyframe.js";
+import { KeyframeBudget } from "../src/capture/keyframe-budget.js";
 import {
   FfmpegScreenProducer,
   screenInputFor,
@@ -48,7 +48,7 @@ describe.skipIf(!hasFfmpeg)("FfmpegScreenProducer (real ffmpeg, lavfi testsrc)",
     const errors: string[] = [];
     const session = new CaptureSession(store, {
       clock: MonotonicClock.start(),
-      keyframeGate: new KeyframeGate({ hammingThreshold: 1 }),
+      keyframeBudget: new KeyframeBudget({ minIntervalMs: 0 }),
       blobStore: blobs,
     });
     // Same two-output shape as the real screen args, but from a moving test
@@ -99,7 +99,7 @@ describe.skipIf(!hasFfmpeg)("FfmpegScreenProducer (real ffmpeg, lavfi testsrc)",
     const errors: string[] = [];
     const session = new CaptureSession(store, {
       clock: MonotonicClock.start(),
-      keyframeGate: new KeyframeGate({ hammingThreshold: 1 }),
+      keyframeBudget: new KeyframeBudget({ minIntervalMs: 0 }),
       blobStore: blobs,
     });
     // Drives the REAL args() graph (all three outputs) off a synthetic lavfi
@@ -146,21 +146,43 @@ describe.skipIf(!hasFfmpeg)("FfmpegScreenProducer (real ffmpeg, lavfi testsrc)",
 
 /** args() is pure — assert the filter graph without spawning anything. */
 describe("FfmpegScreenProducer.args", () => {
-  it("emits three mapped outputs and decimates only the sampling branches", () => {
+  it("splits video off first, then decimates ONE sampling branch feeding gray+JPEG", () => {
     const p = new FfmpegScreenProducer({ fps: 1, videoFps: 10, grayW: 32, grayH: 32 });
     // @ts-expect-error — exercising the private arg builder directly.
     const a: string[] = p.args("/tmp/out.mp4");
     const joined = a.join(" ");
 
-    expect(joined).toContain("split=3[v][g][c]");
-    expect(joined).toContain("[g]fps=1,"); // sampling branch decimated
-    expect(joined).toContain("[c]fps=1,");
+    expect(joined).toContain("[0:v]split=2[v][s]");
+    // ONE scale, at the stored JPEG's width, feeding the decimator and both
+    // branches — never two scale passes.
+    expect(joined).toContain("[s]fps=1,scale=1280:-2,mpdecimate=");
+    expect(joined).toContain("[d]split=2[g][c]");
+    expect(joined).toContain("[g]scale=32:32,format=gray[gg]");
+    expect(joined).toContain("[c]null[cc]");
     expect(joined).not.toContain("[v]fps="); // video branch keeps full rate
+    expect(joined).not.toContain("[v]mpdecimate"); // and is never decimated
     expect(joined).toContain("-framerate 10"); // input runs at videoFps
     expect(joined).toContain("+frag_keyframe+empty_moov+default_base_moof");
     expect(joined).toContain("-pix_fmt yuv420p");
     expect(a[a.length - 1]).toBe("pipe:3");
     expect(joined).toContain("/tmp/out.mp4");
+  });
+
+  it("carries every mpdecimate parameter, including the heartbeat", () => {
+    const p = new FfmpegScreenProducer({
+      decimate: { hi: 1, lo: 2, frac: 0.5, max: 7 },
+    });
+    // @ts-expect-error — exercising the private arg builder directly.
+    const a: string[] = p.args(null);
+    expect(a.join(" ")).toContain("mpdecimate=hi=1:lo=2:frac=0.5:max=7");
+  });
+
+  it("decimate:false leaves an inert filter rather than a broken graph", () => {
+    const p = new FfmpegScreenProducer({ decimate: false });
+    // @ts-expect-error — exercising the private arg builder directly.
+    const a: string[] = p.args(null);
+    expect(a.join(" ")).not.toContain("mpdecimate");
+    expect(a.join(" ")).toContain("[d]split=2[g][c]"); // the graph still links up
   });
 
   it("logs at warning level so avfoundation's recovery line is visible", () => {
@@ -178,7 +200,8 @@ describe("FfmpegScreenProducer.args", () => {
     // @ts-expect-error — exercising the private arg builder directly.
     const a: string[] = p.args(null);
 
-    expect(a.join(" ")).toContain("split=2[g][c]");
+    expect(a.join(" ")).toContain("[0:v]split=1[s]");
+    expect(a.join(" ")).toContain("[d]split=2[g][c]");
     expect(a.join(" ")).not.toContain("libx264");
   });
 
@@ -188,6 +211,7 @@ describe("FfmpegScreenProducer.args", () => {
     const a: string[] = p.args(null);
 
     expect(a.join(" ")).not.toContain("split");
+    expect(a.join(" ")).toContain("mpdecimate="); // still decimated
     expect(a[a.length - 1]).toBe("pipe:1");
   });
 });

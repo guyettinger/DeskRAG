@@ -156,6 +156,22 @@ export interface VectorInsert {
   vector: Float32Array;
 }
 
+/**
+ * One utterance, with the timings the STT provider reported.
+ *
+ * Finer than a segment on purpose: a segment's span is not the span of the
+ * speech inside it, and only a clip can say where a sentence actually was.
+ */
+export interface TranscriptClipInsert {
+  id: string;
+  sessionId: string;
+  tMonoStart: number;
+  tMonoEnd: number;
+  text: string;
+}
+
+export type TranscriptClipRow = TranscriptClipInsert;
+
 /** Patch the text columns of an already-persisted segment (represent/ fills these). */
 export interface SegmentPatch {
   digest?: string;
@@ -369,6 +385,22 @@ export interface Store {
 
   /** Attach represent/ output (digest, caption, transcript text) to a segment. */
   updateSegment(id: string, patch: SegmentPatch): Promise<void>;
+  /**
+   * Attach the focused-app-window caption text to a segment. Lives in
+   * segment_app_caption (a new table — see the schema comment) rather than a
+   * `SegmentPatch` field, since `segment`'s columns are frozen.
+   */
+  updateSegmentAppCaption(segmentId: string, text: string): Promise<void>;
+  /** Read back a segment's app_caption text, or undefined if none was written. */
+  getAppCaption(segmentId: string): string | undefined;
+  /**
+   * Persist utterance-level speech. SQLite only — no vector space is keyed on a
+   * clip, so there is no SQLite→Lance ordering hazard here, the same as the
+   * trace_* tables.
+   */
+  putTranscriptClips(rows: TranscriptClipInsert[]): Promise<void>;
+  /** A session's clips in t_mono order. */
+  getTranscriptClipsBySession(sessionId: string): TranscriptClipRow[];
   /** Add segment vectors, after their source text is already committed to SQLite. */
   putSegmentVectors(rows: SegmentVectorInsert[]): Promise<void>;
 

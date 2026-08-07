@@ -30,6 +30,7 @@ import {
   Representer,
   FrameRepresenter,
   CaptionRepresenter,
+  AppCaptionRepresenter,
   RegionRepresenter,
   TranscriptRepresenter,
   StoredAxProvider,
@@ -113,6 +114,7 @@ export function capabilitiesFor(p: ProviderSettingsView): Capabilities {
   return {
     imageSearch: p.imageProvider !== "none",
     caption: p.captionProvider !== "none",
+    appCaption: p.captionProvider !== "none",
     rerank: p.rerankProvider !== "none",
     // No transcript member, deliberately — see Capabilities in shared/types.ts.
   };
@@ -509,10 +511,17 @@ export class DeskRagService {
   async stopRecording(): Promise<RecordingStatus> {
     if (this.state.state !== "recording" || !this.session) return this.state;
     const sessionId = this.state.sessionId!;
-    await this.session.stop();
+    const session = this.session;
+    // Claim the transition SYNCHRONOUSLY, before the first await: a second
+    // concurrent call racing in behind this one must see state !== "recording"
+    // immediately, or it passes the guard above too and calls index() twice —
+    // measured on a real recording as 28 segment rows (14 duplicated) from one
+    // session, because Segmenter.segment() has no dedup and just re-inserts.
     this.session = undefined;
     this.state = { state: "indexing", sessionId, activeSignals: this.state.activeSignals };
     this.emitState();
+
+    await session.stop();
 
     try {
       await this.index(sessionId);
@@ -579,6 +588,21 @@ export class DeskRagService {
             captionEmbedder: prov.textEmbedder,
             blobStore: this.blobs,
           }).represent(sessionId),
+      });
+      stages.push({
+        name: "App captions",
+        // Needs a cropper too (sharp), unlike the whole-frame caption stage —
+        // skip entirely rather than write nothing useful when it's unavailable.
+        run: async () => {
+          const cropper = await this.loadCropper();
+          if (!cropper) return;
+          await new AppCaptionRepresenter(this.store, {
+            captioner: prov.captioner!,
+            captionEmbedder: prov.textEmbedder,
+            blobStore: this.blobs,
+            cropper,
+          }).represent(sessionId);
+        },
       });
     }
     // Regions run under EVERY image configuration, including none. Proposal is
@@ -695,7 +719,7 @@ export class DeskRagService {
     // unregistered namespace, and caption/transcript are absent by default.
     const registered = new Set(this.store.listVectorSpaces().map((s) => s.namespace));
     const searchers: ViewSearcher[] = [];
-    for (const view of ["digest", "caption", "transcript"] as const) {
+    for (const view of ["digest", "caption", "app_caption", "transcript"] as const) {
       const s = new TextViewSearcher(prov.textEmbedder, view);
       if (registered.has(s.namespace)) searchers.push(s);
     }
@@ -733,12 +757,18 @@ export class DeskRagService {
     // that before searching, or an empty result over a full library is
     // indistinguishable from "nothing matched".
     const registered = new Set(this.store.listVectorSpaces().map((s) => s.namespace));
-    const hasCurrentTextSpace = (["digest", "caption", "transcript"] as const).some((view) =>
-      registered.has(new TextViewSearcher(prov.textEmbedder, view).namespace),
+    const hasCurrentTextSpace = (["digest", "caption", "app_caption", "transcript"] as const).some(
+      (view) => registered.has(new TextViewSearcher(prov.textEmbedder, view).namespace),
     );
     const hasAnyTextSpace = this.store
       .listVectorSpaces()
-      .some((s) => s.view === "digest" || s.view === "caption" || s.view === "transcript");
+      .some(
+        (s) =>
+          s.view === "digest" ||
+          s.view === "caption" ||
+          s.view === "app_caption" ||
+          s.view === "transcript",
+      );
 
     const retriever = this.buildRetriever(prov);
     const { frames } = await retriever.retrieve({
@@ -966,6 +996,7 @@ export class DeskRagService {
       keyframes: detail.keyframes,
       regionCounts,
       audio,
+      transcriptClips: this.store.getTranscriptClipsBySession(sessionId),
     });
 
     // Only a FINISHED session is immutable. Caching an open one would freeze

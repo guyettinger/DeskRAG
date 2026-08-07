@@ -9,7 +9,7 @@ import { Segmenter } from "../src/segment/segmenter.js";
 import { Representer } from "../src/represent/representer.js";
 import { FrameRepresenter } from "../src/represent/frame-representer.js";
 import { FrameIngestor, type SampledFrame } from "../src/capture/frame-ingest.js";
-import { KeyframeGate } from "../src/capture/keyframe.js";
+import { KeyframeBudget } from "../src/capture/keyframe-budget.js";
 import { FakeEmbeddingProvider } from "../src/embed/fake.js";
 import { Tier1Retriever } from "../src/retrieve/retriever.js";
 import { Tier2Retriever } from "../src/retrieve/tier2.js";
@@ -59,7 +59,7 @@ describe("Tier 2: frame association + image embedding + scoped retrieval", () =>
     await store.endSession(sessionId, 9000); // endTMono 8000
 
     // Two keyframes: A early (t=1000), B late (t=6000), with distinct images.
-    const ing = new FrameIngestor(store, sessionId, new KeyframeGate({ hammingThreshold: 1 }), blobs);
+    const ing = new FrameIngestor(store, sessionId, new KeyframeBudget({ minIntervalMs: 0 }), blobs);
     const frame = (tMono: number, gray: Uint8Array, image: Uint8Array): SampledFrame => ({
       tMono, width: 1920, height: 1080, gray, grayW: 9, grayH: 8, image: { bytes: image, codec: "png" },
     });
@@ -79,20 +79,29 @@ describe("Tier 2: frame association + image embedding + scoped retrieval", () =>
     expect(frameRep.namespace).toBe("frame_image:fake:m:8");
 
     const segs = store.getSegmentsBySession(sessionId);
-    const early = segs.find((s) => s.granularity === "action" && s.tMonoStart === 0)!;
-    const late = segs.find((s) => s.granularity === "action" && s.tMonoStart === 5000)!;
-    const task = segs.find((s) => s.granularity === "task")!;
+    // Each frame is now a scene_change boundary, so an action segment STARTS at
+    // the frame it holds. Boundaries here are
+    //   [0 session_start, 1000 scene, 5000 focus, 6000 scene, 8000 session_end]
+    // and action does not subdivide, so the four spans are
+    //   [0,1000) [1000,5000) [5000,6000) [6000,8000]
+    // — the ones at 0 and 5000 contain no frame at all.
+    const early = segs.find((s) => s.granularity === "action" && s.tMonoStart === 1000)!;
+    const late = segs.find((s) => s.granularity === "action" && s.tMonoStart === 6000)!;
+    // task still cuts only at focus_change, so it is unchanged: [0,5000) [5000,8000].
+    const earlyTask = segs.find((s) => s.granularity === "task" && s.tMonoStart === 0)!;
+    const lateTask = segs.find((s) => s.granularity === "task" && s.tMonoStart === 5000)!;
 
-    // frame A (t=1000) -> early action + task; frame B (t=6000) -> late action + task.
-    expect(new Set(store.getFrame(frameA)!.segmentIds)).toEqual(new Set([early.id, task.id]));
-    expect(new Set(store.getFrame(frameB)!.segmentIds)).toEqual(new Set([late.id, task.id]));
+    expect(new Set(store.getFrame(frameA)!.segmentIds)).toEqual(new Set([early.id, earlyTask.id]));
+    expect(new Set(store.getFrame(frameB)!.segmentIds)).toEqual(new Set([late.id, lateTask.id]));
   });
 
   it("excludes an exact visual match that falls outside the Tier-1 segment scope", async () => {
     const { sessionId, frameA, frameB } = await setup();
     const segs = store.getSegmentsBySession(sessionId);
-    const early = segs.find((s) => s.granularity === "action" && s.tMonoStart === 0)!;
-    const late = segs.find((s) => s.granularity === "action" && s.tMonoStart === 5000)!;
+    // The action segments that actually HOLD frames A and B — each starts at
+    // its frame's scene_change boundary. See the association test above.
+    const early = segs.find((s) => s.granularity === "action" && s.tMonoStart === 1000)!;
+    const late = segs.find((s) => s.granularity === "action" && s.tMonoStart === 6000)!;
 
     const tier2 = new Tier2Retriever(store, fake);
 

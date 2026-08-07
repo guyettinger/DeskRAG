@@ -35,6 +35,8 @@ import type {
   SearchHit,
   SegmentInsert,
   SegmentPatch,
+  TranscriptClipInsert,
+  TranscriptClipRow,
   SegmentRow,
   AxSnapshotReason,
   AxSnapshotRow,
@@ -193,6 +195,21 @@ export class DualStore implements Store {
            meta       = COALESCE(@meta, meta)
          WHERE id = @id`,
       ),
+      upsertSegmentAppCaption: db.prepare(
+        `INSERT INTO segment_app_caption(segment_id, text) VALUES (?, ?)
+         ON CONFLICT(segment_id) DO UPDATE SET text = excluded.text`,
+      ),
+      selectSegmentAppCaption: db.prepare(
+        "SELECT text FROM segment_app_caption WHERE segment_id = ?",
+      ),
+      insertTranscriptClip: db.prepare(
+        `INSERT INTO transcript_clip(id, session_id, t_mono_start, t_mono_end, text)
+         VALUES (@id, @sessionId, @tMonoStart, @tMonoEnd, @text)`,
+      ),
+      selectTranscriptClipsBySession: db.prepare(
+        `SELECT id, session_id, t_mono_start, t_mono_end, text
+           FROM transcript_clip WHERE session_id = ? ORDER BY t_mono_start`,
+      ),
       deleteRegionFts: db.prepare(`DELETE FROM region_fts WHERE region_id = ?`),
       selectSegmentIdsBySession: db.prepare(
         "SELECT id FROM segment WHERE session_id = ?",
@@ -250,6 +267,9 @@ export class DualStore implements Store {
       ),
       selectSegmentIdsWithTranscript: db.prepare(
         "SELECT id FROM segment WHERE transcript IS NOT NULL",
+      ),
+      selectSegmentIdsWithAppCaption: db.prepare(
+        "SELECT segment_id AS id FROM segment_app_caption",
       ),
       selectRegionById: db.prepare("SELECT * FROM region WHERE id = ?"),
       selectRegionsByFrame: db.prepare(
@@ -552,6 +572,56 @@ export class DualStore implements Store {
         meta: patch.meta === undefined ? null : JSON.stringify(patch.meta),
       });
     });
+  }
+
+  async updateSegmentAppCaption(segmentId: string, text: string): Promise<void> {
+    await this.mutex.run(async () => {
+      this.stmts.upsertSegmentAppCaption.run(segmentId, text);
+    });
+  }
+
+  getAppCaption(segmentId: string): string | undefined {
+    const row = this.stmts.selectSegmentAppCaption.get(segmentId) as
+      | { text: string }
+      | undefined;
+    return row?.text;
+  }
+
+  async putTranscriptClips(rows: TranscriptClipInsert[]): Promise<void> {
+    if (rows.length === 0) return;
+    await this.mutex.run(async () => {
+      const tx = this.db.transaction((rs: TranscriptClipInsert[]) => {
+        for (const r of rs) {
+          this.stmts.insertTranscriptClip.run({
+            id: r.id,
+            sessionId: r.sessionId,
+            tMonoStart: r.tMonoStart,
+            tMonoEnd: r.tMonoEnd,
+            text: r.text,
+          });
+        }
+      });
+      tx(rows);
+    });
+  }
+
+  getTranscriptClipsBySession(sessionId: string): TranscriptClipRow[] {
+    const rows = this.stmts.selectTranscriptClipsBySession.all(sessionId) as {
+      id: string;
+      session_id: string;
+      t_mono_start: number;
+      t_mono_end: number;
+      text: string;
+    }[];
+    return rows.map((r) => ({
+      id: r.id,
+      sessionId: r.session_id,
+      // safeIntegers makes column reads BigInt; these are small and every
+      // consumer does arithmetic on them, so coerce here like hydrateFrame does.
+      tMonoStart: Number(r.t_mono_start),
+      tMonoEnd: Number(r.t_mono_end),
+      text: r.text,
+    }));
   }
 
   async putSegmentVectors(rows: SegmentVectorInsert[]): Promise<void> {
@@ -1031,7 +1101,9 @@ export class DualStore implements Store {
               ? this.stmts.selectSegmentIdsWithDigest
               : space.view === "transcript"
                 ? this.stmts.selectSegmentIdsWithTranscript
-                : null;
+                : space.view === "app_caption"
+                  ? this.stmts.selectSegmentIdsWithAppCaption
+                  : null;
         expected = new Set(
           stmt ? (stmt.all() as { id: string }[]).map((r) => r.id) : [],
         );

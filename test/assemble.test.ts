@@ -10,7 +10,7 @@ import { Representer } from "../src/represent/representer.js";
 import { FrameRepresenter } from "../src/represent/frame-representer.js";
 import { RegionRepresenter } from "../src/represent/regions/region-representer.js";
 import { FrameIngestor, type SampledFrame } from "../src/capture/frame-ingest.js";
-import { KeyframeGate } from "../src/capture/keyframe.js";
+import { KeyframeBudget } from "../src/capture/keyframe-budget.js";
 import { FakeEmbeddingProvider } from "../src/embed/fake.js";
 import { BehaviorFeatureExtractor } from "../src/represent/behavior.js";
 import { Retriever } from "../src/retrieve/assemble.js";
@@ -72,7 +72,7 @@ describe("Retriever (assembly capstone)", () => {
     ]);
     await store.endSession(sessionId, 9000);
 
-    const ing = new FrameIngestor(store, sessionId, new KeyframeGate({ hammingThreshold: 1 }), blobs);
+    const ing = new FrameIngestor(store, sessionId, new KeyframeBudget({ minIntervalMs: 0 }), blobs);
     const frame = (t: number, gray: Uint8Array, image: Uint8Array): SampledFrame => ({
       tMono: t, width: 1920, height: 1080, gray, grayW: 9, grayH: 8, image: { bytes: image, codec: "png" },
     });
@@ -87,7 +87,10 @@ describe("Retriever (assembly capstone)", () => {
       imageEmbedder: fake, blobStore: blobs, cropper, axProvider: () => [axEl],
     }).represent(sessionId);
 
-    const late = store.getSegmentsBySession(sessionId).find((s) => s.granularity === "action" && s.tMonoStart === 5000)!;
+    // Frame B is a scene_change boundary, so the action span holding it STARTS
+    // at t=6000. Boundaries here are [0 start, 1000 scene, 5000 focus,
+    // 6000 scene, 8000 end] and action does not subdivide.
+    const late = store.getSegmentsBySession(sessionId).find((s) => s.granularity === "action" && s.tMonoStart === 6000)!;
     return { sessionId, frameA: a.frameId!, frameB: b.frameId!, late };
   }
 

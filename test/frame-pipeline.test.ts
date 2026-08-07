@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ulid } from "ulid";
 import { DualStore } from "../src/store/store.js";
 import { dHash, resizeNearestGray } from "../src/capture/phash.js";
-import { KeyframeGate } from "../src/capture/keyframe.js";
+import { KeyframeBudget } from "../src/capture/keyframe-budget.js";
 import { FrameIngestor, type SampledFrame } from "../src/capture/frame-ingest.js";
 
 const ALL_ONES = (1n << 64n) - 1n;
@@ -39,21 +39,42 @@ describe("dHash", () => {
   });
 });
 
-describe("KeyframeGate", () => {
-  it("keeps the first frame, dedups near-duplicates, keeps distinct frames", () => {
-    const gate = new KeyframeGate({ hammingThreshold: 10, sceneChangeThreshold: 25 });
-    expect(gate.consider(0n).keep).toBe(true); // first
-    expect(gate.consider(0b111n).keep).toBe(false); // 3 bits from last kept -> dedup
-    expect(gate.consider(0xfffn).keep).toBe(true); // 12 bits -> distinct
+describe("KeyframeBudget", () => {
+  it("always keeps the first frame, whatever the interval", () => {
+    const b = new KeyframeBudget({ minIntervalMs: 1000 });
+    expect(b.consider(0)).toBe(true);
   });
 
-  it("forces a keyframe on a frame-to-frame scene-change spike", () => {
-    const gate = new KeyframeGate({ hammingThreshold: 10, sceneChangeThreshold: 25 });
-    gate.consider(0n); // keep (first)
-    gate.consider(0n); // dup, skipped; lastConsidered = 0
-    const d = gate.consider(ALL_ONES); // 64-bit jump vs previous
-    expect(d.keep).toBe(true);
-    expect(d.forced).toBe(true);
+  it("keeps the FIRST of a burst and drops the rest inside the interval", () => {
+    const b = new KeyframeBudget({ minIntervalMs: 500 });
+    expect(b.consider(0)).toBe(true);
+    expect(b.consider(100)).toBe(false);
+    expect(b.consider(400)).toBe(false);
+    expect(b.consider(499)).toBe(false);
+    expect(b.consider(500)).toBe(true); // the interval has elapsed
+  });
+
+  it("measures from the last KEPT frame, not the last considered one", () => {
+    // A steady stream just under the interval must still yield a frame each
+    // time the interval elapses — measuring from the last *considered* frame
+    // would starve the lane forever.
+    const b = new KeyframeBudget({ minIntervalMs: 500 });
+    b.consider(0); // kept
+    b.consider(400); // dropped
+    expect(b.consider(600)).toBe(true); // 600 - 0 >= 500
+  });
+
+  it("keeps everything at minIntervalMs 0 — the rule tests want", () => {
+    const b = new KeyframeBudget({ minIntervalMs: 0 });
+    expect([0, 0, 1, 1].map((t) => b.consider(t))).toEqual([true, true, true, true]);
+  });
+
+  it("reset() forgets the last kept frame", () => {
+    const b = new KeyframeBudget({ minIntervalMs: 500 });
+    b.consider(0);
+    expect(b.consider(100)).toBe(false);
+    b.reset();
+    expect(b.consider(100)).toBe(true);
   });
 });
 
@@ -73,15 +94,17 @@ describe("FrameIngestor -> Tier-0 (phashPrefilter)", () => {
   it("stores only kept keyframes and makes them findable by pHash", async () => {
     const sessionId = ulid();
     await store.putSession({ id: sessionId, startedAt: 0, epochMono: 0 });
-    const ing = new FrameIngestor(store, sessionId, new KeyframeGate({ hammingThreshold: 10 }));
+    const ing = new FrameIngestor(store, sessionId, new KeyframeBudget({ minIntervalMs: 500 }));
 
     const frame = (tMono: number, gray: Uint8Array): SampledFrame => ({
       tMono, width: 1920, height: 1080, gray, grayW: 9, grayH: 8,
     });
 
-    const a = await ing.ingest(frame(0, gradient(false))); // hash 0 -> kept
-    const b = await ing.ingest(frame(1, gradient(false))); // identical -> skipped
-    const c = await ing.ingest(frame(2, gradient(true))); // all-ones -> kept
+    // Dedup is ffmpeg's job now (mpdecimate). What the ingestor still enforces
+    // is the BUDGET: a second frame 1ms later is the tail of the same burst.
+    const a = await ing.ingest(frame(0, gradient(false)));
+    const b = await ing.ingest(frame(1, gradient(true))); // inside the interval
+    const c = await ing.ingest(frame(600, gradient(true))); // interval elapsed
 
     expect(a.kept).toBe(true);
     expect(b.kept).toBe(false);

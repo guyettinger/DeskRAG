@@ -8,14 +8,31 @@
  * putSegmentVectors (vector -> Lance), so reconcile can re-embed a transcript
  * from the persisted text after a crash.
  *
+ * It ALSO persists utterance-level clips (transcript_clip) from the provider's
+ * own timestamps. The segment-level text is what the Tier-1 vector view embeds
+ * and is unchanged; the clips exist because a segment's span is not the span of
+ * the speech inside it, and only the clips can say where a sentence actually
+ * was. A provider that reports no timestamps writes no clips — never a guessed
+ * interval spanning the whole blob.
+ *
  * The transcript becomes a Tier-1 text view: TextViewSearcher(embedder,
  * "transcript") lets NL queries hit spoken content directly.
  */
 
-import type { EmbeddingProvider, TranscriptionProvider } from "../../embed/types.js";
+import type {
+  EmbeddingProvider,
+  TranscriptionProvider,
+  TranscriptionResult,
+} from "../../embed/types.js";
 import { namespaceFor } from "../../embed/types.js";
+import { ulid } from "ulid";
 import type { BlobStore } from "../../store/blob-store.js";
-import type { BlobRow, SegmentVectorInsert, Store } from "../../store/types.js";
+import type {
+  BlobRow,
+  SegmentVectorInsert,
+  Store,
+  TranscriptClipInsert,
+} from "../../store/types.js";
 
 export interface TranscriptRepresenterOptions {
   transcriber: TranscriptionProvider;
@@ -28,6 +45,8 @@ export interface TranscriptRepresenterOptions {
 export interface TranscriptRepresentResult {
   segmentCount: number;
   transcribedCount: number;
+  /** Utterance rows written. 0 when the provider reported no timestamps. */
+  clipCount: number;
   namespace: string;
 }
 
@@ -69,38 +88,79 @@ export class TranscriptRepresenter {
     await this.ensureSpace();
     const segments = this.store.getSegmentsBySession(sessionId);
     if (segments.length === 0) {
-      return { segmentCount: 0, transcribedCount: 0, namespace: this.namespace };
+      return { segmentCount: 0, transcribedCount: 0, clipCount: 0, namespace: this.namespace };
     }
 
     const audioBlobs = this.store
       .getBlobsBySession(sessionId)
       .filter((b) => AUDIO_MEDIA.has(b.media));
 
-    // Transcribe each audio blob once; cache text by blob id.
-    const textByBlob = new Map<string, string>();
+    // Transcribe each audio blob once; cache the full result (text + optional
+    // per-clip timestamps) by blob id.
+    const resultByBlob = new Map<string, TranscriptionResult>();
     for (const b of audioBlobs) {
       const bytes = await this.blobStore.read(b);
-      const { text } = await this.transcriber.transcribe(
+      const r = await this.transcriber.transcribe(
         bytes,
         this.language !== undefined ? { language: this.language } : undefined,
       );
-      const trimmed = text.trim();
-      if (trimmed) textByBlob.set(b.id, trimmed);
+      const trimmed = r.text.trim();
+      if (!trimmed) continue;
+      resultByBlob.set(b.id, { text: trimmed, ...(r.segments ? { segments: r.segments } : {}) });
     }
+
+    // Utterance extent, persisted. These are the same offsets the per-segment
+    // slicing below uses — the difference is that a clip keeps them, so the
+    // rail can draw the speech rather than the segment that contains it.
+    const clips: TranscriptClipInsert[] = [];
+    for (const b of audioBlobs) {
+      const r = resultByBlob.get(b.id);
+      if (!r?.segments) continue;
+      for (const s of r.segments) {
+        const text = s.text.trim();
+        if (!text) continue;
+        clips.push({
+          id: ulid(),
+          sessionId,
+          tMonoStart: b.tMonoStart + s.startMs,
+          tMonoEnd: b.tMonoStart + s.endMs,
+          text,
+        });
+      }
+    }
+    await this.store.putTranscriptClips(clips);
 
     const transcripts: string[] = [];
     const segIds: string[] = [];
     for (const seg of segments) {
-      const overlapping = audioBlobs
-        .filter(
-          (b) =>
-            textByBlob.has(b.id) &&
-            overlaps(b, seg.tMonoStart, seg.tMonoEnd),
-        )
+      const overlappingBlobs = audioBlobs
+        .filter((b) => resultByBlob.has(b.id) && overlaps(b, seg.tMonoStart, seg.tMonoEnd))
         .sort((a, b) => a.tMonoStart - b.tMonoStart);
-      if (overlapping.length === 0) continue;
 
-      const transcript = overlapping.map((b) => textByBlob.get(b.id)!).join(" ").trim();
+      const pieces: string[] = [];
+      for (const b of overlappingBlobs) {
+        const r = resultByBlob.get(b.id)!;
+        if (r.segments && r.segments.length > 0) {
+          // Slice by absolute time: only the words that actually fall in this
+          // store segment's window, not the blob's whole text.
+          for (const s of r.segments) {
+            const absStart = b.tMonoStart + s.startMs;
+            const absEnd = b.tMonoStart + s.endMs;
+            if (absStart < seg.tMonoEnd && absEnd > seg.tMonoStart) {
+              const piece = s.text.trim();
+              if (piece) pieces.push(piece);
+            }
+          }
+        } else {
+          // No timestamps for this blob (fake transcriber, or a provider that
+          // can't give them): fall back to attributing its whole text to every
+          // segment it overlaps — today's behavior. Duplication can return in
+          // this case, but a transcript is still better than none.
+          pieces.push(r.text);
+        }
+      }
+
+      const transcript = pieces.join(" ").trim();
       if (!transcript) continue;
 
       await this.store.updateSegment(seg.id, { transcript }); // SQLite text first
@@ -122,6 +182,7 @@ export class TranscriptRepresenter {
     return {
       segmentCount: segments.length,
       transcribedCount: segIds.length,
+      clipCount: clips.length,
       namespace: this.namespace,
     };
   }

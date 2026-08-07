@@ -2,9 +2,71 @@ import { describe, expect, it } from "vitest";
 import type { KeyframeMarkerDTO, SessionTracksDTO } from "../app/src/shared/types.js";
 import {
   densityPath,
+  labelFits,
   readoutAt,
+  spanRects,
   thumbPlacement,
 } from "../app/src/renderer/src/screens/track-view.js";
+
+describe("labelFits", () => {
+  it("refuses a label the bar cannot hold untruncated", () => {
+    // 1s of a 100s axis on a 1000px rail is 10px — nothing fits.
+    expect(labelFits(1, 100, 1000, "Calculator")).toBe(false);
+  });
+
+  it("allows a short label in a wide bar", () => {
+    expect(labelFits(50, 100, 1000, "Calculator")).toBe(true);
+  });
+
+  it("depends on DURATION, never position — the rule cannot flip under translation", () => {
+    // spanRects moves; labelFits must not. Same duration, same answer.
+    expect(labelFits(50, 100, 1000, "Calculator")).toBe(labelFits(50, 100, 1000, "Calculator"));
+    expect(labelFits(5, 100, 1000, "Calculator")).toBe(false);
+  });
+
+  it("is false before the axis has been measured, and for empty text", () => {
+    expect(labelFits(50, 100, 0, "Calculator")).toBe(false);
+    expect(labelFits(50, 100, 1000, "")).toBe(false);
+  });
+});
+
+describe("spanRects", () => {
+  it("gives the bar the signal's TRUE extent as percentages", () => {
+    const r = spanRects(2, 4, 10, 1000, 12);
+    expect(r.leftPct).toBeCloseTo(20);
+    expect(r.widthPct).toBeCloseTo(20);
+  });
+
+  it("pads a hair-thin bar's HIT rect without widening the bar", () => {
+    const r = spanRects(5, 5.01, 10, 1000, 12);
+    expect(r.widthPct).toBeCloseTo(0.1); // the bar stays honest: 1px
+    expect(r.hit!.widthPx).toBe(12); // the target does not
+    // Centred on the bar: 500.5px centre, 12px wide.
+    expect(r.hit!.leftPx).toBeCloseTo(494.5);
+  });
+
+  it("clamps the hit rect INTO the axis at both ends", () => {
+    // A span at t=0 would otherwise put its target over the title gutter,
+    // which is the transport's column too.
+    expect(spanRects(0, 0, 10, 1000, 12).hit!.leftPx).toBe(0);
+    expect(spanRects(10, 10, 10, 1000, 12).hit!.leftPx).toBe(988);
+  });
+
+  it("moves the hit rect by exactly the shift under a uniform translation", () => {
+    const a = spanRects(2, 4, 10, 1000, 12);
+    const b = spanRects(3, 5, 10, 1000, 12);
+    expect(b.hit!.leftPx - a.hit!.leftPx).toBeCloseTo(100);
+    expect(b.hit!.widthPx).toBe(a.hit!.widthPx);
+  });
+
+  it("returns a null hit rect before the axis is measured", () => {
+    // The bar still renders from its percentages, so nothing flashes empty on
+    // the frame before the ResizeObserver first fires.
+    const r = spanRects(2, 4, 10, 0, 12);
+    expect(r.leftPct).toBeCloseTo(20);
+    expect(r.hit).toBeNull();
+  });
+});
 
 describe("thumbPlacement", () => {
   it("keeps images that clear their neighbour and degrades the rest to ticks", () => {
@@ -67,6 +129,7 @@ describe("readoutAt", () => {
         id: "apps",
         title: "apps",
         shape: "span",
+        showLabels: false,
         spans: [{ startSec: 0, endSec: 5, label: "TextEdit", tone: "app-1" }],
         emptyReason: null,
         warning: null,
@@ -75,6 +138,7 @@ describe("readoutAt", () => {
         id: "typing",
         title: "typing",
         shape: "density",
+        showLabels: false,
         density: {
           values: new Array(10).fill(0).map((_, i) => (i === 2 ? 1 : 0)),
           peak: 4,
@@ -87,6 +151,7 @@ describe("readoutAt", () => {
         id: "audio-mic",
         title: "audio (mic)",
         shape: "density",
+        showLabels: false,
         density: { values: new Array(10).fill(null), peak: 0, unit: "amplitude" },
         emptyReason: null,
         warning: null,
@@ -95,6 +160,7 @@ describe("readoutAt", () => {
         id: "markers",
         title: "markers",
         shape: "mark",
+        showLabels: false,
         marks: [{ atSec: 3, label: "bookmark", tone: "ok" }],
         emptyReason: null,
         warning: null,
@@ -103,6 +169,7 @@ describe("readoutAt", () => {
         id: "keyframes",
         title: "keyframes",
         shape: "thumb",
+        showLabels: false,
         thumbs: [{ atSec: 3, marker: marker("f1"), regionCount: 7 }],
         emptyReason: null,
         warning: null,

@@ -75,7 +75,11 @@ export { nestAxElements } from "./capture/ax/tree.js";
  * when doing input/window capture.
  */
 export { dHash, resizeNearestGray } from "./capture/phash.js";
-export { KeyframeGate, type KeyframeGateOptions, type GateDecision } from "./capture/keyframe.js";
+export {
+  KeyframeBudget,
+  DEFAULT_KEYFRAME_MIN_INTERVAL_MS,
+  type KeyframeBudgetOptions,
+} from "./capture/keyframe-budget.js";
 export {
   FrameIngestor,
   type SampledFrame,
@@ -85,7 +89,9 @@ export { FrameChunker } from "./capture/frame-chunker.js";
 export { JpegStreamSplitter } from "./capture/jpeg-splitter.js";
 export {
   FfmpegScreenProducer,
+  DEFAULT_DECIMATE,
   type FfmpegScreenOptions,
+  type DecimateOptions,
 } from "./capture/producers/ffmpeg-screen.js";
 export {
   DEFAULT_AUDIO_INPUT,
@@ -116,11 +122,13 @@ export { encodeWav, wavPeaks, type WavFormat, type WavPeaks } from "./capture/pr
  * represent time.
  */
 export { Segmenter, type SegmentResult } from "./segment/segmenter.js";
-export { computeBoundaries } from "./segment/boundaries.js";
+export { computeBoundaries, MEANINGFUL_INPUT_KINDS } from "./segment/boundaries.js";
 export { windowSegments } from "./segment/windowing.js";
 export {
-  DEFAULT_GRANULARITIES,
+  BASE_GRANULARITIES,
+  resolveGranularities,
   DEFAULT_DWELL_GAP_MS,
+  DEFAULT_BURST_GAP_MS,
   type Boundary,
   type BoundaryReason,
   type GranularityConfig,
@@ -204,6 +212,11 @@ export {
   type CaptionRepresenterOptions,
   type CaptionRepresentResult,
 } from "./represent/caption/caption-representer.js";
+export {
+  AppCaptionRepresenter,
+  type AppCaptionRepresenterOptions,
+  type AppCaptionRepresentResult,
+} from "./represent/caption/app-caption-representer.js";
 export { FakeCaptionProvider } from "./represent/caption/fake.js";
 /**
  * Local VLM captioner. Barrel-safe (plain fetch); `listVisionModels` is what the

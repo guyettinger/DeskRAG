@@ -31,6 +31,7 @@
     "build:ax": "swiftc -O native/ax-dump.swift -o native/ax-dump && swiftc -O native/ax-exec.swift -o native/ax-exec",
     "build:ax-exec": "swiftc -O native/ax-exec.swift -o native/ax-exec",
     "smoke:onnx-electron": "npm run build && node scripts/onnx-electron-smoke.mjs",
+    "probe:decimate": "node scripts/decimate-probe.mjs",
     "gen:brand": "tsx scripts/brand/index.ts",
     "gen:shots": "npm run app:build && node scripts/shots.mjs",
     "app:install": "npm --prefix app install",

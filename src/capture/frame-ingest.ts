@@ -1,7 +1,8 @@
 /**
- * FrameIngestor — turns sampled frames into persisted keyframe rows. It hashes
- * every sampled frame (dHash), runs the keyframe gate, and for KEPT frames writes
- * a frame row carrying the pHash (the Tier-0 coarse visual index + dedup key).
+ * FrameIngestor — turns sampled frames into persisted keyframe rows. Every
+ * frame offered here has ALREADY been decided to be a visual state change by
+ * ffmpeg's `mpdecimate`; this applies the KeyframeBudget's rate limit, hashes
+ * the frame (dHash) for the Tier-0 coarse visual index, and writes a frame row.
  * Frames are stored relational-only here: segment_ids are attached later (lazy,
  * at/after segmentation) and the frame_image vector is a later represent/ view.
  *
@@ -14,7 +15,7 @@ import { ulid } from "ulid";
 import type { Store } from "../store/types.js";
 import type { BlobStore } from "../store/blob-store.js";
 import { dHash } from "./phash.js";
-import { KeyframeGate } from "./keyframe.js";
+import { KeyframeBudget } from "./keyframe-budget.js";
 
 export interface SampledFrame {
   tMono: number;
@@ -33,7 +34,6 @@ export interface SampledFrame {
 
 export interface IngestResult {
   kept: boolean;
-  forced: boolean;
   phash: bigint;
   frameId?: string;
 }
@@ -44,14 +44,15 @@ export class FrameIngestor {
   constructor(
     private readonly store: Store,
     private readonly sessionId: string,
-    private readonly gate: KeyframeGate = new KeyframeGate(),
+    private readonly budget: KeyframeBudget = new KeyframeBudget(),
     private readonly blobStore?: BlobStore,
   ) {}
 
   async ingest(frame: SampledFrame): Promise<IngestResult> {
+    // The hash is computed for EVERY frame regardless: it is the Tier-0 index
+    // on the row, not a keep decision any more.
     const phash = dHash(frame.gray, frame.grayW, frame.grayH);
-    const { keep, forced } = this.gate.consider(phash);
-    if (!keep) return { kept: false, forced, phash };
+    if (!this.budget.consider(frame.tMono)) return { kept: false, phash };
 
     // Persist the keyframe image blob first (frame.blob_id FK needs it to exist).
     let blobId = frame.blobId;
@@ -80,7 +81,7 @@ export class FrameIngestor {
         ...(blobId !== undefined ? { blobId } : {}),
       },
     ]);
-    return { kept: true, forced, phash, frameId };
+    return { kept: true, phash, frameId };
   }
 
   /** Number of keyframes kept so far (== next frame_offset). */

@@ -11,7 +11,7 @@ import { StoredAxProvider } from "../src/represent/regions/stored-ax-provider.js
 import { FusedRegionProposer } from "../src/represent/regions/proposer.js";
 import { Tier3Retriever } from "../src/retrieve/tier3.js";
 import { FrameIngestor, type SampledFrame } from "../src/capture/frame-ingest.js";
-import { KeyframeGate } from "../src/capture/keyframe.js";
+import { KeyframeBudget } from "../src/capture/keyframe-budget.js";
 import { CaptureSession } from "../src/capture/session.js";
 import { AxCapturer } from "../src/capture/ax/ax-capturer.js";
 import { NoopAxSource } from "../src/capture/ax/noop.js";
@@ -212,7 +212,7 @@ describe("AX end-to-end: capture -> represent -> Tier 3", () => {
     await store.putEvents([{ id: ulid(), sessionId, tMono: 0, kind: "mouse_move" }]);
     await store.endSession(sessionId, 1000);
 
-    const ing = new FrameIngestor(store, sessionId, new KeyframeGate({ hammingThreshold: 1 }), blobs);
+    const ing = new FrameIngestor(store, sessionId, new KeyframeBudget({ minIntervalMs: 0 }), blobs);
     const frame: SampledFrame = {
       tMono: 100, width: 1920, height: 1080, gray: gradGray(), grayW: 9, grayH: 8,
       image: { bytes: Uint8Array.from([1, 2, 3, 4]), codec: "png" },
@@ -261,7 +261,7 @@ describe("CaptureSession AX wiring", () => {
   it("captures the AX tree for each kept keyframe", async () => {
     const session = new CaptureSession(store, {
       clock: MonotonicClock.start(),
-      keyframeGate: new KeyframeGate({ hammingThreshold: 1 }),
+      keyframeBudget: new KeyframeBudget({ minIntervalMs: 0 }),
       axSource: fakeSource([saveButton]),
     });
     session.addProducer(new OneFrameProducer());

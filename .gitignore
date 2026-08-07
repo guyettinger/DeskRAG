@@ -33,3 +33,7 @@ app/dist-app/
 
 .DS_Store
 .idea/
+
+# Claude Code local state. `.claude/skills/` IS committed — it is project tooling.
+.claude/settings.local.json
+.claude/worktrees/
