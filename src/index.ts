@@ -122,7 +122,7 @@ export { encodeWav, wavPeaks, type WavFormat, type WavPeaks } from "./capture/pr
  * represent time.
  */
 export { Segmenter, type SegmentResult } from "./segment/segmenter.js";
-export { computeBoundaries } from "./segment/boundaries.js";
+export { computeBoundaries, MEANINGFUL_INPUT_KINDS } from "./segment/boundaries.js";
 export { windowSegments } from "./segment/windowing.js";
 export {
   BASE_GRANULARITIES,

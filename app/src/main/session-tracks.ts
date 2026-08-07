@@ -250,7 +250,9 @@ const BOUNDARY_TONE: Record<string, TrackTone> = {
   session_start: "ok",
   session_end: "ok",
   focus_change: "accent",
+  scene_change: "accent",
   dwell_gap: "warn",
+  burst_gap: "warn",
   bookmark: "ok",
   window: "neutral",
 };

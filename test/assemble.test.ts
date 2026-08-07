@@ -87,7 +87,10 @@ describe("Retriever (assembly capstone)", () => {
       imageEmbedder: fake, blobStore: blobs, cropper, axProvider: () => [axEl],
     }).represent(sessionId);
 
-    const late = store.getSegmentsBySession(sessionId).find((s) => s.granularity === "action" && s.tMonoStart === 5000)!;
+    // Frame B is a scene_change boundary, so the action span holding it STARTS
+    // at t=6000. Boundaries here are [0 start, 1000 scene, 5000 focus,
+    // 6000 scene, 8000 end] and action does not subdivide.
+    const late = store.getSegmentsBySession(sessionId).find((s) => s.granularity === "action" && s.tMonoStart === 6000)!;
     return { sessionId, frameA: a.frameId!, frameB: b.frameId!, late };
   }
 

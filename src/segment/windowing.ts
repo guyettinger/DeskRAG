@@ -46,6 +46,12 @@ export function windowSegments(
     for (let i = 0; i < effective.length - 1; i++) {
       const b0 = effective[i]!;
       const b1 = effective[i + 1]!;
+      // One segment per span: the span is a visual state, and a clock-sliced
+      // piece of it is not a smaller state, just a smaller piece.
+      if (g.subdivide === false) {
+        mk(b0.tMono, b1.tMono, b0.reason);
+        continue;
+      }
       let start = b0.tMono;
       let first = true;
       while (start < b1.tMono) {

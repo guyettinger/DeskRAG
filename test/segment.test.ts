@@ -8,6 +8,7 @@ import { Segmenter } from "../src/segment/segmenter.js";
 import { computeBoundaries } from "../src/segment/boundaries.js";
 import { windowSegments } from "../src/segment/windowing.js";
 import {
+  BASE_GRANULARITIES,
   resolveGranularities,
   type Boundary,
   type GranularityConfig,
@@ -93,6 +94,34 @@ describe("computeBoundaries", () => {
       1500,
     );
     expect(b[1]).toEqual({ tMono: 2000, reason: "focus_change" });
+  });
+
+  it("marks a scene change from a kept frame's t_mono", () => {
+    const b = computeBoundaries([ev(0, "mouse_move")], 8000, 3000, 1500, [4000]);
+    expect(b).toEqual([
+      { tMono: 0, reason: "session_start" },
+      { tMono: 4000, reason: "scene_change" },
+      { tMono: 8000, reason: "session_end" },
+    ]);
+  });
+
+  it("prefers focus_change over a scene_change on the same t_mono, and scene_change over a gap", () => {
+    const b = computeBoundaries([ev(0, "key_down"), ev(4000, "focus_change")], 8000, 3000, 1500, [
+      4000, 6000,
+    ]);
+    expect(b[1]).toEqual({ tMono: 4000, reason: "focus_change" });
+    expect(b[2]).toEqual({ tMono: 6000, reason: "scene_change" });
+  });
+
+  it("scene changes do NOT suppress a dwell gap — they are not input", () => {
+    // dwell_gap means "no input at all". A frame arriving mid-gap is the screen
+    // changing by itself, which is precisely NOT the user being active, so it
+    // must not close the gap. This is why scene times are a separate parameter
+    // rather than merged into the event list.
+    const b = computeBoundaries([ev(0, "key_down"), ev(9000, "key_down")], 10_000, 3000, 1500, [
+      4000,
+    ]);
+    expect(b.map((x) => x.reason)).toContain("dwell_gap");
   });
 });
 
@@ -201,6 +230,42 @@ describe("windowSegments", () => {
       [0, 2000, "session_start"],
       [2000, 8000, "burst_gap"],
     ]);
+  });
+
+  it("subdivide:false emits ONE segment per span, however long", () => {
+    const g: GranularityConfig = {
+      name: "action",
+      targetMs: 10_000,
+      strideMs: 10_000,
+      boundaryAware: true,
+      subdivide: false,
+    };
+    const bounds: Boundary[] = [
+      { tMono: 0, reason: "session_start" },
+      { tMono: 45_000, reason: "session_end" },
+    ];
+    const segs = windowSegments("s", g, bounds, ulid);
+    expect(segs.map((s) => [s.tMonoStart, s.tMonoEnd, s.boundaryReason])).toEqual([
+      [0, 45_000, "session_start"],
+    ]);
+  });
+});
+
+describe("BASE_GRANULARITIES", () => {
+  it("cuts action at visual state change, never at inactivity", () => {
+    const action = BASE_GRANULARITIES.find((g) => g.name === "action")!;
+    expect(action.cutReasons).toEqual(["scene_change", "focus_change", "bookmark"]);
+    expect(action.cutReasons).not.toContain("dwell_gap");
+    expect(action.cutReasons).not.toContain("burst_gap");
+    // A sub-window contains no keyframe, so subdividing by clock reintroduces
+    // exactly the caption-extent defect this design removes.
+    expect(action.subdivide).toBe(false);
+  });
+
+  it("leaves task cutting only at the big semantic switches", () => {
+    const task = BASE_GRANULARITIES.find((g) => g.name === "task")!;
+    expect(task.cutReasons).toEqual(["focus_change", "bookmark"]);
+    expect(task.subdivide).toBeUndefined(); // undefined means subdivide
   });
 });
 

@@ -77,13 +77,20 @@ describe("CaptionRepresenter (view 2)", () => {
     const result = await rep.represent(sessionId);
 
     expect(result.namespace).toBe("caption:fake:m:8");
-    // Every segment (2 actions + 2 tasks, now that task splits at the same
-    // focus_change action does) contains a keyframe -> all captioned.
+    // Each frame is a scene_change boundary, so segmentation is now
+    //   action [0,1000) [1000,5000) [5000,6000) [6000,8000]   (4)
+    //   task   [0,5000) [5000,8000]                           (2)
+    // and only the four holding a keyframe (t=1000 or t=6000) get captioned —
+    // the action spans at 0 and 5000 hold none.
     expect(result.captionedCount).toBe(4);
 
     const segs = store.getSegmentsBySession(sessionId);
-    expect(segs.every((s) => s.caption !== null)).toBe(true);
-    const late = segs.find((s) => s.granularity === "action" && s.tMonoStart === 5000)!;
+    expect(segs).toHaveLength(6);
+    expect(segs.filter((s) => s.caption !== null)).toHaveLength(4);
+    // The captioned segment whose digest names Slack is the task span: the
+    // action span carrying the focus change is bracketed by it and the next
+    // scene change, so it holds no frame in this synthetic schedule.
+    const late = segs.find((s) => s.granularity === "task" && s.tMonoStart === 5000)!;
     expect(late.caption).toContain("Slack"); // context (digest) flowed into the caption
 
     // The caption is a Tier-1 view: querying its exact text ranks the segment #1.
@@ -193,8 +200,10 @@ describe("AppCaptionRepresenter (app_caption view)", () => {
     expect(result.namespace).toBe("app_caption:fake:m:8");
 
     const segs = store.getSegmentsBySession(sessionId);
-    const early = segs.find((s) => s.granularity === "action" && s.tMonoStart === 0)!;
-    const late = segs.find((s) => s.granularity === "action" && s.tMonoStart === 5000)!;
+    // Each frame is a scene_change boundary, so the action span holding a frame
+    // STARTS at that frame: [1000,5000) holds t=1000, [6000,8000] holds t=6000.
+    const early = segs.find((s) => s.granularity === "action" && s.tMonoStart === 1000)!;
+    const late = segs.find((s) => s.granularity === "action" && s.tMonoStart === 6000)!;
 
     // Early segment's only frame (t=1000) precedes any focus_change with
     // bounds -> no app_caption at all, never a copy of the whole-frame caption.

@@ -88,22 +88,29 @@ describe("Retriever Tier-4 rerank", () => {
     await new Representer(store, { digestEmbedder: fake }).represent(sessionId);
     await new FrameRepresenter(store, { imageEmbedder: fake, blobStore: blobs }).represent(sessionId);
     await new RegionRepresenter(store, { imageEmbedder: fake, blobStore: blobs, cropper }).represent(sessionId);
-    return { frameA: a.frameId!, frameB: b.frameId! };
+    // Each frame is a scene_change boundary, so the action span holding frame A
+    // starts at t=1000. Its digest is READ rather than hardcoded: the rerank
+    // query has to overlap whatever that segment actually says, and what a
+    // digest says is a property of the segment's boundaries.
+    const earlyDigest = store
+      .getSegmentsBySession(sessionId)
+      .find((s) => s.granularity === "action" && s.tMonoStart === 1000)!.digest!;
+    return { frameA: a.frameId!, frameB: b.frameId!, earlyDigest };
   }
 
   it("reorders the assembled frames for an NL query; without it, base score wins", async () => {
-    const { frameA, frameB } = await setup();
+    const { frameA, frameB, earlyDigest } = await setup();
     // No Tier-1 searchers -> unscoped visual recall; imgB is the exact match for
-    // frame B, so the base assembled order is [B, A].
+    // frame B, so the base assembled order is [B, A] whatever the text says.
     const base = await new Retriever(store, { searchers: [], imageEmbedder: fake })
-      .retrieve({ image: imgB, text: "mouse movement" });
+      .retrieve({ image: imgB, text: earlyDigest });
     expect(base.frames[0]!.frameId).toBe(frameB);
 
-    // With a reranker + a query whose words overlap frame A's digest ("mouse
-    // movement"), Tier 4 promotes A above the higher-scored B.
+    // With a reranker + a query whose words overlap frame A's digest, Tier 4
+    // promotes A above the higher-scored B.
     const reranked = await new Retriever(store, { searchers: [], imageEmbedder: fake }, {
       reranker: new FakeReranker(),
-    }).retrieve({ image: imgB, text: "mouse movement" });
+    }).retrieve({ image: imgB, text: earlyDigest });
     expect(reranked.frames[0]!.frameId).toBe(frameA);
     expect(reranked.frames.map((f) => f.frameId).sort()).toEqual([frameA, frameB].sort());
   });

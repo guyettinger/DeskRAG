@@ -1,8 +1,8 @@
 /**
  * Segmenter — reads a session's events from the store, detects boundaries, and
  * windows them into overlapping multi-granularity segments, then persists them.
- * Pure event-driven v1; scene-diff / speech-boundary signals plug in later by
- * contributing extra boundaries.
+ * Pure event-driven boundaries plus the session's own keyframes, which are the
+ * visual-state-change signal; speech boundaries plug in later the same way.
  *
  * Segments are relational-only here (transcript/digest/caption/vectors are
  * filled by represent/ downstream), so this uses store.putSegments with no
@@ -55,7 +55,18 @@ export class Segmenter {
     const events = this.store.getEventsBySession(sessionId);
 
     const endTMono = this.deriveEnd(session.startedAt, session.endedAt, events);
-    const boundaries = computeBoundaries(events, endTMono, this.dwellGapMs, this.burstGapMs);
+    // A kept frame IS a visual state change — mpdecimate decided that at
+    // capture time and FrameIngestor only wrote a row for frames that survived
+    // it. Passed as bare t_monos, not as events, so boundaries.ts still sees
+    // only SegEvent and `segment/` stays a leaf that knows nothing about frames.
+    const sceneTMonos = this.store.getFramesBySession(sessionId).map((f) => f.tMono);
+    const boundaries = computeBoundaries(
+      events,
+      endTMono,
+      this.dwellGapMs,
+      this.burstGapMs,
+      sceneTMonos,
+    );
     const granularities = this.granularitiesOverride ?? resolveGranularities(endTMono);
 
     const all: SegmentInsert[] = [];

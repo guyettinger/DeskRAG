@@ -9,6 +9,7 @@
 export type BoundaryReason =
   | "session_start"
   | "focus_change" // app/window focus changed
+  | "scene_change" // the screen itself changed — a kept keyframe (mpdecimate)
   | "dwell_gap" // activity resumed after a long input-idle gap (any event, including mouse_move)
   | "burst_gap" // activity resumed after a shorter gap between MEANINGFUL input (click/key/scroll)
   | "bookmark" // explicit user hotkey marker
@@ -42,6 +43,17 @@ export interface GranularityConfig {
    * click/key pause is noise at task scale.
    */
   cutReasons?: BoundaryReason[];
+  /**
+   * Subdivide a span longer than `targetMs` into `targetMs` chunks. Defaults to
+   * true (undefined means true), which is what "task" wants.
+   *
+   * `action` sets it FALSE. A sub-window is a slice of clock with no boundary
+   * behind it and therefore no keyframe of its own, so a caption or a digest
+   * attached to it is draped over time nothing distinguishes — exactly the
+   * defect this design removes. An action span's length is bounded by
+   * mpdecimate's `max` heartbeat instead, at capture time.
+   */
+  subdivide?: boolean;
 }
 
 export interface SegmenterOptions {
@@ -55,7 +67,16 @@ export interface SegmenterOptions {
 }
 
 export const BASE_GRANULARITIES: GranularityConfig[] = [
-  { name: "action", targetMs: 10_000, strideMs: 10_000, boundaryAware: true },
+  {
+    name: "action",
+    targetMs: 10_000,
+    strideMs: 10_000,
+    boundaryAware: true,
+    // Inactivity indicates INTENT, not a change of state, so it does not cut
+    // here — it is surfaced as its own rail lane instead.
+    cutReasons: ["scene_change", "focus_change", "bookmark"],
+    subdivide: false,
+  },
   {
     name: "task",
     targetMs: 180_000,

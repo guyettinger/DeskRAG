@@ -1,7 +1,11 @@
 /**
- * Event-driven boundary detection (v1). Candidate boundaries:
+ * Event-driven boundary detection. Candidate boundaries:
  *  - session_start (t=0) and session_end (endTMono) always bracket the timeline,
  *  - focus_change / bookmark events (semantic switches the user made),
+ *  - scene_change: a kept keyframe, i.e. the screen itself changed. Passed
+ *    SEPARATELY from `events` and never merged into them, because a frame is
+ *    not input: merging would let a screen changing by itself close a dwell gap,
+ *    which means the opposite of what dwell_gap asserts.
  *  - dwell_gap: activity resuming after ANY input-idle gap > dwellGapMs — the
  *    "nothing happened at all, not even mouse movement" signal,
  *  - burst_gap: activity resuming after a gap > burstGapMs between MEANINGFUL
@@ -10,8 +14,8 @@
  *    dwell_gap fire during active use — this is the finer signal that does.
  *
  * When several reasons land on the same t_mono, the most specific wins
- * (bookmark > focus_change > dwell_gap > burst_gap); the endpoints always stay
- * session_start / session_end.
+ * (bookmark > focus_change > scene_change > dwell_gap > burst_gap); the
+ * endpoints always stay session_start / session_end.
  */
 
 import type { Boundary, BoundaryReason, SegEvent } from "./types.js";
@@ -22,18 +26,31 @@ const PRIORITY: Record<BoundaryReason, number> = {
   session_end: 100,
   bookmark: 30,
   focus_change: 20,
+  scene_change: 15,
   dwell_gap: 10,
   burst_gap: 5,
   window: 0,
 };
 
-const MEANINGFUL_KINDS = new Set(["mouse_down", "key_down", "scroll"]);
+/**
+ * Input that means the user DID something, as opposed to moving the pointer.
+ *
+ * Exported because the app's track rail draws the same gaps this detector cuts
+ * at, and two readers of one rule is the drift hazard that already bit
+ * ax-dump/ax-exec.
+ */
+export const MEANINGFUL_INPUT_KINDS: ReadonlySet<string> = new Set([
+  "mouse_down",
+  "key_down",
+  "scroll",
+]);
 
 export function computeBoundaries(
   events: readonly SegEvent[],
   endTMono: number,
   dwellGapMs: number = DEFAULT_DWELL_GAP_MS,
   burstGapMs: number = DEFAULT_BURST_GAP_MS,
+  sceneTMonos: readonly number[] = [],
 ): Boundary[] {
   const best = new Map<number, BoundaryReason>();
   const add = (tMono: number, reason: BoundaryReason) => {
@@ -53,7 +70,7 @@ export function computeBoundaries(
     }
     lastT = ev.tMono;
 
-    if (MEANINGFUL_KINDS.has(ev.kind)) {
+    if (MEANINGFUL_INPUT_KINDS.has(ev.kind)) {
       if (lastMeaningfulT !== undefined && ev.tMono - lastMeaningfulT > burstGapMs) {
         add(ev.tMono, "burst_gap");
       }
@@ -63,6 +80,7 @@ export function computeBoundaries(
     if (ev.kind === "focus_change") add(ev.tMono, "focus_change");
     else if (ev.kind === "bookmark") add(ev.tMono, "bookmark");
   }
+  for (const t of sceneTMonos) add(t, "scene_change");
   add(endTMono, "session_end");
 
   return [...best.entries()]
