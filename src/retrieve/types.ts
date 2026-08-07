@@ -91,6 +91,18 @@ export interface RegionHit {
   matchedBy: ("ann" | "fts")[];
   /** ANN distance when matched by image (absent for FTS-only hits). */
   distance?: number;
+  /**
+   * 1-based DENSE rank of this region's role+label among the AX-label FTS
+   * matches (bm25 order), when matched by text. This is what lets a text query
+   * rank frames INSIDE one segment: a flat per-hit constant would say only
+   * "matched", so every frame showing any matching label would tie.
+   *
+   * Dense, and keyed on the label rather than the row, because two frames
+   * showing the SAME control are equally good answers — bm25 orders equal rows
+   * arbitrarily, and a positional rank would let that arbitrary order outweigh
+   * the segment evidence.
+   */
+  ftsRank?: number;
 }
 
 /** How wide Tier 1 fans across views, and how hard RRF damps deep ranks. */

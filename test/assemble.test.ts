@@ -188,6 +188,73 @@ describe("Retriever (assembly capstone)", () => {
     expect(res.frames.map((f) => f.frameId)).toContain(b.frameId!);
   });
 
+  /**
+   * The defect: for a text query, frames are recalled by segment MEMBERSHIP and
+   * carry no ANN distance, so `frameScore` was 0 for every one of them and every
+   * frame sharing a segment scored identically. Measured on a real library, one
+   * query returned 11 frames tied to six decimal places, ordered arbitrarily.
+   *
+   * Tier 3's AX-label half is the per-frame evidence that breaks it — and it
+   * needs no model, so it works on the default configuration.
+   */
+  it("text query: frames in ONE segment are ranked by their own AX labels, not tied", async () => {
+    const sessionId = ulid();
+    await store.putSession({ id: sessionId, startedAt: 1000, epochMono: 0 });
+    await store.putEvents([
+      { id: ulid(), sessionId, tMono: 0, kind: "focus_change", data: { app: "TextEdit" } },
+    ]);
+    await store.endSession(sessionId, 9000);
+
+    const ing = new FrameIngestor(store, sessionId, new KeyframeBudget({ minIntervalMs: 0 }), blobs);
+    const a = await ing.ingest({
+      tMono: 1000, width: 1920, height: 1080, gray: grad(false), grayW: 9, grayH: 8,
+      image: { bytes: imgA, codec: "png" },
+    });
+    const b = await ing.ingest({
+      tMono: 2000, width: 1920, height: 1080, gray: grad(true), grayW: 9, grayH: 8,
+      image: { bytes: imgB, codec: "png" },
+    });
+
+    await new Segmenter(store).segment(sessionId);
+    await associateFrames(store, sessionId);
+    await new Representer(store, { digestEmbedder: fake, behavior }).represent(sessionId);
+
+    // Both frames sit in the same task segment. Only frame B shows the button.
+    const task = store.getSegmentsBySession(sessionId).find((s) => s.granularity === "task")!;
+    await store.putRegions([
+      { id: ulid(), frameId: a.frameId!, segmentId: task.id, sessionId, x: 0, y: 0, w: 10, h: 10,
+        source: "ax", role: "button", label: "Cancel", priority: 1 },
+      { id: ulid(), frameId: b.frameId!, segmentId: task.id, sessionId, x: 0, y: 0, w: 10, h: 10,
+        source: "ax", role: "button", label: "Publish", priority: 1 },
+    ]);
+
+    // No image provider at all — the default.
+    const res = await new Retriever(store, {
+      searchers: [new TextViewSearcher(fake, "digest")],
+    }).retrieve({ text: "Publish" });
+
+    const scoreOf = (id: string) => res.frames.find((f) => f.frameId === id)?.score ?? -1;
+    expect(scoreOf(b.frameId!)).toBeGreaterThan(scoreOf(a.frameId!));
+
+    // And the match is shown, not merely scored: a text query gets highlights.
+    const hit = res.frames.find((f) => f.frameId === b.frameId)!;
+    expect(hit.highlights.map((h) => h.label)).toContain("Publish");
+    expect(hit.highlights[0]!.matchedBy).toContain("fts");
+  });
+
+  it("ties are ordered by time, deterministically — never by Map insertion order", async () => {
+    const { frameA, frameB, late } = await setup();
+    const res = await retriever().retrieve({ text: late.digest! });
+    const tied = res.frames.filter(
+      (f, _i, all) => all.filter((g) => g.score === f.score).length > 1,
+    );
+    for (let i = 1; i < tied.length; i++) {
+      if (tied[i - 1]!.score !== tied[i]!.score) continue;
+      expect(tied[i - 1]!.frame!.tMono).toBeLessThanOrEqual(tied[i]!.frame!.tMono);
+    }
+    expect([frameA, frameB].every((id) => res.frames.some((f) => f.frameId === id))).toBe(true);
+  });
+
   it("associateFrames links a frame to BOTH its action and its task segment", async () => {
     const sessionId = ulid();
     await store.putSession({ id: sessionId, startedAt: 1000, epochMono: 0 });

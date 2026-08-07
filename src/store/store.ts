@@ -253,7 +253,7 @@ export class DualStore implements Store {
       ),
       phashScan,
       ftsMatch: db.prepare(
-        "SELECT region_id FROM region_fts WHERE region_fts MATCH ? LIMIT ?",
+        "SELECT region_id FROM region_fts WHERE region_fts MATCH ? ORDER BY rank LIMIT ?",
       ),
       insertVectorSpace: db.prepare(
         `INSERT OR IGNORE INTO vector_space(namespace, view, provider_id, model, dimensions, shared_text_space, created_at)
@@ -1085,16 +1085,42 @@ export class DualStore implements Store {
     return this.lance.searchRegion(namespace, vector, k, scope.frameIds);
   }
 
-  ftsRegions(query: string, limit = 50): string[] {
+  /**
+   * Tier 3's text half. Best first (`ORDER BY rank` — FTS5's bm25), because the
+   * caller scores a region by its POSITION here: an unordered list would make
+   * "which part of this frame matches" arbitrary.
+   *
+   * `scope.frameIds` PRE-filters, exactly as LanceDB's `.where()` does for the
+   * ANN half. Fetching a global top-N and intersecting afterwards is the bug
+   * this replaces: with 1,200 regions across a library, the global best matches
+   * are usually all outside the frames Tier 2 selected, so the scoped result
+   * came back empty while matching regions sat inside the scope unseen.
+   */
+  ftsRegions(query: string, limit = 50, scope?: { frameIds: string[] }): string[] {
     // Sanitize arbitrary text (digests, NL queries) into a safe FTS5 expression:
     // quoted alphanumeric terms OR-joined. Avoids MATCH syntax errors from ':' '.'
     // '→' etc., and matches a region whose role/label contains ANY query term.
     const terms = query.match(/[A-Za-z0-9]+/g);
     if (!terms || terms.length === 0) return [];
     const match = terms.map((t) => `"${t}"`).join(" OR ");
-    return (this.stmts.ftsMatch.all(match, limit) as { region_id: string }[]).map(
-      (r) => r.region_id,
+    if (scope === undefined) {
+      return (this.stmts.ftsMatch.all(match, limit) as { region_id: string }[]).map(
+        (r) => r.region_id,
+      );
+    }
+    if (scope.frameIds.length === 0) return [];
+    // Prepared per call because the IN arity varies with the scope size. The
+    // join is against `region`, not the FTS table, since region_id is UNINDEXED.
+    const holes = scope.frameIds.map(() => "?").join(",");
+    const stmt = this.db.prepare(
+      `SELECT f.region_id FROM region_fts f
+         JOIN region r ON r.id = f.region_id
+        WHERE region_fts MATCH ? AND r.frame_id IN (${holes})
+        ORDER BY rank LIMIT ?`,
     );
+    return (
+      stmt.all(match, ...scope.frameIds, limit) as { region_id: string }[]
+    ).map((r) => r.region_id);
   }
 
   /**

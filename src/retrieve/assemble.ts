@@ -63,8 +63,6 @@ export interface RetrieverOptions {
 }
 
 const DEFAULT_WEIGHTS: RetrieverWeights = { frame: 1, region: 0.5, segment: 0.5 };
-/** Score assigned to an FTS-only region hit (no ANN distance). */
-const FTS_ONLY_SCORE = 0.5;
 
 /**
  * The coarse-to-fine capstone: one `retrieve()` call runs every applicable tier,
@@ -122,10 +120,21 @@ export class Retriever {
       this.tier2 = new Tier2Retriever(store, config.imageEmbedder, {
         ...(opts.frameTopN !== undefined ? { topN: opts.frameTopN } : {}),
       });
-      this.tier3 = new Tier3Retriever(store, config.imageEmbedder, {
-        ...(opts.regionTopN !== undefined ? { topN: opts.regionTopN } : {}),
-      });
     }
+    // Tier 3 ALWAYS exists. Its ANN half needs the image embedder and gets it
+    // when there is one; its AX-label FTS half needs no model at all, and for a
+    // text query it is the only per-frame evidence in the system — without it,
+    // frames recalled by segment membership carry no distance and every frame
+    // sharing a segment scores identically. Measured before this: one query
+    // returned 11 frames tied to six decimal places.
+    //
+    // On the MULTIVECTOR path it is deliberately FTS-only (the embedder is not
+    // passed): there, patches ARE the regions, so a region score derived from
+    // the same MaxSim would double-count the frame's own evidence. An AX label
+    // is a different signal and double-counts nothing.
+    this.tier3 = new Tier3Retriever(store, config.imageEmbedder, {
+      ...(opts.regionTopN !== undefined ? { topN: opts.regionTopN } : {}),
+    });
     if (config.patchEmbedder) {
       this.tier2mv = new Tier2MultiVectorRetriever(store, config.patchEmbedder, {
         ...(opts.frameTopN !== undefined ? { topN: opts.frameTopN } : {}),
@@ -152,12 +161,14 @@ export class Retriever {
     const queryVectors = this.tier2mv ? await this.tier2mv.embedQuery(query) : null;
     const frameHits = await this.recallFrames(query, segScope, queryVectors);
 
-    // Tier 3 — region highlights per recalled frame. Single-vector path only:
-    // on the multivector path the patches ARE the regions, so a region score
-    // derived from the same MaxSim would double-count the frame's own evidence.
+    // Tier 3 — region evidence per recalled frame. Runs for a TEXT query as
+    // well as an image one: the AX-label half is the only thing that can tell
+    // two frames of the same segment apart, and it is also what puts highlights
+    // on a text result at all (they used to be image-query-only, leaving 1,153
+    // labelled regions unreachable from the search box).
     const frameIds = frameHits.map((f) => f.frameId);
     const regionHits =
-      this.tier3 && query.image && frameIds.length > 0
+      this.tier3 && (query.image || query.text) && frameIds.length > 0
         ? await this.tier3.retrieveRegions(query, frameIds)
         : [];
     const regionsByFrame = new Map<string, RegionHit[]>();
@@ -190,15 +201,17 @@ export class Retriever {
       const f = out[i]!;
       const frame = f.frame ?? this.store.getFrame(f.frameId);
       if (!frame) continue;
-      out[i] = {
-        ...f,
-        highlights: await this.tier2mv!.highlightsForFrame(
-          f.frameId,
-          queryVectors,
-          frame.width,
-          frame.height,
-        ),
-      };
+      const patches = await this.tier2mv!.highlightsForFrame(
+        f.frameId,
+        queryVectors,
+        frame.width,
+        frame.height,
+      );
+      // APPENDED, not substituted. Patch highlights are synthetic tiles with no
+      // label; Tier 3's are real `region` rows carrying an AX role and label.
+      // Overwriting dropped every named highlight on this path, which is the
+      // only path that can say WHAT the outlined thing is called.
+      out[i] = { ...f, highlights: [...f.highlights, ...patches] };
     }
     return out;
   }
@@ -273,13 +286,25 @@ export class Retriever {
     // Raw components per frame.
     const raw = frameHits.map((fh) => {
       const regions = regionsByFrame.get(fh.frameId) ?? [];
+      // An FTS-only hit scores by its bm25 RANK, not a flat constant. The
+      // constant said only "something here matched", so every frame containing
+      // any matching label scored identically — precisely the tie this tier is
+      // supposed to break.
       const regionScores = regions
-        .map((r) => (r.distance !== undefined ? 1 / (1 + r.distance) : FTS_ONLY_SCORE))
+        .map((r) =>
+          r.distance !== undefined
+            ? 1 / (1 + r.distance)
+            : r.ftsRank !== undefined
+              ? 1 / r.ftsRank
+              : 0,
+        )
         .sort((a, b) => b - a)
         .slice(0, this.regionTopK);
-      const regionScore = regionScores.length
-        ? regionScores.reduce((s, v) => s + v, 0) / regionScores.length
-        : 0;
+      // Divided by regionTopK, NOT by how many hits there were. Dividing by the
+      // count made a frame with one strong match and two weak ones score BELOW
+      // a frame with only the strong one — adding evidence lowered the score.
+      // Padding to K makes the measure monotone: another match never hurts.
+      const regionScore = regionScores.reduce((s, v) => s + v, 0) / this.regionTopK;
       const frameScore = frameScoreOf(fh.distance);
       const best = this.bestSegment(fh, segScore);
       return {
@@ -309,7 +334,19 @@ export class Retriever {
       ...(r.fh.frame ? { frame: r.fh.frame } : {}),
     }));
 
-    results.sort((a, b) => b.score - a.score);
+    // Ties are REAL and are left as ties — frames with no region match and one
+    // shared segment are genuinely equal on every signal we have. What they
+    // must not be is arbitrarily ordered, so the tie-break is explicit: earlier
+    // frame first. It relied on Map insertion order plus V8's stable sort
+    // before, which is true today and is not a property to depend on. A frame
+    // id is a ULID and therefore already time-ordered, so it carries the same
+    // meaning when a row was not hydrated.
+    results.sort(
+      (a, b) =>
+        b.score - a.score ||
+        (a.frame?.tMono ?? 0) - (b.frame?.tMono ?? 0) ||
+        (a.frameId < b.frameId ? -1 : a.frameId > b.frameId ? 1 : 0),
+    );
     return results.slice(0, this.finalTopN);
   }
 

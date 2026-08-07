@@ -538,8 +538,13 @@ export interface Store {
     k: number,
     scope: RegionScope,
   ): Promise<SearchHit[]>;
-  /** Tier 3's text half: FTS5 over stored AX role/label, so regions are searchable by UI role. */
-  ftsRegions(query: string, limit?: number): string[];
+  /**
+   * Tier 3's text half: FTS5 over stored AX role/label, so regions are
+   * searchable by UI role. Best first (bm25); `scope.frameIds` PRE-filters, the
+   * same rule the ANN half follows — post-filtering a global top-N returns
+   * nothing as soon as the library is bigger than the limit.
+   */
+  ftsRegions(query: string, limit?: number, scope?: { frameIds: string[] }): string[];
   /**
    * Tier 1's LEXICAL half: FTS5 over a segment's combined view text, best first
    * (bm25). Fused into the same RRF as the dense views — a rare literal token is
