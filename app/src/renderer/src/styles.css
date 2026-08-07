@@ -1508,7 +1508,10 @@ select {
 }
 
 /* Centred at a fixed height rather than inset from the lane's edges: at 48px an
-   edge-inset bar fills the lane and the rail reads as a stack of blocks. */
+   edge-inset bar fills the lane and the rail reads as a stack of blocks.
+
+   `pointer-events: none` because the bar is the signal's TRUE extent and must
+   never be widened to be clickable — .tracks__span-hit below is the target. */
 .tracks__span {
   position: absolute;
   top: 50%;
@@ -1518,8 +1521,14 @@ select {
   border-radius: 3px;
   overflow: hidden;
   background: var(--tone);
+  pointer-events: none;
 }
 
+/* No `text-overflow: ellipsis`, on purpose. Nothing in this rail truncates:
+   `labelFits` withholds a label that would not fit, so an ellipsis could only
+   ever mean that rule had broken — and hiding that is how the run-on paragraph
+   this replaced went unnoticed. The parent's `overflow: hidden` (for the
+   rounded corners) is the backstop. */
 .tracks__span-label {
   display: block;
   padding: 6px 5px;
@@ -1527,8 +1536,19 @@ select {
   font-size: 11px;
   line-height: 14px;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+}
+
+/* The hit target: transparent, padded to MIN_HIT_PX, centred on its bar. Same
+   principle as the Flows wire's fat transparent stroke under a 2px path — a
+   2px-wide thing cannot be hit with a mouse, and the fix belongs in the target
+   rather than in the drawing. */
+.tracks__span-hit {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 26px;
+  background: transparent;
+  pointer-events: auto;
 }
 
 .tracks__mark {
