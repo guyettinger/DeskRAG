@@ -89,7 +89,9 @@ export { FrameChunker } from "./capture/frame-chunker.js";
 export { JpegStreamSplitter } from "./capture/jpeg-splitter.js";
 export {
   FfmpegScreenProducer,
+  DEFAULT_DECIMATE,
   type FfmpegScreenOptions,
+  type DecimateOptions,
 } from "./capture/producers/ffmpeg-screen.js";
 export {
   DEFAULT_AUDIO_INPUT,

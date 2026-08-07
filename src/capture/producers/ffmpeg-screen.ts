@@ -1,14 +1,19 @@
 /**
  * FfmpegScreenProducer — samples the screen by spawning ffmpeg. It emits TWO
- * aligned outputs from one process, split by `-filter_complex ... split=2`:
- *   - stdout (pipe:1): downscaled grayscale rawvideo → FrameChunker → pHash,
+ * aligned outputs from one process:
+ *   - stdout (pipe:1): downscaled grayscale rawvideo → FrameChunker → dHash,
  *   - fd 3   (pipe:3): MJPEG full frames        → JpegStreamSplitter → the
  *                       stored keyframe image (frame_image view + region crops).
- * Both are filtered from the same input at the same fps, so frame N of each
- * corresponds; they're paired by index and pushed through ctx.ingestFrame.
  * ffmpeg does the JPEG encoding, so no in-Node image codec is needed.
  *
- * Set `storeImages: false` to fall back to grayscale-only (pHash/Tier-0 only).
+ * WHAT CHANGED ON SCREEN IS DECIDED HERE, by `mpdecimate` on the shared
+ * sampling branch BEFORE it splits into those two. mpdecimate compares 8x8
+ * blocks against the last kept frame, so it sees a localized change that a
+ * whole-frame hash averages away. Decimating before the split is also what
+ * keeps the two outputs paired by index: both are downstream of one decimator,
+ * so frame N of each still corresponds.
+ *
+ * Set `storeImages: false` to fall back to grayscale-only (dHash/Tier-0 only).
  * Device/input is platform-specific: on macOS the avfoundation display index is
  * discovered in start() (see `input`), and everything is overridable via
  * `ffmpegArgs`. Not exercised by the unit suite — the testable
@@ -67,6 +72,41 @@ export function screenInputFor(
   };
 }
 
+/**
+ * `mpdecimate` parameters. It divides each frame into 8x8 blocks, computes SAD
+ * per block against the LAST KEPT frame, and keeps the frame when any block
+ * exceeds `hi`, or when more than `frac` of blocks exceed `lo`.
+ */
+export interface DecimateOptions {
+  /** Any single 8x8 block above this keeps the frame outright. */
+  hi?: number;
+  /** Blocks above this are counted toward `frac`. */
+  lo?: number;
+  /** Fraction of blocks that must exceed `lo` to keep the frame. */
+  frac?: number;
+  /** Force a keep after this many consecutive drops — the heartbeat. */
+  max?: number;
+}
+
+/**
+ * PROVISIONAL — replaced by measured values in the calibration task. Do not
+ * treat these as tuned.
+ *
+ * `hi` is deliberately far above ffmpeg's own default (64*12 = 768) so the
+ * any-ONE-block path effectively never fires alone: a blinking text caret is
+ * roughly one 8x8 block whose SAD clears 768 easily, and on screen content that
+ * alone would emit a keyframe every single sample. A real state change — a
+ * digit, a menu, a field filling — spans several blocks and is caught by the
+ * `lo`/`frac` path instead, which is why `frac` is small rather than ffmpeg's
+ * 0.33.
+ */
+export const DEFAULT_DECIMATE: Required<DecimateOptions> = {
+  hi: 64 * 64,
+  lo: 64 * 5,
+  frac: 0.002,
+  max: 60,
+};
+
 export interface FfmpegScreenOptions {
   /**
    * avfoundation input (macOS screen device index or name), e.g. "2".
@@ -101,6 +141,12 @@ export interface FfmpegScreenOptions {
   imageMaxWidth?: number;
   /** MJPEG quality (ffmpeg -q:v, 2=best..31=worst). */
   imageQuality?: number;
+  /**
+   * Visual-state-change detection. `false` disables decimation entirely (every
+   * sampled frame is offered to the KeyframeBudget) — for tests and for
+   * diagnosing whether the filter is the reason a frame is missing.
+   */
+  decimate?: DecimateOptions | false;
   /** Record the full-rate session video to a file (third output branch). */
   recordVideo?: boolean;
   /** Input framerate; also the recorded video's framerate. */
@@ -162,6 +208,16 @@ export class FfmpegScreenProducer implements Producer {
     // sampling branches then decimate back to `fps` with their own filter, so
     // the pHash/keyframe pipeline sees exactly the stream it always did.
     const inputRate = videoPath ? this.videoFps : fps;
+    const maxW = this.opts.imageMaxWidth ?? 1280;
+    const q = this.opts.imageQuality ?? 5;
+    const crf = this.opts.videoCrf ?? 28;
+    const preset = this.opts.videoPreset ?? "veryfast";
+    const videoMaxW = this.opts.videoMaxWidth ?? 1920;
+    // ONE scale, at the stored JPEG's own width, feeding the decimator AND both
+    // sampling branches. Decimating at native resolution and re-scaling for the
+    // JPEG would be two scale passes and maximally sensitive to a caret.
+    const sample = `fps=${fps},scale=${maxW}:-2,${this.decimateFilter()}`;
+    const gray = `scale=${this.grayW}:${this.grayH},format=gray`;
     const head = [
       // `warning`, not `error`, on purpose. macOS avfoundation logs
       //   "Selected pixel format (yuv420p) is not supported by the input device"
@@ -178,31 +234,28 @@ export class FfmpegScreenProducer implements Producer {
     if (!this.storeImages && !videoPath) {
       return [
         ...head,
-        "-vf", `fps=${fps},scale=${this.grayW}:${this.grayH},format=gray`,
+        "-vf", `${sample},${gray}`,
         "-f", "rawvideo", "-pix_fmt", "gray", "pipe:1",
       ];
     }
 
-    const maxW = this.opts.imageMaxWidth ?? 1280;
-    const q = this.opts.imageQuality ?? 5;
-    const crf = this.opts.videoCrf ?? 28;
-    const preset = this.opts.videoPreset ?? "veryfast";
-    const videoMaxW = this.opts.videoMaxWidth ?? 1920;
-
-    // Split labels in output order: [v] video, [g] gray/pHash, [c] JPEG.
-    const labels = [...(videoPath ? ["[v]"] : []), "[g]", ...(this.storeImages ? ["[c]"] : [])];
-    const chains: string[] = [];
+    // Top split: the video branch keeps the full input rate, and ONE sampling
+    // branch carries everything the keyframe pipeline sees. Decimating BEFORE
+    // the gray/JPEG split is what keeps pair() aligned by construction — both
+    // branches are downstream of the same decimator.
+    const topLabels = [...(videoPath ? ["[v]"] : []), "[s]"];
+    const chains: string[] = [`[0:v]split=${topLabels.length}${topLabels.join("")}`];
     // The video scale lives INSIDE the graph: -vf cannot be combined with
     // -filter_complex on the same output stream.
     if (videoPath) chains.push(`[v]scale='min(${videoMaxW},iw)':-2[vv]`);
-    chains.push(`[g]fps=${fps},scale=${this.grayW}:${this.grayH},format=gray[gg]`);
-    if (this.storeImages) chains.push(`[c]fps=${fps},scale=${maxW}:-2[cc]`);
+    chains.push(`[s]${sample}[d]`);
+    if (this.storeImages) {
+      chains.push(`[d]split=2[g][c]`, `[g]${gray}[gg]`, `[c]null[cc]`);
+    } else {
+      chains.push(`[d]${gray}[gg]`);
+    }
 
-    const out: string[] = [
-      ...head,
-      "-filter_complex",
-      `[0:v]split=${labels.length}${labels.join("")};` + chains.join(";"),
-    ];
+    const out: string[] = [...head, "-filter_complex", chains.join(";")];
     // Fragmented MP4: playable even if ffmpeg is killed mid-recording, at the
     // cost of fragment-granular (rather than indexed) seeking.
     if (videoPath) {
@@ -219,6 +272,22 @@ export class FfmpegScreenProducer implements Producer {
       out.push("-map", "[cc]", "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", String(q), "pipe:3");
     }
     return out;
+  }
+
+  /**
+   * The mpdecimate expression, or an inert `null` filter when decimation is
+   * disabled — `null` rather than an empty string so the chain still links its
+   * labels and the graph stays well formed.
+   */
+  private decimateFilter(): string {
+    const d = this.opts.decimate;
+    if (d === false) return "null";
+    const o = d ?? {};
+    const hi = o.hi ?? DEFAULT_DECIMATE.hi;
+    const lo = o.lo ?? DEFAULT_DECIMATE.lo;
+    const frac = o.frac ?? DEFAULT_DECIMATE.frac;
+    const max = o.max ?? DEFAULT_DECIMATE.max;
+    return `mpdecimate=hi=${hi}:lo=${lo}:frac=${frac}:max=${max}`;
   }
 
   async start(ctx: CaptureContext): Promise<void> {
