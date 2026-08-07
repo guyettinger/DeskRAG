@@ -36,6 +36,18 @@ export function macKeycodeFor(uiohookKeycode: number): number | undefined {
   return SCANCODE_TO_VK[uiohookKeycode];
 }
 
+/**
+ * Backspace, in the same PC set-1 scancode space as the table above.
+ *
+ * Deliberately NOT in `SCANCODE_TO_VK`: it types no character, so `resolveChar`
+ * must keep reporting "no char" for it. It lives here because this file is where
+ * scancode facts belong — a second copy in `represent/` is the drift hazard the
+ * ax-dump/ax-exec pair already paid for. `typedRuns` uses it to reconstruct what
+ * ended up ON SCREEN; a replayable `type` action does not, since the keystrokes
+ * it replays include the correction.
+ */
+export const BACKSPACE_SCANCODE = 14;
+
 /** Column index into a keymap entry: [plain, shift, alt, altShift]. */
 function columnFor(shift: boolean, alt: boolean): 0 | 1 | 2 | 3 {
   if (shift && alt) return 3;

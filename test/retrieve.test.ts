@@ -8,7 +8,7 @@ import { Segmenter } from "../src/segment/segmenter.js";
 import { Representer } from "../src/represent/representer.js";
 import { BehaviorFeatureExtractor } from "../src/represent/behavior.js";
 import { FakeEmbeddingProvider } from "../src/embed/fake.js";
-import { reciprocalRankFusion } from "../src/retrieve/rrf.js";
+import { reciprocalRankFusion, DEFAULT_RRF_K } from "../src/retrieve/rrf.js";
 import { Tier1Retriever } from "../src/retrieve/retriever.js";
 import type { EmbedOptions, EmbeddingProvider } from "../src/embed/types.js";
 import {
@@ -46,6 +46,47 @@ describe("reciprocalRankFusion", () => {
 
   it("returns nothing for no lists", () => {
     expect(reciprocalRankFusion([])).toEqual([]);
+  });
+
+  /**
+   * The property k is chosen for: with five lanes, RANK must be able to outweigh
+   * lane COUNT. At the published k=60 it cannot — the count term spans 5x while
+   * rank over a 100-long list spans 2.6x — so a segment ranked ~20th everywhere
+   * beat one ranked 1st in two lanes by construction. Measured on a real
+   * library: a sentence the user typed was #1 in the digest lane and #1 in the
+   * lexical lane, and came 13th fused.
+   */
+  it("a top hit in two lanes beats a mediocre hit in all five", () => {
+    const filler = (offset: number) =>
+      Array.from({ length: 100 }, (_, i) => `f${(i + offset) % 100}`);
+    // `exact` is #1 in two lanes and absent from three.
+    // `ubiquitous` sits at rank 20 in all five.
+    const lists = ["a", "b", "c", "d", "e"].map((key, lane) => {
+      const ids = filler(lane);
+      ids.splice(19, 0, "ubiquitous");
+      if (lane < 2) ids.unshift("exact");
+      return { key, ids };
+    });
+    const fused = reciprocalRankFusion(lists, DEFAULT_RRF_K);
+    const rank = (id: string) => fused.findIndex((f) => f.id === id);
+    expect(rank("exact")).toBeLessThan(rank("ubiquitous"));
+
+    // And the inversion this replaced, so the reason stays visible.
+    const atSixty = reciprocalRankFusion(lists, 60);
+    const rank60 = (id: string) => atSixty.findIndex((f) => f.id === id);
+    expect(rank60("ubiquitous")).toBeLessThan(rank60("exact"));
+  });
+
+  it("still rewards genuine agreement — k damps, it does not disable", () => {
+    // Same rank in both lanes vs a single lane's #1: agreement should win.
+    const fused = reciprocalRankFusion(
+      [
+        { key: "l1", ids: ["solo", "agreed"] },
+        { key: "l2", ids: ["other", "agreed"] },
+      ],
+      DEFAULT_RRF_K,
+    );
+    expect(fused[0]!.id).toBe("agreed");
   });
 });
 

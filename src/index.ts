@@ -173,6 +173,18 @@ export {
  * `associateFrames` it always runs.
  */
 export { indexSegmentText, type SegmentTextResult } from "./represent/segment-text.js";
+/**
+ * Typed text runs coalesced at SESSION scope — deliberately a different
+ * grouping policy from `groupGestures`, which must flush on any non-key event
+ * because a replayable `type` action has to be contiguous. See typed-runs.ts.
+ */
+export {
+  typedRuns,
+  typedTextOverlapping,
+  DEFAULT_RUN_GAP_MS,
+  type TypedRun,
+  type TypedRunOptions,
+} from "./represent/typed-runs.js";
 export {
   FrameRepresenter,
   type FrameRepresenterOptions,

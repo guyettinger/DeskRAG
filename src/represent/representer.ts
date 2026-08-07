@@ -15,6 +15,8 @@ import { namespaceFor } from "../embed/types.js";
 import type { Store, SegmentVectorInsert } from "../store/types.js";
 import { buildDigest, type DigestContext, type DigestEvent } from "./digest.js";
 import { BehaviorFeatureExtractor, type BehaviorEvent } from "./behavior.js";
+import { typedRuns, typedTextOverlapping } from "./typed-runs.js";
+import type { TraceEvent } from "../trace/types.js";
 
 /** The providers backing the event-only views. `behavior` defaults to a fresh extractor. */
 export interface RepresenterOptions {
@@ -96,6 +98,18 @@ export class Representer {
 
     const sessionEnd = Math.max(...segments.map((s) => s.tMonoEnd));
 
+    // Typing runs are coalesced ONCE, over the whole session. Per segment they
+    // would be shredded: `action` cuts at every visual state change and typing
+    // is one, so a sentence lands in five segments as five fragments and the
+    // phrase exists in none of them.
+    const runs = this.digestContext.keymapAt
+      ? typedRuns(events as unknown as TraceEvent[], this.digestContext.keymapAt)
+      : [];
+    const digestContext: DigestContext = {
+      ...this.digestContext,
+      typedTextAt: (start, end) => typedTextOverlapping(runs, start, end),
+    };
+
     const digestTexts: string[] = [];
     const digestSegIds: string[] = [];
     const behaviorRows: SegmentVectorInsert[] = [];
@@ -110,7 +124,7 @@ export class Representer {
           (inclusiveRight ? e.tMono <= seg.tMonoEnd : e.tMono < seg.tMonoEnd),
       );
 
-      const digest = buildDigest(segEvents as DigestEvent[], this.digestContext, {
+      const digest = buildDigest(segEvents as DigestEvent[], digestContext, {
         tMonoStart: seg.tMonoStart,
         tMonoEnd: seg.tMonoEnd,
       });

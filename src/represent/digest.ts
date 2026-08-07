@@ -26,9 +26,6 @@
  */
 
 import type { Keymap } from "../capture/env/types.js";
-import { groupGestures } from "../trace/gestures.js";
-import { resolveKeys } from "../trace/lift.js";
-import type { TraceEvent } from "../trace/types.js";
 
 export interface DigestEvent {
   tMono: number;
@@ -52,6 +49,16 @@ export interface DigestContext {
    * `type` step follows in the other direction.
    */
   keymapAt?: (tMono: number) => Keymap | undefined;
+  /**
+   * The FULL text of every typing run overlapping a segment's window.
+   *
+   * Resolved at SESSION scope by the caller (`Representer` derives it from
+   * `keymapAt`), never from the segment's own events — `action` cuts at every
+   * visual state change and typing IS one, so grouping per segment shredded a
+   * sentence into `typed "this is"` / `typed "a test"` / `typed "of the"` and
+   * left the phrase in no segment at all.
+   */
+  typedTextAt?: (tMonoStart: number, tMonoEnd: number) => string[];
   /**
    * The focused app/window/URL as of a t_mono — LATEST AT-OR-BEFORE, like every
    * other environment fact in this pipeline.
@@ -111,34 +118,6 @@ function urlTerms(url: string): string[] {
 }
 
 const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? "" : "s"}`;
-
-/** Collapse whitespace and trim, so one run of typing is one clean phrase. */
-const tidy = (s: string) => s.replace(/\s+/g, " ").trim();
-
-/**
- * Typed text runs within these events, or [] when no layout is known.
- *
- * Delegates to `resolveKeys` + `groupGestures` rather than decoding keycodes
- * here. Two decoders of one keymap is precisely the `ax-dump`/`ax-exec` drift
- * hazard, and `groupGestures` already owns the rules that make typed text
- * correct: a command consumes nothing, shift/alt are consumed into the column
- * choice, Escape and the arrows never become characters, and a key with no
- * resolved char emits NOTHING rather than a fabricated one.
- */
-function typedRuns(events: readonly DigestEvent[], keymapAt: (t: number) => Keymap | undefined): string[] {
-  const trace: TraceEvent[] = events.map((e) => ({
-    tMono: e.tMono,
-    kind: e.kind,
-    x: e.x ?? null,
-    y: e.y ?? null,
-    data: e.data ?? null,
-  }));
-  const { gestures } = groupGestures(resolveKeys(trace, keymapAt));
-  return gestures
-    .filter((g): g is Extract<typeof g, { type: "text" }> => g.type === "text")
-    .map((g) => tidy(g.text))
-    .filter((t) => t.length > 0);
-}
 
 /** The segment this digest describes. Per-call, unlike the per-session context. */
 export interface DigestWindow {
@@ -228,7 +207,12 @@ export function buildDigest(
     }
   }
 
-  const typed = ctx.keymapAt ? typedRuns(ordered, ctx.keymapAt) : [];
+  // Session-scope runs, resolved by the caller. A run spanning several segments
+  // is carried WHOLE into each of them: every one of those moments is part of
+  // composing that text, so each is a legitimate answer to a query for the
+  // phrase, while the fragment inside the window is an answer to nothing.
+  const typed =
+    window !== undefined ? (ctx.typedTextAt?.(window.tMonoStart, window.tMonoEnd) ?? []) : [];
 
   const parts: string[] = [];
 
