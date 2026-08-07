@@ -996,6 +996,7 @@ export class DeskRagService {
       keyframes: detail.keyframes,
       regionCounts,
       audio,
+      transcriptClips: this.store.getTranscriptClipsBySession(sessionId),
     });
 
     // Only a FINISHED session is immutable. Caching an open one would freeze

@@ -10,6 +10,7 @@ import {
   clicksLane,
   finestGranularity,
   framesLane,
+  idleLane,
   markersLane,
   mouseSpeedLane,
   mouseXyLane,
@@ -45,6 +46,7 @@ const input = (events: EventRow[], over: Partial<LaneInput> = {}): LaneInput => 
   keyframes: [],
   regionCounts: new Map(),
   audio: [],
+  transcriptClips: [],
   ...over,
 });
 
@@ -284,6 +286,78 @@ describe("transcriptLane / captionLane", () => {
     expect(captionLane(i).emptyReason).toContain("captioner");
     expect(transcriptLane(i).emptyReason).toContain("whisper");
   });
+
+  it("draws the UTTERANCE when clips exist, not the segment containing it", () => {
+    const lane = transcriptLane(
+      input([], {
+        segments: [seg("a1", "action", 0, 10_000, { transcript: "one plus one" })],
+        transcriptClips: [{ tMonoStart: 1000, tMonoEnd: 2500, text: "one plus one" }],
+      }),
+    );
+    expect(lane.spans).toEqual([
+      { startSec: 1, endSec: 2.5, label: "one plus one", tone: "ok" },
+    ]);
+    expect(lane.warning).toBeNull();
+  });
+
+  it("falls back to segment spans WITH a warning when there are no clips", () => {
+    const lane = transcriptLane(
+      input([], {
+        segments: [seg("a1", "action", 0, 10_000, { transcript: "one plus one" })],
+      }),
+    );
+    expect(lane.spans).toHaveLength(1);
+    expect(lane.spans![0]!.endSec).toBe(10); // the SEGMENT's span, overstated
+    expect(lane.warning).toContain("SEGMENTS");
+  });
+
+  it("has no warning when there is simply nothing transcribed", () => {
+    const lane = transcriptLane(input([]));
+    expect(lane.emptyReason).not.toBeNull();
+    expect(lane.warning).toBeNull();
+  });
+});
+
+describe("showLabels", () => {
+  it("is true ONLY for apps — the one identity span lane", () => {
+    const tracks = buildSessionTracks({
+      ...input([ev("focus_change", 0, { data: { app: "Calculator" } })]),
+      sessionId: "s1",
+      anchoredToVideo: false,
+    });
+    const labelled = tracks.lanes.filter((l) => l.showLabels).map((l) => l.id);
+    expect(labelled).toEqual(["apps"]);
+  });
+});
+
+describe("idleLane", () => {
+  it("spans a dwell gap from the last event to the one that resumed", () => {
+    const lane = idleLane(input([ev("key_down", 0), ev("key_down", 5000)]));
+    expect(lane.spans).toHaveLength(1);
+    expect(lane.spans![0]!.startSec).toBe(0);
+    expect(lane.spans![0]!.endSec).toBe(5);
+    expect(lane.spans![0]!.tone).toBe("warn");
+  });
+
+  it("reports a burst pause between meaningful input, ignoring mouse_move", () => {
+    const lane = idleLane(
+      input([ev("mouse_down", 0), ev("mouse_move", 1000), ev("key_down", 2000)]),
+    );
+    // 2000ms since the last MEANINGFUL event, under the 3000ms dwell gap.
+    expect(lane.spans).toHaveLength(1);
+    expect(lane.spans![0]!.tone).toBe("neutral");
+  });
+
+  it("never reports one gap twice — a dwell gap is not also a pause", () => {
+    const lane = idleLane(input([ev("key_down", 0), ev("key_down", 5000)]));
+    expect(lane.spans).toHaveLength(1);
+  });
+
+  it("says so when nothing was idle", () => {
+    const lane = idleLane(input([ev("key_down", 0), ev("key_down", 100)]));
+    expect(lane.spans).toEqual([]);
+    expect(lane.emptyReason).not.toBeNull();
+  });
 });
 
 describe("axLane", () => {
@@ -359,6 +433,7 @@ describe("buildSessionTracks", () => {
       "ax",
       "typing",
       "clicks",
+      "idle",
       "scroll",
       "mouse-speed",
       "mouse-xy",
