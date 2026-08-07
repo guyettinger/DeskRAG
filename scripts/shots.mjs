@@ -111,7 +111,20 @@ const SHOTS = [
     id: "search",
     nav: "Search",
     settle: ".searchbar",
-    query: "reviewing the pull request in the editor",
+    // Chosen against the data, not invented. Three constraints, all measured
+    // over four candidate queries on the current data dir:
+    //   - it must match content that was ACTUALLY RECORDED (see the header
+    //     note). The previous string described a pull-request review that
+    //     appears in no recording;
+    //   - it must produce region HIGHLIGHTS, since that is what the README says
+    //     a hit carries. The previous string badged 0 of the 8 cards a 1180x800
+    //     shot shows; this one badges 8 of 8;
+    //   - the results must be VARIED. A contact sheet of eight identical cards
+    //     undersells the screen, and the card's label is the segment digest, so
+    //     frames sharing a segment are indistinguishable on it. Distinct digests
+    //     over 30 hits: "formatting text in TextEdit" 4, "the underline button
+    //     in the text editor" 5, this one 14.
+    query: "stop the recording",
   },
   { id: "settings", nav: "Settings", settle: ".card" },
 ];
