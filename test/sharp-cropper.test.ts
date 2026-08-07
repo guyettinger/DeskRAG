@@ -11,7 +11,7 @@ import { Segmenter } from "../src/segment/segmenter.js";
 import { RegionRepresenter } from "../src/represent/regions/region-representer.js";
 import { Tier3Retriever } from "../src/retrieve/tier3.js";
 import { FrameIngestor, type SampledFrame } from "../src/capture/frame-ingest.js";
-import { KeyframeGate } from "../src/capture/keyframe.js";
+import { KeyframeBudget } from "../src/capture/keyframe-budget.js";
 import { FakeEmbeddingProvider } from "../src/embed/fake.js";
 import type { EventInsert } from "../src/store/types.js";
 import type { UIElement } from "../src/embed/types.js";
@@ -113,7 +113,7 @@ describe("SharpRegionCropper in the region pipeline", () => {
     const jpeg = new Uint8Array(
       await sharp({ create: { width: 64, height: 48, channels: 3, background: { r: 120, g: 60, b: 30 } } }).jpeg().toBuffer(),
     );
-    const ing = new FrameIngestor(store, sessionId, new KeyframeGate({ hammingThreshold: 1 }), blobs);
+    const ing = new FrameIngestor(store, sessionId, new KeyframeBudget({ minIntervalMs: 0 }), blobs);
     const frame: SampledFrame = {
       tMono: 100, width: 64, height: 48, gray: gradGray(), grayW: 9, grayH: 8, image: { bytes: jpeg, codec: "jpeg" },
     };

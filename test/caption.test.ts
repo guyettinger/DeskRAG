@@ -10,7 +10,7 @@ import { Representer } from "../src/represent/representer.js";
 import { CaptionRepresenter } from "../src/represent/caption/caption-representer.js";
 import { FakeCaptionProvider } from "../src/represent/caption/fake.js";
 import { FrameIngestor, type SampledFrame } from "../src/capture/frame-ingest.js";
-import { KeyframeGate } from "../src/capture/keyframe.js";
+import { KeyframeBudget } from "../src/capture/keyframe-budget.js";
 import { FakeEmbeddingProvider } from "../src/embed/fake.js";
 import { Tier1Retriever } from "../src/retrieve/retriever.js";
 import { TextViewSearcher } from "../src/retrieve/searchers.js";
@@ -59,7 +59,7 @@ describe("CaptionRepresenter (view 2)", () => {
     ]);
     await store.endSession(sessionId, 9000);
 
-    const ing = new FrameIngestor(store, sessionId, new KeyframeGate({ hammingThreshold: 1 }), blobs);
+    const ing = new FrameIngestor(store, sessionId, new KeyframeBudget({ minIntervalMs: 0 }), blobs);
     const frame = (t: number, gray: Uint8Array, img: Uint8Array): SampledFrame => ({
       tMono: t, width: 100, height: 100, gray, grayW: 9, grayH: 8, image: { bytes: img, codec: "png" },
     });
@@ -158,7 +158,7 @@ describe("AppCaptionRepresenter (app_caption view)", () => {
     ]);
     await store.endSession(sessionId, 9000);
 
-    const ing = new FrameIngestor(store, sessionId, new KeyframeGate({ hammingThreshold: 1 }), blobs);
+    const ing = new FrameIngestor(store, sessionId, new KeyframeBudget({ minIntervalMs: 0 }), blobs);
     const frame = (t: number, gray: Uint8Array, img: Uint8Array): SampledFrame => ({
       tMono: t, width: 1000, height: 1000, gray, grayW: 9, grayH: 8, image: { bytes: img, codec: "png" },
     });

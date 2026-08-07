@@ -75,7 +75,11 @@ export { nestAxElements } from "./capture/ax/tree.js";
  * when doing input/window capture.
  */
 export { dHash, resizeNearestGray } from "./capture/phash.js";
-export { KeyframeGate, type KeyframeGateOptions, type GateDecision } from "./capture/keyframe.js";
+export {
+  KeyframeBudget,
+  DEFAULT_KEYFRAME_MIN_INTERVAL_MS,
+  type KeyframeBudgetOptions,
+} from "./capture/keyframe-budget.js";
 export {
   FrameIngestor,
   type SampledFrame,

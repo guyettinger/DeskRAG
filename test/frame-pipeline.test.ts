@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ulid } from "ulid";
 import { DualStore } from "../src/store/store.js";
 import { dHash, resizeNearestGray } from "../src/capture/phash.js";
-import { KeyframeGate } from "../src/capture/keyframe.js";
 import { KeyframeBudget } from "../src/capture/keyframe-budget.js";
 import { FrameIngestor, type SampledFrame } from "../src/capture/frame-ingest.js";
 
@@ -37,24 +36,6 @@ describe("dHash", () => {
   it("resizeNearestGray downscales deterministically", () => {
     const src = Uint8Array.from({ length: 16 }, (_, i) => i); // 4x4
     expect(resizeNearestGray(src, 4, 4, 2, 2)).toEqual(Uint8Array.from([0, 2, 8, 10]));
-  });
-});
-
-describe("KeyframeGate", () => {
-  it("keeps the first frame, dedups near-duplicates, keeps distinct frames", () => {
-    const gate = new KeyframeGate({ hammingThreshold: 10, sceneChangeThreshold: 25 });
-    expect(gate.consider(0n).keep).toBe(true); // first
-    expect(gate.consider(0b111n).keep).toBe(false); // 3 bits from last kept -> dedup
-    expect(gate.consider(0xfffn).keep).toBe(true); // 12 bits -> distinct
-  });
-
-  it("forces a keyframe on a frame-to-frame scene-change spike", () => {
-    const gate = new KeyframeGate({ hammingThreshold: 10, sceneChangeThreshold: 25 });
-    gate.consider(0n); // keep (first)
-    gate.consider(0n); // dup, skipped; lastConsidered = 0
-    const d = gate.consider(ALL_ONES); // 64-bit jump vs previous
-    expect(d.keep).toBe(true);
-    expect(d.forced).toBe(true);
   });
 });
 
@@ -113,15 +94,17 @@ describe("FrameIngestor -> Tier-0 (phashPrefilter)", () => {
   it("stores only kept keyframes and makes them findable by pHash", async () => {
     const sessionId = ulid();
     await store.putSession({ id: sessionId, startedAt: 0, epochMono: 0 });
-    const ing = new FrameIngestor(store, sessionId, new KeyframeGate({ hammingThreshold: 10 }));
+    const ing = new FrameIngestor(store, sessionId, new KeyframeBudget({ minIntervalMs: 500 }));
 
     const frame = (tMono: number, gray: Uint8Array): SampledFrame => ({
       tMono, width: 1920, height: 1080, gray, grayW: 9, grayH: 8,
     });
 
-    const a = await ing.ingest(frame(0, gradient(false))); // hash 0 -> kept
-    const b = await ing.ingest(frame(1, gradient(false))); // identical -> skipped
-    const c = await ing.ingest(frame(2, gradient(true))); // all-ones -> kept
+    // Dedup is ffmpeg's job now (mpdecimate). What the ingestor still enforces
+    // is the BUDGET: a second frame 1ms later is the tail of the same burst.
+    const a = await ing.ingest(frame(0, gradient(false)));
+    const b = await ing.ingest(frame(1, gradient(true))); // inside the interval
+    const c = await ing.ingest(frame(600, gradient(true))); // interval elapsed
 
     expect(a.kept).toBe(true);
     expect(b.kept).toBe(false);

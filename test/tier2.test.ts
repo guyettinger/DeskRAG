@@ -9,7 +9,7 @@ import { Segmenter } from "../src/segment/segmenter.js";
 import { Representer } from "../src/represent/representer.js";
 import { FrameRepresenter } from "../src/represent/frame-representer.js";
 import { FrameIngestor, type SampledFrame } from "../src/capture/frame-ingest.js";
-import { KeyframeGate } from "../src/capture/keyframe.js";
+import { KeyframeBudget } from "../src/capture/keyframe-budget.js";
 import { FakeEmbeddingProvider } from "../src/embed/fake.js";
 import { Tier1Retriever } from "../src/retrieve/retriever.js";
 import { Tier2Retriever } from "../src/retrieve/tier2.js";
@@ -59,7 +59,7 @@ describe("Tier 2: frame association + image embedding + scoped retrieval", () =>
     await store.endSession(sessionId, 9000); // endTMono 8000
 
     // Two keyframes: A early (t=1000), B late (t=6000), with distinct images.
-    const ing = new FrameIngestor(store, sessionId, new KeyframeGate({ hammingThreshold: 1 }), blobs);
+    const ing = new FrameIngestor(store, sessionId, new KeyframeBudget({ minIntervalMs: 0 }), blobs);
     const frame = (tMono: number, gray: Uint8Array, image: Uint8Array): SampledFrame => ({
       tMono, width: 1920, height: 1080, gray, grayW: 9, grayH: 8, image: { bytes: image, codec: "png" },
     });

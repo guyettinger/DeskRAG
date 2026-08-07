@@ -7,7 +7,7 @@ import { DualStore } from "../src/store/store.js";
 import { BlobStore } from "../src/store/blob-store.js";
 import { Segmenter } from "../src/segment/segmenter.js";
 import { FrameIngestor, type SampledFrame } from "../src/capture/frame-ingest.js";
-import { KeyframeGate } from "../src/capture/keyframe.js";
+import { KeyframeBudget } from "../src/capture/keyframe-budget.js";
 import { RegionRepresenter } from "../src/represent/regions/region-representer.js";
 import { Tier3Retriever } from "../src/retrieve/tier3.js";
 import { FakeEmbeddingProvider } from "../src/embed/fake.js";
@@ -65,7 +65,7 @@ describe("Tier 3: region proposal + embedding + scoped highlights", () => {
     await store.endSession(sessionId, 9000);
 
     // One keyframe at t=6000 (in the late action segment where the clicks are).
-    const ing = new FrameIngestor(store, sessionId, new KeyframeGate({ hammingThreshold: 1 }), blobs);
+    const ing = new FrameIngestor(store, sessionId, new KeyframeBudget({ minIntervalMs: 0 }), blobs);
     const gray = new Uint8Array(72).fill(128);
     const frame: SampledFrame = {
       tMono: 6000, width: 1920, height: 1080, gray, grayW: 9, grayH: 8,

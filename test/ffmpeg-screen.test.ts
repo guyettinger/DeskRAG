@@ -7,7 +7,7 @@ import { DualStore } from "../src/store/store.js";
 import { BlobStore } from "../src/store/blob-store.js";
 import { MonotonicClock } from "../src/timeline/clock.js";
 import { CaptureSession } from "../src/capture/session.js";
-import { KeyframeGate } from "../src/capture/keyframe.js";
+import { KeyframeBudget } from "../src/capture/keyframe-budget.js";
 import {
   FfmpegScreenProducer,
   screenInputFor,
@@ -48,7 +48,7 @@ describe.skipIf(!hasFfmpeg)("FfmpegScreenProducer (real ffmpeg, lavfi testsrc)",
     const errors: string[] = [];
     const session = new CaptureSession(store, {
       clock: MonotonicClock.start(),
-      keyframeGate: new KeyframeGate({ hammingThreshold: 1 }),
+      keyframeBudget: new KeyframeBudget({ minIntervalMs: 0 }),
       blobStore: blobs,
     });
     // Same two-output shape as the real screen args, but from a moving test
@@ -99,7 +99,7 @@ describe.skipIf(!hasFfmpeg)("FfmpegScreenProducer (real ffmpeg, lavfi testsrc)",
     const errors: string[] = [];
     const session = new CaptureSession(store, {
       clock: MonotonicClock.start(),
-      keyframeGate: new KeyframeGate({ hammingThreshold: 1 }),
+      keyframeBudget: new KeyframeBudget({ minIntervalMs: 0 }),
       blobStore: blobs,
     });
     // Drives the REAL args() graph (all three outputs) off a synthetic lavfi

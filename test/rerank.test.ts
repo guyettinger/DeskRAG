@@ -10,7 +10,7 @@ import { Representer } from "../src/represent/representer.js";
 import { FrameRepresenter } from "../src/represent/frame-representer.js";
 import { RegionRepresenter } from "../src/represent/regions/region-representer.js";
 import { FrameIngestor, type SampledFrame } from "../src/capture/frame-ingest.js";
-import { KeyframeGate } from "../src/capture/keyframe.js";
+import { KeyframeBudget } from "../src/capture/keyframe-budget.js";
 import { FakeEmbeddingProvider } from "../src/embed/fake.js";
 import { Retriever } from "../src/retrieve/assemble.js";
 import { FakeReranker } from "../src/retrieve/rerank/fake.js";
@@ -77,7 +77,7 @@ describe("Retriever Tier-4 rerank", () => {
     ]);
     await store.endSession(sessionId, 9000);
 
-    const ing = new FrameIngestor(store, sessionId, new KeyframeGate({ hammingThreshold: 1 }), blobs);
+    const ing = new FrameIngestor(store, sessionId, new KeyframeBudget({ minIntervalMs: 0 }), blobs);
     const frame = (t: number, gray: Uint8Array, img: Uint8Array): SampledFrame => ({
       tMono: t, width: 100, height: 100, gray, grayW: 9, grayH: 8, image: { bytes: img, codec: "png" },
     });
