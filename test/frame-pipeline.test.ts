@@ -6,6 +6,7 @@ import { ulid } from "ulid";
 import { DualStore } from "../src/store/store.js";
 import { dHash, resizeNearestGray } from "../src/capture/phash.js";
 import { KeyframeGate } from "../src/capture/keyframe.js";
+import { KeyframeBudget } from "../src/capture/keyframe-budget.js";
 import { FrameIngestor, type SampledFrame } from "../src/capture/frame-ingest.js";
 
 const ALL_ONES = (1n << 64n) - 1n;
@@ -54,6 +55,45 @@ describe("KeyframeGate", () => {
     const d = gate.consider(ALL_ONES); // 64-bit jump vs previous
     expect(d.keep).toBe(true);
     expect(d.forced).toBe(true);
+  });
+});
+
+describe("KeyframeBudget", () => {
+  it("always keeps the first frame, whatever the interval", () => {
+    const b = new KeyframeBudget({ minIntervalMs: 1000 });
+    expect(b.consider(0)).toBe(true);
+  });
+
+  it("keeps the FIRST of a burst and drops the rest inside the interval", () => {
+    const b = new KeyframeBudget({ minIntervalMs: 500 });
+    expect(b.consider(0)).toBe(true);
+    expect(b.consider(100)).toBe(false);
+    expect(b.consider(400)).toBe(false);
+    expect(b.consider(499)).toBe(false);
+    expect(b.consider(500)).toBe(true); // the interval has elapsed
+  });
+
+  it("measures from the last KEPT frame, not the last considered one", () => {
+    // A steady stream just under the interval must still yield a frame each
+    // time the interval elapses — measuring from the last *considered* frame
+    // would starve the lane forever.
+    const b = new KeyframeBudget({ minIntervalMs: 500 });
+    b.consider(0); // kept
+    b.consider(400); // dropped
+    expect(b.consider(600)).toBe(true); // 600 - 0 >= 500
+  });
+
+  it("keeps everything at minIntervalMs 0 — the rule tests want", () => {
+    const b = new KeyframeBudget({ minIntervalMs: 0 });
+    expect([0, 0, 1, 1].map((t) => b.consider(t))).toEqual([true, true, true, true]);
+  });
+
+  it("reset() forgets the last kept frame", () => {
+    const b = new KeyframeBudget({ minIntervalMs: 500 });
+    b.consider(0);
+    expect(b.consider(100)).toBe(false);
+    b.reset();
+    expect(b.consider(100)).toBe(true);
   });
 });
 
