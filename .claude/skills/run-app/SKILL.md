@@ -1,0 +1,147 @@
+---
+name: run-app
+description: Launch and drive DeskRAGApp — the Electron client — to check a change in the real app rather than only in the suite. Covers the Playwright `_electron` launch that opens the REAL data dir, navigating the screens, and asserting against the live DOM. Use this whenever you need to run, start, open, screenshot, or click through the app; whenever you want to confirm a renderer, IPC, DTO, or store change actually works on screen; and whenever a claim about what the app *shows* would otherwise rest on reading the code. `npm test` cannot see any of this — the suite has no renderer and no Electron.
+---
+
+# Running DeskRAGApp
+
+`npm test` proves the projection functions are right. It cannot tell you the
+rail rendered, the IPC payload arrived, or the label is legible — there is no
+renderer and no Electron in the suite. This is how you find out.
+
+This repo's two worst bugs were both invisible to `npm test` and obvious within
+minutes of driving a real session. Assume that pattern holds.
+
+## Launch
+
+`scripts/launch.mjs` in this skill directory wraps the whole dance. From the
+repo root:
+
+```bash
+node .claude/skills/run-app/scripts/rail-report.mjs        # worked example
+```
+
+To write your own check, import the helpers:
+
+```js
+import { launchApp, gotoScreen } from "./.claude/skills/run-app/scripts/launch.mjs";
+const { app, page } = await launchApp();
+await gotoScreen(page, "Library");
+// ... assert, screenshot ...
+await app.close();
+```
+
+Four things about the launch are load-bearing, and each one fails *silently*
+if you get it wrong:
+
+- **Build both packages first.** The app imports `dist/`, not `src/`, and
+  electron-vite builds to `app/out/`. `npm run build && npm --prefix app run build`.
+  Skipping this drives the *previous* version of your change and everything
+  looks fine.
+- **Launch the app DIRECTORY, never `app/out/main/index.js`.** Electron derives
+  `app.getName()` — and therefore `<userData>` — from the `package.json` next to
+  the entry point. Point at the built file and the app silently becomes
+  "Electron" and opens an empty `~/Library/Application Support/Electron/`
+  instead of the real data dir. You get a working app with no recordings in it
+  and no error anywhere.
+- **Use the app's own Electron binary**, resolved through
+  `createRequire(app/package.json)("electron")`. Playwright must not download a
+  browser; the app's binary is the one with the right ABI for its
+  `better-sqlite3`.
+- **Quit any running dev instance.** A second process opening the same
+  `DualStore`/LanceDB data dir will not share it.
+
+The window is created with `show: false` and `firstWindow()` resolves *before*
+`ready-to-show`, so set the size and show it yourself rather than trusting a
+default — `launchApp()` does this.
+
+## Navigate
+
+Rail buttons are matched by **label, never index**. `scripts/shots.mjs` learned
+this the hard way: inserting a screen shifted every index below it, and a shot
+that meant "Search" silently drove a different screen and waited 8 seconds for a
+selector that was never coming. `gotoScreen()` uses an anchored regex and throws
+if the match is not exactly one.
+
+Screens: `Record`, `Library`, `Flows`, `Search`, `Settings`.
+
+## Wait for CONTENT, not for a timer
+
+This is the mistake most likely to waste your afternoon, and it produces a
+*confident wrong answer* rather than an error.
+
+The Library's rail is hydrated over IPC after the screen mounts. A probe 2.5s
+after navigating reported the keyframes lane as empty — zero thumbnails, zero
+ticks. The screenshot taken moments later plainly showed 21 thumbnails. Nothing
+failed; the DOM was simply sampled before the data landed, and the number lied.
+
+So wait on a *condition that means the data is here*, not on elapsed time:
+
+```js
+await page.waitForFunction(
+  () => document.querySelectorAll(".tracks__lane").length > 0
+     && [...document.querySelectorAll(".tracks__lane")]
+          .some((l) => l.querySelector(".tracks__span, .tracks__thumb, .tracks__mark")),
+  { timeout: 20_000 },
+);
+```
+
+`waitForContent()` in `launch.mjs` does exactly this.
+
+## Assert in the DOM *and* look at the screenshot
+
+Do both. They fail in different directions, which is the point:
+
+- A **screenshot alone** can't tell you a label is one pixel from truncating, or
+  that a 5px bar has a 12px hit target. Geometry needs `getBoundingClientRect()`.
+- A **DOM assertion alone** gave the "0 keyframes" reading above. It was the
+  screenshot that caught it.
+
+**Read the screenshot you took.** A blank frame means the launch failed, and an
+unread screenshot proves nothing.
+
+Useful predicates, all learned from real defects in this rail:
+
+```js
+// A label wider than its box is a TRUNCATED label. The rail's contract is that
+// `labelFits` withholds a label that would not fit, so nothing truncates —
+// an ellipsis reappearing means that rule broke.
+labels.filter((l) => l.scrollWidth > l.clientWidth + 1).length === 0
+
+// The bar is the signal's TRUE extent; the hit rect is padded separately.
+// Widening the bar to make it clickable is the overstatement the rail exists
+// to avoid, so these two numbers are SUPPOSED to differ.
+minSpanPx  // e.g. 5.67 — honest
+minHitPx   // e.g. 12.0 — clickable
+```
+
+Lane identity is **not** in the DOM as an id — `TrackLane.tsx` renders
+`data-shape` and the title text. Match lanes by their `.tracks__title`.
+
+## Nothing here spawns `ax-exec`
+
+The Library and Flows screens read the store and never observe the live desktop.
+Driving them cannot trigger an Accessibility permission prompt, and if you ever
+see one, something has been wired that should not be — see CLAUDE.md on the
+executor being deliberately unreachable from the app.
+
+## When there is no data
+
+Library, Flows and Search all depend on indexed recordings. Without them you get
+legitimate empty states, not failures — `.empty`, or a lane's `.tracks__empty`
+carrying its `emptyReason`. If your check needs real content, assert the empty
+state is *absent* rather than letting a soft timeout pass silently.
+
+To record one: launch the app and press Record. **The Recorder window's own
+elapsed timer displays milliseconds**, so leaving it on screen makes every
+sampled frame a visual change and defeats keyframe decimation entirely (measured:
+18/18 and 22/22 frames kept at every threshold). Close it to the tray — recording
+continues.
+
+## Related
+
+- `scripts/shots.mjs` in the repo root regenerates `docs/images/*.png` with the
+  same launch pattern. If you change navigation or screen selectors, check
+  whether it needs the same edit.
+- `scripts/decimate-probe.mjs` is the read-only harness for keyframe thresholds
+  and needs no app at all.
