@@ -393,6 +393,15 @@ export interface SearchResultDTO {
   frames: FrameHitDTO[];
   /** True when no text vector space exists for the CURRENT provider. */
   indexedUnderDifferentProvider?: boolean;
+  /**
+   * Segments matched, but not one of them has a keyframe linked to it, so
+   * nothing could be returned. This is an INDEX defect, not an empty library:
+   * frame↔segment links used to be written only by the image stages, which are
+   * gated on a provider defaulting to "none". Reported separately because it is
+   * indistinguishable from "nothing matched" and has a specific remedy —
+   * Settings → Rebuild search index.
+   */
+  segmentsMatchedButNoFrames?: number;
 }
 
 export interface SearchInput {
@@ -596,6 +605,14 @@ export interface DeskRagApi {
      * existing indexing channel, so `onIndexing` covers this too.
      */
     reindex(): Promise<ReindexResultDTO>;
+    /**
+     * Re-run the SEARCH-side stages (frame links, digest + behavior, lexical
+     * index) over every recording, in place. Separate from `reindex`, which
+     * rebuilds the trace graph: this one deliberately does not re-segment, so
+     * segment ids — and the captions and transcripts attached to them — survive.
+     * Progress arrives on the same indexing channel.
+     */
+    reindexSearch(): Promise<ReindexSearchResultDTO>;
     /** Every recorded signal, bucketed onto the session's own time axis. */
     tracks(sessionId: string): Promise<SessionTracksDTO | null>;
   };
@@ -651,6 +668,19 @@ export interface ReindexResultDTO {
   missingKeymap: boolean;
 }
 
+/**
+ * The outcome of re-running the search-side stages over the whole library.
+ *
+ * Unlike a graph rebuild this is per-session and in place: it re-links frames to
+ * segments, rewrites and re-embeds each digest, and rebuilds the lexical index.
+ * It never re-segments, so segment ids — and every caption and transcript hung
+ * off them — survive.
+ */
+export interface ReindexSearchResultDTO {
+  sessions: number;
+  segments: number;
+}
+
 /** IPC channel names — one place so main + preload can't drift. */
 export const IPC = {
   settingsGet: "settings:get",
@@ -670,6 +700,7 @@ export const IPC = {
   sessionsDetail: "sessions:detail",
   sessionsRemove: "sessions:remove",
   sessionsReindex: "sessions:reindex",
+  sessionsReindexSearch: "sessions:reindex-search",
   sessionsTracks: "sessions:tracks",
   flowsGraph: "flows:graph",
   modelDownloadEvent: "models:download-event",

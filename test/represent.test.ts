@@ -7,6 +7,8 @@ import { DualStore } from "../src/store/store.js";
 import { Segmenter } from "../src/segment/segmenter.js";
 import { Representer } from "../src/represent/representer.js";
 import { buildDigest, type DigestEvent } from "../src/represent/digest.js";
+import { typedRuns, typedTextOverlapping } from "../src/represent/typed-runs.js";
+import type { TraceEvent } from "../src/trace/types.js";
 import { BehaviorFeatureExtractor, type BehaviorEvent } from "../src/represent/behavior.js";
 import { FakeEmbeddingProvider } from "../src/embed/fake.js";
 import type { EventInsert } from "../src/store/types.js";
@@ -46,6 +48,174 @@ describe("buildDigest", () => {
 
   it("summarizes activity even with no app context", () => {
     expect(buildDigest([{ tMono: 0, kind: "key_down" }])).toBe("1 keystroke.");
+  });
+
+  /**
+   * The signals that were on disk and reached no view. Tallies alone left 61% of
+   * real action segments carrying `1 click.` / `mouse movement.` / `idle
+   * segment` — byte-identical strings that embed to one vector.
+   */
+  it("carries the window title, which was parsed and thrown away", () => {
+    const d = buildDigest([
+      { tMono: 0, kind: "focus_change", data: { app: "Google Chrome", title: "PR #39 · DeskRAG" } },
+      { tMono: 1, kind: "mouse_down" },
+    ]);
+    expect(d).toContain("Google Chrome");
+    expect(d).toContain("PR #39 · DeskRAG");
+  });
+
+  it("carries the URL and its bare host, so a query naming just the site matches", () => {
+    const d = buildDigest([
+      { tMono: 0, kind: "url_change", data: { url: "https://github.com/guyettinger/DeskRAG/pull/39" } },
+    ]);
+    expect(d).toContain("https://github.com/guyettinger/DeskRAG/pull/39");
+    expect(d).toContain("github.com");
+  });
+
+  const key = (tMono: number, scancode: number): DigestEvent => ({
+    tMono, kind: "key_down", data: { keycode: scancode, modifiers: [] },
+  });
+
+  it("carries the text actually typed, as resolved at session scope", () => {
+    const evs: DigestEvent[] = [
+      { tMono: 0, kind: "focus_change", data: { app: "TextEdit", title: "Untitled" } },
+    ];
+    const d = buildDigest(evs, { typedTextAt: () => ["has"] }, { tMonoStart: 0, tMonoEnd: 100 });
+    expect(d).toContain('typed "has"');
+  });
+
+  it("emits NO typed text without a keymap — never a US-QWERTY guess", () => {
+    const d = buildDigest([key(10, 35), key(20, 30)], {}, { tMonoStart: 0, tMonoEnd: 100 });
+    expect(d).not.toContain('typed "');
+    expect(d).toContain("2 keystrokes"); // the tally still records that keys happened
+  });
+
+  it("caps typed text so one long run cannot swamp the segment's embedding", () => {
+    const d = buildDigest(
+      [],
+      { typedTextAt: () => ["a".repeat(500)], maxTypedChars: 20 },
+      { tMonoStart: 0, tMonoEnd: 100 },
+    );
+    expect(d).toContain("…");
+    expect(d.length).toBeLessThan(200);
+  });
+
+  it("carries a run WHOLE into every segment it passes through", () => {
+    const phrase = "This is a test of the emergency broadcast system";
+    const runs = [{ text: phrase, tMonoStart: 1000, tMonoEnd: 9000 }];
+    // Three consecutive segments, each holding only a slice of the typing.
+    for (const w of [
+      { tMonoStart: 1000, tMonoEnd: 3000 },
+      { tMonoStart: 3000, tMonoEnd: 6000 },
+      { tMonoStart: 6000, tMonoEnd: 9000 },
+    ]) {
+      const d = buildDigest([], { typedTextAt: () => typedTextOverlapping(runs, w.tMonoStart, w.tMonoEnd) }, w);
+      expect(d).toContain(phrase);
+    }
+  });
+
+  it("names what was clicked, from the labels of the regions under the point", () => {
+    const d = buildDigest(
+      [
+        { tMono: 0, kind: "focus_change", data: { app: "Calculator" } },
+        { tMono: 10, kind: "mouse_down", x: 100, y: 200 },
+        { tMono: 20, kind: "mouse_down", x: 400, y: 500 },
+      ],
+      { labelAt: (p) => (p.x === 100 ? "All Clear" : undefined) },
+    );
+    expect(d).toContain('clicked "All Clear"');
+    // The unlabelled click contributes nothing rather than an empty quote.
+    expect(d).not.toContain('clicked ""');
+  });
+});
+
+/**
+ * The coalescer that fixes the fragmentation. `groupGestures` cannot serve this
+ * purpose: it flushes on ANY non-key event because a replayable `type` action
+ * must be contiguous, and the digest fed it one segment at a time while `action`
+ * cuts at every visual state change — and typing IS a visual state change.
+ */
+describe("typedRuns", () => {
+  const KEYMAP = {
+    layoutId: "com.apple.keylayout.US",
+    entries: {
+      0: ["a", "A", "å", "Å"], 1: ["s", "S", "ß", "Í"], 4: ["h", "H", "˙", "Ó"],
+      49: [" ", " ", " ", " "],
+    } as Record<number, [string, string, string, string]>,
+  };
+  const at = () => KEYMAP;
+  // scancode -> vk: 35->4 "h", 30->0 "a", 31->1 "s", 57->49 " "
+  const ev = (tMono: number, kind: string, data?: unknown): TraceEvent => ({
+    tMono, kind, x: null, y: null, data: data ?? null,
+  });
+  const k = (tMono: number, scancode: number, modifiers: string[] = []) =>
+    ev(tMono, "key_down", { keycode: scancode, modifiers });
+
+  it("keeps one phrase together across mouse activity mid-sentence", () => {
+    const runs = typedRuns(
+      [
+        k(0, 35), k(10, 30), k(20, 31),
+        // A caret reposition. groupGestures flushes here; composing does not stop.
+        ev(25, "mouse_move"), ev(26, "mouse_down"),
+        k(30, 35), k(40, 30), k(50, 31),
+      ],
+      at,
+    );
+    expect(runs.length).toBe(1);
+    expect(runs[0]!.text).toBe("hashas");
+    expect(runs[0]!.tMonoStart).toBe(0);
+    expect(runs[0]!.tMonoEnd).toBe(50);
+  });
+
+  it("ends a run at a focus change — text composed in another app is another run", () => {
+    const runs = typedRuns(
+      [k(0, 35), k(10, 30), ev(20, "focus_change", { app: "Chrome" }), k(30, 31)],
+      at,
+    );
+    expect(runs.map((r) => r.text)).toEqual(["ha", "s"]);
+  });
+
+  it("ends a run at a long idle — the next keystroke is a new thought", () => {
+    const runs = typedRuns([k(0, 35), k(10, 30), k(10_000, 31)], at);
+    expect(runs.map((r) => r.text)).toEqual(["ha", "s"]);
+  });
+
+  it("ends a run at a command chord — ⌘S is an instruction, not content", () => {
+    const runs = typedRuns([k(0, 35), k(10, 30), k(20, 31, ["cmd"]), k(30, 35)], at);
+    expect(runs.map((r) => r.text)).toEqual(["ha", "h"]);
+  });
+
+  it("returns nothing without a keymap, never a US-QWERTY guess", () => {
+    expect(typedRuns([k(0, 35), k(10, 30)], () => undefined)).toEqual([]);
+  });
+
+  /**
+   * Backspace is scancode 14 and types no character, so `resolveChar` correctly
+   * reports none — which left the typist's own corrections in the run. Measured
+   * on a real recording, that produced "the mergeemergency braoadcast system",
+   * matching no query for what is plainly on the screen. Applying it yielded
+   * exactly "this is a test of the emergency broadcast system".
+   */
+  it("applies backspace, so a run is what ended up ON SCREEN", () => {
+    // "has", backspace, "a" -> "haa"
+    const runs = typedRuns([k(0, 35), k(10, 30), k(20, 31), k(30, 14), k(40, 30)], at);
+    expect(runs[0]!.text).toBe("haa");
+  });
+
+  it("a backspace with nothing to delete is a no-op, not a crash", () => {
+    // It ate text typed before this run began; that text is not ours to guess.
+    const runs = typedRuns([k(0, 14), k(10, 35), k(20, 30)], at);
+    expect(runs.map((r) => r.text)).toEqual(["ha"]);
+    expect(typedRuns([k(0, 14)], at)).toEqual([]);
+  });
+
+  it("overlap is inclusive of every segment a run passes through", () => {
+    const runs = [{ text: "hello world", tMonoStart: 100, tMonoEnd: 900 }];
+    expect(typedTextOverlapping(runs, 0, 100)).toEqual([]); // ends before the run
+    expect(typedTextOverlapping(runs, 0, 200)).toEqual(["hello world"]);
+    expect(typedTextOverlapping(runs, 300, 400)).toEqual(["hello world"]); // wholly inside
+    expect(typedTextOverlapping(runs, 800, 1000)).toEqual(["hello world"]);
+    expect(typedTextOverlapping(runs, 901, 1000)).toEqual([]); // starts after
   });
 });
 

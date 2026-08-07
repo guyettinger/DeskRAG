@@ -211,6 +211,13 @@ export class DualStore implements Store {
            FROM transcript_clip WHERE session_id = ? ORDER BY t_mono_start`,
       ),
       deleteRegionFts: db.prepare(`DELETE FROM region_fts WHERE region_id = ?`),
+      insertSegmentFts: db.prepare(
+        `INSERT INTO segment_fts(segment_id, text) VALUES (?, ?)`,
+      ),
+      deleteSegmentFts: db.prepare(`DELETE FROM segment_fts WHERE segment_id = ?`),
+      ftsSegmentMatch: db.prepare(
+        "SELECT segment_id FROM segment_fts WHERE segment_fts MATCH ? ORDER BY rank LIMIT ?",
+      ),
       selectSegmentIdsBySession: db.prepare(
         "SELECT id FROM segment WHERE session_id = ?",
       ),
@@ -246,7 +253,7 @@ export class DualStore implements Store {
       ),
       phashScan,
       ftsMatch: db.prepare(
-        "SELECT region_id FROM region_fts WHERE region_fts MATCH ? LIMIT ?",
+        "SELECT region_id FROM region_fts WHERE region_fts MATCH ? ORDER BY rank LIMIT ?",
       ),
       insertVectorSpace: db.prepare(
         `INSERT OR IGNORE INTO vector_space(namespace, view, provider_id, model, dimensions, shared_text_space, created_at)
@@ -645,6 +652,42 @@ export class DualStore implements Store {
     });
   }
 
+  /**
+   * Like {@link putSegmentVectors}, but REPLACES any existing vector for each id
+   * in its namespace.
+   *
+   * `putSegmentVectors` is a bare `lance.add`, so re-running a represent stage
+   * writes a SECOND vector under the same id in the same table. Neither copy is
+   * an orphan — both have a live SQLite row — so `reconcile()` would never clean
+   * it up, and the duplicate would sit in every ANN result forever. That made
+   * re-indexing structurally unsafe, which is why this exists before any
+   * re-index path does.
+   *
+   * Lance-only, like its sibling: the text these vectors came from was already
+   * written to SQLite, so the write-order rule is untouched and a crash between
+   * the delete and the add leaves a re-embeddable gap `reconcile()` recovers.
+   */
+  async replaceSegmentVectors(rows: SegmentVectorInsert[]): Promise<void> {
+    if (rows.length === 0) return;
+    await this.mutex.run(async () => {
+      const byNs = new Map<string, VecRow[]>();
+      for (const r of rows) {
+        this.requireSpace(r.namespace);
+        const list = byNs.get(r.namespace) ?? [];
+        list.push({
+          id: r.segmentId,
+          session_id: r.sessionId,
+          vector: Array.from(r.vector),
+        });
+        byNs.set(r.namespace, list);
+      }
+      for (const [ns, list] of byNs) {
+        await this.lance.deleteByIds(ns, list.map((v) => v.id));
+        await this.lance.add(ns, list);
+      }
+    });
+  }
+
   // --- enrich existing frames (Tier-2 represent/) ----------------------------
 
   async associateFrameSegments(
@@ -970,9 +1013,11 @@ export class DualStore implements Store {
       }
 
       // Then SQLite. CASCADE clears event/blob/segment/frame/region/frame_segment;
-      // the standalone region_fts is not cascaded, so clear it explicitly.
+      // the standalone FTS tables have no foreign key, so clear them explicitly
+      // or a deleted recording keeps answering searches.
       const tx = this.db.transaction(() => {
         for (const rid of regionIds) this.stmts.deleteRegionFts.run(rid);
+        for (const sid of segIds) this.stmts.deleteSegmentFts.run(sid);
         this.stmts.deleteSession.run(sessionId);
       });
       tx();
@@ -1040,15 +1085,74 @@ export class DualStore implements Store {
     return this.lance.searchRegion(namespace, vector, k, scope.frameIds);
   }
 
-  ftsRegions(query: string, limit = 50): string[] {
+  /**
+   * Tier 3's text half. Best first (`ORDER BY rank` — FTS5's bm25), because the
+   * caller scores a region by its POSITION here: an unordered list would make
+   * "which part of this frame matches" arbitrary.
+   *
+   * `scope.frameIds` PRE-filters, exactly as LanceDB's `.where()` does for the
+   * ANN half. Fetching a global top-N and intersecting afterwards is the bug
+   * this replaces: with 1,200 regions across a library, the global best matches
+   * are usually all outside the frames Tier 2 selected, so the scoped result
+   * came back empty while matching regions sat inside the scope unseen.
+   */
+  ftsRegions(query: string, limit = 50, scope?: { frameIds: string[] }): string[] {
     // Sanitize arbitrary text (digests, NL queries) into a safe FTS5 expression:
     // quoted alphanumeric terms OR-joined. Avoids MATCH syntax errors from ':' '.'
     // '→' etc., and matches a region whose role/label contains ANY query term.
     const terms = query.match(/[A-Za-z0-9]+/g);
     if (!terms || terms.length === 0) return [];
     const match = terms.map((t) => `"${t}"`).join(" OR ");
-    return (this.stmts.ftsMatch.all(match, limit) as { region_id: string }[]).map(
-      (r) => r.region_id,
+    if (scope === undefined) {
+      return (this.stmts.ftsMatch.all(match, limit) as { region_id: string }[]).map(
+        (r) => r.region_id,
+      );
+    }
+    if (scope.frameIds.length === 0) return [];
+    // Prepared per call because the IN arity varies with the scope size. The
+    // join is against `region`, not the FTS table, since region_id is UNINDEXED.
+    const holes = scope.frameIds.map(() => "?").join(",");
+    const stmt = this.db.prepare(
+      `SELECT f.region_id FROM region_fts f
+         JOIN region r ON r.id = f.region_id
+        WHERE region_fts MATCH ? AND r.frame_id IN (${holes})
+        ORDER BY rank LIMIT ?`,
+    );
+    return (
+      stmt.all(match, ...scope.frameIds, limit) as { region_id: string }[]
+    ).map((r) => r.region_id);
+  }
+
+  /**
+   * Replace one segment's lexical index entry. Delete-then-insert, so it is
+   * idempotent and a re-index cannot accumulate duplicate rows — the hazard
+   * `putSegmentVectors` had. An empty text writes NO row: a segment with nothing
+   * to say must not be reachable by every query that happens to match nothing.
+   */
+  indexSegmentText(segmentId: string, text: string): void {
+    const tx = this.db.transaction(() => {
+      this.stmts.deleteSegmentFts.run(segmentId);
+      const trimmed = text.trim();
+      if (trimmed.length > 0) this.stmts.insertSegmentFts.run(segmentId, trimmed);
+    });
+    tx();
+  }
+
+  /**
+   * Tier 1's lexical lane: segments whose indexed text matches ANY query term,
+   * BEST FIRST (`ORDER BY rank` — FTS5's bm25). The order is the whole point:
+   * RRF fuses by position, so an unordered list would contribute noise.
+   *
+   * Shares `ftsRegions`'s sanitizer, and for the same reason — arbitrary text
+   * (a natural-language query, a pasted URL) contains ':' '.' '→' and would
+   * otherwise raise an FTS5 MATCH syntax error rather than simply not matching.
+   */
+  ftsSegments(query: string, limit = 50): string[] {
+    const terms = query.match(/[A-Za-z0-9]+/g);
+    if (!terms || terms.length === 0) return [];
+    const match = terms.map((t) => `"${t}"`).join(" OR ");
+    return (this.stmts.ftsSegmentMatch.all(match, limit) as { segment_id: string }[]).map(
+      (r) => r.segment_id,
     );
   }
 

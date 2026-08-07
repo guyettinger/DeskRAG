@@ -13,13 +13,22 @@
 import type { EmbeddingProvider } from "../embed/types.js";
 import { namespaceFor } from "../embed/types.js";
 import type { Store, SegmentVectorInsert } from "../store/types.js";
-import { buildDigest, type DigestEvent } from "./digest.js";
+import { buildDigest, type DigestContext, type DigestEvent } from "./digest.js";
 import { BehaviorFeatureExtractor, type BehaviorEvent } from "./behavior.js";
+import { typedRuns, typedTextOverlapping } from "./typed-runs.js";
+import type { TraceEvent } from "../trace/types.js";
 
 /** The providers backing the event-only views. `behavior` defaults to a fresh extractor. */
 export interface RepresenterOptions {
   digestEmbedder: EmbeddingProvider;
   behavior?: BehaviorFeatureExtractor;
+  /**
+   * The world the digest resolves typed text and clicked labels against.
+   * Injected for the same reason `LiftInput` injects its environment callbacks:
+   * keeps `represent/` from parsing event payload shapes or hit-testing against
+   * the store. Omitted means a tally-only digest — never a guess.
+   */
+  digestContext?: DigestContext;
 }
 
 /** What was written, and into which namespaces. */
@@ -37,6 +46,7 @@ export interface RepresentResult {
 export class Representer {
   private readonly digestEmbedder: EmbeddingProvider;
   private readonly behavior: BehaviorFeatureExtractor;
+  private readonly digestContext: DigestContext;
   readonly digestNamespace: string;
   readonly behaviorNamespace: string;
   private spacesReady = false;
@@ -47,6 +57,7 @@ export class Representer {
   ) {
     this.digestEmbedder = opts.digestEmbedder;
     this.behavior = opts.behavior ?? new BehaviorFeatureExtractor();
+    this.digestContext = opts.digestContext ?? {};
     this.digestNamespace = namespaceFor("digest", this.digestEmbedder);
     this.behaviorNamespace = namespaceFor("behavior", this.behavior);
   }
@@ -87,6 +98,18 @@ export class Representer {
 
     const sessionEnd = Math.max(...segments.map((s) => s.tMonoEnd));
 
+    // Typing runs are coalesced ONCE, over the whole session. Per segment they
+    // would be shredded: `action` cuts at every visual state change and typing
+    // is one, so a sentence lands in five segments as five fragments and the
+    // phrase exists in none of them.
+    const runs = this.digestContext.keymapAt
+      ? typedRuns(events as unknown as TraceEvent[], this.digestContext.keymapAt)
+      : [];
+    const digestContext: DigestContext = {
+      ...this.digestContext,
+      typedTextAt: (start, end) => typedTextOverlapping(runs, start, end),
+    };
+
     const digestTexts: string[] = [];
     const digestSegIds: string[] = [];
     const behaviorRows: SegmentVectorInsert[] = [];
@@ -101,7 +124,10 @@ export class Representer {
           (inclusiveRight ? e.tMono <= seg.tMonoEnd : e.tMono < seg.tMonoEnd),
       );
 
-      const digest = buildDigest(segEvents as DigestEvent[]);
+      const digest = buildDigest(segEvents as DigestEvent[], digestContext, {
+        tMonoStart: seg.tMonoStart,
+        tMonoEnd: seg.tMonoEnd,
+      });
       const bvec = this.behavior.extract(segEvents as BehaviorEvent[], {
         tMonoStart: seg.tMonoStart,
         tMonoEnd: seg.tMonoEnd,
@@ -128,7 +154,11 @@ export class Representer {
       namespace: this.digestNamespace,
       vector: digestVecs[i]!,
     }));
-    await this.store.putSegmentVectors([...digestRows, ...behaviorRows]);
+    // REPLACE, not add: this stage re-runs whenever the library is re-indexed
+    // (a changed digest has to be re-embedded), and a bare add would leave two
+    // vectors under one id in one namespace — undetectable, since both have a
+    // live SQLite row, so reconcile() would never prune either.
+    await this.store.replaceSegmentVectors([...digestRows, ...behaviorRows]);
 
     return {
       segmentCount: segments.length,

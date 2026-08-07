@@ -62,6 +62,18 @@ Text query, or an image file as a visual example (needs an image model). Hits re
 as a contact sheet of keyframes — timecode, wall-clock, segment digest, score, and a
 highlight count.
 
+A text query is answered by **both** halves of the index: the embedding views
+(digest, caption, transcript) for meaning, and a full-text index for exact terms —
+a filename, an error string, a URL, a phrase you typed. The two are fused by rank,
+so a result both agree on rises. The full-text half and the region-label
+highlights need no model at all, so text search is fully useful before you
+configure anything.
+
+A miss tells you *which* kind it is: "no matches" is different from "these
+recordings were indexed by another embedding model" and from "segments matched but
+no keyframe is linked to them", which is an index problem with a specific fix
+(below).
+
 ![Search screen](../docs/images/search.png)
 
 ### Detail
@@ -103,6 +115,16 @@ screen: the drawer lists each session that observed it with the timecode, and cl
 one opens the Library at exactly that moment. `observations` and the number of links can
 legitimately disagree — a recording you deleted leaves the count it contributed — and
 the drawer says so rather than showing a quietly short list.
+
+**Rebuild search index** in Settings re-links keyframes to segments, rebuilds every
+digest, and rewrites the text index, for every recording already on disk. What a
+recording is *findable by* is decided by the code that indexed it, so anything
+recorded before the digest carried window titles, typed text and clicked labels
+stays unfindable by any of them until this runs — and a recording indexed with no
+image provider has no frame↔segment links at all, which makes text search return
+nothing for it. It never re-segments, so segment ids and the captions and
+transcripts attached to them survive. Nothing is re-recorded and no video,
+keyframe, caption or transcript is touched.
 
 **Rebuild trace graph** in the Library discards the graph and re-lifts every
 recording, oldest first — needed after a change to how identity is derived, since a
@@ -163,6 +185,11 @@ running; every other model is optional, and a missing binary or native module
 disables exactly one feature instead of breaking startup. Stopping a recording
 auto-runs segment → represent, with the frame/caption/region and transcript stages
 included only when their model is configured.
+
+Five stages run **regardless of configuration**, because they need no model and
+search does not work without them: segmenting, linking keyframes to segments,
+region proposal, the digest and behavioral vector, and the text index. The
+provider-gated stages only ever add to what those produce.
 
 ## Setup (dev)
 

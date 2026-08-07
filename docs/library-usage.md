@@ -8,7 +8,8 @@ import {
   DualStore, BlobStore,
   CaptureSession, KeyframeBudget,
   Segmenter, Representer, FrameRepresenter,
-  Retriever, TextViewSearcher, BehaviorViewSearcher,
+  associateFrames, indexSegmentText,
+  Retriever, TextViewSearcher, BehaviorViewSearcher, LexicalSegmentSearcher,
   FakeEmbeddingProvider, BehaviorFeatureExtractor,
 } from "deskrag";
 
@@ -30,12 +31,19 @@ await session.stop();
 // --- represent ------------------------------------------------------------
 const embed = new FakeEmbeddingProvider();            // swap for OllamaTextEmbedding / OnnxTextEmbedding
 await new Segmenter(store).segment(sessionId);
+// ALWAYS run this, even with no image provider: a text query recalls frames by
+// segment membership, so without these links search returns nothing at all.
+await associateFrames(store, sessionId);
 await new Representer(store, { digestEmbedder: embed, behavior: new BehaviorFeatureExtractor() }).represent(sessionId);
 await new FrameRepresenter(store, { imageEmbedder: embed, blobStore: blobs }).represent(sessionId);
+// Last, so it sees whatever text the provider-gated stages above produced.
+indexSegmentText(store, sessionId);
 
 // --- recall ---------------------------------------------------------------
 const retriever = new Retriever(store, {
   searchers: [new TextViewSearcher(embed, "digest"), new BehaviorViewSearcher(new BehaviorFeatureExtractor())],
+  // Needs no provider, so it always works — and it is the only path to an exact term.
+  lexical: new LexicalSegmentSearcher(store),
   imageEmbedder: embed,
 });
 const result = await retriever.retrieve({ text: "debugging the auth dialog" /*, image, behavior */ });
@@ -112,7 +120,17 @@ const outcome = await executeRun({
   be given `TextViewSearcher`s whose namespace appears in `store.listVectorSpaces()`.
   Caption/transcript spaces don't exist until something has been indexed with those
   providers. `BehaviorViewSearcher` is always safe — it returns null without a
-  behavior vector.
+  behavior vector, and `LexicalSegmentSearcher` is always safe because FTS needs no
+  provider and no vector space.
+- **`associateFrames` and `indexSegmentText` are not optional.** Neither needs a
+  model, and both were once folded into stages that do. A text query recalls frames
+  purely by segment membership, so skipping the first returns **zero results over a
+  fully indexed library** — silently. Skipping the second costs the lexical lane,
+  which on a text-only setup is the only route to an exact term.
+- **`putSegmentVectors` is a bare Lance add.** Re-running a represent stage writes a
+  second vector under the same id, and neither copy is an orphan, so `reconcile()`
+  will never prune it. Use `store.replaceSegmentVectors` on any path that can run
+  twice — re-indexing, backfilling, a retry.
 - **Deleting a recording is two calls, in order:** `store.deleteSession(id)` then
   `blobs.removeSession(id)`. The store records where blobs are; it does not own the
   files. Rows first — a row pointing at a deleted file is a broken read, whereas a

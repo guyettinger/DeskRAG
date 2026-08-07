@@ -15,6 +15,7 @@ import type { ImageEmbeddingProvider } from "../embed/types.js";
 import { namespaceFor } from "../embed/types.js";
 import type { BlobStore } from "../store/blob-store.js";
 import type { FrameVectorInsert, Store } from "../store/types.js";
+import { segmentIdsForFrame, sessionEndOf } from "./frame-segments.js";
 
 /** The image model and the blob store the keyframe bytes are read from. */
 export interface FrameRepresenterOptions {
@@ -68,19 +69,11 @@ export class FrameRepresenter {
     if (frames.length === 0) {
       return { frameCount: 0, embeddedCount: 0, namespace: this.namespace };
     }
-    const sessionEnd = Math.max(...segments.map((s) => s.tMonoEnd), 0);
+    const sessionEnd = sessionEndOf(segments);
 
     const pending: { frameId: string; segmentIds: string[]; bytes: Uint8Array }[] = [];
     for (const frame of frames) {
-      const segmentIds = segments
-        .filter((s) => {
-          const inclusiveRight = s.tMonoEnd === sessionEnd;
-          return (
-            frame.tMono >= s.tMonoStart &&
-            (inclusiveRight ? frame.tMono <= s.tMonoEnd : frame.tMono < s.tMonoEnd)
-          );
-        })
-        .map((s) => s.id);
+      const segmentIds = segmentIdsForFrame(frame, segments, sessionEnd);
 
       // SQLite association first (idempotent).
       await this.store.associateFrameSegments(frame.id, segmentIds);

@@ -140,7 +140,12 @@ export {
  * (digest text + behavioral vector); the frame-dependent ones each have their own
  * representer so they can be skipped when their provider is not configured.
  */
-export { buildDigest, type DigestEvent } from "./represent/digest.js";
+export {
+  buildDigest,
+  DEFAULT_MAX_TYPED_CHARS,
+  type DigestContext,
+  type DigestEvent,
+} from "./represent/digest.js";
 export {
   BehaviorFeatureExtractor,
   BEHAVIOR_MODEL,
@@ -153,6 +158,33 @@ export {
   type RepresenterOptions,
   type RepresentResult,
 } from "./represent/representer.js";
+/**
+ * Frame↔segment association, split out so it can run WITHOUT an image provider.
+ * Text-only retrieval recalls frames purely by segment membership, so these
+ * links are the difference between search working and returning nothing.
+ */
+export {
+  associateFrames,
+  segmentIdsForFrame,
+  sessionEndOf,
+} from "./represent/frame-segments.js";
+/**
+ * The lexical index pass — the last represent stage. Needs no provider, so like
+ * `associateFrames` it always runs.
+ */
+export { indexSegmentText, type SegmentTextResult } from "./represent/segment-text.js";
+/**
+ * Typed text runs coalesced at SESSION scope — deliberately a different
+ * grouping policy from `groupGestures`, which must flush on any non-key event
+ * because a replayable `type` action has to be contiguous. See typed-runs.ts.
+ */
+export {
+  typedRuns,
+  typedTextOverlapping,
+  DEFAULT_RUN_GAP_MS,
+  type TypedRun,
+  type TypedRunOptions,
+} from "./represent/typed-runs.js";
 export {
   FrameRepresenter,
   type FrameRepresenterOptions,
@@ -267,7 +299,11 @@ export {
 } from "./retrieve/tier2-mv.js";
 export { Tier3Retriever, type Tier3Options } from "./retrieve/tier3.js";
 export { Retriever, type RetrieverOptions } from "./retrieve/assemble.js";
-export { TextViewSearcher, BehaviorViewSearcher } from "./retrieve/searchers.js";
+export {
+  TextViewSearcher,
+  BehaviorViewSearcher,
+  LexicalSegmentSearcher,
+} from "./retrieve/searchers.js";
 /**
  * Tier-4 rerank. The real reranker is a local ONNX cross-encoder and therefore NOT
  * here — import it from `./retrieve/rerank/onnx.js`.
@@ -277,6 +313,7 @@ export { FakeReranker } from "./retrieve/rerank/fake.js";
 export type {
   Query,
   ViewSearcher,
+  LexicalSearcher,
   SegmentHit,
   PerViewHit,
   FrameHit,

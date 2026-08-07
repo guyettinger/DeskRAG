@@ -28,6 +28,9 @@ import {
   KeymapProducer,
   Segmenter,
   Representer,
+  associateFrames,
+  indexSegmentText,
+  LexicalSegmentSearcher,
   FrameRepresenter,
   CaptionRepresenter,
   AppCaptionRepresenter,
@@ -56,6 +59,7 @@ import type { SettingsStore } from "./settings.js";
 import { MODELS } from "./models.js";
 import { libUrl } from "./lib-resolve.js";
 import { DEFAULT_GRAPH_ID, indexTrace, rebuildGraph } from "./trace-index.js";
+import { digestContextFor } from "./digest-context.js";
 import { frequentRoutes, toGraphDTO } from "./graph-view.js";
 import {
   ModelFilesMissingError,
@@ -544,12 +548,44 @@ export class DeskRagService {
     type Stage = { name: string; run: () => Promise<unknown> };
     const stages: Stage[] = [
       { name: "Segmenting", run: () => new Segmenter(this.store).segment(sessionId) },
+      // ALWAYS on, and it has to be: text-only retrieval recalls frames purely
+      // by segment membership, so without these links a default install (no
+      // image provider) returns nothing for every query. It used to happen only
+      // inside the image stages, which are gated on a provider that defaults to
+      // "none" — measured on a real store, 2 of 4 recordings had zero links.
+      // Pure SQLite over what Segmenting just wrote; no model involved.
+      { name: "Linking frames", run: () => associateFrames(this.store, sessionId) },
+      // Regions run BEFORE the digest, and under every image configuration
+      // including none. Proposal is geometry + the AX tree; only the crops need
+      // a model. Two things downstream read what this writes: the digest names
+      // what was clicked from these labels, and `Anchor.visual` in the trace
+      // graph is built from these rows — gating the whole stage on
+      // `imageEmbedder` once meant the late-interaction (patch) path wrote no
+      // region rows at all and silently cost the executor its middle anchor rung.
+      {
+        name: prov.imageEmbedder ? "Regions" : "Regions (proposal only)",
+        run: async () => {
+          const cropper = prov.imageEmbedder ? await this.loadCropper() : undefined;
+          return new RegionRepresenter(this.store, {
+            // Without a cropper there is nothing to embed, so drop back to
+            // proposal rather than skipping the stage.
+            ...(prov.imageEmbedder && cropper
+              ? { imageEmbedder: prov.imageEmbedder, blobStore: this.blobs, cropper }
+              : {}),
+            axProvider: new StoredAxProvider(this.store).provide,
+          }).represent(sessionId);
+        },
+      },
       {
         name: "Digest + behavior",
         run: () =>
           new Representer(this.store, {
             digestEmbedder: prov.textEmbedder,
             behavior: prov.behavior,
+            // Typed text and clicked labels — resolved against the session's own
+            // keymap and the regions the stage above just wrote. Absent either,
+            // the digest degrades to tallies rather than guessing.
+            digestContext: digestContextFor(this.store, sessionId),
           }).represent(sessionId),
       },
     ];
@@ -605,25 +641,6 @@ export class DeskRagService {
         },
       });
     }
-    // Regions run under EVERY image configuration, including none. Proposal is
-    // geometry + the AX tree; only the crops need a model. Gating the whole stage
-    // on `imageEmbedder` meant the late-interaction (patch) path wrote no region
-    // rows at all — and `Anchor.visual` in the trace graph is built from those
-    // rows, so choosing ColSmol silently cost the executor its middle anchor rung.
-    stages.push({
-      name: prov.imageEmbedder ? "Regions" : "Regions (proposal only)",
-      run: async () => {
-        const cropper = prov.imageEmbedder ? await this.loadCropper() : undefined;
-        return new RegionRepresenter(this.store, {
-          // Without a cropper there is nothing to embed, so drop back to
-          // proposal rather than skipping the stage.
-          ...(prov.imageEmbedder && cropper
-            ? { imageEmbedder: prov.imageEmbedder, blobStore: this.blobs, cropper }
-            : {}),
-          axProvider: new StoredAxProvider(this.store).provide,
-        }).represent(sessionId);
-      },
-    });
     // Probed, not "configured": the model downloads itself, so the only thing
     // that can still be missing is the whisper.cpp binary — and skipping here is
     // what keeps a machine without it from fetching 57MB it cannot use.
@@ -655,6 +672,16 @@ export class DeskRagService {
         },
       });
     }
+
+    // After every text-writing stage, because it reads what they wrote: digest,
+    // caption, app_caption and transcript are produced by four stages under four
+    // different provider configurations, and one reader at the end sees whatever
+    // actually landed. Needs no provider, so it always runs — on a default
+    // install this lane is the only route from a query to an exact term.
+    stages.push({
+      name: "Search index",
+      run: async () => indexSegmentText(this.store, sessionId),
+    });
 
     // Last: the trace graph. It runs after Regions because `regionsAt` reads what
     // that stage wrote, and after Segmenting because boundaries define the nodes.
@@ -729,6 +756,11 @@ export class DeskRagService {
     // Exactly one visual path, or neither — Retriever rejects both at once.
     return new Retriever(this.store, {
       searchers,
+      // Unconditional: FTS needs no provider and no vector space, so unlike
+      // every searcher above it can never be missing. It is also the only way a
+      // default install reaches an exact literal — a filename, an error string,
+      // a URL — which is where the dense views are weakest.
+      lexical: new LexicalSegmentSearcher(this.store),
       ...(prov.patchEmbedder
         ? { patchEmbedder: prov.patchEmbedder }
         : prov.imageEmbedder
@@ -771,7 +803,7 @@ export class DeskRagService {
       );
 
     const retriever = this.buildRetriever(prov);
-    const { frames } = await retriever.retrieve({
+    const { frames, segments } = await retriever.retrieve({
       ...(input.text ? { text: input.text } : {}),
       ...(input.imageBytes ? { image: input.imageBytes } : {}),
     });
@@ -808,6 +840,12 @@ export class DeskRagService {
       // a space this provider can read.
       ...(hits.length === 0 && hasAnyTextSpace && !hasCurrentTextSpace
         ? { indexedUnderDifferentProvider: true }
+        : {}),
+      // Segments matched but carried no frames: an index defect with a specific
+      // remedy, not an empty result. Checked after the provider case above,
+      // which is the more fundamental explanation when both could apply.
+      ...(hits.length === 0 && hasCurrentTextSpace && segments.length > 0
+        ? { segmentsMatchedButNoFrames: segments.length }
         : {}),
     };
   }
@@ -1030,6 +1068,66 @@ export class DeskRagService {
    * a lift would read, so it would be lifted half-formed and then merged again
    * when it stops.
    */
+  /**
+   * Re-run the search-side stages over every existing recording.
+   *
+   * Needed because the searchable text a recording carries is decided by the
+   * code that indexed it, and existing installs were indexed by code that wrote
+   * a tally-only digest, no lexical index, and — without an image provider — no
+   * frame↔segment links at all, which made text search return nothing.
+   *
+   * Three stages, in the order the indexing path runs them, and DELIBERATELY NOT
+   * `Segmenter`: re-segmenting would mint new segment ids and orphan every
+   * caption, app_caption and transcript already attached to the old ones.
+   * Everything here either rewrites a row in place or replaces a vector by id.
+   *
+   * Refused while recording, for the same reason a graph rebuild is: the session
+   * in flight is still writing the events these stages read.
+   */
+  async reindexSearch(): Promise<{ sessions: number; segments: number }> {
+    if (this.state.state !== "idle") {
+      throw new Error("Stop the current recording before re-indexing.");
+    }
+    const prov = await this.buildProviders();
+    const sessions = this.store.listSessions();
+    let segments = 0;
+    this.emitIndexing({ stage: "Re-indexing search", done: 0, total: sessions.length });
+    try {
+      for (let i = 0; i < sessions.length; i++) {
+        const id = sessions[i]!.id;
+        this.emitIndexing({
+          stage: `Re-indexing recordings ${i + 1}/${sessions.length}`,
+          done: i,
+          total: sessions.length,
+        });
+        await associateFrames(this.store, id);
+        const r = await new Representer(this.store, {
+          digestEmbedder: prov.textEmbedder,
+          behavior: prov.behavior,
+          digestContext: digestContextFor(this.store, id),
+        }).represent(id);
+        segments += r.segmentCount;
+        indexSegmentText(this.store, id);
+      }
+      this.emitIndexing({
+        stage:
+          sessions.length === 0
+            ? "Nothing to re-index — no recordings yet"
+            : `Re-indexed ${sessions.length} recording${sessions.length === 1 ? "" : "s"}, ${segments} segments`,
+        done: sessions.length,
+        total: sessions.length,
+      });
+      return { sessions: sessions.length, segments };
+    } catch (err) {
+      this.emitIndexing({
+        stage: "Re-index failed — see logs",
+        done: 0,
+        total: sessions.length,
+      });
+      throw err;
+    }
+  }
+
   async reindexTraces(): Promise<ReindexResultDTO> {
     if (this.state.state !== "idle") {
       throw new Error("Stop the current recording before rebuilding the graph.");
