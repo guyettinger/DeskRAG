@@ -1,5 +1,18 @@
 # Handoff — the executor's loop closed (2026-08-01)
 
+> **HISTORICAL — superseded. Do not read this as current state.**
+>
+> This is a point-in-time snapshot from 2026-08-01, kept beside the specs as a
+> record of what was known then. Several of its headline claims are now wrong:
+> the test count has since gone 684 → 988; **progressive resolution shipped**
+> (the "one thing I would do next"); **multi-step arming against a real desktop
+> happened on 2026-08-02**; and item 7, "app wiring", was *reversed* — the app
+> deliberately does not reach the executor, and its plan-review screen was
+> removed on 2026-08-06 in favor of Flows.
+>
+> For current open work, read **[ROADMAP.md](../../ROADMAP.md)**. For current
+> invariants, read **[CLAUDE.md](../../CLAUDE.md)**.
+
 `main` is at `35890c8`. Working tree clean, **684 tests passing**, all three
 gates green (`npm run typecheck`, `npm test`, `npm --prefix app run typecheck`).
 

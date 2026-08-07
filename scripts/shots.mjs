@@ -15,6 +15,22 @@
  *     additionally needs a session that reached the Trace stage, since the graph
  *     is what it draws — and a graph REBUILT since provenance was added, or the
  *     routes column is empty and the screen shows its rebuild banner instead.
+ *   - **A CAPTION PROVIDER AND AN IMAGE MODEL MUST BE CONFIGURED, and the shots
+ *     degrade SILENTLY without them — no warning fires, because the screens
+ *     render perfectly well with the data missing.** `captionProvider: "none"`
+ *     costs Detail its CAPTION block and the Library chapter title its label
+ *     (`keyframeLabel` falls back digest -> timecode); `imageProvider: "none"`
+ *     writes no region rows, so Search's per-hit highlight badge is 0 and never
+ *     renders. Measured: a data dir with both set to "none" produced a Detail
+ *     shot reading "no caption"/"no transcript" and a Search shot reading "No
+ *     matches" — both captured cleanly, both useless as README assets.
+ *   - **The query below only matches content that was actually recorded.** It is
+ *     a fixed demo string, not a search for whatever happens to be there, so a
+ *     data dir re-recorded with different content returns 0 frames and the
+ *     contact sheet the README describes never appears.
+ *
+ * Both of the above are reasons the shots are worth LOOKING at after a run, not
+ * just checking for the ✓ — the script cannot tell a thin store from a rich one.
  *
  * Nothing here spawns `ax-exec`. The Flows screen reads the stored graph and
  * never observes the live desktop, so unlike the Replay screen it replaced,

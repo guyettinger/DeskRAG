@@ -12,7 +12,7 @@ invariants that constrain changes to this design, see [CLAUDE.md](../CLAUDE.md).
 - **Coarse-to-fine retrieval** — pHash → segment RRF → frame ANN → region ANN + accessibility-label full-text search → optional cross-encoder rerank — returning **highlights**: the matched region bounding boxes + labels to outline *where* on the recalled frame the match is.
 - **The PixelRAG edge, grounded** — region proposals fuse the accessibility tree, interaction hotspots (weighted DBSCAN over clicks/dwell — a signal video RAG can't have), and grid tiling.
 - **Recorded behavior as a graph** — sessions lift into a **trace IR** of verified states and action edges that merges across recordings, so a task recorded twice discovers its own variable slots instead of being told them.
-- **An executor that acts only on an approved plan** — layered anchors resolve a route against the live accessibility tree, and a plan stops where resolution stops working rather than guessing past it.
+- **An executor that acts only on an approved plan** — layered anchors resolve a route against the live accessibility tree, and a plan stops where resolution stops working rather than guessing past it. It is a library subsystem only: nothing in the desktop app can reach it.
 
 ## The pipeline
 
@@ -98,6 +98,12 @@ Both `trace/` and `replay/` are **leaves**: pure TypeScript that never imports
 `store/`, `represent/` or `retrieve/`. External data arrives through injected
 callbacks, which is what keeps graph persistence a one-directional dependency.
 
+**The executor is not wired to the app.** `src/replay/` is complete and its whole
+test suite is green, but DeskRAGApp reaches none of it — there is no plan DTO, no
+arm channel, and the app never spawns `ax-exec`. The app's window onto the graph
+is **Flows**, a reader. The executor is exercised by the suite and by the
+read-only `scripts/replay-probe.mjs`; see [ROADMAP.md](../ROADMAP.md).
+
 ## Repo layout
 
 | Path | What it is |
@@ -123,3 +129,5 @@ text/raw first then the vector, and slot into reconciliation and a Tier-1
 - [Providers](./providers.md) — what runs where, and why every one is local
 - [Library usage](./library-usage.md)
 - [DeskRAGApp](../app/README.md) — the desktop client
+- [Roadmap and known gaps](../ROADMAP.md) — what isn't built, and where a shipped
+  subsystem stops short of its claim

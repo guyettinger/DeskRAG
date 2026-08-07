@@ -20,11 +20,6 @@
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-/** The subset of `@huggingface/tokenizers`' Tokenizer that adapters use. */
-export type LoadedTokenizer = Awaited<
-  ReturnType<typeof loadTokenizer>
->;
-
 /**
  * tokenizer_config.json as a sibling of tokenizer.json — the layout every model
  * in `app/src/main/models.ts` downloads.

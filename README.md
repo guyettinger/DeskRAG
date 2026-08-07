@@ -77,6 +77,7 @@ npm install && npm run typecheck && npm test
 | [Providers](./docs/providers.md) | what runs where, weight pinning, why every provider is local |
 | [Library usage](./docs/library-usage.md) | the API shape, end to end |
 | [DeskRAGApp](./app/README.md) | the Electron desktop client |
+| [Roadmap](./ROADMAP.md) | what isn't built yet, and where a shipped part stops short |
 | [CLAUDE.md](./CLAUDE.md) | the load-bearing invariants, verified the hard way |
 
 ## License

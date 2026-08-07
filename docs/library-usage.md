@@ -6,7 +6,7 @@ The pipeline composes explicit stages. Retrieval is a single call over the capst
 ```ts
 import {
   DualStore, BlobStore,
-  CaptureSession, KeyframeGate,
+  CaptureSession, KeyframeBudget,
   Segmenter, Representer, FrameRepresenter,
   Retriever, TextViewSearcher, BehaviorViewSearcher,
   FakeEmbeddingProvider, BehaviorFeatureExtractor,
@@ -19,7 +19,7 @@ const blobs = new BlobStore("blobs");
 // Real producers are imported from their own paths (native / subprocess):
 //   ./capture/producers/uiohook-input, /active-window, /ffmpeg-screen
 //   ./capture/ax/swift-ax-source  (+ new StoredAxProvider(store).provide for regions)
-const session = new CaptureSession(store, { blobStore: blobs, keyframeGate: new KeyframeGate() });
+const session = new CaptureSession(store, { blobStore: blobs, keyframeBudget: new KeyframeBudget() });
 // session.addProducer(new UiohookInputProducer());
 // session.addProducer(new ActiveWindowProducer());
 // session.addProducer(new FfmpegScreenProducer({ fps: 1 })); // input: auto-detected display
@@ -101,6 +101,13 @@ const outcome = await executeRun({
 - **Producers never touch the store**, including for files they write themselves. A
   producer whose subprocess writes directly to disk calls `ctx.reserveBlob(media, codec)`
   before spawning and `ctx.commitBlob(blobId, { tMonoStart, tMonoEnd })` after it exits.
+- **ffmpeg decides what a keyframe is, not `KeyframeBudget`.** `FfmpegScreenProducer`
+  runs `mpdecimate` in its sampling branch, which compares 8×8 SAD blocks against the
+  last *kept* frame and so notices a localized change. `KeyframeBudget` is only a
+  minimum-interval rate limit on top of that (it keeps the first frame of a burst);
+  `minIntervalMs: 0` means "keep whatever ffmpeg kept". The whole-frame hash gate it
+  replaced could not see a Calculator digit on a 2560×1440 screen — measured at one
+  keyframe per sixteen seconds of real use.
 - **`searchSegments` throws on an unregistered namespace**, so a `Retriever` must only
   be given `TextViewSearcher`s whose namespace appears in `store.listVectorSpaces()`.
   Caption/transcript spaces don't exist until something has been indexed with those
