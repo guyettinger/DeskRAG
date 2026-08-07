@@ -25,7 +25,17 @@ export interface KeyframeBudgetOptions {
   minIntervalMs?: number;
 }
 
-/** Provisional; replaced by a measured value in the calibration task. */
+/**
+ * MEASURED: at the shipped 1fps sampling rate this never binds in steady state.
+ * Frame arrivals across two real recordings were 989-1000ms apart with ZERO
+ * gaps under 500ms, so it drops nothing a healthy capture produces.
+ *
+ * It is not therefore inert. `tMono` is stamped on ARRIVAL, so if ffmpeg stalls
+ * and then delivers several frames at once they land milliseconds apart and the
+ * budget collapses that burst to its first frame — which is the one that
+ * started the change. It is also the only cap if `fps` is ever raised, and
+ * every kept frame costs a JPEG blob, a caption and an embedding.
+ */
 export const DEFAULT_KEYFRAME_MIN_INTERVAL_MS = 500;
 
 export class KeyframeBudget {

@@ -89,21 +89,35 @@ export interface DecimateOptions {
 }
 
 /**
- * PROVISIONAL — replaced by measured values in the calibration task. Do not
- * treat these as tuned.
+ * MEASURED with scripts/decimate-probe.mjs against two real recordings plus
+ * three synthetic controls. See the commit that set these.
  *
- * `hi` is deliberately far above ffmpeg's own default (64*12 = 768) so the
- * any-ONE-block path effectively never fires alone: a blinking text caret is
- * roughly one 8x8 block whose SAD clears 768 easily, and on screen content that
- * alone would emit a keyframe every single sample. A real state change — a
- * digit, a menu, a field filling — spans several blocks and is caught by the
- * `lo`/`frac` path instead, which is why `frac` is small rather than ffmpeg's
- * 0.33.
+ * **`lo` is the load-bearing one, and ffmpeg's default of 64*5 = 320 is far too
+ * low for screen content.** 320 is 5 per pixel, which H.264 ringing clears
+ * across most of the frame, so nearly every block counts toward `frac` and the
+ * filter keeps everything. Raising it to 64*20 = 1280 puts the threshold above
+ * the compression noise floor while a real UI change still clears it easily.
+ * On a real 18-frame Calculator recording this yields 13 keyframes against 13-14
+ * distinct states counted by eye — the parameters are checked against what the
+ * screen actually did, not against a target count.
+ *
+ * `frac` is small rather than ffmpeg's 0.33 because a state change is LOCAL: a
+ * Calculator digit is roughly 10 of ~3600 blocks, i.e. 0.003. Pushing it to 0.01
+ * dropped a real scrolling session from 20 kept frames to 5.
+ *
+ * `hi` sits above ffmpeg's 768 so the any-ONE-block path cannot fire alone on a
+ * cursor or a caret. At these `lo`/`frac` values it measurably makes no
+ * difference (4096, 16384 and 999999 all gave 13 and 20), so it is a fast path
+ * for a genuinely huge single-block change rather than a tuned threshold.
+ *
+ * The three synthetic controls at these values: a static screen 20 frames -> 1,
+ * a 64x64 patch changing every second -> 19 of 19 kept, an 8x16 caret-sized
+ * patch -> 1. Caret rejected, digit kept, which is the whole discrimination.
  */
 export const DEFAULT_DECIMATE: Required<DecimateOptions> = {
   hi: 64 * 64,
-  lo: 64 * 5,
-  frac: 0.002,
+  lo: 64 * 20,
+  frac: 0.003,
   max: 60,
 };
 
