@@ -8,6 +8,13 @@
  * putSegmentVectors (vector -> Lance), so reconcile can re-embed a transcript
  * from the persisted text after a crash.
  *
+ * It ALSO persists utterance-level clips (transcript_clip) from the provider's
+ * own timestamps. The segment-level text is what the Tier-1 vector view embeds
+ * and is unchanged; the clips exist because a segment's span is not the span of
+ * the speech inside it, and only the clips can say where a sentence actually
+ * was. A provider that reports no timestamps writes no clips — never a guessed
+ * interval spanning the whole blob.
+ *
  * The transcript becomes a Tier-1 text view: TextViewSearcher(embedder,
  * "transcript") lets NL queries hit spoken content directly.
  */
@@ -18,8 +25,14 @@ import type {
   TranscriptionResult,
 } from "../../embed/types.js";
 import { namespaceFor } from "../../embed/types.js";
+import { ulid } from "ulid";
 import type { BlobStore } from "../../store/blob-store.js";
-import type { BlobRow, SegmentVectorInsert, Store } from "../../store/types.js";
+import type {
+  BlobRow,
+  SegmentVectorInsert,
+  Store,
+  TranscriptClipInsert,
+} from "../../store/types.js";
 
 export interface TranscriptRepresenterOptions {
   transcriber: TranscriptionProvider;
@@ -32,6 +45,8 @@ export interface TranscriptRepresenterOptions {
 export interface TranscriptRepresentResult {
   segmentCount: number;
   transcribedCount: number;
+  /** Utterance rows written. 0 when the provider reported no timestamps. */
+  clipCount: number;
   namespace: string;
 }
 
@@ -73,7 +88,7 @@ export class TranscriptRepresenter {
     await this.ensureSpace();
     const segments = this.store.getSegmentsBySession(sessionId);
     if (segments.length === 0) {
-      return { segmentCount: 0, transcribedCount: 0, namespace: this.namespace };
+      return { segmentCount: 0, transcribedCount: 0, clipCount: 0, namespace: this.namespace };
     }
 
     const audioBlobs = this.store
@@ -93,6 +108,27 @@ export class TranscriptRepresenter {
       if (!trimmed) continue;
       resultByBlob.set(b.id, { text: trimmed, ...(r.segments ? { segments: r.segments } : {}) });
     }
+
+    // Utterance extent, persisted. These are the same offsets the per-segment
+    // slicing below uses — the difference is that a clip keeps them, so the
+    // rail can draw the speech rather than the segment that contains it.
+    const clips: TranscriptClipInsert[] = [];
+    for (const b of audioBlobs) {
+      const r = resultByBlob.get(b.id);
+      if (!r?.segments) continue;
+      for (const s of r.segments) {
+        const text = s.text.trim();
+        if (!text) continue;
+        clips.push({
+          id: ulid(),
+          sessionId,
+          tMonoStart: b.tMonoStart + s.startMs,
+          tMonoEnd: b.tMonoStart + s.endMs,
+          text,
+        });
+      }
+    }
+    await this.store.putTranscriptClips(clips);
 
     const transcripts: string[] = [];
     const segIds: string[] = [];
@@ -146,6 +182,7 @@ export class TranscriptRepresenter {
     return {
       segmentCount: segments.length,
       transcribedCount: segIds.length,
+      clipCount: clips.length,
       namespace: this.namespace,
     };
   }

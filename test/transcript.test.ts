@@ -126,6 +126,68 @@ describe("TranscriptRepresenter (transcript view)", () => {
     expect(early.transcript).not.toContain(late.transcript!);
   });
 
+  it("persists utterance clips at absolute t_mono, not segment spans", async () => {
+    const sessionId = ulid();
+    const mk = (t: number, kind: string): EventInsert => ({
+      id: ulid(), sessionId, tMono: t, kind,
+    });
+    await store.putSession({ id: sessionId, startedAt: 1000, epochMono: 0 });
+    await store.putEvents([mk(0, "mouse_move"), mk(5000, "focus_change"), mk(6000, "key_down")]);
+    await store.endSession(sessionId, 9000); // endTMono 8000
+
+    // A 10s blob that does NOT start at zero: the clip's absolute time is
+    // blob.tMonoStart + offset, and an off-by-that is the bug to catch.
+    const blob = await blobs.write(sessionId, "mic", Uint8Array.from([1, 2, 3, 4, 5]), {
+      tMonoStart: 2000, tMonoEnd: 12_000, codec: "wav",
+    });
+    await store.putBlobs([blob]);
+
+    await new Segmenter(store).segment(sessionId);
+
+    const rep = new TranscriptRepresenter(store, {
+      transcriber: new FakeTranscription({ withTimestamps: true, clipDurationMs: 10_000 }),
+      transcriptEmbedder: fake,
+      blobStore: blobs,
+    });
+    const result = await rep.represent(sessionId);
+
+    const clips = store.getTranscriptClipsBySession(sessionId);
+    expect(clips).toHaveLength(2); // FakeTranscription splits the text in half
+    expect(result.clipCount).toBe(2);
+    // Offsets 0..5000 and 5000..10000, shifted by the blob's own start.
+    expect(clips.map((c) => [c.tMonoStart, c.tMonoEnd])).toEqual([
+      [2000, 7000],
+      [7000, 12_000],
+    ]);
+    // The clip carries the utterance's OWN text, never the whole blob's.
+    expect(clips[0]!.text).not.toBe(clips[1]!.text);
+    expect(clips[0]!.text.length).toBeGreaterThan(0);
+  });
+
+  it("writes no clips when the provider gives no timestamps, and says so in the count", async () => {
+    const sessionId = ulid();
+    await store.putSession({ id: sessionId, startedAt: 1000, epochMono: 0 });
+    await store.putEvents([{ id: ulid(), sessionId, tMono: 0, kind: "mouse_move" } as EventInsert]);
+    await store.endSession(sessionId, 9000);
+    const blob = await blobs.write(sessionId, "mic", Uint8Array.from([9, 9]), {
+      tMonoStart: 0, tMonoEnd: 8000, codec: "wav",
+    });
+    await store.putBlobs([blob]);
+    await new Segmenter(store).segment(sessionId);
+
+    const rep = new TranscriptRepresenter(store, {
+      transcriber: new FakeTranscription(), // no withTimestamps
+      transcriptEmbedder: fake,
+      blobStore: blobs,
+    });
+    const result = await rep.represent(sessionId);
+
+    expect(result.clipCount).toBe(0);
+    expect(store.getTranscriptClipsBySession(sessionId)).toEqual([]);
+    // Segment-level text is unaffected — the Tier-1 view still works.
+    expect(result.transcribedCount).toBeGreaterThan(0);
+  });
+
   it("reconcile re-embeds a transcript that has text but no vector", async () => {
     const sessionId = ulid();
     await store.putSession({ id: sessionId, startedAt: 0, epochMono: 0 });
