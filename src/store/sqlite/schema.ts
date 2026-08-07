@@ -64,6 +64,22 @@ CREATE TABLE IF NOT EXISTS segment_app_caption (
   text        TEXT NOT NULL
 );
 
+-- Utterance-level speech, with the timings whisper.cpp's -oj output actually
+-- reports. The segment-level segment.transcript column stays as it is: it is
+-- what the Tier-1 transcript vector view embeds. These rows are the finer
+-- record and exist because a segment's span is NOT the span of the speech
+-- inside it — the rail drew a 10s bar for a two-second sentence, four times
+-- over with the same text.
+CREATE TABLE IF NOT EXISTS transcript_clip (
+  id           TEXT PRIMARY KEY,
+  session_id   TEXT NOT NULL REFERENCES session(id) ON DELETE CASCADE,
+  t_mono_start REAL NOT NULL,
+  t_mono_end   REAL NOT NULL,
+  text         TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_transcript_clip_session
+  ON transcript_clip(session_id, t_mono_start);
+
 CREATE TABLE IF NOT EXISTS frame (
   id            TEXT PRIMARY KEY,
   session_id    TEXT NOT NULL REFERENCES session(id) ON DELETE CASCADE,
