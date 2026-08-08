@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BoundaryAxTrigger } from "../src/capture/ax/boundary.js";
 import { CaptureSession } from "../src/capture/session.js";
+import { FakeDeviceClockSource } from "../src/capture/env/fake.js";
 import { SyntheticInputProducer } from "../src/capture/synthetic.js";
 import { DualStore } from "../src/store/store.js";
 import type { AxSource } from "../src/capture/ax/types.js";
@@ -208,6 +209,7 @@ describe("CaptureSession drives boundary AX capture", () => {
     const store = await DualStore.open(join(dir, "meta.sqlite"), join(dir, "lance"));
     try {
       const session = new CaptureSession(store, {
+      deviceClockSource: new FakeDeviceClockSource(0),
         axSource: fakeAx([button]),
         // Long settle, so only stop()'s flush fires the walk — no wall-clock race.
         axSettleMs: 10_000,
@@ -267,7 +269,9 @@ describe("CaptureSession drives boundary AX capture", () => {
     const dir = mkdtempSync(join(tmpdir(), "erag-axwire-"));
     const store = await DualStore.open(join(dir, "meta.sqlite"), join(dir, "lance"));
     try {
-      const session = new CaptureSession(store);
+      const session = new CaptureSession(store, {
+        deviceClockSource: new FakeDeviceClockSource(0),
+      });
       session.addProducer(new SyntheticInputProducer("script", [{ kind: "focus_change" }]));
       const sessionId = await session.start();
       await session.stop();

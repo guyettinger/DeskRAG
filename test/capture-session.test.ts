@@ -6,6 +6,7 @@ import { DualStore } from "../src/store/store.js";
 import { BlobStore } from "../src/store/blob-store.js";
 import { MonotonicClock } from "../src/timeline/clock.js";
 import { CaptureSession } from "../src/capture/session.js";
+import { FakeDeviceClockSource } from "../src/capture/env/fake.js";
 import { SyntheticInputProducer } from "../src/capture/synthetic.js";
 import type { CaptureContext, Producer } from "../src/capture/types.js";
 
@@ -34,6 +35,7 @@ describe("CaptureSession", () => {
     const clock = MonotonicClock.start(() => mono++, () => 1_700_000_000_000);
 
     const session = new CaptureSession(store, {
+      deviceClockSource: new FakeDeviceClockSource(0),
       clock,
       deviceId: "test-device",
       maxBatch: 2, // force several flushes mid-capture
@@ -86,7 +88,8 @@ describe("CaptureSession", () => {
   });
 
   it("guards lifecycle misuse", async () => {
-    const session = new CaptureSession(store, { clock: MonotonicClock.start() });
+    const session = new CaptureSession(store, {
+      deviceClockSource: new FakeDeviceClockSource(0), clock: MonotonicClock.start() });
     expect(() => session.id).toThrow(/not started/);
     await session.start();
     expect(() => session.addProducer(new SyntheticInputProducer("x", []))).toThrow(
@@ -133,7 +136,8 @@ describe("CaptureSession reserveBlob/commitBlob", () => {
 
   it("registers a reserved file as a blob row with its on-disk byte length", async () => {
     const p = probe();
-    const session = new CaptureSession(store, { blobStore: blobs });
+    const session = new CaptureSession(store, {
+      deviceClockSource: new FakeDeviceClockSource(0), blobStore: blobs });
     session.addProducer(p.producer);
     const sessionId = await session.start();
 
@@ -158,7 +162,8 @@ describe("CaptureSession reserveBlob/commitBlob", () => {
 
   it("reserveBlob returns null when the session has no blob store", async () => {
     const p = probe();
-    const session = new CaptureSession(store, {}); // no blobStore
+    const session = new CaptureSession(store, {
+      deviceClockSource: new FakeDeviceClockSource(0),}); // no blobStore
     session.addProducer(p.producer);
     await session.start();
 
@@ -169,7 +174,8 @@ describe("CaptureSession reserveBlob/commitBlob", () => {
 
   it("commitBlob writes no row when the reserved file was never produced", async () => {
     const p = probe();
-    const session = new CaptureSession(store, { blobStore: blobs });
+    const session = new CaptureSession(store, {
+      deviceClockSource: new FakeDeviceClockSource(0), blobStore: blobs });
     session.addProducer(p.producer);
     const sessionId = await session.start();
 
@@ -185,7 +191,8 @@ describe("CaptureSession reserveBlob/commitBlob", () => {
 
   it("commitBlob writes no row for a zero-byte file", async () => {
     const p = probe();
-    const session = new CaptureSession(store, { blobStore: blobs });
+    const session = new CaptureSession(store, {
+      deviceClockSource: new FakeDeviceClockSource(0), blobStore: blobs });
     session.addProducer(p.producer);
     await session.start();
 

@@ -7,6 +7,7 @@
  */
 
 import type { MonotonicClock } from "../timeline/clock.js";
+import type { DeviceClock } from "../timeline/device-clock.js";
 import type { Media } from "../store/types.js";
 import type { SampledFrame, IngestResult } from "./frame-ingest.js";
 
@@ -56,6 +57,15 @@ export interface AudioChunk {
 export interface CaptureContext {
   readonly sessionId: string;
   readonly clock: MonotonicClock;
+  /**
+   * Converts a capture-device timestamp (ffmpeg `-copyts`) to t_mono.
+   *
+   * A producer that samples through a device clock MUST time its samples with
+   * this rather than `clock.now()`. Arrival time carries the whole capture
+   * latency — measured 3.05s on a real avfoundation device — and stamping it
+   * puts frames on a different clock from the events they sit beside.
+   */
+  readonly deviceClock: DeviceClock;
   /** Buffer an event for batched persistence. Non-blocking. */
   emitEvent(ev: EmittedEvent): void;
   /** Run a sampled frame through keyframe gating + persistence (frame producers). */

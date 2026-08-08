@@ -7,6 +7,7 @@ import { DualStore } from "../src/store/store.js";
 import { BlobStore } from "../src/store/blob-store.js";
 import { MonotonicClock } from "../src/timeline/clock.js";
 import { CaptureSession } from "../src/capture/session.js";
+import { FakeDeviceClockSource } from "../src/capture/env/fake.js";
 import { KeyframeBudget } from "../src/capture/keyframe-budget.js";
 import {
   FfmpegScreenProducer,
@@ -47,6 +48,7 @@ describe.skipIf(!hasFfmpeg)("FfmpegScreenProducer (real ffmpeg, lavfi testsrc)",
   it("captures real frames with grayscale pHash and a JPEG keyframe blob", async () => {
     const errors: string[] = [];
     const session = new CaptureSession(store, {
+      deviceClockSource: new FakeDeviceClockSource(0),
       clock: MonotonicClock.start(),
       keyframeBudget: new KeyframeBudget({ minIntervalMs: 0 }),
       blobStore: blobs,
@@ -98,6 +100,7 @@ describe.skipIf(!hasFfmpeg)("FfmpegScreenProducer (real ffmpeg, lavfi testsrc)",
   it("records a continuous MP4 alongside the sampled keyframes", async () => {
     const errors: string[] = [];
     const session = new CaptureSession(store, {
+      deviceClockSource: new FakeDeviceClockSource(0),
       clock: MonotonicClock.start(),
       keyframeBudget: new KeyframeBudget({ minIntervalMs: 0 }),
       blobStore: blobs,

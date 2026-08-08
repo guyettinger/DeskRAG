@@ -14,6 +14,7 @@ import { Tier3Retriever } from "../src/retrieve/tier3.js";
 import { FrameIngestor, type SampledFrame } from "../src/capture/frame-ingest.js";
 import { KeyframeBudget } from "../src/capture/keyframe-budget.js";
 import { CaptureSession } from "../src/capture/session.js";
+import { FakeDeviceClockSource } from "../src/capture/env/fake.js";
 import { AxCapturer } from "../src/capture/ax/ax-capturer.js";
 import { NoopAxSource } from "../src/capture/ax/noop.js";
 import { SwiftAxSource } from "../src/capture/ax/swift-ax-source.js";
@@ -261,6 +262,7 @@ describe("CaptureSession AX wiring", () => {
 
   it("captures the AX tree for each kept keyframe, and links it at represent time", async () => {
     const session = new CaptureSession(store, {
+      deviceClockSource: new FakeDeviceClockSource(0),
       clock: MonotonicClock.start(),
       keyframeBudget: new KeyframeBudget({ minIntervalMs: 0 }),
       axSource: fakeSource([saveButton]),

@@ -7,6 +7,7 @@ import { DualStore } from "../src/store/store.js";
 import { BlobStore } from "../src/store/blob-store.js";
 import { MonotonicClock } from "../src/timeline/clock.js";
 import { CaptureSession } from "../src/capture/session.js";
+import { FakeDeviceClockSource } from "../src/capture/env/fake.js";
 import { FfmpegAudioProducer } from "../src/capture/producers/ffmpeg-audio.js";
 
 const hasFfmpeg = (() => {
@@ -61,6 +62,7 @@ describe.skipIf(!hasFfmpeg)("FfmpegAudioProducer (real ffmpeg, lavfi sine)", () 
   ): Promise<string> => {
     const errors: string[] = [];
     const session = new CaptureSession(store, {
+      deviceClockSource: new FakeDeviceClockSource(0),
       clock: MonotonicClock.start(),
       blobStore: blobs,
     });
@@ -159,6 +161,7 @@ describe("FfmpegAudioProducer.stop", () => {
   it("waits for bytes the child has not delivered yet", async () => {
     const half = BYTES_PER_SECOND / 2; // 0.5s == exactly one chunk
     const session = new CaptureSession(store, {
+      deviceClockSource: new FakeDeviceClockSource(0),
       clock: MonotonicClock.start(),
       blobStore: blobs,
     });

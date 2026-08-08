@@ -12,6 +12,7 @@ import { FakeEmbeddingProvider } from "../src/embed/fake.js";
 import { Tier1Retriever } from "../src/retrieve/retriever.js";
 import { TextViewSearcher } from "../src/retrieve/searchers.js";
 import { CaptureSession } from "../src/capture/session.js";
+import { FakeDeviceClockSource } from "../src/capture/env/fake.js";
 import { MonotonicClock } from "../src/timeline/clock.js";
 import type { CaptureContext, Producer } from "../src/capture/types.js";
 import type { EventInsert } from "../src/store/types.js";
@@ -231,7 +232,8 @@ describe("CaptureSession.ingestAudio", () => {
   });
 
   it("persists an audio chunk as a mic blob (bytes round-trip)", async () => {
-    const session = new CaptureSession(store, { blobStore: blobs, clock: MonotonicClock.start() });
+    const session = new CaptureSession(store, {
+      deviceClockSource: new FakeDeviceClockSource(0), blobStore: blobs, clock: MonotonicClock.start() });
     let ctx: CaptureContext | undefined;
     const producer: Producer = {
       id: "test-audio",
@@ -259,7 +261,8 @@ describe("CaptureSession.ingestAudio", () => {
   });
 
   it("drops audio when no blob store is configured (best-effort)", async () => {
-    const session = new CaptureSession(store, { clock: MonotonicClock.start() });
+    const session = new CaptureSession(store, {
+      deviceClockSource: new FakeDeviceClockSource(0), clock: MonotonicClock.start() });
     let ctx: CaptureContext | undefined;
     session.addProducer({ id: "a", start(c) { ctx = c; }, stop() {} });
     const sessionId = await session.start();

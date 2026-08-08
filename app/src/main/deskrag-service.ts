@@ -23,6 +23,7 @@ import {
   FfmpegScreenProducer,
   FfmpegAudioProducer,
   SwiftAxSource,
+  SwiftDeviceClockSource,
   SwiftDisplaySource,
   SwiftKeymapSource,
   KeymapProducer,
@@ -421,6 +422,13 @@ export class DeskRagService {
     const axSource = sig.ax.enabled ? new SwiftAxSource() : undefined;
     const session = new CaptureSession(this.store, {
       blobStore: this.blobs,
+      // REQUIRED, and unlike axSource it is not gated on a setting: frames and
+      // audio are timed by converting capture-device timestamps through this,
+      // so without it a recording could only stamp arrival times — a whole
+      // capture latency (~3s) away from the events beside them. `start()`
+      // refuses if the sidecar cannot be read, which is why it ships in the
+      // packaged bundle.
+      deviceClockSource: new SwiftDeviceClockSource(),
       ...(axSource ? { axSource } : {}),
     });
 

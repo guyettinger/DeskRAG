@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DualStore } from "../src/store/store.js";
 import { MonotonicClock } from "../src/timeline/clock.js";
 import { CaptureSession } from "../src/capture/session.js";
+import { FakeDeviceClockSource } from "../src/capture/env/fake.js";
 import { KeyframeBudget } from "../src/capture/keyframe-budget.js";
 import type { CaptureContext, Producer } from "../src/capture/types.js";
 import type { SampledFrame } from "../src/capture/frame-ingest.js";
@@ -50,6 +51,7 @@ describe("CaptureSession frame ingestion", () => {
     let mono = 0;
     const clock = MonotonicClock.start(() => mono++, () => 1000);
     const session = new CaptureSession(store, {
+      deviceClockSource: new FakeDeviceClockSource(0),
       clock,
       keyframeBudget: new KeyframeBudget({ minIntervalMs: 0 }),
     });
@@ -81,6 +83,7 @@ describe("CaptureSession frame ingestion", () => {
     let mono = 0;
     const clock = MonotonicClock.start(() => mono++, () => 1000);
     const session = new CaptureSession(store, {
+      deviceClockSource: new FakeDeviceClockSource(0),
       clock,
       keyframeBudget: new KeyframeBudget({ minIntervalMs: 0 }),
       axSource: { query: async () => [{ role: "Button", label: "Send", x: 0, y: 0, w: 10, h: 10 }] },
