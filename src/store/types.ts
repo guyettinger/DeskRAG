@@ -447,6 +447,10 @@ export interface Store {
   getAxForBoundary(sessionId: string, tMono: number): AxSnapshotRow | undefined;
   /** Read back a keyframe's stored AX snapshot (what `StoredAxProvider` serves). */
   getFrameAx(frameId: string): UIElement[];
+  /** Every AX snapshot for a session, oldest first — including empty ones. */
+  getAxSnapshotsBySession(sessionId: string): AxSnapshotRow[];
+  /** Point a stored walk at the frame it describes (see `associateFrameAx`). */
+  setAxSnapshotFrame(snapshotId: string, frameId: string | null): Promise<void>;
 
   // session lifecycle + relational reads (capture, segment, retrieve)
 

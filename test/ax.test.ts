@@ -8,6 +8,7 @@ import { BlobStore } from "../src/store/blob-store.js";
 import { Segmenter } from "../src/segment/segmenter.js";
 import { RegionRepresenter } from "../src/represent/regions/region-representer.js";
 import { StoredAxProvider } from "../src/represent/regions/stored-ax-provider.js";
+import { associateFrameAx } from "../src/represent/frame-ax.js";
 import { FusedRegionProposer } from "../src/represent/regions/proposer.js";
 import { Tier3Retriever } from "../src/retrieve/tier3.js";
 import { FrameIngestor, type SampledFrame } from "../src/capture/frame-ingest.js";
@@ -258,7 +259,7 @@ describe("CaptureSession AX wiring", () => {
     stop(): void {}
   }
 
-  it("captures the AX tree for each kept keyframe", async () => {
+  it("captures the AX tree for each kept keyframe, and links it at represent time", async () => {
     const session = new CaptureSession(store, {
       clock: MonotonicClock.start(),
       keyframeBudget: new KeyframeBudget({ minIntervalMs: 0 }),
@@ -270,6 +271,18 @@ describe("CaptureSession AX wiring", () => {
 
     const frames = store.getFramesBySession(sessionId);
     expect(frames).toHaveLength(1);
+
+    // The walk happens at capture, but it is NOT linked to a frame there: it
+    // reads the screen a whole capture latency after the pixels the triggering
+    // frame shows, so that frame is the wrong one by construction.
+    const walks = store.getAxSnapshotsBySession(sessionId).filter((s) => s.reason === "keyframe");
+    expect(walks).toHaveLength(1);
+    expect(walks[0]!.frameId).toBeNull();
+    expect(store.getFrameAx(frames[0]!.id)).toEqual([]);
+
+    // `associateFrameAx` is what makes it readable — the always-on represent
+    // stage that assigns each walk to the frame nearest its own t_mono.
+    await associateFrameAx(store, sessionId);
     expect(store.getFrameAx(frames[0]!.id)).toEqual([saveButton]);
   });
 });

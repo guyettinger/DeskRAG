@@ -169,6 +169,12 @@ export {
   sessionEndOf,
 } from "./represent/frame-segments.js";
 /**
+ * Frame↔AX association. Capture cannot know which frame a walk describes — the
+ * walk starts when a frame ARRIVES, a whole capture latency after the pixels it
+ * shows — so the walk is assigned here instead, by content time.
+ */
+export { associateFrameAx, nearestFrameId } from "./represent/frame-ax.js";
+/**
  * The lexical index pass — the last represent stage. Needs no provider, so like
  * `associateFrames` it always runs.
  */

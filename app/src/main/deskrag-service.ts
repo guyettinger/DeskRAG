@@ -29,6 +29,7 @@ import {
   Segmenter,
   Representer,
   associateFrames,
+  associateFrameAx,
   indexSegmentText,
   LexicalSegmentSearcher,
   FrameRepresenter,
@@ -560,6 +561,11 @@ export class DeskRagService {
       // "none" — measured on a real store, 2 of 4 recordings had zero links.
       // Pure SQLite over what Segmenting just wrote; no model involved.
       { name: "Linking frames", run: () => associateFrames(this.store, sessionId) },
+      // AX walks post-date the pixels they describe by the capture latency, so
+      // the frame that TRIGGERED a walk is not the frame it shows. Capture
+      // writes no frame_id and this assigns one by content time. It MUST run
+      // before Regions, which reads it through StoredAxProvider.
+      { name: "Linking AX", run: () => associateFrameAx(this.store, sessionId) },
       // Regions run BEFORE the digest, and under every image configuration
       // including none. Proposal is geometry + the AX tree; only the crops need
       // a model. Two things downstream read what this writes: the digest names
@@ -1137,6 +1143,7 @@ export class DeskRagService {
           total: sessions.length,
         });
         await associateFrames(this.store, id);
+        await associateFrameAx(this.store, id);
         const r = await new Representer(this.store, {
           digestEmbedder: prov.textEmbedder,
           behavior: prov.behavior,

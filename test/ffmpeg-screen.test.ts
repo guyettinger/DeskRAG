@@ -141,6 +141,21 @@ describe.skipIf(!hasFfmpeg)("FfmpegScreenProducer (real ffmpeg, lavfi testsrc)",
     // The keyframe pipeline is untouched by the new branch.
     const frames = store.getFramesBySession(sessionId);
     expect(frames.some((f) => f.blobId)).toBe(true);
+
+    // SPACING is the proof that pts is in play, and it is the only assertion
+    // here that can tell the two implementations apart. This lavfi source runs
+    // FLAT OUT (no -re), so ffmpeg emits two seconds of frames in a few tens of
+    // milliseconds and they all ARRIVE at essentially the same instant —
+    // arrival stamping collapses the whole recording onto one timestamp, and a
+    // "first frame is near the video origin" check passes under both. ffmpeg's
+    // pts instead spaces them by the sampling interval: fps 5 => 200ms apart.
+    const times = frames.map((f) => f.tMono).sort((a, b) => a - b);
+    expect(times.length).toBeGreaterThan(3);
+    expect(times[times.length - 1]! - times[0]!).toBeGreaterThan(400);
+
+    // Anchored to the video blob, so (tMono - tMonoStart)/1000 is the media
+    // offset the Library seeks to. The first sample carries pts ~0.
+    expect(times[0]! - video!.tMonoStart).toBeLessThan(150);
   }, 30_000);
 });
 
@@ -155,8 +170,8 @@ describe("FfmpegScreenProducer.args", () => {
     expect(joined).toContain("[0:v]split=2[v][s]");
     // ONE scale, at the stored JPEG's width, feeding the decimator and both
     // branches — never two scale passes.
-    expect(joined).toContain("[s]fps=1,scale=1280:-2,mpdecimate=");
-    expect(joined).toContain("[d]split=2[g][c]");
+    expect(joined).toContain("scale=1280:-2,mpdecimate=");
+    expect(joined).toContain("[d]split=3[g][c][t]");
     expect(joined).toContain("[g]scale=32:32,format=gray[gg]");
     expect(joined).toContain("[c]null[cc]");
     expect(joined).not.toContain("[v]fps="); // video branch keeps full rate
@@ -164,8 +179,51 @@ describe("FfmpegScreenProducer.args", () => {
     expect(joined).toContain("-framerate 10"); // input runs at videoFps
     expect(joined).toContain("+frag_keyframe+empty_moov+default_base_moof");
     expect(joined).toContain("-pix_fmt yuv420p");
-    expect(a[a.length - 1]).toBe("pipe:3");
+    // The pts tap is last, so a frame's capture time arrives with it.
+    expect(a[a.length - 1]).toBe("pipe:4");
     expect(joined).toContain("/tmp/out.mp4");
+  });
+
+  it("rate-limits with select, not fps, so each frame keeps its own pts", () => {
+    const p = new FfmpegScreenProducer({ fps: 1, videoFps: 10, grayW: 32, grayH: 32 });
+    // @ts-expect-error — exercising the private arg builder directly.
+    const a: string[] = p.args("/tmp/out.mp4");
+    const fc = a[a.indexOf("-filter_complex") + 1]!;
+    // vf_fps relabels the frame it picks to the slot start — a constant -0.400s
+    // against the picture at fps=1 over a 10fps input.
+    expect(fc).not.toContain("fps=1,");
+    expect(fc).toContain("select='isnan(prev_selected_t)+gte(t-prev_selected_t\\,1)'");
+  });
+
+  it("taps a third sampling output for the per-frame pts", () => {
+    const p = new FfmpegScreenProducer({ fps: 1, videoFps: 10, grayW: 32, grayH: 32 });
+    // @ts-expect-error — exercising the private arg builder directly.
+    const a: string[] = p.args("/tmp/out.mp4");
+    const fc = a[a.indexOf("-filter_complex") + 1]!;
+    // Downstream of the SAME decimator as gray and MJPEG, which is what keeps
+    // all three index-aligned.
+    expect(fc).toContain("[d]split=3[g][c][t]");
+    expect(a).toContain("mkvtimestamp_v2");
+    expect(a).toContain("pipe:4");
+  });
+
+  it("passes frame-rate mode through on the sampling outputs only", () => {
+    const p = new FfmpegScreenProducer({ fps: 1, videoFps: 10, grayW: 32, grayH: 32 });
+    // @ts-expect-error — exercising the private arg builder directly.
+    const a: string[] = p.args("/tmp/out.mp4");
+    // select does not change the stream's frame-rate metadata, so the default
+    // CFR mode duplicates frames back up to the input rate — measured, 139
+    // where 14 were expected. One per sampling output; never on the mp4.
+    expect(a.filter((x) => x === "-fps_mode")).toHaveLength(3);
+    expect(a.indexOf("-fps_mode")).toBeGreaterThan(a.indexOf("/tmp/out.mp4"));
+  });
+
+  it("still taps pts with images off and no video", () => {
+    const p = new FfmpegScreenProducer({ fps: 1, storeImages: false, recordVideo: false });
+    // @ts-expect-error — exercising the private arg builder directly.
+    const a: string[] = p.args(null);
+    expect(a).toContain("mkvtimestamp_v2");
+    expect(a).toContain("pipe:4");
   });
 
   it("carries every mpdecimate parameter, including the heartbeat", () => {
@@ -182,7 +240,7 @@ describe("FfmpegScreenProducer.args", () => {
     // @ts-expect-error — exercising the private arg builder directly.
     const a: string[] = p.args(null);
     expect(a.join(" ")).not.toContain("mpdecimate");
-    expect(a.join(" ")).toContain("[d]split=2[g][c]"); // the graph still links up
+    expect(a.join(" ")).toContain("[d]split=3[g][c][t]"); // the graph still links up
   });
 
   it("logs at warning level so avfoundation's recovery line is visible", () => {
@@ -201,18 +259,20 @@ describe("FfmpegScreenProducer.args", () => {
     const a: string[] = p.args(null);
 
     expect(a.join(" ")).toContain("[0:v]split=1[s]");
-    expect(a.join(" ")).toContain("[d]split=2[g][c]");
+    expect(a.join(" ")).toContain("[d]split=3[g][c][t]");
     expect(a.join(" ")).not.toContain("libx264");
   });
 
-  it("drops to a gray-only single output when storeImages is false", () => {
+  it("drops to gray + pts when storeImages is false", () => {
     const p = new FfmpegScreenProducer({ storeImages: false, recordVideo: false });
     // @ts-expect-error — exercising the private arg builder directly.
     const a: string[] = p.args(null);
 
-    expect(a.join(" ")).not.toContain("split");
+    // No MJPEG branch, but the pts tap survives: a frame still has to be timed.
+    expect(a.join(" ")).toContain("[d]split=2[g][t]");
+    expect(a.join(" ")).not.toContain("mjpeg");
     expect(a.join(" ")).toContain("mpdecimate="); // still decimated
-    expect(a[a.length - 1]).toBe("pipe:1");
+    expect(a[a.length - 1]).toBe("pipe:4");
   });
 });
 

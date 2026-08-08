@@ -1,10 +1,17 @@
 /**
- * FfmpegScreenProducer — samples the screen by spawning ffmpeg. It emits TWO
+ * FfmpegScreenProducer — samples the screen by spawning ffmpeg. It emits THREE
  * aligned outputs from one process:
  *   - stdout (pipe:1): downscaled grayscale rawvideo → FrameChunker → dHash,
  *   - fd 3   (pipe:3): MJPEG full frames        → JpegStreamSplitter → the
- *                       stored keyframe image (frame_image view + region crops).
+ *                       stored keyframe image (frame_image view + region crops),
+ *   - fd 4   (pipe:4): mkvtimestamp_v2          → TimestampLineSplitter → the
+ *                       frame's CAPTURE TIME, which is what it is stamped with.
  * ffmpeg does the JPEG encoding, so no in-Node image codec is needed.
+ *
+ * A FRAME IS TIMED BY ITS PTS, NEVER BY WHEN IT ARRIVED. Arrival time measured
+ * 3.05s late on a real avfoundation device (~0.8s device start-up plus ~2.2s of
+ * capture-to-delivery latency), which put every stored keyframe ~3.2s behind its
+ * own t_mono while the video, which keeps PTS, was exact. See SampleClock.
  *
  * WHAT CHANGED ON SCREEN IS DECIDED HERE, by `mpdecimate` on the shared
  * sampling branch BEFORE it splits into those two. mpdecimate compares 8x8
@@ -25,6 +32,9 @@ import type { Readable } from "node:stream";
 import { resolveScreenInput } from "./avfoundation-devices.js";
 import { FrameChunker } from "../frame-chunker.js";
 import { JpegStreamSplitter } from "../jpeg-splitter.js";
+import { TimestampLineSplitter } from "../timestamp-splitter.js";
+import { drainPairs, type PairedSample } from "../frame-pairing.js";
+import { SampleClock } from "../sample-clock.js";
 import type { CaptureContext, Producer } from "../types.js";
 
 /**
@@ -181,6 +191,9 @@ export interface FfmpegScreenOptions {
   onError?: (msg: string) => void;
 }
 
+/** See `rateFilter` — mandatory on every output fed from `select`. */
+const PASSTHROUGH = ["-fps_mode", "passthrough"] as const;
+
 export class FfmpegScreenProducer implements Producer {
   readonly id = "screen";
   private proc: ChildProcess | undefined;
@@ -188,8 +201,17 @@ export class FfmpegScreenProducer implements Producer {
   private ingestChain: Promise<void> = Promise.resolve();
   private readonly chunker: FrameChunker;
   private readonly jpeg = new JpegStreamSplitter();
+  private readonly ts = new TimestampLineSplitter();
   private readonly grayQueue: Uint8Array[] = [];
   private readonly jpegQueue: Uint8Array[] = [];
+  private readonly ptsQueue: number[] = [];
+  private sampleClock: SampleClock | undefined;
+  /**
+   * Whether the graph carries a pts tap. A caller-supplied `ffmpegArgs`
+   * replaces the WHOLE arg list, so it has no fd 4 — waiting for one would pair
+   * nothing and record no frames at all.
+   */
+  private readonly usePts: boolean;
   private readonly grayW: number;
   private readonly grayH: number;
   private readonly width: number;
@@ -210,6 +232,7 @@ export class FfmpegScreenProducer implements Producer {
     this.storeImages = opts.storeImages ?? true;
     this.recordVideo = opts.recordVideo ?? true;
     this.videoFps = opts.videoFps ?? 10;
+    this.usePts = opts.ffmpegArgs === undefined;
     this.chunker = new FrameChunker(this.grayW * this.grayH);
   }
 
@@ -230,7 +253,7 @@ export class FfmpegScreenProducer implements Producer {
     // ONE scale, at the stored JPEG's own width, feeding the decimator AND both
     // sampling branches. Decimating at native resolution and re-scaling for the
     // JPEG would be two scale passes and maximally sensitive to a caret.
-    const sample = `fps=${fps},scale=${maxW}:-2,${this.decimateFilter()}`;
+    const sample = `${this.rateFilter(fps)},scale=${maxW}:-2,${this.decimateFilter()}`;
     const gray = `scale=${this.grayW}:${this.grayH},format=gray`;
     const head = [
       // `warning`, not `error`, on purpose. macOS avfoundation logs
@@ -245,11 +268,15 @@ export class FfmpegScreenProducer implements Producer {
       ...(this.opts.omitInputFramerate ? [] : ["-framerate", String(inputRate)]),
       "-i", input,
     ];
+    // Even the leanest configuration goes through filter_complex now: `-vf`
+    // feeds ONE output, and the pts tap is a second one.
     if (!this.storeImages && !videoPath) {
       return [
         ...head,
-        "-vf", `${sample},${gray}`,
-        "-f", "rawvideo", "-pix_fmt", "gray", "pipe:1",
+        "-filter_complex",
+        `[0:v]${sample}[d];[d]split=2[g][t];[g]${gray}[gg];[t]null[tt]`,
+        "-map", "[gg]", ...PASSTHROUGH, "-f", "rawvideo", "-pix_fmt", "gray", "pipe:1",
+        "-map", "[tt]", ...PASSTHROUGH, "-f", "mkvtimestamp_v2", "pipe:4",
       ];
     }
 
@@ -264,9 +291,9 @@ export class FfmpegScreenProducer implements Producer {
     if (videoPath) chains.push(`[v]scale='min(${videoMaxW},iw)':-2[vv]`);
     chains.push(`[s]${sample}[d]`);
     if (this.storeImages) {
-      chains.push(`[d]split=2[g][c]`, `[g]${gray}[gg]`, `[c]null[cc]`);
+      chains.push(`[d]split=3[g][c][t]`, `[g]${gray}[gg]`, `[c]null[cc]`, `[t]null[tt]`);
     } else {
-      chains.push(`[d]${gray}[gg]`);
+      chains.push(`[d]split=2[g][t]`, `[g]${gray}[gg]`, `[t]null[tt]`);
     }
 
     const out: string[] = [...head, "-filter_complex", chains.join(";")];
@@ -281,11 +308,37 @@ export class FfmpegScreenProducer implements Producer {
         "-f", "mp4", "-y", videoPath,
       );
     }
-    out.push("-map", "[gg]", "-f", "rawvideo", "-pix_fmt", "gray", "pipe:1");
+    out.push("-map", "[gg]", ...PASSTHROUGH, "-f", "rawvideo", "-pix_fmt", "gray", "pipe:1");
     if (this.storeImages) {
-      out.push("-map", "[cc]", "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", String(q), "pipe:3");
+      out.push(
+        "-map", "[cc]", ...PASSTHROUGH,
+        "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", String(q), "pipe:3",
+      );
     }
+    out.push("-map", "[tt]", ...PASSTHROUGH, "-f", "mkvtimestamp_v2", "pipe:4");
     return out;
+  }
+
+  /**
+   * The sampling rate limit.
+   *
+   * `select` rather than `fps` because the frame's PTS is now the frame's
+   * TIMESTAMP. `vf_fps` picks the last frame before each slot boundary and
+   * RELABELS it to the slot start — measured as a constant -0.400s against the
+   * picture at fps=1 over a 10fps input. `select` keeps each frame's own pts
+   * (measured 0.000s) and picks the FIRST frame past the interval, which is
+   * also what KeyframeBudget does one layer down.
+   *
+   * The comma inside the expression MUST stay escaped: an unescaped one ends
+   * the filter, and the graph silently becomes a different, valid graph.
+   *
+   * It REQUIRES `-fps_mode passthrough` on every output fed from it — select
+   * does not change the stream's frame-rate metadata, so the default CFR mode
+   * duplicates frames back up to the input rate. Measured: 139 frames where 14
+   * were expected.
+   */
+  private rateFilter(fps: number): string {
+    return `select='isnan(prev_selected_t)+gte(t-prev_selected_t\\,${1 / fps})'`;
   }
 
   /**
@@ -332,14 +385,22 @@ export class FfmpegScreenProducer implements Producer {
       }
     }
 
-    // stdio: [stdin ignore, stdout gray, stderr, fd3 mjpeg (when storing images)].
-    const stdio = this.storeImages
-      ? (["ignore", "pipe", "pipe", "pipe"] as const)
-      : (["ignore", "pipe", "pipe"] as const);
+    // stdio: [stdin ignore, stdout gray, stderr, fd3 mjpeg (when storing
+    // images), fd4 pts]. fd 4 is fixed so the timestamp pipe does not move when
+    // images are off.
+    const stdio = [
+      "ignore",
+      "pipe",
+      "pipe",
+      this.storeImages ? "pipe" : "ignore",
+      "pipe",
+    ] as const;
     const proc = spawn(this.opts.ffmpegPath ?? "ffmpeg", this.args(videoPath), {
       stdio: [...stdio],
     });
     this.proc = proc;
+    // The video origin is known only after reserveBlob above.
+    this.sampleClock = new SampleClock(this.video?.tMonoStart);
 
     proc.stdout?.on("data", (chunk: Buffer) => {
       for (const gray of this.chunker.push(chunk)) {
@@ -356,32 +417,50 @@ export class FfmpegScreenProducer implements Producer {
         }
       });
     }
+    if (this.usePts) {
+      const times = proc.stdio[4] as Readable | undefined;
+      times?.on("data", (chunk: Buffer) => {
+        for (const ms of this.ts.push(chunk)) {
+          this.ptsQueue.push(ms);
+          this.pair();
+        }
+      });
+    }
     proc.stderr?.on("data", (d: Buffer) => onError(d.toString().trim()));
     proc.on("error", (err) => onError(err.message));
   }
 
-  /** Emit frames once both streams have the next index (or gray-only mode). */
+  /** Emit every sample all of the graph's outputs have delivered. */
   private pair(): void {
-    if (!this.storeImages) {
-      while (this.grayQueue.length > 0) this.enqueue(this.grayQueue.shift()!);
-      return;
-    }
-    while (this.grayQueue.length > 0 && this.jpegQueue.length > 0) {
-      this.enqueue(this.grayQueue.shift()!, this.jpegQueue.shift()!);
+    for (const sample of drainPairs(
+      this.grayQueue,
+      this.usePts ? this.ptsQueue : null,
+      this.storeImages ? this.jpegQueue : null,
+    )) {
+      this.enqueue(sample);
     }
   }
 
-  private enqueue(gray: Uint8Array, jpeg?: Uint8Array): void {
+  private enqueue(sample: PairedSample): void {
     const ctx = this.ctx!;
+    // STAMP HERE, NOT INSIDE THE CHAIN. `tMono` is ffmpeg's capture time, which
+    // carries none of the delivery latency that arrival time did — measured
+    // 3.05s of it on a real avfoundation device. Reading any clock inside the
+    // continuation below would also add however long every earlier frame's blob
+    // write and insert took, which is unbounded and never recovers.
+    const tMono =
+      sample.ptsMs === null
+        ? ctx.clock.now()
+        : this.sampleClock!.tMonoFor(sample.ptsMs, ctx.clock.now());
     this.ingestChain = this.ingestChain.then(async () => {
       await ctx.ingestFrame({
-        tMono: ctx.clock.now(),
+        tMono,
         width: this.width,
         height: this.height,
-        gray,
+        gray: sample.gray,
         grayW: this.grayW,
         grayH: this.grayH,
-        ...(jpeg ? { image: { bytes: jpeg, codec: "jpeg" } } : {}),
+        ...(sample.jpeg ? { image: { bytes: sample.jpeg, codec: "jpeg" } } : {}),
       });
     });
   }

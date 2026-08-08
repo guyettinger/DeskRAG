@@ -166,6 +166,7 @@ export class DualStore implements Store {
       selectAxByFrame: db.prepare(
         "SELECT elements FROM ax_snapshot WHERE frame_id = ? ORDER BY t_mono DESC LIMIT 1",
       ),
+      updateAxSnapshotFrame: db.prepare("UPDATE ax_snapshot SET frame_id = ? WHERE id = ?"),
       insertAxBoundary: db.prepare(
         `INSERT INTO ax_snapshot_boundary(snapshot_id, session_id, t_mono)
          VALUES (@snapshotId, @sessionId, @tMono)
@@ -763,6 +764,20 @@ export class DualStore implements Store {
     return (this.stmts.selectAxSnapshotsBySession.all(sessionId) as unknown[]).flatMap((r) => {
       const row = this.hydrateAxSnapshot(r);
       return row ? [row] : [];
+    });
+  }
+
+  /**
+   * Point a stored walk at the frame it describes.
+   *
+   * Capture cannot know that frame: a walk starts when a frame ARRIVES, and the
+   * frame arrives a whole capture latency after the pixels it shows (measured
+   * ~2.2s), so the triggering frame is the wrong one by construction. See
+   * `associateFrameAx`, which is the only caller.
+   */
+  async setAxSnapshotFrame(snapshotId: string, frameId: string | null): Promise<void> {
+    await this.mutex.run(async () => {
+      this.stmts.updateAxSnapshotFrame.run(frameId, snapshotId);
     });
   }
 
