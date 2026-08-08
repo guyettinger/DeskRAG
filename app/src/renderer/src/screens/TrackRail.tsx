@@ -182,24 +182,23 @@ export function TrackRail({
   // 60fps. KeyframeStrip already encoded this lesson by setting state only when
   // the nearest keyframe changed.
   //
-  // Note the divisor: MEDIA time over MEDIA duration. The axis is a fraction,
-  // and the two clocks meet only there.
-  const mediaSec = videoSec && videoSec > 0 ? videoSec : totalSec;
+  // ONE AXIS: media seconds ARE lane seconds. Lane offset 0 is media 0 (the
+  // video blob's tMonoStart is now the CAPTURE time of its first frame, not a
+  // pre-spawn guess), and the mp4 carries capture timestamps rather than being
+  // re-timed to a constant rate. The old divisor rescaled media onto the lane
+  // span to paper over an offset AND a 1.4% rate divergence; both are gone, so
+  // the conversion is deleted rather than tuned.
   useEffect(() => {
     const p = player?.current;
-    if (!p || mediaSec <= 0) return;
+    if (!p || totalSec <= 0) return;
     return p.subscribe(({ currentTime }) => {
-      const at = `${(currentTime / mediaSec) * 100}%`;
+      const at = `${(currentTime / totalSec) * 100}%`;
       if (headRef.current) headRef.current.style.transform = `translateX(${at})`;
       if (knobRef.current) knobRef.current.style.transform = `translateX(${at})`;
-      // The clock reads in LANE seconds, like everything else in this rail —
-      // media time scaled onto the axis, never printed raw beside lane values.
       const el = clockRef.current;
-      if (el && !el.dataset.hovering) {
-        el.textContent = timecodeAt((currentTime / mediaSec) * totalSec);
-      }
+      if (el && !el.dataset.hovering) el.textContent = timecodeAt(currentTime);
     });
-  }, [player, mediaSec, totalSec]);
+  }, [player, totalSec]);
 
   /** Lane seconds under the cursor, or null when it is off the axis (the gutter). */
   const secAt = (clientX: number): number | null => {
@@ -210,11 +209,10 @@ export function TrackRail({
     return ((clientX - r.left) / r.width) * totalSec;
   };
 
-  /** Takes LANE seconds and converts, so nothing outside this function has to
-   *  know that the video's clock runs slightly short of the session's. */
+  /** Lane seconds ARE media seconds — see the playhead above. */
   const seek = (sec: number): void => {
     const p = player?.current;
-    if (p && totalSec > 0) p.currentTime = Math.max(0, (sec / totalSec) * mediaSec);
+    if (p) p.currentTime = Math.max(0, sec);
   };
 
   /**
@@ -222,10 +220,13 @@ export function TrackRail({
    *
    * It cannot run on mount: `videoSec` is `Infinity` until the fragmented MP4
    * is buffered enough for the provider to report a real duration, and
-   * `totalSec` comes from the tracks fetch. Depending on `mediaSec` is what
-   * makes this fire on the render where both have arrived — the alternative,
-   * sleeping a guessed interval, is the pattern this repo rejects everywhere
-   * it appears.
+   * `totalSec` comes from the tracks fetch. Depending on both is what makes
+   * this fire on the render where they have arrived — the alternative, sleeping
+   * a guessed interval, is the pattern this repo rejects everywhere it appears.
+   *
+   * `videoSec` is consulted ONLY as readiness now, never as a conversion
+   * factor: lane seconds are media seconds, and a seek issued before the
+   * provider has a duration does not stick.
    *
    * Keyed on the NONCE, not the moment: `player.subscribe` re-renders this
    * component every animation frame, so the guard has to hold — but two jumps
@@ -235,12 +236,13 @@ export function TrackRail({
   const seekDone = useRef<number | null>(null);
   useEffect(() => {
     if (!seekTo) return;
-    if (!player?.current || totalSec <= 0 || !Number.isFinite(mediaSec) || mediaSec <= 0) return;
+    if (!player?.current || totalSec <= 0) return;
+    if (videoSec === null || !Number.isFinite(videoSec) || videoSec <= 0) return;
     if (seekDone.current === seekTo.nonce) return;
     seekDone.current = seekTo.nonce;
     seek(seekTo.sec);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seekTo, totalSec, mediaSec, player]);
+  }, [seekTo, totalSec, videoSec, player]);
 
   const readout = useMemo(() => {
     if (!tracks || !hover) return null;

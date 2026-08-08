@@ -395,12 +395,21 @@ electron-vite + React + TS. Three source roots with a hard rule between them: **
     `translateX` resolves against the ELEMENT's own size, and the 1px box it
     shipped as moved the playhead ONE PIXEL across the whole timeline (measured
     561.0 → 562.0 seeking 0 → 100%). It looked stationary and nothing failed.
-  - **Media seconds are NOT lane seconds.** The lanes are `t_mono` offsets; the
-    scrubber is media time, and the encoded video is shorter than the span it
-    covers — measured 84.9s of media for an 85.76s session, a 1% divergence that
-    is 5px at the right end. `TrackRail` takes `videoSec` and converts at exactly
-    one place (`seek`, and the playhead's divisor); everything else stays in lane
-    seconds. Dividing one clock by the other's total is the bug to watch for.
+  - **MEDIA SECONDS *ARE* LANE SECONDS — one axis, and the conversion is gone.**
+    This reverses the old rule, which had `TrackRail` rescale media onto the lane
+    span. That rescale existed because the two clocks genuinely differed by an
+    OFFSET (media 0 happened after `video.tMonoStart`) and a RATE (the mp4 was
+    encoded CFR while the device delivered at its own pace — measured 1.4%,
+    7.100s of real time per 7.000s of media). Both are removed at the source:
+    `video.tMonoStart` is now the CAPTURE time of the first frame, and the mp4
+    carries capture timestamps (`-fps_mode passthrough`). So the playhead is
+    `currentTime / totalSec` and `seek` is identity. Measured after: seeking to
+    media 4/10/16s puts the playhead at 20.30/50.75/81.20% of the axis, all
+    giving one `totalSec` of 19.70s against a t_mono span of 19.705s; and the
+    video at media 5.000/12.000 reads a reference clock within 57ms/24ms of
+    prediction, where the same measurement gave 0.93s/1.03s and growing before.
+    `videoSec` survives ONLY as a readiness signal — it is `Infinity` until the
+    fragmented MP4 buffers, and a seek issued before then does not stick.
   - **The rail is `.tracks`, NOT `.rail`** — `.rail` is the left navigation sidebar
     (`--rail-w: 76px`). Caught by grepping before minting the class, the same rule
     `.drawer` exists because of.
