@@ -83,6 +83,32 @@ function secOf(tMono: number, originMono: number): number {
   return (tMono - originMono) / 1000;
 }
 
+/**
+ * The `t_mono` that lane offset 0 means: the video's FIRST FRAME when there is
+ * one, `t_mono` zero otherwise.
+ *
+ * Stated here once because four callers need it and every one of them used to
+ * restate it — the rail, the keyframe markers, a search hit, and the Flows deep
+ * link. The last of those got it wrong (raw `tMono / 1000`), which landed every
+ * jump early by the pre-roll: capture starts while ffmpeg is still spawning, so
+ * a session's first signals are genuinely BEFORE the video's first frame.
+ */
+export function laneOriginOf(video: { tMonoStart: number } | null | undefined): number {
+  return video ? video.tMonoStart : 0;
+}
+
+/**
+ * A `t_mono` stamp as LANE seconds — the axis the track rail is drawn in, and
+ * the axis every cross-screen jump is expressed in.
+ *
+ * Clamped at 0, because no pixel of the axis means "before zero". The rail
+ * declares that stretch separately (`preRollSec`, and the hatched clipped edge);
+ * a moment to seek to has no such affordance and must simply land at the start.
+ */
+export function laneSec(tMono: number, originMono: number): number {
+  return Math.max(0, secOf(tMono, originMono));
+}
+
 function asRecord(data: unknown): Record<string, unknown> {
   return data !== null && typeof data === "object" ? (data as Record<string, unknown>) : {};
 }

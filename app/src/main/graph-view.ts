@@ -18,6 +18,9 @@ import {
 } from "@shared/types";
 import { isLocatable } from "deskrag";
 import type { Action, Anchor, EdgeSource, Graph, NodeSource, Predicate, TraceNode } from "deskrag";
+// One definition of what a moment is, shared with the track rail and the
+// keyframe markers. Both modules are pure and root-tested.
+import { laneSec } from "./session-tracks.js";
 
 /**
  * Roles whose label names a STATE rather than a document. `Sheet` and `Dialog`
@@ -165,24 +168,26 @@ export function chipIds(ids: readonly string[]): Map<string, string> {
  */
 export type ResolveSessionStart = (sessionId: string) => number | undefined;
 
-const MS_PER_SEC = 1000;
+/**
+ * Where lane offset 0 sits for a recording, injected like `ResolveSessionStart`
+ * and for the same reason.
+ *
+ * `atSec` is LANE seconds, and this module used to mint it as raw
+ * `tMono / MS_PER_SEC` — which is the axis only when the video's first frame
+ * happens to coincide with `t_mono` zero. It never does: capture runs while
+ * ffmpeg is still spawning, measured at 1.9s of pre-roll on a real session, so
+ * every jump from this screen landed that much early. The Library's own
+ * keyframe markers were always computed correctly; two callers of one payload
+ * disagreeing about what a moment IS is the drift the shared `laneSec` exists
+ * to close.
+ */
+export type ResolveLaneOrigin = (sessionId: string) => number;
 
 function toNodeSources(
   sources: readonly NodeSource[] | undefined,
   startedAt: ResolveSessionStart,
+  laneOrigin: ResolveLaneOrigin,
 ): NodeSourceDTO[] {
-  return (sources ?? []).flatMap((s) => {
-    const at = startedAt(s.sessionId);
-    return at === undefined
-      ? []
-      : [{ sessionId: s.sessionId, startedAt: at, atSec: s.tMono / MS_PER_SEC }];
-  });
-}
-
-function toEdgeSources(
-  sources: readonly EdgeSource[] | undefined,
-  startedAt: ResolveSessionStart,
-): EdgeSourceDTO[] {
   return (sources ?? []).flatMap((s) => {
     const at = startedAt(s.sessionId);
     return at === undefined
@@ -191,10 +196,29 @@ function toEdgeSources(
           {
             sessionId: s.sessionId,
             startedAt: at,
-            atSec: s.tMonoStart / MS_PER_SEC,
-            throughSec: s.tMonoEnd / MS_PER_SEC,
+            atSec: laneSec(s.tMono, laneOrigin(s.sessionId)),
           },
         ];
+  });
+}
+
+function toEdgeSources(
+  sources: readonly EdgeSource[] | undefined,
+  startedAt: ResolveSessionStart,
+  laneOrigin: ResolveLaneOrigin,
+): EdgeSourceDTO[] {
+  return (sources ?? []).flatMap((s) => {
+    const at = startedAt(s.sessionId);
+    if (at === undefined) return [];
+    const origin = laneOrigin(s.sessionId);
+    return [
+      {
+        sessionId: s.sessionId,
+        startedAt: at,
+        atSec: laneSec(s.tMonoStart, origin),
+        throughSec: laneSec(s.tMonoEnd, origin),
+      },
+    ];
   });
 }
 
@@ -219,12 +243,19 @@ function toEdgeActions(actions: readonly Action[], graph: Graph): EdgeActionDTO[
 export interface GraphViewOptions {
   resolveFrameBlob?: ResolveFrameBlob;
   sessionStart?: ResolveSessionStart;
+  laneOrigin?: ResolveLaneOrigin;
 }
 
 export function toGraphDTO(graph: Graph, opts: GraphViewOptions = {}): GraphDTO {
   const ranks = rankNodes(graph);
   const chips = chipIds(graph.nodes.map((n) => n.id));
-  const { resolveFrameBlob, sessionStart = (): undefined => undefined } = opts;
+  const {
+    resolveFrameBlob,
+    sessionStart = (): undefined => undefined,
+    // No resolver means t_mono zero, which is where a session with no video
+    // starts anyway — the same fallback `laneOriginOf` takes.
+    laneOrigin = (): number => 0,
+  } = opts;
 
   const nodes: GraphNodeDTO[] = graph.nodes.map((n) => {
     const named = labelNode(n);
@@ -246,7 +277,7 @@ export function toGraphDTO(graph: Graph, opts: GraphViewOptions = {}): GraphDTO 
       locatable: isLocatable(n.predicates),
       intervene: n.intervene,
       rank: ranks.get(n.id) ?? 0,
-      sources: toNodeSources(n.sources, sessionStart),
+      sources: toNodeSources(n.sources, sessionStart, laneOrigin),
     };
   });
 
@@ -258,7 +289,7 @@ export function toGraphDTO(graph: Graph, opts: GraphViewOptions = {}): GraphDTO 
     back: (ranks.get(e.to) ?? 0) <= (ranks.get(e.from) ?? 0),
     provenance: e.provenance,
     observations: e.observations,
-    sources: toEdgeSources(e.sources, sessionStart),
+    sources: toEdgeSources(e.sources, sessionStart, laneOrigin),
     ...(e.liftWarnings !== undefined ? { liftWarnings: [...e.liftWarnings] } : {}),
   }));
 

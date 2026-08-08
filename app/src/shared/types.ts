@@ -137,7 +137,16 @@ export interface HighlightDTO {
 export interface FrameHitDTO {
   frameId: string;
   score: number;
+  /** The recording this frame came from, so a result can be opened in the Library. */
+  sessionId: string;
   tMono: number;
+  /**
+   * The moment this frame is at, in LANE seconds — the axis the track rail is
+   * drawn in and the axis every cross-screen jump is expressed in. NOT
+   * `tMono / 1000`: lane offset 0 is the video's first frame. Same meaning as
+   * `KeyframeMarkerDTO.offsetSec`; both come from `laneSec`.
+   */
+  offsetSec: number;
   /** Wall-clock ms (session.startedAt + tMono), for human display. */
   wallClock: number;
   width: number;
@@ -175,6 +184,8 @@ export interface ResultDetailDTO {
   width: number;
   height: number;
   tMono: number;
+  /** As `FrameHitDTO.offsetSec` — LANE seconds, for the jump into the Library. */
+  offsetSec: number;
   wallClock: number;
   score?: number;
   session: { id: string; startedAt: number };

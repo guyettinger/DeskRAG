@@ -297,6 +297,42 @@ describe("toGraphDTO provenance", () => {
     expect(dto.nodes[0]?.sources).toEqual([]);
   });
 
+  /**
+   * `atSec` is LANE seconds — offsets from the VIDEO's first frame, which is
+   * the axis the track rail is drawn in and the axis the Library seeks on.
+   * This module used to send raw `tMono / 1000`, and since capture runs while
+   * ffmpeg is still spawning (measured: 1.9s of pre-roll on a real session),
+   * every jump from this screen landed that much early.
+   */
+  it("measures a source from the video's first frame, not from t_mono zero", () => {
+    const g = graph(
+      [sourcedNode("n0", [app("Mail")], [{ sessionId: "s1", tMono: 4500 }]), node("n1")],
+      [sourcedEdge("e0", "n0", "n1", [{ sessionId: "s1", tMonoStart: 4500, tMonoEnd: 6250 }])],
+    );
+    const dto = toGraphDTO(g, { sessionStart: startedAt, laneOrigin: () => 1900 });
+    expect(dto.nodes[0]?.sources[0]?.atSec).toBe(2.6);
+    expect(dto.edges[0]?.sources[0]).toMatchObject({ atSec: 2.6, throughSec: 4.35 });
+  });
+
+  /**
+   * Pre-roll is real: a boundary can be recorded BEFORE the first frame exists.
+   * No pixel of the axis means "before zero", so the jump lands at the start.
+   */
+  it("clamps a source recorded before the video started", () => {
+    const g = graph(
+      [sourcedNode("n0", [app("Mail")], [{ sessionId: "s1", tMono: 300 }]), node("n1")],
+      [edge("e0", "n0", "n1")],
+    );
+    const dto = toGraphDTO(g, { sessionStart: startedAt, laneOrigin: () => 1900 });
+    expect(dto.nodes[0]?.sources[0]?.atSec).toBe(0);
+  });
+
+  /** No resolver is t_mono zero — what a session with no video already means. */
+  it("falls back to t_mono zero when no lane origin is supplied", () => {
+    const g = graph([sourcedNode("n0", [app("Mail")], [{ sessionId: "s1", tMono: 4500 }])], []);
+    expect(toGraphDTO(g, { sessionStart: startedAt }).nodes[0]?.sources[0]?.atSec).toBe(4.5);
+  });
+
   it("describes an edge's actions in words, with the slot's samples", () => {
     const g: Graph = {
       ...graph([node("n0"), node("n1")], []),
