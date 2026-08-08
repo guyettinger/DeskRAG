@@ -6,11 +6,14 @@
  * `graph-layout.ts` sits beside `GraphCanvas.tsx` for exactly this reason.
  */
 
-import type {
-  KeyframeMarkerDTO,
-  SessionTracksDTO,
-  TrackDensityDTO,
-  TrackTone,
+import {
+  TRACK_GROUPS,
+  type KeyframeMarkerDTO,
+  type SessionTracksDTO,
+  type TrackDensityDTO,
+  type TrackGroup,
+  type TrackLaneDTO,
+  type TrackTone,
 } from "@shared/types";
 
 /**
@@ -119,6 +122,13 @@ export interface SpanRects {
   widthPct: number;
   /** The hit target in px, padded to `minHitPx`. Null until the axis is measured. */
   hit: { leftPx: number; widthPx: number } | null;
+  /**
+   * The signal began before the axis does, or ran past its end, and the bar has
+   * been cut to fit. The renderer draws a notched edge — never a plain one, or
+   * the cut reads as the signal's real boundary.
+   */
+  clippedStart: boolean;
+  clippedEnd: boolean;
 }
 
 /**
@@ -133,6 +143,16 @@ export interface SpanRects {
  *
  * The target is CLAMPED into the axis: centred on a span at t=0 it would hang
  * into the title gutter, which is the transport's column.
+ *
+ * THE BAR IS CLAMPED TOO, and that is not a retreat from the extent rule above.
+ * Lane offsets are measured from the video's first frame, so a signal recorded
+ * before ffmpeg produced one has a NEGATIVE start — measured on a real session,
+ * the `action` and `task` lanes began at −1.9s and painted 57px across the lane
+ * titles. The part outside the axis is not merely inconvenient, it is
+ * unrepresentable: there is no pixel that means "before zero". So the bar is cut
+ * to the axis and the cut is DECLARED (`clippedStart` / `clippedEnd`) for the
+ * renderer to notch, which is the same disclosure the rail already makes when it
+ * distinguishes recorded silence from no coverage at all.
  */
 export function spanRects(
   startSec: number,
@@ -142,15 +162,110 @@ export function spanRects(
   minHitPx: number,
 ): SpanRects {
   const frac = totalSec > 0 ? 1 / totalSec : 0;
-  const leftPct = startSec * frac * 100;
-  const widthPct = Math.max(0, (endSec - startSec) * frac * 100);
-  if (axisWidth <= 0) return { leftPct, widthPct, hit: null };
+  const clippedStart = startSec < 0;
+  const clippedEnd = endSec > totalSec;
+  // Ordered max-then-min so a span lying entirely off the axis collapses to zero
+  // width at the edge it fell off, rather than inverting into a negative bar.
+  const start = Math.min(Math.max(startSec, 0), totalSec);
+  const end = Math.min(Math.max(endSec, start), totalSec);
 
-  const left = startSec * frac * axisWidth;
-  const width = Math.max(0, (endSec - startSec) * frac * axisWidth);
+  const leftPct = start * frac * 100;
+  const widthPct = Math.max(0, (end - start) * frac * 100);
+  if (axisWidth <= 0) return { leftPct, widthPct, hit: null, clippedStart, clippedEnd };
+
+  const left = start * frac * axisWidth;
+  const width = Math.max(0, (end - start) * frac * axisWidth);
   const widthPx = Math.max(width, minHitPx);
   const leftPx = Math.max(0, Math.min(axisWidth - widthPx, left + width / 2 - widthPx / 2));
-  return { leftPct, widthPct, hit: { leftPx, widthPx } };
+  return { leftPct, widthPct, hit: { leftPx, widthPx }, clippedStart, clippedEnd };
+}
+
+/**
+ * How much signal was recorded BEFORE the axis begins, in seconds.
+ *
+ * Zero when nothing precedes it. Offsets are measured from the video's first
+ * frame, and capture starts before ffmpeg delivers one, so a real session
+ * routinely carries a second or two of events with negative offsets. That time
+ * cannot be drawn — it is off the axis by construction — so the ruler names it
+ * instead. Reported from the DTO rather than the store because it is exactly
+ * what the clipped bars are about to show, and the two must agree.
+ */
+export function preRollSec(lanes: readonly TrackLaneDTO[]): number {
+  let earliest = 0;
+  for (const lane of lanes) {
+    for (const s of lane.spans ?? []) if (s.startSec < earliest) earliest = s.startSec;
+    for (const m of lane.marks ?? []) if (m.atSec < earliest) earliest = m.atSec;
+    for (const t of lane.thumbs ?? []) if (t.atSec < earliest) earliest = t.atSec;
+  }
+  return earliest < 0 ? -earliest : 0;
+}
+
+export interface RulerTick {
+  atSec: number;
+  label: string;
+}
+
+/**
+ * Nice labelled ticks for the shared time ruler.
+ *
+ * The step comes from a fixed ladder rather than `totalSec / n`, so the numbers
+ * a reader sees are the ones they would have chosen — :05, :10, :15 — and they
+ * do not renumber into arbitrary values as the window resizes. Only the DENSITY
+ * of ticks changes with width; a tick that exists at one width sits at the same
+ * second at every other. Sub-second steps keep a tenth so two ticks never print
+ * the same label.
+ */
+const TICK_LADDER = [0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600];
+
+export function rulerTicks(totalSec: number, axisWidth: number, minGapPx = 88): RulerTick[] {
+  if (totalSec <= 0 || axisWidth <= 0) return [];
+  const minStep = (minGapPx / axisWidth) * totalSec;
+  const step = TICK_LADDER.find((s) => s >= minStep) ?? TICK_LADDER[TICK_LADDER.length - 1]!;
+  const out: RulerTick[] = [];
+  // Count in integers: accumulating `at += step` drifts on 0.1, which is exactly
+  // the floating-point trap `thumbPlacement` and `Path.curve` both document.
+  for (let i = 0; i * step <= totalSec + 1e-9; i++) {
+    const atSec = i * step;
+    out.push({ atSec, label: tickLabel(atSec, step) });
+  }
+  return out;
+}
+
+function tickLabel(sec: number, step: number): string {
+  const whole = Math.floor(sec);
+  const mm = Math.floor(whole / 60);
+  const ss = String(whole % 60).padStart(2, "0");
+  // A tenth only where the step needs one — otherwise consecutive sub-second
+  // ticks would print the same string.
+  const frac = step < 1 ? `.${Math.round((sec - whole) * 10)}` : "";
+  return `${mm}:${ss}${frac}`;
+}
+
+export interface LaneBand {
+  id: TrackGroup;
+  title: string;
+  lanes: TrackLaneDTO[];
+  /** How many of them are legitimately empty — shown on a collapsed band. */
+  emptyCount: number;
+}
+
+/**
+ * Lanes gathered into their bands, in `TRACK_GROUPS` order.
+ *
+ * A band with no lanes is dropped rather than rendered empty: an absent band
+ * says nothing, whereas an empty LANE says why it is empty, which is the payload.
+ * Within a band, `buildSessionTracks`'s order is preserved untouched.
+ */
+export function groupLanes(lanes: readonly TrackLaneDTO[]): LaneBand[] {
+  return TRACK_GROUPS.map(({ id, title }) => {
+    const inBand = lanes.filter((l) => l.group === id);
+    return {
+      id,
+      title,
+      lanes: inBand,
+      emptyCount: inBand.filter((l) => l.emptyReason !== null).length,
+    };
+  }).filter((band) => band.lanes.length > 0);
 }
 
 function timecodeShort(sec: number): string {
@@ -222,6 +337,11 @@ export interface ReadoutOptions {
  * laid out rather than joined, because the single line this replaced truncated
  * exactly when it had the most to say: a caption-length keyframe label and five
  * lane values do not fit on one line.
+ *
+ * EVERY lane is resolved, including those in a collapsed band. Collapsing is a
+ * choice about how much of the PLOT to show; the question this card answers is
+ * unchanged by it, and a card that silently dropped rows would make collapsing a
+ * band quietly lose evidence.
  */
 export function readoutAt(
   tracks: SessionTracksDTO,

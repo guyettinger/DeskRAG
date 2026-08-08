@@ -274,6 +274,31 @@ export type TrackTone =
 
 export type TrackShape = "density" | "span" | "mark" | "thumb";
 
+/**
+ * Which band of the rail a lane belongs to, so sixteen lanes can be collapsed to
+ * the few a reader currently cares about.
+ *
+ * Named for the SIGNAL each lane comes from, never for its shape: `apps` and
+ * `keyframes` are both "screen" though one is a span and one a thumbnail,
+ * because what a reader collapses is "I am not looking at the screen right now"
+ * — not "I am not looking at spans". A shape-keyed grouping would scatter one
+ * question across three bands.
+ *
+ * Required on `TrackLaneDTO` rather than optional, for the same reason
+ * `showLabels` is: the compiler then finds every builder and every test fixture,
+ * so a new lane cannot silently land in a default band.
+ */
+export type TrackGroup = "screen" | "segments" | "input" | "audio" | "marks";
+
+/** Band order and display names. The rail renders bands in THIS order. */
+export const TRACK_GROUPS: readonly { id: TrackGroup; title: string }[] = [
+  { id: "screen", title: "screen" },
+  { id: "segments", title: "segments" },
+  { id: "audio", title: "audio" },
+  { id: "input", title: "input" },
+  { id: "marks", title: "marks" },
+];
+
 export interface TrackSpanDTO {
   startSec: number;
   endSec: number;
@@ -320,6 +345,8 @@ export interface TrackLaneDTO {
   id: string;
   title: string;
   shape: TrackShape;
+  /** Which collapsible band of the rail this lane sits in. See `TrackGroup`. */
+  group: TrackGroup;
   /**
    * Whether this lane's spans may paint their label into the bar.
    *

@@ -3,8 +3,12 @@ import type { TrackLaneDTO } from "@shared/types";
 import { keyframeLabel } from "../api.js";
 import { densityPath, labelFits, spanRects, thumbPlacement } from "./track-view.js";
 
-/** Matches `.tracks__plot`'s height, so a one-unit inset is one pixel. */
-const DENSITY_H = 48;
+/**
+ * Matches `.tracks__plot`'s height for a density lane, so a one-unit inset in
+ * `densityPath` is one pixel. Density lanes keep the taller row: a trace needs
+ * vertical room to be a trace rather than a line.
+ */
+const DENSITY_H = 30;
 /**
  * Thumbnail width in PIXELS — 16:9 against the 42px image `.tracks__thumb`
  * draws. It used to be a fraction duplicated as a percentage in the stylesheet,
@@ -43,10 +47,15 @@ const thumbLeft = (sec: number, totalSec: number, axisWidth: number): number => 
  */
 export function TrackLane(props: Props): React.JSX.Element {
   const { lane } = props;
+  // An empty lane keeps its row but not its height. Absence still has to be
+  // VISIBLE — "no scrolling recorded" is the payload, and a lane that vanished
+  // would make a signal that was never captured indistinguishable from one this
+  // build does not know about. It just stops costing as much as a lane with data.
+  const empty = lane.emptyReason !== null;
   return (
-    <div className="tracks__lane" data-shape={lane.shape}>
+    <div className="tracks__lane" data-shape={lane.shape} data-empty={empty || undefined}>
       <div className="tracks__gutter">
-        <span className="tracks__title">{lane.title}</span>
+        <span className="tracks__title mono">{lane.title}</span>
         {lane.warning && (
           <span className="tracks__warn" title={lane.warning}>
             !
@@ -54,7 +63,7 @@ export function TrackLane(props: Props): React.JSX.Element {
         )}
       </div>
       <div className="tracks__plot">
-        {lane.emptyReason ? (
+        {empty ? (
           <span className="tracks__empty">{lane.emptyReason}</span>
         ) : (
           <LaneBody {...props} />
@@ -72,16 +81,26 @@ function LaneBody({ lane, totalSec, axisWidth, onSeek, onInspect }: Props): Reac
       <>
         {lane.spans?.map((s, i) => {
           const r = spanRects(s.startSec, s.endSec, totalSec, axisWidth, MIN_HIT_PX);
+          // A span lying entirely off the axis draws nothing. `preRollSec` on the
+          // ruler is what reports that it existed — a zero-width bar could not.
+          if (r.widthPct <= 0) return null;
           // The bar carries the signal's TRUE extent; the hit target is a
           // separate padded rect, because widening the bar to make it clickable
           // is the overstatement this rail was rebuilt to remove.
+          //
+          // The label is measured against the VISIBLE width, not the recorded
+          // duration: a clipped bar has less room than its span claims, and
+          // measuring the claim is how a label ends up wider than its box.
+          const visibleSec = (r.widthPct / 100) * totalSec;
           const showLabel =
-            lane.showLabels && labelFits(s.endSec - s.startSec, totalSec, axisWidth, s.label);
+            lane.showLabels && labelFits(visibleSec, totalSec, axisWidth, s.label);
           return (
             <React.Fragment key={i}>
               <div
                 className="tracks__span"
                 data-tone={s.tone}
+                data-clip-start={r.clippedStart || undefined}
+                data-clip-end={r.clippedEnd || undefined}
                 style={{ left: `${r.leftPct}%`, width: `${r.widthPct}%` }}
               >
                 {showLabel && <span className="tracks__span-label">{s.label}</span>}

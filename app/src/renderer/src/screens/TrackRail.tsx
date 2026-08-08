@@ -1,15 +1,31 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { MediaPlayerInstance } from "@vidstack/react";
-import type { SessionTracksDTO } from "@shared/types";
+import type { SessionTracksDTO, TrackGroup } from "@shared/types";
 import { api, keyframeLabel } from "../api.js";
 import { TrackLane } from "./TrackLane.js";
-import { readoutAt } from "./track-view.js";
+import { groupLanes, preRollSec, readoutAt, rulerTicks } from "./track-view.js";
 
 /** How far from the cursor a point event still counts as "here". */
 const HOVER_TOL_PX = 8;
-/** Card width + margin, for deciding which side of the cursor it sits on. */
-const TIP_W = 336;
-const TIP_H = 260;
+/** Breathing room between the hover card and the window edge. */
+const TIP_MARGIN = 8;
+/** Distance from the cursor to the card, so the card never sits under it. */
+const TIP_OFFSET = 14;
+
+/** Rail height, in px: the floor, the default, and the room the monitor keeps. */
+const RAIL_MIN = 104;
+/**
+ * Grip + ruler + a band header and roughly six data lanes — enough that the
+ * banding is visible as a structure rather than as a single header you have to
+ * scroll past to discover. Measured against a 1600x1000 window, this still
+ * leaves the frame ~390px of height, against the 197px it had before any of
+ * this. The reader moves it from here.
+ */
+const RAIL_DEFAULT = 262;
+const MONITOR_FLOOR = 260;
+/** One preference across sessions — which signals you watch is not per-recording. */
+const RAIL_H_KEY = "deskrag.rail.height";
+const BANDS_KEY = "deskrag.rail.collapsed";
 
 interface Props {
   sessionId: string;
@@ -38,6 +54,33 @@ interface Hover {
   y: number;
 }
 
+function timecodeAt(sec: number): string {
+  const s = Math.max(0, sec);
+  const mm = Math.floor(s / 60);
+  const ss = Math.floor(s % 60);
+  const t = Math.floor((s - Math.floor(s)) * 10);
+  return `${mm}:${String(ss).padStart(2, "0")}.${t}`;
+}
+
+/** A stored preference, or the fallback when nothing is stored or it is junk. */
+function readStored<T>(key: string, fallback: T, parse: (raw: string) => T | null): T {
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (raw === null) return fallback;
+    return parse(raw) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeStored(key: string, value: string): void {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    /* a full or disabled store costs a preference, never the screen */
+  }
+}
+
 /**
  * Every recorded signal on one time axis, beneath the player. Replaces the
  * keyframe filmstrip, so the screen has exactly one time axis.
@@ -50,9 +93,11 @@ interface Hover {
  * the scrubber above and the lanes below are one axis structurally rather than
  * by tuning.
  *
- * It scrolls vertically, because fifteen 48px lanes do not fit above a video
- * frame in a 900x600 window and cutting lanes would sacrifice the capture-audit
- * reading to the navigation one.
+ * Three things keep sixteen lanes readable in the height a video frame leaves:
+ * lanes are gathered into COLLAPSIBLE BANDS, an empty lane keeps its row but not
+ * its height, and the rail itself is DRAGGABLE — the reader decides how the
+ * stage is split rather than a `34vh` cap deciding it for them. The monitor
+ * keeps a floor throughout, so the frame can never be dragged away entirely.
  */
 export function TrackRail({
   sessionId,
@@ -66,6 +111,22 @@ export function TrackRail({
   const [axisWidth, setAxisWidth] = useState(0);
   const axisRef = useRef<HTMLDivElement>(null);
   const headRef = useRef<HTMLDivElement>(null);
+  const knobRef = useRef<HTMLDivElement>(null);
+  const clockRef = useRef<HTMLSpanElement>(null);
+  const railRef = useRef<HTMLDivElement>(null);
+
+  const [railH, setRailH] = useState(() =>
+    readStored(RAIL_H_KEY, RAIL_DEFAULT, (raw) => {
+      const n = Number(raw);
+      return Number.isFinite(n) && n >= RAIL_MIN ? n : null;
+    }),
+  );
+  const [collapsed, setCollapsed] = useState<ReadonlySet<TrackGroup>>(() =>
+    readStored(BANDS_KEY, new Set<TrackGroup>(), (raw) => {
+      const parsed: unknown = JSON.parse(raw);
+      return Array.isArray(parsed) ? new Set(parsed as TrackGroup[]) : null;
+    }),
+  );
 
   useEffect(() => {
     let live = true;
@@ -79,6 +140,18 @@ export function TrackRail({
   }, [sessionId]);
 
   const totalSec = tracks?.totalSec ?? 0;
+  const bands = useMemo(() => (tracks ? groupLanes(tracks.lanes) : []), [tracks]);
+  const preRoll = useMemo(() => (tracks ? preRollSec(tracks.lanes) : 0), [tracks]);
+  const ticks = useMemo(() => rulerTicks(totalSec, axisWidth), [totalSec, axisWidth]);
+  /**
+   * Room for the pre-roll's words before the first tick after 0:00.
+   *
+   * 148px is that sentence at 10px mono. Below it the label is dropped rather
+   * than overlapped — the ruler is the one place in this rail where two strings
+   * can land on the same pixels, and they did at a 1000px window.
+   */
+  const preRollLabelFits =
+    ticks.length > 1 && (ticks[1]!.atSec / totalSec) * axisWidth >= 148;
 
   // The axis is measured, not assumed: the thumbnail spacing rule and the hover
   // tolerance are both PIXEL facts, and the rail is resizable.
@@ -92,7 +165,7 @@ export function TrackRail({
   }, [tracks]);
 
   // The playhead is written IMPERATIVELY. `player.subscribe` fires every
-  // animation frame; routing it through state would re-render fifteen lanes at
+  // animation frame; routing it through state would re-render sixteen lanes at
   // 60fps. KeyframeStrip already encoded this lesson by setting state only when
   // the nearest keyframe changed.
   //
@@ -103,10 +176,17 @@ export function TrackRail({
     const p = player?.current;
     if (!p || mediaSec <= 0) return;
     return p.subscribe(({ currentTime }) => {
-      const el = headRef.current;
-      if (el) el.style.transform = `translateX(${(currentTime / mediaSec) * 100}%)`;
+      const at = `${(currentTime / mediaSec) * 100}%`;
+      if (headRef.current) headRef.current.style.transform = `translateX(${at})`;
+      if (knobRef.current) knobRef.current.style.transform = `translateX(${at})`;
+      // The clock reads in LANE seconds, like everything else in this rail —
+      // media time scaled onto the axis, never printed raw beside lane values.
+      const el = clockRef.current;
+      if (el && !el.dataset.hovering) {
+        el.textContent = timecodeAt((currentTime / mediaSec) * totalSec);
+      }
     });
-  }, [player, mediaSec]);
+  }, [player, mediaSec, totalSec]);
 
   /** Lane seconds under the cursor, or null when it is off the axis (the gutter). */
   const secAt = (clientX: number): number | null => {
@@ -154,20 +234,135 @@ export function TrackRail({
     });
   }, [tracks, hover, axisWidth, totalSec]);
 
+  const toggleBand = useCallback((id: TrackGroup): void => {
+    setCollapsed((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      writeStored(BANDS_KEY, JSON.stringify([...next]));
+      return next;
+    });
+  }, []);
+
+  /**
+   * Drag the rail taller or shorter.
+   *
+   * The ceiling is measured from the stage at grab time rather than stored as a
+   * viewport fraction: what the rail may take is whatever is left after the
+   * monitor's floor, and that depends on the window, not on a guess. Pointer
+   * capture is what keeps the drag alive when the cursor outruns the 8px grip.
+   */
+  const onGrab = useCallback((e: React.PointerEvent<HTMLDivElement>): void => {
+    const rail = railRef.current;
+    const stage = rail?.parentElement;
+    if (!rail || !stage) return;
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = rail.getBoundingClientRect().height;
+    const ceiling = Math.max(RAIL_MIN, stage.getBoundingClientRect().height - MONITOR_FLOOR);
+    const el = e.currentTarget;
+    el.setPointerCapture(e.pointerId);
+
+    const move = (ev: PointerEvent): void => {
+      // Upward drag grows the rail: it is anchored to the bottom of the stage.
+      const next = Math.round(Math.min(ceiling, Math.max(RAIL_MIN, startH - (ev.clientY - startY))));
+      setRailH(next);
+    };
+    const up = (): void => {
+      el.releasePointerCapture(e.pointerId);
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerup", up);
+      setRailH((h) => {
+        writeStored(RAIL_H_KEY, String(h));
+        return h;
+      });
+    };
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up);
+  }, []);
+
   if (!tracks) return <div className="tracks tracks--note">reading signals…</div>;
   if (totalSec <= 0) {
     return <div className="tracks tracks--note">this recording has no measurable span</div>;
   }
 
   return (
-    <div className="tracks">
+    <div className="tracks" ref={railRef} style={{ height: railH }}>
+      <div
+        className="tracks__grip"
+        onPointerDown={onGrab}
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="Resize timeline"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowUp") setRailH((h) => h + 24);
+          else if (e.key === "ArrowDown") setRailH((h) => Math.max(RAIL_MIN, h - 24));
+          else return;
+          e.preventDefault();
+        }}
+      >
+        <span className="tracks__grip-bar" />
+      </div>
+
+      {/* The ruler: the one place the axis is numbered. It sits OUTSIDE the
+          scroller so the numbers stay put while the lanes scroll under them —
+          a ruler that scrolled away would leave the bars unmeasurable. */}
+      <div className="tracks__ruler">
+        <div className="tracks__ruler-gutter">
+          <span className="tracks__clock mono" ref={clockRef}>
+            {timecodeAt(0)}
+          </span>
+        </div>
+        <div className="tracks__ruler-axis" data-preroll={preRoll > 0.05 || undefined}>
+          {ticks.map((t) => (
+            <span
+              key={t.atSec}
+              className="tracks__tick"
+              style={{ left: `${(t.atSec / totalSec) * 100}%` }}
+            >
+              <span className="tracks__tick-label mono">{t.label}</span>
+            </span>
+          ))}
+          {player && <div className="tracks__knob" ref={knobRef} />}
+          {/* Signals recorded before the first video frame exist and cannot be
+              drawn — there is no pixel meaning "before zero". Saying so is the
+              same disclosure the audio lane makes distinguishing silence from
+              no coverage. */}
+          {preRoll > 0.05 && (
+            <span
+              className="tracks__preroll mono"
+              title={`Capture ran ${preRoll.toFixed(1)}s before the first video frame. Signals from that stretch are cut at 0 and their bars notched.`}
+            >
+              ◀{/* The words are withheld when they would not fit before the
+                    first tick — the same rule `labelFits` applies to every bar
+                    in this rail, applied to the ruler. At 1000px wide this text
+                    ran straight through the `0:10` label. The marker and its
+                    tooltip always remain, so the fact is never lost. */}
+              {preRollLabelFits && <> {preRoll.toFixed(1)}s before frame one</>}
+            </span>
+          )}
+        </div>
+      </div>
+
       <div
         className="tracks__body"
         onMouseMove={(e) => {
           const sec = secAt(e.clientX);
           setHover(sec === null ? null : { sec, x: e.clientX, y: e.clientY });
+          const el = clockRef.current;
+          if (el) {
+            if (sec === null) delete el.dataset.hovering;
+            else {
+              el.dataset.hovering = "1";
+              el.textContent = timecodeAt(sec);
+            }
+          }
         }}
-        onMouseLeave={() => setHover(null)}
+        onMouseLeave={() => {
+          setHover(null);
+          if (clockRef.current) delete clockRef.current.dataset.hovering;
+        }}
         onClick={(e) => {
           // A keyframe handles its own click and stops there; anything else on
           // the axis is a seek. The gutter is not on the axis, so it is neither.
@@ -180,16 +375,47 @@ export function TrackRail({
             playhead its height: an abspos child of the SCROLLER would be sized
             to the client box and stop at the fold once the rail is scrolled. */}
         <div className="tracks__inner">
-          {tracks.lanes.map((lane) => (
-            <TrackLane
-              key={lane.id}
-              lane={lane}
-              totalSec={totalSec}
-              axisWidth={axisWidth}
-              onSeek={player ? seek : null}
-              onInspect={onInspect}
-            />
-          ))}
+          {bands.map((band) => {
+            const open = !collapsed.has(band.id);
+            return (
+              <React.Fragment key={band.id}>
+                <button
+                  className="tracks__band"
+                  aria-expanded={open}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleBand(band.id);
+                  }}
+                >
+                  <span className="tracks__band-caret" aria-hidden="true">
+                    {open ? "▾" : "▸"}
+                  </span>
+                  <span className="tracks__band-title mono">{band.title}</span>
+                  {/* Collapsed, the band says how much it is holding back.
+                      Open, it flags only what is empty — the lanes themselves
+                      say the rest. */}
+                  <span className="tracks__band-count mono">
+                    {open
+                      ? band.emptyCount > 0
+                        ? `${band.emptyCount} empty`
+                        : ""
+                      : `${band.lanes.length} lanes`}
+                  </span>
+                </button>
+                {open &&
+                  band.lanes.map((lane) => (
+                    <TrackLane
+                      key={lane.id}
+                      lane={lane}
+                      totalSec={totalSec}
+                      axisWidth={axisWidth}
+                      onSeek={player ? seek : null}
+                      onInspect={onInspect}
+                    />
+                  ))}
+              </React.Fragment>
+            );
+          })}
           <div className="tracks__axis" ref={axisRef}>
             {player && <div className="tracks__playhead" ref={headRef} />}
             {hover && (
@@ -219,24 +445,52 @@ function ReadoutCard({
   hover: Hover;
   readout: ReturnType<typeof readoutAt>;
 }): React.JSX.Element | null {
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+
+  // MEASURED, never guessed. This flipped on two constants — a 336x260 estimate
+  // — and the card is whatever sixteen lanes of clamped prose come to: measured
+  // ~550px, so it ran off the bottom of the window and cut the last lanes off
+  // exactly when the reader had asked for all of them. Clamping into the
+  // viewport needs the real height, and the real height is only known after
+  // layout. `useLayoutEffect` so the correction lands before paint.
+  useLayoutEffect(() => {
+    const el = cardRef.current;
+    if (!el) return;
+    const { width, height } = el.getBoundingClientRect();
+    const right = hover.x + TIP_OFFSET + width;
+    setPos({
+      left:
+        right > window.innerWidth - TIP_MARGIN
+          ? Math.max(TIP_MARGIN, hover.x - TIP_OFFSET - width)
+          : hover.x + TIP_OFFSET,
+      // Clamped rather than flipped: a card taller than the space on either
+      // side has no good anchor, so it is pinned inside the window instead.
+      top: Math.max(
+        TIP_MARGIN,
+        Math.min(hover.y + TIP_OFFSET, window.innerHeight - height - TIP_MARGIN),
+      ),
+    });
+  }, [hover.x, hover.y, readout]);
+
   if (readout.rows.length === 0) return null;
-  const flipX = hover.x + TIP_W > window.innerWidth;
-  const flipY = hover.y + TIP_H > window.innerHeight;
   return (
     <div
       className="tracks__tip"
+      ref={cardRef}
       style={{
-        left: flipX ? undefined : hover.x + 14,
-        right: flipX ? window.innerWidth - hover.x + 14 : undefined,
-        top: flipY ? undefined : hover.y + 14,
-        bottom: flipY ? window.innerHeight - hover.y + 14 : undefined,
+        left: pos?.left ?? hover.x + TIP_OFFSET,
+        top: pos?.top ?? hover.y + TIP_OFFSET,
+        // Hidden for the one frame between mount and measurement, so the card
+        // never appears at an unclamped position and jumps.
+        visibility: pos ? undefined : "hidden",
       }}
     >
       <div className="tracks__tip-head mono">{readout.timecode}</div>
       <div className="tracks__tip-rows">
         {readout.rows.map((row) => (
           <React.Fragment key={row.laneId}>
-            <span className="tracks__tip-title">{row.title}</span>
+            <span className="tracks__tip-title mono">{row.title}</span>
             <span className="tracks__tip-value" data-tone={row.tone ?? undefined}>
               {row.text}
             </span>

@@ -415,7 +415,7 @@ describe("audioLanes", () => {
 });
 
 describe("buildSessionTracks", () => {
-  it("puts the lanes in reading order: screen, attention, index, hands, sound", () => {
+  it("puts the lanes in BAND order, so the rail needs no separate sort", () => {
     const dto = buildSessionTracks({
       ...input([ev("focus_change", 0, { data: { app: "TextEdit" } })], {
         segments: [seg("a1", "action", 0, 4000)],
@@ -427,22 +427,49 @@ describe("buildSessionTracks", () => {
       "frames",
       "apps",
       "web",
-      "seg-action",
-      "transcript",
-      "caption",
       "ax",
+      "seg-action",
+      "caption",
+      "transcript",
+      "audio-none",
       "typing",
       "clicks",
-      "idle",
       "scroll",
       "mouse-speed",
       "mouse-xy",
-      "audio-none",
+      "idle",
       "markers",
     ]);
     expect(dto.sessionId).toBe("s1");
     expect(dto.totalSec).toBe(10);
     expect(dto.anchoredToVideo).toBe(true);
+  });
+
+  it("stamps every lane with a band, and emits them already gathered", () => {
+    const dto = buildSessionTracks({
+      ...input([ev("focus_change", 0, { data: { app: "TextEdit" } })], {
+        segments: [seg("a1", "action", 0, 4000)],
+      }),
+      sessionId: "s1",
+      anchoredToVideo: true,
+    });
+    expect(dto.lanes.every((l) => typeof l.group === "string")).toBe(true);
+    expect(dto.lanes.find((l) => l.id === "frames")?.group).toBe("screen");
+    expect(dto.lanes.find((l) => l.id === "seg-action")?.group).toBe("segments");
+    expect(dto.lanes.find((l) => l.id === "typing")?.group).toBe("input");
+    expect(dto.lanes.find((l) => l.id === "transcript")?.group).toBe("audio");
+    expect(dto.lanes.find((l) => l.id === "markers")?.group).toBe("marks");
+
+    // Each band is CONTIGUOUS. The rail renders bands in order without sorting,
+    // so a lane escaping its run would silently render under the wrong header.
+    const seen = new Set<string>();
+    let last: string | null = null;
+    for (const lane of dto.lanes) {
+      if (lane.group === last) continue;
+      expect(seen.has(lane.group)).toBe(false);
+      seen.add(lane.group);
+      last = lane.group;
+    }
   });
 
   it("renders an empty rail rather than dividing by zero on a session with no span", () => {

@@ -16,9 +16,40 @@
 import React, { useEffect, useMemo, useState } from "react";
 import type { FlowsDTO } from "@shared/types";
 import { api } from "../api.js";
+import { GhostLottie } from "../brand/GhostLottie.js";
 import { GraphCanvas, type Highlight, type Selection } from "./GraphCanvas.js";
 import { InspectDrawer } from "./InspectDrawer.js";
 import { RouteList } from "./RouteList.js";
+
+/**
+ * The same head every other screen carries — this one had none at all, so the
+ * screen opened straight onto a stats chip and named itself nowhere.
+ *
+ * Shared by the populated and empty states rather than written twice: an empty
+ * Flows still has to say what Flows IS, which is exactly when a reader most
+ * needs telling.
+ *
+ * The copy says "a path you actually walked" because that is the screen's one
+ * real promise: a route is only ever something a recording did, never a path
+ * composed by walking the merged graph. Describing it as what the graph *can*
+ * reach would advertise flows nobody has performed.
+ */
+function FlowsHead({ children }: { children?: React.ReactNode }): React.JSX.Element {
+  return (
+    <div className="page__head flows__head">
+      <div className="flows__headtext">
+        <span className="eyebrow">Flows</span>
+        <h1>Paths through your recordings</h1>
+        <p>
+          Every session merges into one map of the states you passed through and the actions
+          between them. A route is a path you actually walked — pick one to highlight it, then
+          open the recording it came from.
+        </p>
+      </div>
+      {children}
+    </div>
+  );
+}
 
 interface Props {
   /** Jump to the Library, at this moment of this recording. */
@@ -53,10 +84,15 @@ export function FlowsScreen({ onOpenRecording }: Props): React.JSX.Element {
   if (flows === null) {
     return (
       <div className="page flows">
-        <p className="muted">
-          No trace graph yet. Record a session — or, if you have recordings already, rebuild the
-          graph from Settings.
-        </p>
+        <FlowsHead />
+        <div className="empty">
+          <GhostLottie size={104} className="empty__ghost" playing />
+          <h3>No flows yet</h3>
+          <p>
+            Record a session and its states will appear here. If you already have recordings,
+            rebuild the trace graph from Settings.
+          </p>
+        </div>
       </div>
     );
   }
@@ -81,27 +117,37 @@ export function FlowsScreen({ onOpenRecording }: Props): React.JSX.Element {
 
   return (
     <div className="page page--fill flows">
-      <div className="flows__bar">
-        <span className="chip">
-          <span className="dot" /> {graph.nodes.length} states · {graph.edges.length} actions
-        </span>
-        {route !== null && (
-          <button className="flows__route" onClick={() => setRouteId(null)}>
-            showing “{route.label}” · {route.count} recording{route.count === 1 ? "" : "s"} — clear
-          </button>
-        )}
-        {appFilter !== undefined && (
-          <button className="flows__route" onClick={() => setAppFilter(undefined)}>
-            {appFilter} only — clear
-          </button>
-        )}
-        {needsRebuild && (
-          <span className="flows__warn">
-            Built before recordings were tracked — rebuild the trace graph from Settings to link
-            these states back to their sessions.
+      {/* The counts and the active filters ride IN the head rather than in a
+          row beneath it. Two stacked header rows were doing one job, and this
+          screen pays for height in canvas: the bar cost the graph ~40px, on top
+          of the head's own ~100. */}
+      <FlowsHead>
+        <div className="flows__bar">
+          <span className="chip">
+            <span className="dot" /> {graph.nodes.length} states · {graph.edges.length} actions
           </span>
-        )}
-      </div>
+          {route !== null && (
+            <button className="flows__route" onClick={() => setRouteId(null)}>
+              showing “{route.label}” · {route.count} recording{route.count === 1 ? "" : "s"} —
+              clear
+            </button>
+          )}
+          {appFilter !== undefined && (
+            <button className="flows__route" onClick={() => setAppFilter(undefined)}>
+              {appFilter} only — clear
+            </button>
+          )}
+        </div>
+      </FlowsHead>
+
+      {/* Prose, and long — it stays a full-width row rather than being squeezed
+          into the head's right-hand cluster beside two chips. */}
+      {needsRebuild && (
+        <p className="flows__warn">
+          Built before recordings were tracked — rebuild the trace graph from Settings to link
+          these states back to their sessions.
+        </p>
+      )}
 
       <div className="flows__stage">
         <RouteList
