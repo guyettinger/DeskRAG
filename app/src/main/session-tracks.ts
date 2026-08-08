@@ -699,6 +699,8 @@ export function audioLanes(input: LaneInput): LaneBody[] {
 export interface TrackInput extends LaneInput {
   sessionId: string;
   anchoredToVideo: boolean;
+  /** See `SessionTracksDTO.clockCalibrated` — absence of a calibration row. */
+  clockCalibrated: boolean;
 }
 
 /**
@@ -742,6 +744,7 @@ export function buildSessionTracks(input: TrackInput): SessionTracksDTO {
     sessionId: input.sessionId,
     totalSec: input.totalSec,
     anchoredToVideo: input.anchoredToVideo,
+    clockCalibrated: input.clockCalibrated,
     lanes: bandedLanes(input).flatMap(([group, body]) =>
       (Array.isArray(body) ? body : [body]).map((lane) => ({ ...lane, group })),
     ),

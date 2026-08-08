@@ -274,6 +274,7 @@ describe("readoutAt", () => {
     sessionId: "s1",
     totalSec: 10,
     anchoredToVideo: true,
+      clockCalibrated: true,
     lanes: [
       {
         id: "apps",

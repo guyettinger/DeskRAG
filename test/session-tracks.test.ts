@@ -355,6 +355,7 @@ describe("showLabels", () => {
       ...input([ev("focus_change", 0, { data: { app: "Calculator" } })]),
       sessionId: "s1",
       anchoredToVideo: false,
+      clockCalibrated: true,
     });
     const labelled = tracks.lanes.filter((l) => l.showLabels).map((l) => l.id);
     expect(labelled).toEqual(["apps"]);
@@ -453,6 +454,7 @@ describe("buildSessionTracks", () => {
       }),
       sessionId: "s1",
       anchoredToVideo: true,
+      clockCalibrated: true,
     });
     expect(dto.lanes.map((l) => l.id)).toEqual([
       "frames",
@@ -483,6 +485,7 @@ describe("buildSessionTracks", () => {
       }),
       sessionId: "s1",
       anchoredToVideo: true,
+      clockCalibrated: true,
     });
     expect(dto.lanes.every((l) => typeof l.group === "string")).toBe(true);
     expect(dto.lanes.find((l) => l.id === "frames")?.group).toBe("screen");
@@ -508,6 +511,7 @@ describe("buildSessionTracks", () => {
       ...input([], { totalSec: 0 }),
       sessionId: "s1",
       anchoredToVideo: false,
+      clockCalibrated: true,
     });
     expect(dto.totalSec).toBe(0);
     expect(dto.lanes.every((l) => l.emptyReason !== null || l.shape === "span")).toBe(true);

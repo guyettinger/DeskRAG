@@ -1918,6 +1918,18 @@ select {
   cursor: help;
 }
 
+/* Recorded before the capture clock was calibrated. It sits above the ruler
+   rather than inside a lane because it is about the AXIS, not any one signal —
+   every lane on this rail is affected. Uses the well's own inset so it lines up
+   with the ruler beneath it. */
+.tracks__uncalibrated {
+  flex: none;
+  padding: var(--s1) var(--bar-pad) 0;
+  color: var(--amber);
+  font-size: var(--t-micro);
+  line-height: 1.4;
+}
+
 /* The margin gives back exactly what the slider's thumb margin takes, so this
    box and the scrubber's track are the same span of pixels. Margin, not padding:
    an abspos child resolves its percentages against the PADDING box, so padding

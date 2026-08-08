@@ -326,6 +326,17 @@ export function TrackRail({
       {/* The ruler: the one place the axis is numbered. It sits OUTSIDE the
           scroller so the numbers stay put while the lanes scroll under them —
           a ruler that scrolled away would leave the bars unmeasurable. */}
+      {/* Recorded before the capture clock existed, so its frames and audio were
+          timed by ARRIVAL rather than capture. The lanes then sit about a
+          second from the video they describe, and nothing can recover the
+          difference — the delivery latency of a past session was never stored.
+          Saying so beats a rail that looks aligned and is not. */}
+      {tracks && !tracks.clockCalibrated && (
+        <div className="tracks__uncalibrated">
+          Recorded before the capture clock was calibrated — lanes and video may
+          differ by about a second.
+        </div>
+      )}
       <div className="tracks__ruler">
         <div className="tracks__ruler-gutter">
           <span className="tracks__clock mono" ref={clockRef}>

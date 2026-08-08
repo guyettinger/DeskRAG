@@ -1077,6 +1077,10 @@ export class DeskRagService {
       totalSec,
       buckets: TRACK_BUCKETS,
       anchoredToVideo: detail.video !== null,
+      // Absence of the row is the marker: a session recorded before the
+      // device-clock bridge existed was timed by ARRIVAL, so its lanes sit
+      // about a second from the video, and the difference is unrecoverable.
+      clockCalibrated: this.store.getSessionClock(sessionId) !== undefined,
       events: this.store.getEventsBySession(sessionId),
       segments: this.store.getSegmentsBySession(sessionId),
       frames,
