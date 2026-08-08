@@ -26,7 +26,7 @@ Optional, per feature — a missing one disables exactly that feature:
 
 | Feature | Needs |
 |---|---|
-| Screen capture, audio chunks | **`ffmpeg`** on `PATH` |
+| Screen capture, audio chunks | **`ffmpeg` 5.1 or newer** on `PATH` |
 | Mouse/keyboard + focused window | **`uiohook-napi`**, **`active-win`** (optionalDependencies) |
 | Accessibility tree | **`swiftc`** (Xcode Command Line Tools) — build the sidecars with `npm run build:ax` |
 | Transcription | a **`whisper.cpp`** binary (`brew install whisper-cpp`) — the model downloads itself |
@@ -44,6 +44,14 @@ npm run build:ax   # optional: compile both macOS sidecars (native/ax-dump, nati
 > Rebuild the sidecars *and* the library together. `ax-dump`'s stdout shape is
 > parsed by `dist/`, so a `native/` built against an older `dist/` makes every
 > accessibility walk silently return nothing — no error, just empty results.
+
+> **ffmpeg must be 5.1 or newer.** The screen producer rate-limits sampling with
+> `select` so each frame keeps its own presentation timestamp, and that needs
+> `-fps_mode passthrough` on the sampling outputs — `-fps_mode` arrived in 5.1.
+> An older ffmpeg rejects the option and exits, so recording fails loudly rather
+> than producing mistimed frames. `-vsync passthrough` is the older spelling and
+> is deliberately not used: it prints a deprecation line on every run, and the
+> producer routes ffmpeg's stderr straight to the user.
 
 To run the desktop client instead of using the library directly, see
 [DeskRAGApp](../app/README.md).
