@@ -216,15 +216,31 @@ describe("FfmpegScreenProducer.args", () => {
     expect(a).toContain("pipe:4");
   });
 
-  it("passes frame-rate mode through on the sampling outputs only", () => {
+  it("passes frame-rate mode through on EVERY output", () => {
     const p = new FfmpegScreenProducer({ fps: 1, videoFps: 10, grayW: 32, grayH: 32 });
     // @ts-expect-error — exercising the private arg builder directly.
     const a: string[] = p.args("/tmp/out.mp4");
-    // select does not change the stream's frame-rate metadata, so the default
-    // CFR mode duplicates frames back up to the input rate — measured, 139
-    // where 14 were expected. One per sampling output; never on the mp4.
-    expect(a.filter((x) => x === "-fps_mode")).toHaveLength(3);
-    expect(a.indexOf("-fps_mode")).toBeGreaterThan(a.indexOf("/tmp/out.mp4"));
+    // On the three SAMPLING outputs because select does not change the stream's
+    // frame-rate metadata, so the default CFR mode duplicates frames back up to
+    // the input rate — measured, 139 where 14 were expected.
+    //
+    // And on the MP4, which is the reversal: it used to stay CFR because its
+    // only job was to be watchable. Now the rail's axis IS its timeline, and
+    // CFR compressed it against real time by a measured 1.4%.
+    expect(a.filter((x) => x === "-fps_mode")).toHaveLength(4);
+    expect(a.indexOf("-fps_mode")).toBeLessThan(a.indexOf("/tmp/out.mp4"));
+  });
+
+  it("gives the mp4 capture timestamps, so media seconds are lane seconds", () => {
+    const p = new FfmpegScreenProducer({ fps: 1, videoFps: 10, grayW: 32, grayH: 32 });
+    // @ts-expect-error — exercising the private arg builder directly.
+    const a: string[] = p.args("/tmp/out.mp4");
+    // CFR re-times the video to exactly videoFps, compressing it against real
+    // time — measured 1.4%, which is what made the rail need a rescale and put
+    // the event lanes ~0.9s from the picture they describe.
+    const mp4 = a.slice(a.indexOf("-map"), a.indexOf("/tmp/out.mp4"));
+    expect(mp4.join(" ")).toContain("-fps_mode passthrough");
+    expect(a.filter((x) => x === "-fps_mode")).toHaveLength(4);
   });
 
   it("asks for absolute device timestamps on the pts tap", () => {

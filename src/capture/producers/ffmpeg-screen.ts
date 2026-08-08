@@ -309,6 +309,13 @@ export class FfmpegScreenProducer implements Producer {
     if (videoPath) {
       out.push(
         "-map", "[vv]",
+        // VFR, carrying the CAPTURE timestamps. CFR re-times the video to
+        // exactly videoFps, which compresses it against real time — measured
+        // 1.4%, 7.100s of real time per 7.000s of media. That divergence is
+        // what forced the rail to rescale media onto its axis, and it left the
+        // event lanes ~0.9s from the picture they describe. With capture
+        // timestamps media seconds ARE lane seconds and the rescale is deleted.
+        ...PASSTHROUGH,
         "-c:v", "libx264", "-preset", preset, "-crf", String(crf),
         "-pix_fmt", "yuv420p", "-g", String(this.videoFps * 2),
         "-movflags", "+frag_keyframe+empty_moov+default_base_moof",
