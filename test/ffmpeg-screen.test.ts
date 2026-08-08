@@ -53,8 +53,12 @@ describe.skipIf(!hasFfmpeg)("FfmpegScreenProducer (real ffmpeg, lavfi testsrc)",
       keyframeBudget: new KeyframeBudget({ minIntervalMs: 0 }),
       blobStore: blobs,
     });
-    // Same two-output shape as the real screen args, but from a moving test
+    // Same THREE-output shape as the real screen args, but from a moving test
     // pattern for ~1s at 5fps (grayW/grayH default to 9x8 to match the chunker).
+    //
+    // The pts tap on pipe:4 is MANDATORY even in an override: a frame is timed
+    // by its capture timestamp now, and a graph without the tap makes the
+    // producer throw rather than quietly stamping arrival time.
     session.addProducer(
       new FfmpegScreenProducer({
         grayW: 9,
@@ -65,9 +69,11 @@ describe.skipIf(!hasFfmpeg)("FfmpegScreenProducer (real ffmpeg, lavfi testsrc)",
           "-hide_banner", "-loglevel", "error",
           "-f", "lavfi", "-i", "testsrc=size=64x48:rate=5:duration=1",
           "-filter_complex",
-          "[0:v]fps=5,split=2[g][c];[g]scale=9:8,format=gray[gg];[c]scale=64:-2[cc]",
+          "[0:v]fps=5,split=3[g][c][t];[g]scale=9:8,format=gray[gg];" +
+            "[c]scale=64:-2[cc];[t]null[tt]",
           "-map", "[gg]", "-f", "rawvideo", "-pix_fmt", "gray", "pipe:1",
           "-map", "[cc]", "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "5", "pipe:3",
+          "-map", "[tt]", "-copyts", "-f", "mkvtimestamp_v2", "pipe:4",
         ],
       }),
     );
@@ -219,6 +225,17 @@ describe("FfmpegScreenProducer.args", () => {
     // where 14 were expected. One per sampling output; never on the mp4.
     expect(a.filter((x) => x === "-fps_mode")).toHaveLength(3);
     expect(a.indexOf("-fps_mode")).toBeGreaterThan(a.indexOf("/tmp/out.mp4"));
+  });
+
+  it("asks for absolute device timestamps on the pts tap", () => {
+    const p = new FfmpegScreenProducer({ fps: 1, videoFps: 10, grayW: 32, grayH: 32 });
+    // @ts-expect-error — exercising the private arg builder directly.
+    const a: string[] = p.args("/tmp/out.mp4");
+    // -copyts is per-OUTPUT: the tap reports the device base while the mp4
+    // stays normalized to zero. Without it the tap reports media time and the
+    // bridge has nothing real to convert.
+    expect(a.slice(a.indexOf("[tt]")).join(" ")).toContain("-copyts");
+    expect(a.slice(0, a.indexOf("/tmp/out.mp4")).join(" ")).not.toContain("-copyts");
   });
 
   it("still taps pts with images off and no video", () => {
