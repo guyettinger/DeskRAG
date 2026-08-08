@@ -234,16 +234,34 @@ matching its card timecode, and seeking the video to `offsetSec` should land on
 that same picture. Until that is done this is a well-measured hypothesis, not a
 fixed bug.
 
-## Disclosed residual
+## Disclosed residual — corrected 2026-08-08 after driving the rail
 
-`video.tMonoStart` is stamped before spawn while media 0 happens **D ≈ 808ms**
-later, so frames land ~0.8s *early* against input events. That is down from
-+3.05s late and of the opposite sign, and it does not affect the goal above —
-frame-to-video agreement is exact regardless of D, since D cancels in
-`(frame.tMono − video.tMonoStart)`. Closing the last 0.8s would need a
-`mach_absolute_time` reading at the session epoch, most plausibly a
-permission-free `ax-dump --clock` mode in the grain of `--displays`/`--keymap`.
-Out of scope.
+The original text here said "frames land ~0.8s early against input events" and
+treated it as a constant footnote. **Both halves were wrong**, found by reading
+the rail on a real recording:
+
+- **It is an offset AND a rate.** Reading the recorder's own clock out of the
+  video: `media 5.000 → 06.303`, `media 12.000 → 13.403`, so
+  `true = 1.0143·media + 1.232`. The 1.4% rate means the gap GROWS — 0.93s at
+  media 5, 1.03s at media 12 — rather than sitting still.
+- **It is not a footnote, it is an incoherent axis.** Frames now sit on the
+  MEDIA clock (`lane = pts`) while events, AX walks and segments sit on `t_mono`
+  (`lane = true − V`), and the playhead uses a third rule
+  (`(media/mediaSec)·totalSec`). Measured on screen: a `focus_change` at
+  `t_mono` 3.021 draws at lane 2.647 while the video shows that moment at media
+  1.76 — the APPS lane is ~0.9s right of the picture.
+
+What this design achieved stands: frame↔video agreement is exact, and
+frame↔event shrank from ~3s to ~1s. What it did not do is put frames and events
+on a SHARED axis — it moved frames from "the event clock, 3s late" to "a
+different clock". The rail's premise is one axis, so that is a real gap, not a
+tolerance.
+
+Closing it needs the true time of media 0, which is a `mach_absolute_time`
+reading Node cannot make (`ax-dump --clock` + `-copyts`). The RATE alone is
+recoverable with no new machinery: recording arrival beside pts gives the slope
+exactly, because a constant delivery latency cancels in it. Superseded by the
+track-axis design that follows this one.
 
 ## Out of scope
 
