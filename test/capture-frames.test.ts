@@ -70,4 +70,28 @@ describe("CaptureSession frame ingestion", () => {
     expect(store.phashPrefilter(0n, 5)).toHaveLength(2);
     expect(store.getSession(sessionId)!.endedAt).not.toBeNull();
   });
+
+  it("records a keyframe walk with NO frame, because capture cannot know which", async () => {
+    // The walk starts when a frame ARRIVES, which is a whole capture latency
+    // after the pixels that frame shows (~2.2s measured on a real device). The
+    // triggering frame is therefore the wrong one by construction, and
+    // `associateFrameAx` assigns the right one at represent time. Writing the
+    // trigger here is what fed region proposal a tree from one screen and a
+    // picture from another.
+    let mono = 0;
+    const clock = MonotonicClock.start(() => mono++, () => 1000);
+    const session = new CaptureSession(store, {
+      clock,
+      keyframeBudget: new KeyframeBudget({ minIntervalMs: 0 }),
+      axSource: { query: async () => [{ role: "Button", label: "Send", x: 0, y: 0, w: 10, h: 10 }] },
+    });
+    session.addProducer(new SyntheticFrameProducer([gradient(false)]));
+
+    const sessionId = await session.start();
+    await session.stop();
+
+    const walks = store.getAxSnapshotsBySession(sessionId).filter((s) => s.reason === "keyframe");
+    expect(walks).toHaveLength(1);
+    expect(walks[0]!.frameId).toBeNull();
+  });
 });

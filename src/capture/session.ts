@@ -137,8 +137,12 @@ export class CaptureSession {
       // On a kept keyframe, snapshot the live AX tree alongside it.
       ingestFrame: async (frame) => {
         const res = await this.ingestor!.ingest(frame);
+        // NO frameId. The walk starts now, but `frame` shows the screen a whole
+        // capture latency ago (~2.2s measured), so this is not the frame the
+        // walk describes. `associateFrameAx` assigns it at represent time, when
+        // the neighbouring frames' capture times are known.
         if (res.kept && res.frameId && this.axCapturer) {
-          await this.axCapturer.capture("keyframe", res.frameId);
+          await this.axCapturer.capture("keyframe");
         }
         return res;
       },
