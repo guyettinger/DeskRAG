@@ -44,6 +44,7 @@ import type {
   SessionInsert,
   TraceGraph,
   TraceGraphSummary,
+  SessionClockRow,
   SessionRow,
   SessionSummaryRow,
   Store,
@@ -167,6 +168,14 @@ export class DualStore implements Store {
         "SELECT elements FROM ax_snapshot WHERE frame_id = ? ORDER BY t_mono DESC LIMIT 1",
       ),
       updateAxSnapshotFrame: db.prepare("UPDATE ax_snapshot SET frame_id = ? WHERE id = ?"),
+      insertSessionClock: db.prepare(
+        `INSERT INTO session_clock(session_id, device_epoch_ms, mono_epoch_ms)
+         VALUES (@sessionId, @deviceEpochMs, @monoEpochMs)
+         ON CONFLICT(session_id) DO UPDATE SET
+           device_epoch_ms = excluded.device_epoch_ms,
+           mono_epoch_ms   = excluded.mono_epoch_ms`,
+      ),
+      selectSessionClock: db.prepare("SELECT * FROM session_clock WHERE session_id = ?"),
       insertAxBoundary: db.prepare(
         `INSERT INTO ax_snapshot_boundary(snapshot_id, session_id, t_mono)
          VALUES (@snapshotId, @sessionId, @tMono)
@@ -765,6 +774,36 @@ export class DualStore implements Store {
       const row = this.hydrateAxSnapshot(r);
       return row ? [row] : [];
     });
+  }
+
+  /**
+   * The device-timebase calibration for a session.
+   *
+   * ABSENCE is meaningful: a session with no row was recorded before the clock
+   * bridge existed, so its frames and audio are on the old per-producer
+   * conventions and are NOT comparable with a calibrated recording.
+   */
+  async putSessionClock(row: SessionClockRow): Promise<void> {
+    await this.mutex.run(async () => {
+      this.stmts.insertSessionClock.run({
+        sessionId: row.sessionId,
+        deviceEpochMs: row.deviceEpochMs,
+        monoEpochMs: row.monoEpochMs,
+      });
+    });
+  }
+
+  getSessionClock(sessionId: string): SessionClockRow | undefined {
+    const r = this.stmts.selectSessionClock.get(sessionId) as
+      | { session_id: string; device_epoch_ms: number; mono_epoch_ms: number }
+      | undefined;
+    return r === undefined
+      ? undefined
+      : {
+          sessionId: r.session_id,
+          deviceEpochMs: r.device_epoch_ms,
+          monoEpochMs: r.mono_epoch_ms,
+        };
   }
 
   /**

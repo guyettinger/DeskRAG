@@ -45,6 +45,21 @@ export interface AxSnapshotRow {
   boundaryTMono?: number;
 }
 
+/**
+ * The device-timebase calibration for one session: a reading from
+ * `ax-dump --clock` paired with the `t_mono` at which it was taken.
+ *
+ * Frames and audio are stored on `t_mono` by converting their capture-device
+ * timestamps through this offset. A session with NO row predates the bridge and
+ * carries the old per-producer conventions, so its timestamps are not
+ * comparable with a calibrated recording's.
+ */
+export interface SessionClockRow {
+  sessionId: string;
+  deviceEpochMs: number;
+  monoEpochMs: number;
+}
+
 export interface TraceGraphSummary {
   id: string;
   nodes: number;
@@ -451,6 +466,10 @@ export interface Store {
   getAxSnapshotsBySession(sessionId: string): AxSnapshotRow[];
   /** Point a stored walk at the frame it describes (see `associateFrameAx`). */
   setAxSnapshotFrame(snapshotId: string, frameId: string | null): Promise<void>;
+  /** Record the device-timebase calibration for a session. */
+  putSessionClock(row: SessionClockRow): Promise<void>;
+  /** The calibration, or undefined for a session recorded before it existed. */
+  getSessionClock(sessionId: string): SessionClockRow | undefined;
 
   // session lifecycle + relational reads (capture, segment, retrieve)
 

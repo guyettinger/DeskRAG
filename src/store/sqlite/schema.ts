@@ -289,6 +289,21 @@ CREATE TABLE IF NOT EXISTS trace_slot (
   ord       INTEGER NOT NULL,
   PRIMARY KEY (graph_id, name)
 );
+
+-- The capture device's timebase, paired with the t_mono at which it was read.
+-- Frames and audio are stored on t_mono via this offset, so without it their
+-- timestamps would mean something different from every calibrated session.
+--
+-- ABSENCE IS THE MARKER: every recording made before the bridge existed has no
+-- row, which is how the rail knows to say its axis is uncalibrated instead of
+-- pretending. Adding a TABLE is the sanctioned schema move — this file runs on
+-- every open, so it appears on an existing database, while an existing table's
+-- shape can never change.
+CREATE TABLE IF NOT EXISTS session_clock (
+  session_id      TEXT PRIMARY KEY REFERENCES session(id) ON DELETE CASCADE,
+  device_epoch_ms REAL NOT NULL,         -- ax-dump --clock, CLOCK_UPTIME_RAW
+  mono_epoch_ms   REAL NOT NULL          -- clock.now() taken beside it
+);
 `;
 
 /** Pragmas applied on every connection open. WAL = single-writer + concurrent reads. */
