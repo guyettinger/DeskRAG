@@ -208,6 +208,52 @@ The real gate is a recording against a millisecond reference clock, asserting:
 2. The APPS lane transition and the video agree on screen.
 3. Audio blob spans line up with speech in the recording.
 
+## Validated on a real recording (2026-08-08)
+
+A 30s session through DeskRAGApp against a millisecond reference clock, recorder
+hidden to the tray. Readings, not claims:
+
+**1. `frame.tMono` is TRUE capture time.** This is the assertion the previous
+spec could not make — it only checked frames against the video, which both being
+wrong together would have satisfied.
+
+| frame | `t_mono` | clock should read | clock reads | error |
+| --- | --- | --- | --- | --- |
+| 12 | 13743.929 | 14:44:14.180 | 14:44:14.143 | **37ms** |
+| 20 | 21743.929 | 14:44:22.180 | 14:44:22.129 | **51ms** |
+
+Both inside one frame interval (100ms at 10fps), and not growing — 14ms of
+difference across 8 seconds is quantization. The same measurement gave **~3.2s**
+before this work.
+
+**2. The video's own timeline is true.** Media 5.000 and 12.000 read within
+**57ms** and **24ms** of prediction, where the same measurement gave 0.93s and
+1.03s *and growing* under CFR.
+
+**3. The rail is one axis.** Seeking to media 4/10/16s puts the playhead at
+20.30/50.75/81.20% of the axis — all yielding one `totalSec` of 19.70s against a
+t_mono span of 19.705s.
+
+**4. Frames are exactly regular.** 31 frames at `video.tMonoStart + N × 1000ms`
+exactly, the first ON the origin, because the origin is now the first sample's
+capture time rather than a pre-spawn stamp.
+
+**5. Audio is anchored on device time.** Three blobs spanning
+`[1.62–11.62] [11.62–21.62] [21.62–29.28]`, anchored 0.12s *before*
+`video.tMonoStart` (1.744) — the audio device opens sooner than the screen, which
+arrival stamping could never have shown.
+
+**6. Disclosure works.** The Aug 8 recording shows no notice; an Aug 6 one shows
+"Recorded before the capture clock was calibrated".
+
+### Gates, both settled
+
+- **VFR fragmented MP4 in Vidstack/Chromium: PASSES.** Finite duration
+  (19.400001), `readyState 4`, seeks to 3/9/15s land exactly. The CFR fallback
+  was not needed.
+- **`-copyts` on avfoundation audio: works, but NOT via the planned mechanism.**
+  `mkvtimestamp_v2` rejects audio streams outright. See the audio section above.
+
 ## Out of scope
 
 - Repairing existing recordings.
