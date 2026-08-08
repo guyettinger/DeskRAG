@@ -71,6 +71,29 @@ normalized — but Node's clock (`performance.now()` via `uv_hrtime`) is on
 machine. Bridging them would need a `mach_absolute_time` reading Node cannot
 make without new native code. None of it is necessary.
 
+### Validated on a real recording (2026-08-08)
+
+A 32-second session recorded through DeskRAGApp against a millisecond reference
+clock, with the recorder hidden to the tray. Readings, not claims:
+
+- **36 frames, spaced exactly 1000.000ms**, the first landing exactly on
+  `video.tMonoStart` (265.361334). Perfectly regular spacing is the signature of
+  PTS; arrival stamping cannot produce it.
+- **Keyframe ↔ video agreement is exact.** The keyframe at `t_mono` 10265.361
+  and the video frame at its media offset (10.000s) both read **11:18:32.753**
+  — identical to the millisecond. Across the whole recording, a gray reduction
+  cropped to the clock gives mean **0.08** aligned against **4.26** for a
+  deliberately +1s-misaligned control (8 points, 4–32s), a 53× separation. An
+  uncropped 32×32 comparison gives 4.17 vs 4.77 and proves nothing — the frame
+  is mostly black, so codec noise dominates and the digits are invisible to it.
+- **Against WALL time frames are 1.492s EARLY**, consistently (measured at
+  `t_mono` 10265.361 and 30265.361, both exactly +1.492s). This is the disclosed
+  `D` residual below, and it is larger here than the ~808ms measured by the
+  probe — so treat D as "order one second, machine- and run-dependent", not as a
+  constant. It cancels entirely in the frame↔video mapping, which is why the
+  agreement above is exact regardless.
+- **AX association ran:** 36 keyframe walks, all 36 linked by `associateFrameAx`.
+
 ### Why it is wider than navigation
 
 `frame.t_mono` is not only a seek target:
