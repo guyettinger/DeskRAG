@@ -11,6 +11,8 @@
 import { stat } from "node:fs/promises";
 import { ulid } from "ulid";
 import { MonotonicClock } from "../timeline/clock.js";
+import { DeviceClock } from "../timeline/device-clock.js";
+import type { DeviceClockSource } from "./env/types.js";
 import type { Store, EventInsert, Media } from "../store/types.js";
 import { EventBatcher, type BatcherOptions } from "./batcher.js";
 import { FrameIngestor } from "./frame-ingest.js";
@@ -38,6 +40,14 @@ export interface CaptureSessionOptions extends BatcherOptions {
    * keyframe-only AX has nothing to offer where it matters most.
    */
   axSource?: AxSource;
+  /**
+   * Reads the capture device's timebase (`ax-dump --clock`). REQUIRED, and
+   * deliberately not optional: a session that could not calibrate would store
+   * frame and audio timestamps meaning something different from every other
+   * session, and an optional bridge is exactly the silent second convention
+   * this exists to remove. Tests pass a `FakeDeviceClockSource`.
+   */
+  deviceClockSource: DeviceClockSource;
   /** Settle delay before a boundary-triggered AX walk (default 250ms). */
   axSettleMs?: number;
   /** Input-idle gap that counts as a dwell for AX triggering (default 3000ms). */
@@ -51,6 +61,8 @@ export interface CaptureSessionOptions extends BatcherOptions {
  */
 export class CaptureSession {
   readonly clock: MonotonicClock;
+  /** Set in start(), before anything can observe it. See the refusal there. */
+  private deviceClock: DeviceClock | undefined;
   private readonly producers: Producer[] = [];
   private readonly batcher: EventBatcher;
   private sessionId: string | undefined;
@@ -65,7 +77,9 @@ export class CaptureSession {
 
   constructor(
     private readonly store: Store,
-    private readonly opts: CaptureSessionOptions = {},
+    // No default: `deviceClockSource` is required, and a defaulted `{}` would
+    // silently reintroduce the optional bridge.
+    private readonly opts: CaptureSessionOptions,
   ) {
     this.clock = opts.clock ?? MonotonicClock.start();
     this.batcher = new EventBatcher((rows) => this.store.putEvents(rows), opts);
@@ -85,6 +99,32 @@ export class CaptureSession {
 
   async start(): Promise<string> {
     if (this.running) throw new Error("CaptureSession already started");
+
+    // Calibrate FIRST, before `running` is set and before any row exists. A
+    // session that cannot read the device timebase can only stamp frames and
+    // audio with their ARRIVAL times, which carry the whole capture latency
+    // (measured 3.05s on a real screen device) and would sit on a different
+    // clock from every event in the same recording. Refusing loudly beats
+    // storing a second, silent convention — and refusing before the session row
+    // exists keeps a failed start from looking like a recording that captured
+    // nothing.
+    let deviceClock: DeviceClock;
+    let calibration: { deviceEpochMs: number; monoEpochMs: number };
+    try {
+      const deviceMs = await this.opts.deviceClockSource.read();
+      // ONE reading of each clock: taking `now()` twice would put whatever the
+      // sidecar spawn cost between the stored pair and the one actually used.
+      const monoEpochMs = this.clock.now();
+      deviceClock = DeviceClock.calibrate(deviceMs, monoEpochMs);
+      calibration = { deviceEpochMs: deviceMs, monoEpochMs };
+    } catch (err) {
+      throw new Error(
+        `cannot read the capture clock (ax-dump --clock): ${(err as Error).message}. ` +
+          "Build the sidecar with `npm run build:ax`, or set ERAG_AX_BIN.",
+      );
+    }
+    this.deviceClock = deviceClock;
+
     this.running = true;
     this.sessionId = ulid();
     await this.store.putSession({
@@ -94,6 +134,9 @@ export class CaptureSession {
       ...(this.opts.deviceId !== undefined ? { deviceId: this.opts.deviceId } : {}),
       ...(this.opts.meta !== undefined ? { meta: this.opts.meta } : {}),
     });
+    // Persisted so a reader can tell a calibrated recording from one made
+    // before the bridge existed — absence is the marker.
+    await this.store.putSessionClock({ sessionId: this.sessionId, ...calibration });
     this.batcher.start();
     this.ingestor = new FrameIngestor(
       this.store,
@@ -132,6 +175,7 @@ export class CaptureSession {
         : undefined;
 
     const ctx: CaptureContext = {
+      deviceClock: this.deviceClock!,
       sessionId: this.sessionId,
       clock: this.clock,
       // On a kept keyframe, snapshot the live AX tree alongside it.

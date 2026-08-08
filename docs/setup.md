@@ -22,13 +22,22 @@
   index 0 is often a *virtual* device that records silence with no error at all. List
   yours with `ffmpeg -f avfoundation -list_devices true -i ""`.
 
+The **`ax-dump` sidecar is required to record at all**, not just for the
+accessibility tree. Capture reads the device timebase from `ax-dump --clock`,
+and without it a frame can only be stamped with the time it *arrived* — measured
+3.05s later than the moment it was captured. A session refuses to start rather
+than storing timestamps that mean something different from every other session.
+
+A packaged build ships the binary in `Contents/Resources`; a dev checkout builds
+it with `npm run build:ax`, which needs `swiftc` (Xcode Command Line Tools).
+
 Optional, per feature — a missing one disables exactly that feature:
 
 | Feature | Needs |
 |---|---|
 | Screen capture, audio chunks | **`ffmpeg` 5.1 or newer** on `PATH` |
 | Mouse/keyboard + focused window | **`uiohook-napi`**, **`active-win`** (optionalDependencies) |
-| Accessibility tree | **`swiftc`** (Xcode Command Line Tools) — build the sidecars with `npm run build:ax` |
+| Accessibility tree | the same **`ax-dump`** sidecar (see above) |
 | Transcription | a **`whisper.cpp`** binary (`brew install whisper-cpp`) — the model downloads itself |
 | Ollama-backed embeddings/captions | an **Ollama** daemon on localhost |
 

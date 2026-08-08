@@ -7,6 +7,7 @@ import { DualStore } from "../src/store/store.js";
 import { BlobStore } from "../src/store/blob-store.js";
 import { MonotonicClock } from "../src/timeline/clock.js";
 import { CaptureSession } from "../src/capture/session.js";
+import { FakeDeviceClockSource } from "../src/capture/env/fake.js";
 import { KeyframeBudget } from "../src/capture/keyframe-budget.js";
 import {
   FfmpegScreenProducer,
@@ -47,12 +48,17 @@ describe.skipIf(!hasFfmpeg)("FfmpegScreenProducer (real ffmpeg, lavfi testsrc)",
   it("captures real frames with grayscale pHash and a JPEG keyframe blob", async () => {
     const errors: string[] = [];
     const session = new CaptureSession(store, {
+      deviceClockSource: new FakeDeviceClockSource(0),
       clock: MonotonicClock.start(),
       keyframeBudget: new KeyframeBudget({ minIntervalMs: 0 }),
       blobStore: blobs,
     });
-    // Same two-output shape as the real screen args, but from a moving test
+    // Same THREE-output shape as the real screen args, but from a moving test
     // pattern for ~1s at 5fps (grayW/grayH default to 9x8 to match the chunker).
+    //
+    // The pts tap on pipe:4 is MANDATORY even in an override: a frame is timed
+    // by its capture timestamp now, and a graph without the tap makes the
+    // producer throw rather than quietly stamping arrival time.
     session.addProducer(
       new FfmpegScreenProducer({
         grayW: 9,
@@ -63,9 +69,11 @@ describe.skipIf(!hasFfmpeg)("FfmpegScreenProducer (real ffmpeg, lavfi testsrc)",
           "-hide_banner", "-loglevel", "error",
           "-f", "lavfi", "-i", "testsrc=size=64x48:rate=5:duration=1",
           "-filter_complex",
-          "[0:v]fps=5,split=2[g][c];[g]scale=9:8,format=gray[gg];[c]scale=64:-2[cc]",
+          "[0:v]fps=5,split=3[g][c][t];[g]scale=9:8,format=gray[gg];" +
+            "[c]scale=64:-2[cc];[t]null[tt]",
           "-map", "[gg]", "-f", "rawvideo", "-pix_fmt", "gray", "pipe:1",
           "-map", "[cc]", "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "5", "pipe:3",
+          "-map", "[tt]", "-copyts", "-f", "mkvtimestamp_v2", "pipe:4",
         ],
       }),
     );
@@ -98,6 +106,7 @@ describe.skipIf(!hasFfmpeg)("FfmpegScreenProducer (real ffmpeg, lavfi testsrc)",
   it("records a continuous MP4 alongside the sampled keyframes", async () => {
     const errors: string[] = [];
     const session = new CaptureSession(store, {
+      deviceClockSource: new FakeDeviceClockSource(0),
       clock: MonotonicClock.start(),
       keyframeBudget: new KeyframeBudget({ minIntervalMs: 0 }),
       blobStore: blobs,
@@ -207,15 +216,42 @@ describe("FfmpegScreenProducer.args", () => {
     expect(a).toContain("pipe:4");
   });
 
-  it("passes frame-rate mode through on the sampling outputs only", () => {
+  it("passes frame-rate mode through on EVERY output", () => {
     const p = new FfmpegScreenProducer({ fps: 1, videoFps: 10, grayW: 32, grayH: 32 });
     // @ts-expect-error — exercising the private arg builder directly.
     const a: string[] = p.args("/tmp/out.mp4");
-    // select does not change the stream's frame-rate metadata, so the default
-    // CFR mode duplicates frames back up to the input rate — measured, 139
-    // where 14 were expected. One per sampling output; never on the mp4.
-    expect(a.filter((x) => x === "-fps_mode")).toHaveLength(3);
-    expect(a.indexOf("-fps_mode")).toBeGreaterThan(a.indexOf("/tmp/out.mp4"));
+    // On the three SAMPLING outputs because select does not change the stream's
+    // frame-rate metadata, so the default CFR mode duplicates frames back up to
+    // the input rate — measured, 139 where 14 were expected.
+    //
+    // And on the MP4, which is the reversal: it used to stay CFR because its
+    // only job was to be watchable. Now the rail's axis IS its timeline, and
+    // CFR compressed it against real time by a measured 1.4%.
+    expect(a.filter((x) => x === "-fps_mode")).toHaveLength(4);
+    expect(a.indexOf("-fps_mode")).toBeLessThan(a.indexOf("/tmp/out.mp4"));
+  });
+
+  it("gives the mp4 capture timestamps, so media seconds are lane seconds", () => {
+    const p = new FfmpegScreenProducer({ fps: 1, videoFps: 10, grayW: 32, grayH: 32 });
+    // @ts-expect-error — exercising the private arg builder directly.
+    const a: string[] = p.args("/tmp/out.mp4");
+    // CFR re-times the video to exactly videoFps, compressing it against real
+    // time — measured 1.4%, which is what made the rail need a rescale and put
+    // the event lanes ~0.9s from the picture they describe.
+    const mp4 = a.slice(a.indexOf("-map"), a.indexOf("/tmp/out.mp4"));
+    expect(mp4.join(" ")).toContain("-fps_mode passthrough");
+    expect(a.filter((x) => x === "-fps_mode")).toHaveLength(4);
+  });
+
+  it("asks for absolute device timestamps on the pts tap", () => {
+    const p = new FfmpegScreenProducer({ fps: 1, videoFps: 10, grayW: 32, grayH: 32 });
+    // @ts-expect-error — exercising the private arg builder directly.
+    const a: string[] = p.args("/tmp/out.mp4");
+    // -copyts is per-OUTPUT: the tap reports the device base while the mp4
+    // stays normalized to zero. Without it the tap reports media time and the
+    // bridge has nothing real to convert.
+    expect(a.slice(a.indexOf("[tt]")).join(" ")).toContain("-copyts");
+    expect(a.slice(0, a.indexOf("/tmp/out.mp4")).join(" ")).not.toContain("-copyts");
   });
 
   it("still taps pts with images off and no video", () => {

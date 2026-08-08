@@ -7,6 +7,18 @@ files:
   - out/**/*
   - build/**/*
   - package.json
+# The Swift sidecar SHIPS. Capture reads the device timebase from
+# `ax-dump --clock` and a session refuses to start without it, so a packaged app
+# that could not find the binary could not record at all. Before this, `files:`
+# carried no sidecar and the only resolution was `ax-dump` on PATH — which is
+# also why accessibility capture has been dev-only.
+#
+# `npm run dist` builds it first (the binary is gitignored, so a clean checkout
+# has none). It is listed under mac.binaries below so it is signed: an unsigned
+# nested executable fails at SPAWN time under hardened runtime, not at build.
+extraResources:
+  - from: ../native/ax-dump
+    to: ax-dump
 mac:
   icon: build/icon.icns
   category: public.app-category.productivity
@@ -17,6 +29,12 @@ mac:
   hardenedRuntime: true
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
+  # The sidecar is a nested executable, so it must be signed in its own right —
+  # hardened runtime refuses to spawn an unsigned one, and that failure appears
+  # at RUN time, never at build time. Like the entitlements above, this is inert
+  # without a signing identity: verify with `codesign`, not by reading this file.
+  binaries:
+    - Contents/Resources/ax-dump
   extendInfo:
     NSMicrophoneUsageDescription: DeskRAG records microphone audio so your sessions can be transcribed and searched. Audio never leaves this machine.
     NSCameraUsageDescription: DeskRAG does not use the camera.

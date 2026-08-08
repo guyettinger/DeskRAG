@@ -7,6 +7,7 @@ import { DualStore } from "../src/store/store.js";
 import { BlobStore } from "../src/store/blob-store.js";
 import { MonotonicClock } from "../src/timeline/clock.js";
 import { CaptureSession } from "../src/capture/session.js";
+import { FakeDeviceClockSource } from "../src/capture/env/fake.js";
 import { FfmpegAudioProducer } from "../src/capture/producers/ffmpeg-audio.js";
 
 const hasFfmpeg = (() => {
@@ -61,6 +62,7 @@ describe.skipIf(!hasFfmpeg)("FfmpegAudioProducer (real ffmpeg, lavfi sine)", () 
   ): Promise<string> => {
     const errors: string[] = [];
     const session = new CaptureSession(store, {
+      deviceClockSource: new FakeDeviceClockSource(0),
       clock: MonotonicClock.start(),
       blobStore: blobs,
     });
@@ -73,9 +75,16 @@ describe.skipIf(!hasFfmpeg)("FfmpegAudioProducer (real ffmpeg, lavfi sine)", () 
         // Bypasses args(), which also skips the avfoundation device probe —
         // there is no device here to look up.
         ffmpegArgs: [
+          // Carries the anchor channel, like the real args: audio is anchored on
+          // the first reported pts, and a graph without one cannot be timed at
+          // all. lavfi has no device clock, so -copyts reports a
+          // stream-relative pts here — fine, the anchor just lands near zero.
           "-hide_banner", "-loglevel", "error",
           "-f", "lavfi", "-i", `sine=frequency=440:duration=${seconds}`,
           "-ac", "1", "-ar", String(SAMPLE_RATE),
+          "-copyts",
+          "-af",
+          "ametadata=mode=add:key=deskrag:value=1,ametadata=mode=print:file=pipe\\\\:3",
           "-f", "s16le", "pipe:1",
         ],
       }),
@@ -159,6 +168,7 @@ describe("FfmpegAudioProducer.stop", () => {
   it("waits for bytes the child has not delivered yet", async () => {
     const half = BYTES_PER_SECOND / 2; // 0.5s == exactly one chunk
     const session = new CaptureSession(store, {
+      deviceClockSource: new FakeDeviceClockSource(0),
       clock: MonotonicClock.start(),
       blobStore: blobs,
     });
@@ -172,7 +182,14 @@ describe("FfmpegAudioProducer.stop", () => {
           "-e",
           // Ignoring SIGINT for the delay models ffmpeg finalizing its output
           // instead of dying where it stands.
+          // fd 3 carries the device-time anchor, exactly as the real args do:
+          // audio that cannot be anchored has no honest timestamp and is
+          // dropped, so a stand-in has to provide one too. Written FIRST here,
+          // which is the ordering the producer must NOT depend on — the pcm
+          // arriving first is the case it buffers for.
           `process.on("SIGINT", () => {});
+           const fs = require("node:fs");
+           fs.writeSync(3, "frame:0    pts:0       pts_time:0\\ndeskrag=1\\n");
            const buf = Buffer.alloc(${half});
            process.stdout.write(buf);
            setTimeout(() => { process.stdout.write(buf); process.exit(0); }, 200);`,

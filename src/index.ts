@@ -41,6 +41,12 @@ export { hamming64, u64ToI64, i64ToU64 } from "./store/sqlite/db.js";
  * DST would otherwise reorder events against each other.
  */
 export { MonotonicClock } from "./timeline/clock.js";
+/**
+ * The capture device's timebase, bridged onto t_mono. Without it a frame can
+ * only be timed by when it ARRIVED, which is a whole capture latency after the
+ * moment it shows — measured 3.05s on a real screen device.
+ */
+export { DeviceClock } from "./timeline/device-clock.js";
 export { RingBuffer } from "./timeline/ring-buffer.js";
 export { mergeSortedByTMono, isMonotonic, type Stamped } from "./timeline/sync.js";
 
@@ -427,6 +433,16 @@ export {
   type SwiftDisplaySourceOptions,
 } from "./capture/env/swift-displays.js";
 export { SwiftKeymapSource, type SwiftKeymapSourceOptions } from "./capture/env/swift-keymap.js";
+/**
+ * The capture clock. `ax-dump --clock` reads the base avfoundation stamps
+ * capture timestamps on, which Node cannot read for itself — without it a frame
+ * can only be timed by when it arrived, measured 3.05s after it was captured.
+ */
+export {
+  SwiftDeviceClockSource,
+  type SwiftDeviceClockSourceOptions,
+} from "./capture/env/swift-clock.js";
+export { parseDeviceClock } from "./capture/env/clock.js";
 export {
   shouldSampleMove,
   modifiersOf,

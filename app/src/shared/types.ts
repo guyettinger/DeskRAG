@@ -391,6 +391,16 @@ export interface SessionTracksDTO {
   totalSec: number;
   /** Offsets are relative to the video when there is one, else to t_mono zero. */
   anchoredToVideo: boolean;
+  /**
+   * Whether this recording was captured with the device-clock bridge.
+   *
+   * REQUIRED, so the compiler finds every builder and fixture — the same
+   * rationale as `showLabels` and `TrackGroup`. False means the session predates
+   * the bridge: its frames and audio were timed by ARRIVAL, so its lanes sit
+   * about a second from the video they describe, and nothing can recover the
+   * difference because the delivery latency was never recorded.
+   */
+  clockCalibrated: boolean;
   lanes: TrackLaneDTO[];
 }
 

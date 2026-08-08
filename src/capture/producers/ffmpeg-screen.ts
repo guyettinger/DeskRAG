@@ -8,10 +8,12 @@
  *                       frame's CAPTURE TIME, which is what it is stamped with.
  * ffmpeg does the JPEG encoding, so no in-Node image codec is needed.
  *
- * A FRAME IS TIMED BY ITS PTS, NEVER BY WHEN IT ARRIVED. Arrival time measured
- * 3.05s late on a real avfoundation device (~0.8s device start-up plus ~2.2s of
- * capture-to-delivery latency), which put every stored keyframe ~3.2s behind its
- * own t_mono while the video, which keeps PTS, was exact. See SampleClock.
+ * A FRAME IS TIMED BY ITS CAPTURE TIME, NEVER BY WHEN IT ARRIVED. Arrival time
+ * measured 3.05s late on a real avfoundation device (~0.8s device start-up plus
+ * ~2.2s of capture-to-delivery latency), which put every stored keyframe ~3.2s
+ * behind its own t_mono. The tap runs with `-copyts`, so its pts is the DEVICE
+ * timestamp, and `ctx.deviceClock` converts it to t_mono — the same clock the
+ * events in this recording are on. See `src/timeline/device-clock.ts`.
  *
  * WHAT CHANGED ON SCREEN IS DECIDED HERE, by `mpdecimate` on the shared
  * sampling branch BEFORE it splits into those two. mpdecimate compares 8x8
@@ -34,7 +36,6 @@ import { FrameChunker } from "../frame-chunker.js";
 import { JpegStreamSplitter } from "../jpeg-splitter.js";
 import { TimestampLineSplitter } from "../timestamp-splitter.js";
 import { drainPairs, type PairedSample } from "../frame-pairing.js";
-import { SampleClock } from "../sample-clock.js";
 import type { CaptureContext, Producer } from "../types.js";
 
 /**
@@ -205,11 +206,16 @@ export class FfmpegScreenProducer implements Producer {
   private readonly grayQueue: Uint8Array[] = [];
   private readonly jpegQueue: Uint8Array[] = [];
   private readonly ptsQueue: number[] = [];
-  private sampleClock: SampleClock | undefined;
+  /** First sampled pts, which is media 0 — see enqueue(). */
+  private firstPtsMs: number | undefined;
   /**
-   * Whether the graph carries a pts tap. A caller-supplied `ffmpegArgs`
-   * replaces the WHOLE arg list, so it has no fd 4 — waiting for one would pair
-   * nothing and record no frames at all.
+   * Whether the graph carries a pts tap on fd 4.
+   *
+   * Always true for the graph this producer builds. A caller-supplied
+   * `ffmpegArgs` replaces the WHOLE arg list, so it is asked whether it kept
+   * one — an override WITH a tap is timed like any other recording, and an
+   * override WITHOUT one fails loudly in `enqueue` rather than silently pairing
+   * nothing and recording no frames at all.
    */
   private readonly usePts: boolean;
   private readonly grayW: number;
@@ -232,7 +238,8 @@ export class FfmpegScreenProducer implements Producer {
     this.storeImages = opts.storeImages ?? true;
     this.recordVideo = opts.recordVideo ?? true;
     this.videoFps = opts.videoFps ?? 10;
-    this.usePts = opts.ffmpegArgs === undefined;
+    this.usePts =
+      opts.ffmpegArgs === undefined || opts.ffmpegArgs.includes("mkvtimestamp_v2");
     this.chunker = new FrameChunker(this.grayW * this.grayH);
   }
 
@@ -276,7 +283,7 @@ export class FfmpegScreenProducer implements Producer {
         "-filter_complex",
         `[0:v]${sample}[d];[d]split=2[g][t];[g]${gray}[gg];[t]null[tt]`,
         "-map", "[gg]", ...PASSTHROUGH, "-f", "rawvideo", "-pix_fmt", "gray", "pipe:1",
-        "-map", "[tt]", ...PASSTHROUGH, "-f", "mkvtimestamp_v2", "pipe:4",
+        "-map", "[tt]", ...PASSTHROUGH, "-copyts", "-f", "mkvtimestamp_v2", "pipe:4",
       ];
     }
 
@@ -302,6 +309,13 @@ export class FfmpegScreenProducer implements Producer {
     if (videoPath) {
       out.push(
         "-map", "[vv]",
+        // VFR, carrying the CAPTURE timestamps. CFR re-times the video to
+        // exactly videoFps, which compresses it against real time — measured
+        // 1.4%, 7.100s of real time per 7.000s of media. That divergence is
+        // what forced the rail to rescale media onto its axis, and it left the
+        // event lanes ~0.9s from the picture they describe. With capture
+        // timestamps media seconds ARE lane seconds and the rescale is deleted.
+        ...PASSTHROUGH,
         "-c:v", "libx264", "-preset", preset, "-crf", String(crf),
         "-pix_fmt", "yuv420p", "-g", String(this.videoFps * 2),
         "-movflags", "+frag_keyframe+empty_moov+default_base_moof",
@@ -315,7 +329,7 @@ export class FfmpegScreenProducer implements Producer {
         "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", String(q), "pipe:3",
       );
     }
-    out.push("-map", "[tt]", ...PASSTHROUGH, "-f", "mkvtimestamp_v2", "pipe:4");
+    out.push("-map", "[tt]", ...PASSTHROUGH, "-copyts", "-f", "mkvtimestamp_v2", "pipe:4");
     return out;
   }
 
@@ -381,6 +395,10 @@ export class FfmpegScreenProducer implements Producer {
       const reserved = await ctx.reserveBlob("screen", "mp4");
       if (reserved) {
         videoPath = reserved.path;
+        // arrival-ok: a placeholder only. `enqueue` overwrites it with the
+        // first sample's CAPTURE time, which is media 0. It survives only when
+        // no sample ever arrives — a video with no frames has no origin worth
+        // computing, and this keeps the blob row from carrying a NaN.
         this.video = { ...reserved, tMonoStart: ctx.clock.now() };
       }
     }
@@ -399,8 +417,6 @@ export class FfmpegScreenProducer implements Producer {
       stdio: [...stdio],
     });
     this.proc = proc;
-    // The video origin is known only after reserveBlob above.
-    this.sampleClock = new SampleClock(this.video?.tMonoStart);
 
     proc.stdout?.on("data", (chunk: Buffer) => {
       for (const gray of this.chunker.push(chunk)) {
@@ -443,15 +459,28 @@ export class FfmpegScreenProducer implements Producer {
 
   private enqueue(sample: PairedSample): void {
     const ctx = this.ctx!;
-    // STAMP HERE, NOT INSIDE THE CHAIN. `tMono` is ffmpeg's capture time, which
-    // carries none of the delivery latency that arrival time did — measured
-    // 3.05s of it on a real avfoundation device. Reading any clock inside the
-    // continuation below would also add however long every earlier frame's blob
-    // write and insert took, which is unbounded and never recovers.
-    const tMono =
-      sample.ptsMs === null
-        ? ctx.clock.now()
-        : this.sampleClock!.tMonoFor(sample.ptsMs, ctx.clock.now());
+    if (sample.ptsMs === null) {
+      // An `ffmpegArgs` override replaces the whole arg list, so it can omit the
+      // tap. There is no fallback: stamping arrival here would put this
+      // recording's frames on a different clock from its events, silently.
+      throw new Error(
+        "ffmpegArgs override omits the mkvtimestamp_v2 tap on pipe:4 — a frame " +
+          "cannot be timed without it. Add the tap or drop the override.",
+      );
+    }
+    // ffmpeg's pts is the DEVICE timestamp, so this is the true capture time —
+    // not the media offset, and not arrival. The video blob is no longer an
+    // input to frame timing, which is what used to put frames on the media
+    // clock; and nothing here reads a wall clock, so the stamp cannot absorb
+    // however long earlier frames took to write.
+    const tMono = ctx.deviceClock.toTMono(sample.ptsMs);
+    // media 0 IS the first sampled frame: `select` keeps input frame 0. So the
+    // video's origin is that frame's CAPTURE time, where the old pre-spawn
+    // stamp was a guess sitting D ahead of it (measured 0.86–1.5s).
+    if (this.video && this.firstPtsMs === undefined) {
+      this.firstPtsMs = sample.ptsMs;
+      this.video.tMonoStart = tMono;
+    }
     this.ingestChain = this.ingestChain.then(async () => {
       await ctx.ingestFrame({
         tMono,
@@ -486,6 +515,9 @@ export class FfmpegScreenProducer implements Producer {
     if (this.video && this.ctx) {
       await this.ctx.commitBlob(this.video.blobId, {
         tMonoStart: this.video.tMonoStart,
+        // arrival-ok: this genuinely IS an arrival time — the moment recording
+        // stopped, after ffmpeg exited. It bounds the blob; nothing is sampled
+        // at it.
         tMonoEnd: this.ctx.clock.now(),
       });
       this.video = undefined;
