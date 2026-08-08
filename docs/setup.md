@@ -47,7 +47,9 @@ Optional, per feature — a missing one disables exactly that feature:
 npm install
 npm run typecheck
 npm test
-npm run build:ax   # optional: compile both macOS sidecars (native/ax-dump, native/ax-exec)
+npm run build:ax   # compile both macOS sidecars (native/ax-dump, native/ax-exec).
+                   # NOT optional in a dev checkout: capture reads the device
+                   # timebase from `ax-dump --clock` and refuses to start without it.
 ```
 
 > Rebuild the sidecars *and* the library together. `ax-dump`'s stdout shape is
@@ -97,6 +99,40 @@ rebuild touches the other. `sharp`, `@lancedb/lancedb`, `uiohook-napi` and
 Consequence: native version pins live in **both** `package.json` files
 (`better-sqlite3`, `sharp`, `@lancedb/lancedb` + the platform optionals) — keep
 them in sync.
+
+**Checking the split needs `new Database()`, not `require()`.** `better-sqlite3`
+loads its addon lazily at construction, so `require("better-sqlite3")` from
+`app/` succeeds under system Node whatever ABI the binary was built for — it
+proves nothing, and reads as "the Electron rebuild never ran". The mismatch only
+surfaces when a database is opened:
+
+```bash
+# From the repo root. Mind the working directory — the two copies differ only
+# by which node_modules the resolver walks into first.
+(cd app && node -e "new (require('better-sqlite3'))(':memory:')")
+# Correct: ERR_DLOPEN_FAILED, "compiled against ... NODE_MODULE_VERSION 148.
+# This version of Node.js requires NODE_MODULE_VERSION 137" — Electron's, not Node's.
+
+node -e "new (require('better-sqlite3'))(':memory:')"   # root copy: opens silently
+node -p "process.versions.modules"                      # 137 on Node 24
+grep node_module_version app/node_modules/better-sqlite3/build/config.gypi   # 148 on Electron 43
+```
+
+The root copy is the reverse and must open cleanly, since `npm test` runs on
+system Node. If the app's copy really is Node-ABI, `npm --prefix app run
+rebuild:native` fixes it — but confirm with the check above first, because
+`app`'s `postinstall` already runs `electron-rebuild` on every `npm run
+app:install` and its output scrolls past well before the summary.
+
+**npm 11 prints an `allow-scripts` warning on every install, and it is expected
+here.** It lists `better-sqlite3`, `uiohook-napi`, `active-win`,
+`onnxruntime-node`, `esbuild` and `fsevents` as having install scripts "not yet
+covered by allowScripts". No action is needed and you do **not** have to run
+`npm approve-scripts`: each of those resolves its binary from the tarball or an
+optional platform package rather than from the blocked script, so a gated
+install still produces working modules. Verified on macOS arm64 by installing
+the four natives into an empty directory and loading each one; `esbuild` and
+`fsevents` are exercised by `npm test` and the app build.
 
 ## Maintainer tooling
 
