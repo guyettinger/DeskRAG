@@ -1,11 +1,23 @@
 import React, { useEffect, useRef, useState } from "react";
 import type { Capabilities, FrameHitDTO } from "@shared/types";
 import { api, timecode, wallClock } from "../api.js";
-import { IconSearch, IconImage } from "../icons.js";
+import { IconSearch, IconImage, IconLibrary } from "../icons.js";
 import { DetailView } from "./DetailView.js";
 import { GhostLottie } from "../brand/GhostLottie.js";
 
-export function SearchScreen(): React.JSX.Element {
+interface Props {
+  /**
+   * Jump to the Library, at this moment of this recording. Retrieval finds the
+   * moment; without this the screen would then strand the reader on it.
+   *
+   * `atSec` is LANE seconds, straight off the hit — main computes it with the
+   * same `laneSec` the rail and the keyframe markers use, so this screen never
+   * decides what a moment is.
+   */
+  onOpenRecording: (sessionId: string, atSec: number) => void;
+}
+
+export function SearchScreen({ onOpenRecording }: Props): React.JSX.Element {
   const [text, setText] = useState("");
   const [results, setResults] = useState<FrameHitDTO[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -152,7 +164,12 @@ export function SearchScreen(): React.JSX.Element {
           ) : (
             <div className="sheet">
               {results.map((r) => (
-                <FrameCard key={r.frameId} hit={r} onOpen={() => setSelected(r.frameId)} />
+                <FrameCard
+                  key={r.frameId}
+                  hit={r}
+                  onOpen={() => setSelected(r.frameId)}
+                  onOpenRecording={onOpenRecording}
+                />
               ))}
             </div>
           )}
@@ -167,32 +184,62 @@ export function SearchScreen(): React.JSX.Element {
         </div>
       )}
 
-      {selected && <DetailView frameId={selected} onClose={() => setSelected(null)} />}
+      {selected && (
+        <DetailView
+          frameId={selected}
+          onClose={() => setSelected(null)}
+          onOpenRecording={onOpenRecording}
+        />
+      )}
     </div>
   );
 }
 
-function FrameCard({ hit, onOpen }: { hit: FrameHitDTO; onOpen: () => void }): React.JSX.Element {
+function FrameCard({
+  hit,
+  onOpen,
+  onOpenRecording,
+}: {
+  hit: FrameHitDTO;
+  onOpen: () => void;
+  onOpenRecording: (sessionId: string, atSec: number) => void;
+}): React.JSX.Element {
   return (
-    <button className="frame" onClick={onOpen}>
-      <div className="frame__thumb">
-        {hit.thumbUrl ? (
-          <img src={hit.thumbUrl} alt="" loading="lazy" />
-        ) : (
-          <span className="frame__noimg">no keyframe</span>
-        )}
-        <span className="frame__tc mono">{timecode(hit.tMono)}</span>
-        {hit.highlightCount > 0 && <span className="frame__badge mono">◱ {hit.highlightCount}</span>}
-      </div>
-      <div className="frame__body">
-        <div className={`frame__digest${hit.segmentDigest ? "" : " empty"}`}>
-          {hit.segmentDigest ?? "no digest"}
+    <div className="frame">
+      <button className="frame__open" onClick={onOpen}>
+        <div className="frame__thumb">
+          {hit.thumbUrl ? (
+            <img src={hit.thumbUrl} alt="" loading="lazy" />
+          ) : (
+            <span className="frame__noimg">no keyframe</span>
+          )}
+          <span className="frame__tc mono">{timecode(hit.tMono)}</span>
+          {hit.highlightCount > 0 && (
+            <span className="frame__badge mono">◱ {hit.highlightCount}</span>
+          )}
         </div>
-        <div className="frame__foot">
-          <span>{wallClock(hit.wallClock)}</span>
-          <span className="score">{hit.score.toFixed(3)}</span>
+        <div className="frame__body">
+          <div className={`frame__digest${hit.segmentDigest ? "" : " empty"}`}>
+            {hit.segmentDigest ?? "no digest"}
+          </div>
+          <div className="frame__foot">
+            <span>{wallClock(hit.wallClock)}</span>
+            <span className="score">{hit.score.toFixed(3)}</span>
+          </div>
         </div>
-      </div>
-    </button>
+      </button>
+      {/* Withheld, never offered dead: a hit whose frame row has gone names no
+          recording, and main sends an empty id rather than inventing one. */}
+      {hit.sessionId !== "" && (
+        <button
+          className="frame__jump"
+          onClick={() => onOpenRecording(hit.sessionId, hit.offsetSec)}
+          title={`Open this recording in the Library at ${timecode(hit.offsetSec * 1000)}`}
+          aria-label="Open this recording in the Library"
+        >
+          <IconLibrary style={{ width: 14, height: 14 }} />
+        </button>
+      )}
+    </div>
   );
 }

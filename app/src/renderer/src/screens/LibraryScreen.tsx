@@ -3,17 +3,19 @@ import type { SessionDetailDTO, SessionSummaryDTO } from "@shared/types";
 import { api, durationShort, formatBytes, timecode, wallClock } from "../api.js";
 import { GhostLottie } from "../brand/GhostLottie.js";
 import { SessionPlayer } from "./SessionPlayer.js";
+import type { SeekRequest } from "./TrackRail.js";
 
 interface Props {
   /**
-   * A jump from the Flows screen: open this recording at this moment.
+   * A jump from Flows or from Search: open this recording at this moment.
    *
    * `atSec` is LANE seconds — a `t_mono` offset — which is the axis the track
    * rail is drawn in. It is NOT media time: the encoded video runs about 1%
    * short of the span it covers, and `TrackRail.seek` is the one place the two
-   * clocks are reconciled.
+   * clocks are reconciled. `nonce` is what makes a repeat of the same moment a
+   * second jump rather than a dead click; see `App`'s `OpenAt`.
    */
-  openAt?: { sessionId: string; atSec: number } | null;
+  openAt?: { sessionId: string; atSec: number; nonce: number } | null;
   /** Consumed — clear it, or picking another recording would re-seek. */
   onOpened?: () => void;
 }
@@ -26,7 +28,7 @@ export function LibraryScreen({ openAt, onOpened }: Props = {}): React.JSX.Eleme
    * `openAt` so the jump survives the selection change that triggers the
    * detail fetch — and so it can be cleared the instant it is handed over.
    */
-  const [seekTo, setSeekTo] = useState<number | null>(null);
+  const [seekTo, setSeekTo] = useState<SeekRequest | null>(null);
   const [detail, setDetail] = useState<SessionDetailDTO | null>(null);
   const [confirming, setConfirming] = useState<SessionSummaryDTO | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -47,7 +49,7 @@ export function LibraryScreen({ openAt, onOpened }: Props = {}): React.JSX.Eleme
   useEffect(() => {
     if (!openAt) return;
     setSelected(openAt.sessionId);
-    setSeekTo(openAt.atSec);
+    setSeekTo({ sec: openAt.atSec, nonce: openAt.nonce });
     onOpened?.();
   }, [openAt, onOpened]);
 
@@ -154,7 +156,7 @@ export function LibraryScreen({ openAt, onOpened }: Props = {}): React.JSX.Eleme
             {detail ? (
               <>
                 <StageHead detail={detail} />
-                <SessionPlayer key={detail.id} detail={detail} seekToSec={seekTo} />
+                <SessionPlayer key={detail.id} detail={detail} seekTo={seekTo} />
               </>
             ) : (
               <div className="spinner" />

@@ -27,6 +27,19 @@ const MONITOR_FLOOR = 260;
 const RAIL_H_KEY = "deskrag.rail.height";
 const BANDS_KEY = "deskrag.rail.collapsed";
 
+/**
+ * A cross-screen jump, as it arrives at the axis it is expressed in.
+ *
+ * `sec` is LANE seconds — a `t_mono` offset — and `nonce` is what makes two
+ * jumps to the same moment two jumps. Without it the second is a no-op: the
+ * guard below fires once per moment on purpose, since `player.subscribe`
+ * re-renders this component every animation frame.
+ */
+export interface SeekRequest {
+  sec: number;
+  nonce: number;
+}
+
 interface Props {
   sessionId: string;
   /** Null for a session with no video: the axis is real, seeking is not. */
@@ -39,12 +52,12 @@ interface Props {
    */
   videoSec: number | null;
   /**
-   * A moment to jump to on arrival, in LANE seconds — from the Flows screen,
-   * which knows a state's `t_mono` and nothing about media time. It lands here
-   * rather than in `SessionPlayer` because `seek` below is the only place the
-   * two clocks are reconciled, and there must go on being only one.
+   * A moment to jump to on arrival — from Flows or from Search, neither of
+   * which knows anything about media time. It lands here rather than in
+   * `SessionPlayer` because `seek` below is the only place the two clocks are
+   * reconciled, and there must go on being only one.
    */
-  seekToSec?: number | null;
+  seekTo?: SeekRequest | null;
   onInspect: (frameId: string) => void;
 }
 
@@ -103,7 +116,7 @@ export function TrackRail({
   sessionId,
   player,
   videoSec,
-  seekToSec,
+  seekTo,
   onInspect,
 }: Props): React.JSX.Element {
   const [tracks, setTracks] = useState<SessionTracksDTO | null>(null);
@@ -205,7 +218,7 @@ export function TrackRail({
   };
 
   /**
-   * A jump from the Flows screen, performed once both clocks are known.
+   * A jump from Flows or Search, performed once both clocks are known.
    *
    * It cannot run on mount: `videoSec` is `Infinity` until the fragmented MP4
    * is buffered enough for the provider to report a real duration, and
@@ -213,18 +226,21 @@ export function TrackRail({
    * makes this fire on the render where both have arrived — the alternative,
    * sleeping a guessed interval, is the pattern this repo rejects everywhere
    * it appears.
+   *
+   * Keyed on the NONCE, not the moment: `player.subscribe` re-renders this
+   * component every animation frame, so the guard has to hold — but two jumps
+   * to one moment are two jumps, and keying on the seconds made the second a
+   * dead click.
    */
   const seekDone = useRef<number | null>(null);
   useEffect(() => {
-    if (seekToSec === null || seekToSec === undefined) return;
+    if (!seekTo) return;
     if (!player?.current || totalSec <= 0 || !Number.isFinite(mediaSec) || mediaSec <= 0) return;
-    // Once per requested moment: `player.subscribe` re-renders this component
-    // constantly, and re-seeking on every tick would pin playback in place.
-    if (seekDone.current === seekToSec) return;
-    seekDone.current = seekToSec;
-    seek(seekToSec);
+    if (seekDone.current === seekTo.nonce) return;
+    seekDone.current = seekTo.nonce;
+    seek(seekTo.sec);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seekToSec, totalSec, mediaSec, player]);
+  }, [seekTo, totalSec, mediaSec, player]);
 
   const readout = useMemo(() => {
     if (!tracks || !hover) return null;

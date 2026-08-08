@@ -11,6 +11,8 @@ import {
   finestGranularity,
   framesLane,
   idleLane,
+  laneOriginOf,
+  laneSec,
   markersLane,
   mouseSpeedLane,
   mouseXyLane,
@@ -90,6 +92,35 @@ const snap = (
     h: 1,
   }) as AxSnapshotRow["elements"],
   ...over,
+});
+
+/**
+ * The one definition of what a moment is. Four surfaces read it — the rail, the
+ * keyframe markers, a search hit and the Flows deep link — and the last of them
+ * used to compute its own, landing every jump early by the pre-roll.
+ */
+describe("laneOriginOf / laneSec", () => {
+  it("takes the video's first frame as offset zero", () => {
+    expect(laneOriginOf({ tMonoStart: 1900 })).toBe(1900);
+    expect(laneSec(4500, laneOriginOf({ tMonoStart: 1900 }))).toBe(2.6);
+  });
+
+  it("falls back to t_mono zero for a session with no video", () => {
+    expect(laneOriginOf(null)).toBe(0);
+    expect(laneOriginOf(undefined)).toBe(0);
+    expect(laneSec(4500, laneOriginOf(null))).toBe(4.5);
+  });
+
+  /**
+   * Capture starts while ffmpeg is still spawning, so a session's first signals
+   * are genuinely BEFORE the video's first frame. The rail declares that
+   * stretch (`preRollSec`, and the hatched clipped edge); a moment to seek to
+   * has no such affordance and must land at the start rather than off the axis.
+   */
+  it("clamps a stamp from before the video started", () => {
+    expect(laneSec(300, 1900)).toBe(0);
+    expect(laneSec(1900, 1900)).toBe(0);
+  });
 });
 
 describe("appTone", () => {

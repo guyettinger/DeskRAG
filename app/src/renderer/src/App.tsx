@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import type { EnvInfo, RecordingStatus } from "@shared/types";
 import { api } from "./api.js";
 import { GhostMark } from "./brand/GhostMark.js";
@@ -28,17 +28,26 @@ const TITLES: Record<Route, string> = {
 };
 
 /**
- * Where a cross-screen jump is going. The Flows screen's whole payoff is
- * getting from a state on the canvas to the recording it came from, and the
- * Library is where recordings are watched — so the route carries the
- * destination with it.
+ * Where a cross-screen jump is going. Flows and Search both end at a recorded
+ * moment — one from a state on the canvas, one from a retrieved frame — and the
+ * Library is where recordings are watched, so the route carries the destination
+ * with it.
  *
  * `atSec` is LANE seconds (a `t_mono` offset), not media seconds. `TrackRail`
- * is the one place that converts; see its `seek`.
+ * is the one place that converts; see its `seek`. Both producers get the number
+ * from main's `laneSec`, so neither screen decides what a moment means.
  */
 export interface OpenAt {
   sessionId: string;
   atSec: number;
+  /**
+   * Distinguishes two jumps to the SAME moment, which is otherwise a dead
+   * click: React bails on identical state, so nothing downstream re-renders,
+   * and `TrackRail`'s once-per-moment guard would refuse the repeat even if it
+   * did. Easy to hit from Search — the screen unmounts on navigation, so
+   * returning to it means re-running the query and clicking the same hit.
+   */
+  nonce: number;
 }
 
 export function App(): React.JSX.Element {
@@ -46,6 +55,19 @@ export function App(): React.JSX.Element {
   const [status, setStatus] = useState<RecordingStatus>({ state: "idle", activeSignals: [] });
   const [env, setEnv] = useState<EnvInfo | null>(null);
   const [openAt, setOpenAt] = useState<OpenAt | null>(null);
+  /** A counter, not a clock: two clicks land in the same millisecond. */
+  const jumps = useRef(0);
+
+  /**
+   * The one place a jump is minted. Both producers route through it so the
+   * payload can never be half-built — a nonce is not optional, and a screen
+   * that forgot one would fail silently on the second identical jump.
+   */
+  const openRecording = (sessionId: string, atSec: number): void => {
+    jumps.current += 1;
+    setOpenAt({ sessionId, atSec, nonce: jumps.current });
+    setRoute("library");
+  };
 
   useEffect(() => {
     api.recording.status().then(setStatus);
@@ -111,15 +133,8 @@ export function App(): React.JSX.Element {
           {route === "library" && (
             <LibraryScreen openAt={openAt} onOpened={() => setOpenAt(null)} />
           )}
-          {route === "flows" && (
-            <FlowsScreen
-              onOpenRecording={(sessionId, atSec) => {
-                setOpenAt({ sessionId, atSec });
-                setRoute("library");
-              }}
-            />
-          )}
-          {route === "search" && <SearchScreen />}
+          {route === "flows" && <FlowsScreen onOpenRecording={openRecording} />}
+          {route === "search" && <SearchScreen onOpenRecording={openRecording} />}
           {route === "settings" && <SettingsScreen onEnv={setEnv} />}
         </main>
       </div>

@@ -89,7 +89,12 @@ import type {
 } from "@shared/types";
 import { request as requestPermission } from "./permissions.js";
 import { resolveWhisperBinary, whisperAvailable } from "./whisper.js";
-import { buildSessionTracks, type AudioLaneInput } from "./session-tracks.js";
+import {
+  buildSessionTracks,
+  laneOriginOf,
+  laneSec,
+  type AudioLaneInput,
+} from "./session-tracks.js";
 import { peakCountFor, type AudioBlobPeaks } from "./track-buckets.js";
 
 interface Providers {
@@ -809,6 +814,17 @@ export class DeskRagService {
     });
 
     this.lastHighlights.clear();
+    // Hits span sessions, and each session's lane origin is its video's first
+    // frame. One list pass and one blob read per DISTINCT session, memoized —
+    // resolving per hit would rescan the session list for every result.
+    const laneOrigins = new Map<string, number>();
+    const originFor = (sessionId: string): number => {
+      const cached = laneOrigins.get(sessionId);
+      if (cached !== undefined) return cached;
+      const origin = this.laneOriginFor(sessionId);
+      laneOrigins.set(sessionId, origin);
+      return origin;
+    };
     const hits = frames.map((fr) => {
       const frame = fr.frame ?? this.store.getFrame(fr.frameId);
       const session = frame ? this.store.getSession(frame.sessionId) : undefined;
@@ -824,7 +840,12 @@ export class DeskRagService {
       return {
         frameId: fr.frameId,
         score: fr.score,
+        sessionId: frame?.sessionId ?? "",
         tMono: frame?.tMono ?? 0,
+        // No frame row means no recording to open — the hit degrades to the
+        // same zeroed shape the other fields already take, and the renderer
+        // withholds the jump rather than offering one that goes nowhere.
+        offsetSec: frame ? laneSec(frame.tMono, originFor(frame.sessionId)) : 0,
         wallClock: session && frame ? session.startedAt + frame.tMono : 0,
         width: frame?.width ?? 0,
         height: frame?.height ?? 0,
@@ -848,6 +869,20 @@ export class DeskRagService {
         ? { segmentsMatchedButNoFrames: segments.length }
         : {}),
     };
+  }
+
+  /**
+   * Where lane offset 0 sits for a session — the store reads behind
+   * `laneOriginOf`, which is the rule itself.
+   *
+   * A session's screen video is written once, when recording stops, so this is
+   * stable for anything searchable; it is deliberately not cached all the same,
+   * since it is one list scan on a path that already does far more work.
+   */
+  private laneOriginFor(sessionId: string): number {
+    const row = this.store.listSessions().find((s) => s.id === sessionId);
+    const blob = row?.videoBlobId ? this.store.getBlob(row.videoBlobId) : undefined;
+    return laneOriginOf(blob ?? null);
   }
 
   detail(frameId: string): ResultDetailDTO | null {
@@ -880,6 +915,7 @@ export class DeskRagService {
       width: frame.width,
       height: frame.height,
       tMono: frame.tMono,
+      offsetSec: laneSec(frame.tMono, this.laneOriginFor(frame.sessionId)),
       wallClock: session ? session.startedAt + frame.tMono : 0,
       session: { id: frame.sessionId, startedAt: session?.startedAt ?? 0 },
       segment: seg
@@ -943,7 +979,7 @@ export class DeskRagService {
       return {
         frameId: f.id,
         tMono: f.tMono,
-        offsetSec: video ? Math.max(0, (f.tMono - video.tMonoStart) / 1000) : f.tMono / 1000,
+        offsetSec: laneSec(f.tMono, laneOriginOf(video)),
         thumbUrl: f.blobId ? `deskrag://frame/${f.blobId}` : null,
         segmentCaption: seg?.caption ?? null,
         segmentDigest: seg?.digest ?? null,
@@ -979,7 +1015,7 @@ export class DeskRagService {
 
     // Offsets are measured from the video when there is one, so the rail and
     // the scrubber share an origin; from t_mono zero otherwise.
-    const originMono = detail.video ? detail.video.tMonoStart : 0;
+    const originMono = laneOriginOf(detail.video);
     const totalSec = detail.video
       ? (detail.video.tMonoEnd - detail.video.tMonoStart) / 1000
       : detail.durationMs / 1000;
@@ -1195,12 +1231,20 @@ export class DeskRagService {
     if (graph === undefined) return null;
     // One pass over the session list, not a lookup per source: a node observed
     // by three recordings would otherwise scan the list three times, and the
-    // graph renders every node at once.
-    const startedAt = new Map(this.store.listSessions().map((s) => [s.id, s.startedAt]));
+    // graph renders every node at once. The same pass carries the lane origin,
+    // so a jump from this screen lands on the axis the rail is drawn in.
+    const startedAt = new Map<string, number>();
+    const origins = new Map<string, number>();
+    for (const s of this.store.listSessions()) {
+      startedAt.set(s.id, s.startedAt);
+      const blob = s.videoBlobId ? this.store.getBlob(s.videoBlobId) : undefined;
+      origins.set(s.id, laneOriginOf(blob ?? null));
+    }
     return {
       graph: toGraphDTO(graph, {
         resolveFrameBlob: (frameId) => this.frameBlobId(frameId),
         sessionStart: (sessionId) => startedAt.get(sessionId),
+        laneOrigin: (sessionId) => origins.get(sessionId) ?? 0,
       }),
       routes: frequentRoutes(graph),
     };

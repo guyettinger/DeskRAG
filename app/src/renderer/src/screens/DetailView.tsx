@@ -1,12 +1,20 @@
 import React, { useEffect, useState } from "react";
 import type { ResultDetailDTO } from "@shared/types";
 import { api, timecode, wallClock } from "../api.js";
-import { IconClose } from "../icons.js";
+import { IconClose, IconLibrary } from "../icons.js";
 import { AxTree } from "./AxTree.js";
 
 interface Props {
   frameId: string;
   onClose: () => void;
+  /**
+   * Jump to this frame's recording in the Library.
+   *
+   * OPTIONAL, and that is load-bearing: `SessionPlayer` opens this same view to
+   * inspect a keyframe, where the button would point at the screen the reader
+   * is already on. Absent there, present from Search.
+   */
+  onOpenRecording?: (sessionId: string, atSec: number) => void;
 }
 
 interface Bbox {
@@ -31,7 +39,7 @@ function boxStyle(b: Bbox, frameW: number, frameH: number): React.CSSProperties 
   };
 }
 
-export function DetailView({ frameId, onClose }: Props): React.JSX.Element {
+export function DetailView({ frameId, onClose, onOpenRecording }: Props): React.JSX.Element {
   const [detail, setDetail] = useState<ResultDetailDTO | null>(null);
   const [missing, setMissing] = useState(false);
   const [selectedAx, setSelectedAx] = useState<number | null>(null);
@@ -148,6 +156,19 @@ export function DetailView({ frameId, onClose }: Props): React.JSX.Element {
                   <dt>Session</dt>
                   <dd>{detail.session.id.slice(0, 12)}…</dd>
                 </dl>
+                {onOpenRecording && (
+                  <button
+                    className="btn ghost detail__open"
+                    onClick={() => {
+                      onOpenRecording(detail.session.id, detail.offsetSec);
+                      onClose();
+                    }}
+                  >
+                    <span className="inline">
+                      <IconLibrary style={{ width: 15, height: 15 }} /> Open in Library
+                    </span>
+                  </button>
+                )}
               </div>
 
               <Section label="Digest" text={detail.segment?.digest} />

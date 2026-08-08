@@ -17,7 +17,7 @@ import type { KeyframeMarkerDTO, SessionDetailDTO } from "@shared/types";
 import { keyframeLabel } from "../api.js";
 import { IconInspect, IconNextKeyframe, IconPrevKeyframe } from "../icons.js";
 import { DetailView } from "./DetailView.js";
-import { TrackRail } from "./TrackRail.js";
+import { TrackRail, type SeekRequest } from "./TrackRail.js";
 
 const SPEEDS = [0.5, 1, 2, 4];
 
@@ -180,7 +180,7 @@ function InspectButton({
 
 export function SessionPlayer({
   detail,
-  seekToSec,
+  seekTo,
 }: {
   detail: SessionDetailDTO;
   /**
@@ -189,7 +189,7 @@ export function SessionPlayer({
    * rather than converted here: the video's clock runs slightly short of the
    * session's, and `TrackRail.seek` is the ONE place the two are reconciled.
    */
-  seekToSec?: number | null;
+  seekTo?: SeekRequest | null;
 }): React.JSX.Element {
   const playerRef = useRef<MediaPlayerInstance>(null);
   const keyframes = detail.keyframes;
@@ -394,7 +394,7 @@ export function SessionPlayer({
         sessionId={detail.id}
         player={playerRef}
         videoSec={total}
-        seekToSec={seekToSec ?? null}
+        seekTo={seekTo ?? null}
         onInspect={setOpenFrame}
       />
 
