@@ -348,6 +348,26 @@ export function SessionPlayer({
             // emits before*/after* around every slot, so this needs no fork.
             playButton: null,
             beforeTimeSlider: <Transport keyframes={keyframes} />,
+            // The active segment's caption is NOT in the control bar.
+            //
+            // It is a VLM sentence — measured at 886px, ellipsized — and this
+            // app's own rule is that nothing truncates, because a label that
+            // fits or is withheld makes a broken layout visible while an
+            // ellipsis hides it. The rail's `caption` lane carries the same
+            // text at its true extent, and the hover card carries it in full.
+            chapterTitle: null,
+            // THERE IS ONE RUNNING CLOCK, and it is the rail's.
+            //
+            // These read MEDIA seconds while every lane below reads LANE
+            // seconds, and the two genuinely differ — measured on a real
+            // session, `0:29` sat 260px from a header reading `00:00:32.807`
+            // for the same recording. Two clocks disagreeing in one glance is
+            // not a rounding nit, it is the screen contradicting itself. The
+            // ruler's readout is in the axis' own seconds, and the stage header
+            // carries the total; a second opinion here bought nothing.
+            currentTime: null,
+            timeDivider: null,
+            endTime: null,
             // Silent video, local-first: nothing to mute, nowhere to cast.
             muteButton: null,
             volumeSlider: null,

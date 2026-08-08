@@ -13,6 +13,24 @@ export function timecode(ms: number): string {
   return `${pad(h)}:${pad(m)}:${pad(s)}.${pad(frac, 3)}`;
 }
 
+/**
+ * Duration for a LIST row — `0:32`, `1:04:09`.
+ *
+ * Deliberately coarser than `timecode`: in the Library list the duration
+ * identifies a recording rather than measuring one, and the full
+ * `00:00:32.807` wrapped its row onto a second line in a 300px column. The
+ * precise value belongs to the stage header, which describes one recording
+ * instead of ranging over all of them.
+ */
+export function durationShort(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const pad = (n: number): string => String(n).padStart(2, "0");
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
 /** Wall-clock ms -> human date + time. */
 export function wallClock(ms: number): string {
   if (!ms) return "—";

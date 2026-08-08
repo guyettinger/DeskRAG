@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import type { SessionDetailDTO, SessionSummaryDTO } from "@shared/types";
-import { api, formatBytes, timecode, wallClock } from "../api.js";
+import { api, durationShort, formatBytes, timecode, wallClock } from "../api.js";
 import { GhostLottie } from "../brand/GhostLottie.js";
 import { SessionPlayer } from "./SessionPlayer.js";
 
@@ -84,10 +84,7 @@ export function LibraryScreen({ openAt, onOpened }: Props = {}): React.JSX.Eleme
       <div className="page__head">
         <span className="eyebrow">Library</span>
         <h1>Your recordings</h1>
-        <p>
-          Every session you have captured. Play one back — the scrubber is divided at the
-          keyframes that were indexed and searched.
-        </p>
+        <p>Play one back to see every signal it captured on a single time axis.</p>
       </div>
 
       {error && (
@@ -127,10 +124,15 @@ export function LibraryScreen({ openAt, onOpened }: Props = {}): React.JSX.Eleme
                   )}
                   {s.hasVideo && <span className="sessioncard__badge mono">VIDEO</span>}
                 </div>
+                {/* The list IDENTIFIES a recording; the stage header SPECIFIES
+                    it. So the row carries a coarse duration and a frame count
+                    and stops there — the full timecode and the byte size are in
+                    the header, and carrying them here wrapped every row onto a
+                    second line in a 300px column. */}
                 <div className="sessioncard__body">
                   <div className="sessioncard__when">{wallClock(s.startedAt)}</div>
                   <div className="sessioncard__meta mono">
-                    {timecode(s.durationMs)} · {s.frameCount} frames · {formatBytes(s.sizeBytes)}
+                    {durationShort(s.durationMs)} · {s.frameCount} frames
                   </div>
                 </div>
                 <button

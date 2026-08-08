@@ -23,6 +23,7 @@ import {
 import type {
   KeyframeMarkerDTO,
   SessionTracksDTO,
+  TrackGroup,
   TrackLaneDTO,
   TrackMarkDTO,
   TrackSpanDTO,
@@ -37,6 +38,17 @@ import {
   normalize,
   type AudioBlobPeaks,
 } from "./track-buckets.js";
+
+/**
+ * A lane before it has been assigned to a band.
+ *
+ * Every builder returns this rather than a full `TrackLaneDTO`, because a lane's
+ * BAND is the same kind of decision as its ORDER — a statement about the rail's
+ * shape, not about the signal — and both belong in `buildSessionTracks` where
+ * they can be read together. `group` stays REQUIRED on the DTO, so a lane added
+ * to that table without a band does not compile.
+ */
+export type LaneBody = Omit<TrackLaneDTO, "group">;
 
 export interface AudioLaneInput {
   media: string;
@@ -88,7 +100,7 @@ export function appTone(name: string): TrackTone {
 
 // --- attention ---------------------------------------------------------------
 
-export function appsLane(input: LaneInput): TrackLaneDTO {
+export function appsLane(input: LaneInput): LaneBody {
   const changes = input.events.filter((e) => e.kind === "focus_change");
   const spans: TrackSpanDTO[] = [];
   for (let i = 0; i < changes.length; i++) {
@@ -115,7 +127,7 @@ export function appsLane(input: LaneInput): TrackLaneDTO {
   };
 }
 
-export function webLane(input: LaneInput): TrackLaneDTO {
+export function webLane(input: LaneInput): LaneBody {
   const marks: TrackMarkDTO[] = [];
   for (const e of input.events) {
     if (e.kind !== "url_change") continue;
@@ -149,7 +161,7 @@ const MARKER_LABELS: Record<string, string> = {
   bookmark: "bookmark",
 };
 
-export function markersLane(input: LaneInput): TrackLaneDTO {
+export function markersLane(input: LaneInput): LaneBody {
   const marks: TrackMarkDTO[] = input.events
     .filter((e) => e.kind in MARKER_LABELS)
     .map((e) => ({
@@ -178,7 +190,7 @@ function rateLane(
   kind: string,
   unit: string,
   absent: string,
-): { lane: TrackLaneDTO; count: number } {
+): { lane: LaneBody; count: number } {
   const secs = input.events
     .filter((e) => e.kind === kind)
     .map((e) => secOf(e.tMono, input.originMono));
@@ -201,7 +213,7 @@ function rateLane(
   };
 }
 
-export function typingLane(input: LaneInput): TrackLaneDTO {
+export function typingLane(input: LaneInput): LaneBody {
   const { lane, count } = rateLane(
     input,
     "typing",
@@ -223,11 +235,11 @@ export function typingLane(input: LaneInput): TrackLaneDTO {
   };
 }
 
-export function scrollLane(input: LaneInput): TrackLaneDTO {
+export function scrollLane(input: LaneInput): LaneBody {
   return rateLane(input, "scroll", "scroll", "scroll", "events/s", "no scrolling recorded").lane;
 }
 
-export function clicksLane(input: LaneInput): TrackLaneDTO {
+export function clicksLane(input: LaneInput): LaneBody {
   const ups = input.events.filter((e) => e.kind === "mouse_up");
   const marks: TrackMarkDTO[] = input.events
     .filter((e) => e.kind === "mouse_down")
@@ -271,7 +283,7 @@ export function clicksLane(input: LaneInput): TrackLaneDTO {
  * MEANINGFUL_INPUT_KINDS and both gap constants come from `deskrag`, because
  * two readers of one rule is the drift hazard that already bit ax-dump/ax-exec.
  */
-export function idleLane(input: LaneInput): TrackLaneDTO {
+export function idleLane(input: LaneInput): LaneBody {
   const spans: TrackSpanDTO[] = [];
   let lastT: number | undefined;
   let lastMeaningfulT: number | undefined;
@@ -354,7 +366,7 @@ function segmentLabel(s: SegmentRow): string {
   return s.caption ?? s.digest ?? s.boundaryReason ?? "segment";
 }
 
-export function segmentLanes(input: LaneInput): TrackLaneDTO[] {
+export function segmentLanes(input: LaneInput): LaneBody[] {
   const byGranularity = new Map<string, SegmentRow[]>();
   for (const s of input.segments) {
     const list = byGranularity.get(s.granularity) ?? [];
@@ -390,7 +402,7 @@ function presenceLane(
   title: string,
   pick: (s: SegmentRow) => string | null,
   absent: string,
-): TrackLaneDTO {
+): LaneBody {
   const g = finestGranularity(input.segments);
   const spans: TrackSpanDTO[] = input.segments
     .filter((s) => s.granularity === g && pick(s) !== null)
@@ -423,7 +435,7 @@ function presenceLane(
  * no transcript, but it is DISCLOSED rather than smoothed over — the same rule
  * `observations` vs `sources` follows on the Flows screen.
  */
-export function transcriptLane(input: LaneInput): TrackLaneDTO {
+export function transcriptLane(input: LaneInput): LaneBody {
   if (input.transcriptClips.length > 0) {
     return {
       id: "transcript",
@@ -461,7 +473,7 @@ export function transcriptLane(input: LaneInput): TrackLaneDTO {
   };
 }
 
-export function captionLane(input: LaneInput): TrackLaneDTO {
+export function captionLane(input: LaneInput): LaneBody {
   return presenceLane(
     input,
     "caption",
@@ -471,7 +483,7 @@ export function captionLane(input: LaneInput): TrackLaneDTO {
   );
 }
 
-export function axLane(input: LaneInput): TrackLaneDTO {
+export function axLane(input: LaneInput): LaneBody {
   const marks: TrackMarkDTO[] = input.axSnapshots
     .slice()
     .sort((a, b) => a.tMono - b.tMono)
@@ -505,7 +517,7 @@ export function axLane(input: LaneInput): TrackLaneDTO {
   };
 }
 
-export function framesLane(input: LaneInput): TrackLaneDTO {
+export function framesLane(input: LaneInput): LaneBody {
   const thumbs = input.keyframes.map((marker) => ({
     atSec: marker.offsetSec,
     // The marker travels whole rather than being flattened to a string, so
@@ -568,7 +580,7 @@ function moves(input: LaneInput): EventRow[] {
   return input.events.filter((e) => e.kind === "mouse_move" && e.x !== null && e.y !== null);
 }
 
-export function mouseSpeedLane(input: LaneInput): TrackLaneDTO {
+export function mouseSpeedLane(input: LaneInput): LaneBody {
   const ms = moves(input);
   const samples: { sec: number; value: number }[] = [];
   for (let i = 1; i < ms.length; i++) {
@@ -593,7 +605,7 @@ export function mouseSpeedLane(input: LaneInput): TrackLaneDTO {
   };
 }
 
-export function mouseXyLane(input: LaneInput): TrackLaneDTO {
+export function mouseXyLane(input: LaneInput): LaneBody {
   const ms = moves(input);
   const bounds = screenBounds(input.events);
   const xs = ms.map((e) => ({ sec: secOf(e.tMono, input.originMono), value: e.x! / bounds.w }));
@@ -619,7 +631,7 @@ export function mouseXyLane(input: LaneInput): TrackLaneDTO {
 
 // --- sound -------------------------------------------------------------------
 
-export function audioLanes(input: LaneInput): TrackLaneDTO[] {
+export function audioLanes(input: LaneInput): LaneBody[] {
   if (input.audio.length === 0) {
     return [
       {
@@ -670,27 +682,42 @@ export interface TrackInput extends LaneInput {
  * the four questions this rail exists to answer, so a missing lane and a lane
  * that says why it is missing are very different things.
  */
+/**
+ * Lane order AND lane band, in one table.
+ *
+ * Bands are named for the SIGNAL a lane comes from, never its shape: `keyframes`
+ * and `apps` are both "screen" though one is a thumbnail lane and one a span,
+ * because what a reader collapses is "not looking at the screen right now". The
+ * table is listed in band order, so the rail's rendering order falls straight
+ * out of it and no separate sort is needed.
+ */
+function bandedLanes(input: TrackInput): readonly [TrackGroup, LaneBody | LaneBody[]][] {
+  return [
+    ["screen", framesLane(input)],
+    ["screen", appsLane(input)],
+    ["screen", webLane(input)],
+    ["screen", axLane(input)],
+    ["segments", segmentLanes(input)],
+    ["segments", captionLane(input)],
+    ["audio", transcriptLane(input)],
+    ["audio", audioLanes(input)],
+    ["input", typingLane(input)],
+    ["input", clicksLane(input)],
+    ["input", scrollLane(input)],
+    ["input", mouseSpeedLane(input)],
+    ["input", mouseXyLane(input)],
+    ["input", idleLane(input)],
+    ["marks", markersLane(input)],
+  ];
+}
+
 export function buildSessionTracks(input: TrackInput): SessionTracksDTO {
   return {
     sessionId: input.sessionId,
     totalSec: input.totalSec,
     anchoredToVideo: input.anchoredToVideo,
-    lanes: [
-      framesLane(input),
-      appsLane(input),
-      webLane(input),
-      ...segmentLanes(input),
-      transcriptLane(input),
-      captionLane(input),
-      axLane(input),
-      typingLane(input),
-      clicksLane(input),
-      idleLane(input),
-      scrollLane(input),
-      mouseSpeedLane(input),
-      mouseXyLane(input),
-      ...audioLanes(input),
-      markersLane(input),
-    ],
+    lanes: bandedLanes(input).flatMap(([group, body]) =>
+      (Array.isArray(body) ? body : [body]).map((lane) => ({ ...lane, group })),
+    ),
   };
 }
