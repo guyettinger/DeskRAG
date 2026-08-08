@@ -12,6 +12,7 @@ import { SettingsStore, dataDir } from "./settings.js";
 import { registerIpc } from "./ipc.js";
 import { registerScheme, registerProtocol } from "./protocol.js";
 import { ensureToolPath } from "./tool-path.js";
+import { resolveAxBin } from "./sidecar-path.js";
 
 let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -43,12 +44,16 @@ registerScheme(); // must precede app.whenReady
 // is what makes ffmpeg (audio + screen) and whisper-cli look missing.
 ensureToolPath();
 
-// In dev the app runs from <repo>/app/out/main; point the AX sidecar env var at
-// the repo's built binary (npm run build:ax) so capture + the env probe find it
-// without it being on PATH. An explicit ERAG_AX_BIN always wins.
+// The AX sidecar is REQUIRED for capture, not just for accessibility: the
+// device timebase comes from `ax-dump --clock`, and without it a frame can only
+// be stamped with its arrival time — measured 3.05s later than its capture time
+// on a real screen device. So it is resolved in both shapes:
+//   packaged -> Contents/Resources/ax-dump  (electron-builder extraResources)
+//   dev      -> <repo>/native/ax-dump       (npm run build:ax)
+// An explicit ERAG_AX_BIN always wins.
 if (!process.env["ERAG_AX_BIN"]) {
-  const sidecar = join(__dirname, "../../../native/ax-dump");
-  if (existsSync(sidecar)) process.env["ERAG_AX_BIN"] = sidecar;
+  const found = resolveAxBin(process.resourcesPath, __dirname, existsSync);
+  if (found) process.env["ERAG_AX_BIN"] = found;
 }
 
 // `ax-exec` is DELIBERATELY NOT RESOLVED HERE. It is the binary that can click,

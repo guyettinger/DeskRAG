@@ -7,12 +7,13 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
-    "dist": "electron-vite build && electron-builder --config electron-builder.yml",
+    "dist": "npm run build:ax && electron-vite build && electron-builder --config electron-builder.yml",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
     "rebuild:native": "electron-rebuild -f -w better-sqlite3",
     "postinstall": "electron-rebuild -f -w better-sqlite3",
-    "test": "vitest run"
+    "test": "vitest run",
+    "build:ax": "npm --prefix .. run build:ax"
   },
   "dependencies": {
     "@huggingface/tokenizers": "0.1.3",
