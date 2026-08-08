@@ -41,6 +41,12 @@ export { hamming64, u64ToI64, i64ToU64 } from "./store/sqlite/db.js";
  * DST would otherwise reorder events against each other.
  */
 export { MonotonicClock } from "./timeline/clock.js";
+/**
+ * The capture device's timebase, bridged onto t_mono. Without it a frame can
+ * only be timed by when it ARRIVED, which is a whole capture latency after the
+ * moment it shows — measured 3.05s on a real screen device.
+ */
+export { DeviceClock } from "./timeline/device-clock.js";
 export { RingBuffer } from "./timeline/ring-buffer.js";
 export { mergeSortedByTMono, isMonotonic, type Stamped } from "./timeline/sync.js";
 
