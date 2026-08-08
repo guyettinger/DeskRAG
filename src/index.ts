@@ -427,6 +427,16 @@ export {
   type SwiftDisplaySourceOptions,
 } from "./capture/env/swift-displays.js";
 export { SwiftKeymapSource, type SwiftKeymapSourceOptions } from "./capture/env/swift-keymap.js";
+/**
+ * The capture clock. `ax-dump --clock` reads the base avfoundation stamps
+ * capture timestamps on, which Node cannot read for itself — without it a frame
+ * can only be timed by when it arrived, measured 3.05s after it was captured.
+ */
+export {
+  SwiftDeviceClockSource,
+  type SwiftDeviceClockSourceOptions,
+} from "./capture/env/swift-clock.js";
+export { parseDeviceClock } from "./capture/env/clock.js";
 export {
   shouldSampleMove,
   modifiersOf,

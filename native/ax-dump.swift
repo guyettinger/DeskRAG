@@ -333,6 +333,32 @@ if args.contains("--keymap") {
     exit(0)
 }
 
+// MARK: - Device clock (--clock)
+//
+// CLOCK_UPTIME_RAW is the mach_absolute_time base: monotonic and EXCLUDING
+// sleep. avfoundation stamps capture timestamps on it (verified against
+// ffmpeg's -copyts), while Node's uv_hrtime reports mach_continuous_time, which
+// INCLUDES sleep — measured 4.78 days apart on one machine. This reading is the
+// only bridge, and without it a captured frame cannot be placed on t_mono at
+// all: it can only be stamped with its arrival time, which measured 3.05s later
+// than its capture time on a real screen device.
+//
+// Needs no Accessibility permission, so like --displays and --keymap it sits
+// above the AXIsProcessTrusted gate and above the AX --self-test block.
+
+struct ClockOut: Codable {
+    let deviceMs: Double
+}
+
+if args.contains("--clock") {
+    if args.contains("--self-test") {
+        emitJSON(ClockOut(deviceMs: 1234.5))
+        exit(0)
+    }
+    emitJSON(ClockOut(deviceMs: Double(clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) / 1_000_000))
+    exit(0)
+}
+
 // Deterministic contract self-check (no AX access) — used by the test suite to
 // verify the JSON encoding + sidecar wiring regardless of permission state. Two
 // elements, so the parent back-reference is part of the checked contract.

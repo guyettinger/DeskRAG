@@ -39,3 +39,15 @@ export interface KeymapSource {
   query(): Promise<Keymap | undefined>;
   close?(): void;
 }
+
+/**
+ * Reads the capture device's timebase (`ax-dump --clock`), in milliseconds.
+ *
+ * Unlike the other sources here it has NO best-effort contract: it rejects
+ * rather than resolving undefined, because a session with no calibration would
+ * store timestamps meaning something different from every other session. See
+ * `parseDeviceClock`.
+ */
+export interface DeviceClockSource {
+  read(): Promise<number>;
+}
