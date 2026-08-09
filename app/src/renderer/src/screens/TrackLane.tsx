@@ -53,7 +53,15 @@ export function TrackLane(props: Props): React.JSX.Element {
   // build does not know about. It just stops costing as much as a lane with data.
   const empty = lane.emptyReason !== null;
   return (
-    <div className="tracks__lane" data-shape={lane.shape} data-empty={empty || undefined}>
+    <div
+      className="tracks__lane"
+      // The rail's ONE mousemove reads this with `closest()`. Sixteen lanes
+      // across four shapes would otherwise need sixteen more handlers, which is
+      // sixteen more places for the hit rule to drift from the axis rule.
+      data-lane={lane.id}
+      data-shape={lane.shape}
+      data-empty={empty || undefined}
+    >
       <div className="tracks__gutter">
         <span className="tracks__title mono">{lane.title}</span>
         {lane.warning && (

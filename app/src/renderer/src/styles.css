@@ -2188,6 +2188,35 @@ select {
   font-size: var(--t-small);
 }
 
+/* The lane the cursor is on, answered in full. A hover CARRIES AN ARGUMENT —
+   "this bar, here" — and the card that ignored it put `Calculator` second in
+   ~550px behind four near-identical VLM captions. Two lines, so the title and
+   its answer read as one statement rather than as a row in a table. */
+.tracks__tip-focus {
+  display: grid;
+  gap: var(--s0);
+  padding-bottom: var(--s2);
+  font-size: var(--t-body);
+}
+
+/* Every OTHER lane, demoted. The divider lives here rather than under the focus
+   block because this is the box that appears and disappears — a rule on the
+   block above would leave a dangling line whenever nothing else is happening. */
+.tracks__tip-rows[data-compact] {
+  gap: var(--s0) var(--s2);
+  padding-top: var(--s2);
+  border-top: 1px solid var(--hairline-soft);
+}
+
+/* ONE line, and this is not a new exception to the rail's no-truncation rule.
+   The card is already the stated exception — `.tracks__tip-value` clamps at
+   three lines because the card is a glance and DetailView carries the record.
+   The row the reader ASKED for is the one that keeps all three. */
+.tracks__tip-rows[data-compact] .tracks__tip-value {
+  -webkit-line-clamp: 1;
+  color: var(--muted);
+}
+
 /* Same typography as the rail's gutter, so a row reads as the lane it names. */
 .tracks__tip-title {
   color: var(--muted);

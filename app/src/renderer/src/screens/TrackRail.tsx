@@ -65,6 +65,16 @@ interface Hover {
   sec: number;
   x: number;
   y: number;
+  /**
+   * The lane under the cursor, or null over a band header or the space below
+   * the last lane.
+   *
+   * Read with `closest()` from the event target, which is sound because
+   * `.tracks__axis` — the box holding the playhead and crosshair, spanning
+   * every lane — is already `pointer-events: none`. Without that the axis would
+   * be the target everywhere and this would always be null.
+   */
+  laneId: string | null;
 }
 
 function timecodeAt(sec: number): string {
@@ -249,6 +259,7 @@ export function TrackRail({
     return readoutAt(tracks, hover.sec, {
       tolSec: axisWidth > 0 ? (HOVER_TOL_PX / axisWidth) * totalSec : 0,
       label: keyframeLabel,
+      focusLaneId: hover.laneId,
     });
   }, [tracks, hover, axisWidth, totalSec]);
 
@@ -378,7 +389,10 @@ export function TrackRail({
         className="tracks__body"
         onMouseMove={(e) => {
           const sec = secAt(e.clientX);
-          setHover(sec === null ? null : { sec, x: e.clientX, y: e.clientY });
+          const laneId =
+            (e.target as HTMLElement).closest<HTMLElement>(".tracks__lane")?.dataset.lane ??
+            null;
+          setHover(sec === null ? null : { sec, x: e.clientX, y: e.clientY, laneId });
           const el = clockRef.current;
           if (el) {
             if (sec === null) delete el.dataset.hovering;
@@ -459,9 +473,16 @@ export function TrackRail({
 }
 
 /**
- * Every lane resolved at the cursor, laid out. ONE card for all lanes, never one
- * per lane — the question it answers is "what was happening here", and asking it
- * fifteen times is not the same question.
+ * The card. Three states from ONE resolver, because they are one question asked
+ * with different precision:
+ *
+ *  - over a lane            head + focus block + a divided context list
+ *  - over a lane with
+ *    nothing at the cursor  the same, with the lane's own reason as the answer
+ *  - over no lane           head + every row at full weight (the original card)
+ *
+ * The third is not a third rendering: `focus` is null and `rows` holds
+ * everything, so the same JSX produces it.
  *
  * Positioned `fixed` off the pointer rather than inside the rail, because the
  * rail is a clipped scroller and a card anchored inside it would be cut off at
@@ -502,7 +523,7 @@ function ReadoutCard({
     });
   }, [hover.x, hover.y, readout]);
 
-  if (readout.rows.length === 0) return null;
+  if (readout.focus === null && readout.rows.length === 0) return null;
   return (
     <div
       className="tracks__tip"
@@ -516,16 +537,29 @@ function ReadoutCard({
       }}
     >
       <div className="tracks__tip-head mono">{readout.timecode}</div>
-      <div className="tracks__tip-rows">
-        {readout.rows.map((row) => (
-          <React.Fragment key={row.laneId}>
-            <span className="tracks__tip-title mono">{row.title}</span>
-            <span className="tracks__tip-value" data-tone={row.tone ?? undefined}>
-              {row.text}
-            </span>
-          </React.Fragment>
-        ))}
-      </div>
+      {readout.focus && (
+        <div className="tracks__tip-focus">
+          <span className="tracks__tip-title mono">{readout.focus.title}</span>
+          <span className="tracks__tip-value" data-tone={readout.focus.tone ?? undefined}>
+            {readout.focus.text}
+          </span>
+        </div>
+      )}
+      {readout.rows.length > 0 && (
+        // `data-compact` is present only when something is focused above, so it
+        // carries BOTH the divider and the demotion — the context list can only
+        // be context when there is a focus for it to be context to.
+        <div className="tracks__tip-rows" data-compact={readout.focus ? "" : undefined}>
+          {readout.rows.map((row) => (
+            <React.Fragment key={row.laneId}>
+              <span className="tracks__tip-title mono">{row.title}</span>
+              <span className="tracks__tip-value" data-tone={row.tone ?? undefined}>
+                {row.text}
+              </span>
+            </React.Fragment>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
