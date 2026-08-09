@@ -446,8 +446,25 @@ electron-vite + React + TS. Three source roots with a hard rule between them: **
     never sorts. Lanes are 32px (48 for `keyframes`, whose thumbnails need it)
     and an EMPTY lane keeps its row at 22px — absence stays visible, because
     `emptyReason` is the payload, it just stops costing a full row.
-  - **The hover card reports EVERY lane, including collapsed ones.** Collapsing
-    chooses how much of the plot to show; it must not quietly drop evidence. Its
+  - **The hover card ANSWERS THE LANE YOU POINTED AT, and reports the rest as
+    context.** A hover carries an argument — "this bar, here" — and the card
+    that ignored it put the answer (`Calculator`) second in a ~550px card
+    behind four near-identical VLM captions. The lane under the cursor gets a
+    focus block at full weight; every other lane with a value follows as a
+    dimmed one-line row. Over a band header or the space below the last lane
+    there is no gesture to honour, so every row renders at full weight — and
+    that state is `readoutAt`'s DEFAULT (`focusLaneId` omitted), never a second
+    code path. A focused lane ALWAYS answers, using its own `emptyReason` where
+    it carries nothing at the cursor: a card that reported five other lanes and
+    not the one being pointed at reads as broken. **Collapsed bands are still
+    reported in full** — collapsing is a persistent choice about the plot and
+    must not silently cost evidence, where focusing is a gesture; the card now
+    distinguishes the two rather than flattening both into a list. The lane id
+    reaches the card from ONE mousemove via `closest(".tracks__lane")`, which
+    works only because `.tracks__axis` is `pointer-events: none`. Measured on a
+    real 29s recording: **256px over the APPS bar against 426px over a band
+    header**, a focused keyframe keeping its caption at three lines (59px)
+    where every context row clamps to one (18px). Its
     position is MEASURED, not guessed: it flipped on a 336x260 estimate and the
     real card is ~550px with sixteen lanes, so it ran off the bottom of the
     window exactly when the reader had asked for everything. `useLayoutEffect`

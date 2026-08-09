@@ -310,6 +310,15 @@ export interface ReadoutRow {
 
 export interface Readout {
   timecode: string;
+  /**
+   * The lane the cursor is on, resolved — the card's answer to the gesture.
+   *
+   * Null when the cursor is over NO lane (a band header, or the space below
+   * the last lane). There is no pointing gesture there to honour, so the card
+   * answers about everything, which is the card this focus block replaced.
+   */
+  focus: ReadoutRow | null;
+  /** Every OTHER lane carrying a value, in rail order. Never contains `focus`. */
   rows: ReadoutRow[];
 }
 
@@ -327,50 +336,112 @@ export interface ReadoutOptions {
    * rule. Same pattern as `LiftInput.axAt` in the library.
    */
   label: (marker: KeyframeMarkerDTO) => string;
+  /**
+   * The lane under the cursor, or null when it is over none.
+   *
+   * OMITTING IT IS THE DEFAULT, not a branch: it yields `focus: null` and the
+   * full row list, so the no-lane state costs no second code path and every
+   * caller that predates focusing is unchanged.
+   *
+   * A named lane ALWAYS produces a `focus` row, even where it carries nothing
+   * at this instant. A card that answered about five other lanes and not the
+   * one under the cursor reads as broken rather than as informative.
+   */
+  focusLaneId?: string | null;
 }
 
 /**
- * Every lane resolved at one instant — what the hover card shows.
+ * What a focused lane says when it says nothing.
  *
- * ONE hover answers "what was happening here" across all lanes; per-lane
- * tooltips would make you hover fifteen times to ask one question. The rows are
- * laid out rather than joined, because the single line this replaced truncated
- * exactly when it had the most to say: a caption-length keyframe label and five
- * lane values do not fit on one line.
+ * Distinct from an `emptyReason`, which is a property of the whole recording
+ * ("no scrolling recorded"). This one is about the instant.
+ */
+const NOTHING_HERE = "nothing here";
+
+/**
+ * One lane resolved at one instant, or null where it has nothing to say.
  *
- * EVERY lane is resolved, including those in a collapsed band. Collapsing is a
- * choice about how much of the PLOT to show; the question this card answers is
- * unchanged by it, and a card that silently dropped rows would make collapsing a
- * band quietly lose evidence.
+ * Lifted out of `readoutAt` so the SAME resolution serves both the focus row
+ * and the context rows — two copies of these four branches is exactly how the
+ * card would come to disagree with itself about what a lane says.
+ */
+function resolveLane(
+  lane: TrackLaneDTO,
+  sec: number,
+  totalSec: number,
+  { tolSec, label }: ReadoutOptions,
+): ReadoutRow | null {
+  if (lane.emptyReason !== null) return null;
+  const row = (text: string, tone: TrackTone | null): ReadoutRow => ({
+    laneId: lane.id,
+    title: lane.title,
+    text,
+    tone,
+  });
+  if (lane.shape === "span") {
+    const span = lane.spans?.find((s) => sec >= s.startSec && sec < s.endSec);
+    return span ? row(span.label, span.tone) : null;
+  }
+  if (lane.shape === "density" && lane.density) {
+    const text = densityReadout(lane.density, sec, totalSec);
+    // No coverage is omitted entirely. Reporting it as 0 would assert silence
+    // where nothing was recorded at all.
+    return text === null ? null : row(text, null);
+  }
+  if (lane.shape === "mark") {
+    const mark = nearest(lane.marks ?? [], (m) => m.atSec, sec, tolSec);
+    return mark ? row(mark.label, mark.tone) : null;
+  }
+  if (lane.shape === "thumb") {
+    const thumb = nearest(lane.thumbs ?? [], (t) => t.atSec, sec, tolSec);
+    return thumb
+      ? row(`${label(thumb.marker)} · ${thumb.regionCount} regions`, "accent")
+      : null;
+  }
+  return null;
+}
+
+/**
+ * Every lane resolved at one instant, partitioned by what the cursor pointed at.
+ *
+ * ONE card for all lanes, never one per lane — the question is "what was
+ * happening here", and asking it sixteen times is not the same question. But a
+ * hover CARRIES AN ARGUMENT: the lane under the pointer. That lane becomes
+ * `focus` and every other lane with a value becomes context, because a card
+ * that returned sixteen equally-weighted rows put the answer — `Calculator` —
+ * second in ~550px behind four near-identical VLM captions.
+ *
+ * EVERY lane is still resolved, including those in a collapsed band. Collapsing
+ * is a choice about how much of the PLOT to show and must not silently cost
+ * evidence; focusing is a pointing gesture and is answered as one. The two are
+ * different acts, and the card now distinguishes them rather than flattening
+ * both into a list.
  */
 export function readoutAt(
   tracks: SessionTracksDTO,
   sec: number,
-  { tolSec, label }: ReadoutOptions,
+  options: ReadoutOptions,
 ): Readout {
+  const focusLaneId = options.focusLaneId ?? null;
   const rows: ReadoutRow[] = [];
-  const push = (laneId: string, title: string, text: string, tone: TrackTone | null): void => {
-    rows.push({ laneId, title, text, tone });
-  };
+  let focus: ReadoutRow | null = null;
 
   for (const lane of tracks.lanes) {
-    if (lane.emptyReason !== null) continue;
-    if (lane.shape === "span") {
-      const span = lane.spans?.find((s) => sec >= s.startSec && sec < s.endSec);
-      if (span) push(lane.id, lane.title, span.label, span.tone);
-    } else if (lane.shape === "density" && lane.density) {
-      const text = densityReadout(lane.density, sec, tracks.totalSec);
-      if (text) push(lane.id, lane.title, text, null);
-    } else if (lane.shape === "mark") {
-      const mark = nearest(lane.marks ?? [], (m) => m.atSec, sec, tolSec);
-      if (mark) push(lane.id, lane.title, mark.label, mark.tone);
-    } else if (lane.shape === "thumb") {
-      const thumb = nearest(lane.thumbs ?? [], (t) => t.atSec, sec, tolSec);
-      if (thumb) {
-        push(lane.id, lane.title, `${label(thumb.marker)} · ${thumb.regionCount} regions`, "accent");
-      }
+    const resolved = resolveLane(lane, sec, tracks.totalSec, options);
+    if (focusLaneId !== null && lane.id === focusLaneId) {
+      // A focused lane always answers. Where it resolved to nothing, the
+      // lane's own reason is the answer; where it has no reason either, saying
+      // so beats omitting the one row the cursor asked for.
+      focus = resolved ?? {
+        laneId: lane.id,
+        title: lane.title,
+        text: lane.emptyReason ?? NOTHING_HERE,
+        tone: null,
+      };
+    } else if (resolved) {
+      rows.push(resolved);
     }
   }
 
-  return { timecode: timecodeShort(sec), rows };
+  return { timecode: timecodeShort(sec), focus, rows };
 }

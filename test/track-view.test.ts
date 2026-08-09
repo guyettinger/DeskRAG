@@ -330,6 +330,18 @@ describe("readoutAt", () => {
         emptyReason: null,
         warning: null,
       },
+      // Last, and empty: `readoutAt` skips it, so no row-order assertion above
+      // changes. It exists so a FOCUSED empty lane has something to answer with.
+      {
+        id: "scroll",
+        group: "input",
+        title: "scroll",
+        shape: "density",
+        showLabels: false,
+        density: { values: new Array(10).fill(0), peak: 0, unit: "px/s" },
+        emptyReason: "no scrolling recorded",
+        warning: null,
+      },
     ],
   };
 
@@ -368,5 +380,59 @@ describe("readoutAt", () => {
 
   it("names a keyframe through the INJECTED label, never its own rule", () => {
     expect(text(readoutAt(tracks, 3, opts), "keyframes")).toBe("L:f1 · 7 regions");
+  });
+
+  // `sec = 2` throughout below, not 2.5: at 2.5 the `markers` mark and the
+  // `keyframes` thumb both sit EXACTLY tolSec from the cursor and are included,
+  // so a row-order assertion would carry four ids for no reason. At 2.0 the gap
+  // is 1.0 and both fall outside.
+  it("extracts the focused lane and never repeats it in the rows", () => {
+    const r = readoutAt(tracks, 2, { ...opts, focusLaneId: "apps" });
+    expect(r.focus).toEqual({
+      laneId: "apps",
+      title: "apps",
+      text: "TextEdit",
+      tone: "app-1",
+    });
+    expect(r.rows.map((row) => row.laneId)).not.toContain("apps");
+    expect(text(r, "typing")).toBe("4 keys/s");
+  });
+
+  // The no-lane state — a band header, or the space below the last lane — is
+  // the function's DEFAULT, not a branch. That is what keeps this change
+  // additive: every case above this one exercises it.
+  it("without a focus lane reproduces the every-lane card", () => {
+    const r = readoutAt(tracks, 2, opts);
+    expect(r.focus).toBeNull();
+    expect(r.rows.map((row) => row.laneId)).toEqual(["apps", "typing"]);
+  });
+
+  // Pointing at a lane and being answered about five OTHER lanes reads as a
+  // broken card. The lane's own reason is the answer.
+  it("answers about a focused lane that is empty, using the lane's own reason", () => {
+    const r = readoutAt(tracks, 2, { ...opts, focusLaneId: "scroll" });
+    expect(r.focus).toEqual({
+      laneId: "scroll",
+      title: "scroll",
+      text: "no scrolling recorded",
+      tone: null,
+    });
+    expect(r.rows.map((row) => row.laneId)).not.toContain("scroll");
+  });
+
+  it("answers about a focused lane with data elsewhere but none at the cursor", () => {
+    const r = readoutAt(tracks, 7, { ...opts, focusLaneId: "apps" });
+    expect(r.focus).toEqual({
+      laneId: "apps",
+      title: "apps",
+      text: "nothing here",
+      tone: null,
+    });
+  });
+
+  it("treats an unknown focus lane as no focus at all", () => {
+    const r = readoutAt(tracks, 2, { ...opts, focusLaneId: "no-such-lane" });
+    expect(r.focus).toBeNull();
+    expect(r.rows.map((row) => row.laneId)).toEqual(["apps", "typing"]);
   });
 });
