@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { FakeSummaryProvider } from "../src/embed/summary.js";
 import { ComposeRepresenter } from "../src/represent/compose/compose-representer.js";
+import type { LevelKind } from "../src/represent/compose/types.js";
 import type { DualStore } from "../src/store/store.js";
 import { id, makeStore } from "./helpers.js";
 
@@ -161,88 +162,68 @@ describe("ComposeRepresenter", () => {
     expect(store.getFramesBySegment(root.id).map((f) => f.id)).toContain(frame);
   });
 
-  it("NAMES THE ROOT with a dedicated call when composing left it a rollup", async () => {
+  it("writes at most three composed granularities", async () => {
     const { store, sessionId } = await withSession();
-    await seedActions(store, sessionId, 8);
+    await seedActions(store, sessionId, 40);
+    await new ComposeRepresenter(store, { summarizer: new FakeSummaryProvider(2) })
+      .represent(sessionId);
 
-    // Splits when asked to partition (so every level composes), but answers the
-    // naming question with one group — which is exactly what a real model does
-    // NOT do when handed the partitioning prompt for a two-item list.
-    const provider = {
-      id: "t",
-      model: "t",
-      compose: async (kids: readonly { text: string }[], ctx: { kind: string }) => {
-        if (ctx.kind === "session") return [{ start: 0, end: 1, summary: "debugged the clock" }];
-        // Mimics the real failure: asked to SPLIT a two-item list it returns
-        // two groups, which cannot shrink and is therefore rejected — so the
-        // root comes back a rollup.
+    const grans = new Set(
+      store.getSegmentsBySession(sessionId).map((s) => s.granularity),
+    );
+    expect([...grans].sort()).toEqual(["action", "level:1", "level:2", "session"].filter((g) => grans.has(g)).sort());
+    expect(grans.has("level:3")).toBe(false);
+  });
+
+  it("writes NO level:2 without a summarizer — Process is model-only", async () => {
+    const { store, sessionId } = await withSession();
+    await seedActions(store, sessionId, 12);
+    await new ComposeRepresenter(store).represent(sessionId);
+
+    const grans = new Set(store.getSegmentsBySession(sessionId).map((s) => s.granularity));
+    expect(grans.has("level:1")).toBe(true);
+    expect(grans.has("level:2")).toBe(false);
+    expect(grans.has("session")).toBe(true);
+  });
+
+  it("writes an edge that SPANS two levels when a node was elided", async () => {
+    const { store, sessionId } = await withSession();
+    await seedActions(store, sessionId, 12);
+    // Pairs at level 1; at the process level the last task is left alone.
+    const lonely = {
+      id: "t", model: "t",
+      compose: async (kids: readonly { text: string }[], ctx: { kind: LevelKind }) => {
+        if (ctx.kind === "session") return [{ start: 0, end: 1, summary: "the session" }];
+        if (ctx.kind === "process")
+          return [
+            { start: 0, end: kids.length - 1, summary: "phase" },
+            { start: kids.length - 1, end: kids.length, summary: "alone" },
+          ];
         const out = [];
-        const step = kids.length === 2 ? 1 : 2;
-        for (let i = 0; i < kids.length; i += step) {
-          out.push({ start: i, end: Math.min(i + step, kids.length), summary: `run ${i}` });
-        }
+        for (let i = 0; i < kids.length; i += 2)
+          out.push({ start: i, end: Math.min(i + 2, kids.length), summary: `task ${i}` });
         return out;
       },
     };
+    await new ComposeRepresenter(store, { summarizer: lonely }).represent(sessionId);
 
-    const r = await new ComposeRepresenter(store, { summarizer: provider }).represent(sessionId);
-
-    expect(r.rootSummary).toBe("debugged the clock");
     const root = store.getSegmentsBySession(sessionId).find((s) => s.granularity === "session")!;
-    expect(store.getSegmentSummary(root.id)).toEqual({
-      segmentId: root.id,
-      text: "debugged the clock",
-      source: "llm",
-    });
+    const kidGrans = store.getSegmentChildren(root.id)
+      .map((id) => store.getSegment(id)!.granularity);
+    // The root holds a process AND the elided task — two different levels.
+    expect(new Set(kidGrans).size).toBeGreaterThan(1);
   });
 
-  it("leaves the rollup standing when naming the root fails", async () => {
+  it("has NO single-child composed node except the root", async () => {
     const { store, sessionId } = await withSession();
-    await seedActions(store, sessionId, 8);
-    const provider = {
-      id: "t",
-      model: "t",
-      compose: async (kids: readonly { text: string }[], ctx: { kind: string }) => {
-        if (ctx.kind === "session") throw new Error("ollama went away");
-        const out = [];
-        const step = kids.length === 2 ? 1 : 2;
-        for (let i = 0; i < kids.length; i += step) {
-          out.push({ start: i, end: Math.min(i + step, kids.length), summary: `run ${i}` });
-        }
-        return out;
-      },
-    };
+    await seedActions(store, sessionId, 20);
+    await new ComposeRepresenter(store, { summarizer: new FakeSummaryProvider(2) })
+      .represent(sessionId);
 
-    const r = await new ComposeRepresenter(store, { summarizer: provider }).represent(sessionId);
-
-    // Composing still cannot fail the run, and the root still DISCLOSES that
-    // nothing named it.
-    expect(r.rootSummary).not.toBeNull();
-    const root = store.getSegmentsBySession(sessionId).find((s) => s.granularity === "session")!;
-    expect(store.getSegmentSummary(root.id)!.source).toBe("template");
-  });
-
-  it("does not ask for a root name when the model already gave one", async () => {
-    const { store, sessionId } = await withSession();
-    await seedActions(store, sessionId, 4);
-    let singleCalls = 0;
-    const provider = {
-      id: "t",
-      model: "t",
-      compose: async (kids: readonly { text: string }[], ctx: { kind: string }) => {
-        if (ctx.kind === "session") {
-          singleCalls += 1;
-          return [{ start: 0, end: 1, summary: "should not be needed" }];
-        }
-        // Collapses everything in one step, so the root IS model-named.
-        return [{ start: 0, end: kids.length, summary: "did the whole thing" }];
-      },
-    };
-
-    const r = await new ComposeRepresenter(store, { summarizer: provider }).represent(sessionId);
-
-    expect(r.rootSummary).toBe("did the whole thing");
-    expect(singleCalls).toBe(0);
+    for (const s of store.getSegmentsBySession(sessionId)) {
+      if (s.granularity === "action" || s.granularity === "session") continue;
+      expect(store.getSegmentChildren(s.id).length).toBeGreaterThan(1);
+    }
   });
 
   it("returns an empty result for a session with no actions", async () => {

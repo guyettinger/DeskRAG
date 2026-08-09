@@ -8,7 +8,7 @@
  *
  * It cannot fail the run. A provider error, a timeout, an unparseable reply or
  * no daemon at all each degrade that block to the structural grouping, which is
- * `composeLevels`' own contract; nothing here rethrows.
+ * `composeLadder`'s own contract; nothing here rethrows.
  */
 
 import { ulid } from "ulid";
@@ -22,8 +22,8 @@ import type {
   SegmentTreeInsert,
   Store,
 } from "../../store/types.js";
-import { composeLevels } from "./levels.js";
-import type { ChildSummary, ComposedLevel, ComposeGroup, Partitioner } from "./types.js";
+import { composeLadder, type ComposeFn } from "./levels.js";
+import type { ChildSummary, LadderChild } from "./types.js";
 
 /** Level 0 — the only granularity segmentation itself produces. */
 export const LEAF_GRANULARITY = "action";
@@ -97,74 +97,51 @@ export class ComposeRepresenter {
 
     const children = this.leafChildren(leaves, this.store.getEventsBySession(sessionId));
 
-    const composed = await composeLevels(children, {
-      ...(this.summarizer !== undefined ? { partitioner: this.partitioner() } : {}),
+    const ladder = await composeLadder(children, {
+      ...(this.summarizer !== undefined ? { compose: this.composeFn() } : {}),
       ...(this.batchCap !== undefined ? { batchCap: this.batchCap } : {}),
     });
 
-    // Write bottom-up, so a parent's span comes from rows that already exist.
-    let below = leaves.map((s) => ({
-      id: s.id,
-      tMonoStart: s.tMonoStart,
-      tMonoEnd: s.tMonoEnd,
-    }));
+    // ONE forward pass: the ladder is topologically ordered, so every child
+    // already has an id by the time its parent is written.
+    const leafIds = leaves.map((s) => s.id);
+    const leafSpan = leaves.map((s) => ({ start: s.tMonoStart, end: s.tMonoEnd }));
+    const nodeIds: string[] = [];
+    const nodeSpan: { start: number; end: number }[] = [];
     const segments: SegmentInsert[] = [];
     const edges: SegmentTreeInsert[] = [];
     const summaries: SegmentSummaryInsert[] = [];
     let llmNodes = 0;
-    let rootSummary: string | null = null;
 
-    for (let i = 0; i < composed.length; i++) {
-      const level = composed[i]!;
-      const isRoot = i === composed.length - 1;
-      const next: typeof below = [];
-      for (const node of level.nodes) {
-        const kids = below.slice(node.range.start, node.range.end);
-        const nodeId = this.mintId();
-        // A parent's span IS its children's union — never computed some other
-        // way, or a node could claim time nothing was recorded in.
-        const tMonoStart = kids[0]!.tMonoStart;
-        const tMonoEnd = kids[kids.length - 1]!.tMonoEnd;
-        segments.push({
-          id: nodeId,
-          sessionId,
-          granularity: isRoot ? ROOT_GRANULARITY : `${LEVEL_PREFIX}${level.level}`,
-          tMonoStart,
-          tMonoEnd,
-          boundaryReason: "window",
-        });
-        for (const k of kids) edges.push({ sessionId, parentId: nodeId, childId: k.id });
-        summaries.push({ segmentId: nodeId, text: node.summary, source: node.source });
-        if (node.source === "llm") llmNodes += 1;
-        if (isRoot) rootSummary = node.summary;
-        next.push({ id: nodeId, tMonoStart, tMonoEnd });
-      }
-      below = next;
+    const resolve = (c: LadderChild): { id: string; start: number; end: number } =>
+      c.kind === "leaf"
+        ? { id: leafIds[c.index]!, ...leafSpan[c.index]! }
+        : { id: nodeIds[c.index]!, ...nodeSpan[c.index]! };
+
+    for (const node of ladder.nodes) {
+      const kids = node.children.map(resolve);
+      const nodeId = this.mintId();
+      // A parent's span IS its children's union — never computed another way,
+      // or a node could claim time nothing was recorded in.
+      const tMonoStart = Math.min(...kids.map((k) => k.start));
+      const tMonoEnd = Math.max(...kids.map((k) => k.end));
+      segments.push({
+        id: nodeId,
+        sessionId,
+        granularity: node.granularity,
+        tMonoStart,
+        tMonoEnd,
+        boundaryReason: "window",
+      });
+      for (const k of kids) edges.push({ sessionId, parentId: nodeId, childId: k.id });
+      summaries.push({ segmentId: nodeId, text: node.summary, source: node.source });
+      if (node.source === "llm") llmNodes += 1;
+      nodeIds.push(nodeId);
+      nodeSpan.push({ start: tMonoStart, end: tMonoEnd });
     }
 
-    // NAME THE ROOT, when composing did not.
-    //
-    // The root's summary is the session's PURPOSE — the one string a reader
-    // sees in the Library — and partitioning never produces it: the final
-    // collapse asks the model to split a two-item list, which it answers with
-    // two groups every time (3 of 3 trials on a real recording), and two does
-    // not shrink so it is correctly rejected. Naming is a different question,
-    // so it gets its own call rather than a looser acceptance rule.
-    const rootSummaryRow = summaries[summaries.length - 1];
-    if (
-      this.summarizer !== undefined &&
-      rootSummaryRow !== undefined &&
-      rootSummaryRow.source === "template" &&
-      children.length > 1
-    ) {
-      const named = await this.nameRoot(composed);
-      if (named !== undefined) {
-        rootSummaryRow.text = named;
-        rootSummaryRow.source = "llm";
-        rootSummary = named;
-        llmNodes += 1;
-      }
-    }
+    const rootSummary = summaries[summaries.length - 1]?.text ?? null;
+    const levels = new Set(segments.map((s) => s.granularity)).size;
 
     // SQLite rows first, then the edges that reference them, then the text.
     await this.store.putSegments(segments);
@@ -173,7 +150,7 @@ export class ComposeRepresenter {
     await this.embedSummaries(summaries, sessionId);
     await this.linkFrames(segments.map((s) => s.id));
 
-    return { levels: composed.length, nodes: segments.length, llmNodes, rootSummary };
+    return { levels, nodes: segments.length, llmNodes, rootSummary };
   }
 
   /**
@@ -253,54 +230,11 @@ export class ComposeRepresenter {
     );
   }
 
-  /**
-   * One call asking what the whole session WAS, from the summaries of the level
-   * directly beneath the root.
-   *
-   * Returns undefined on any failure, so the rollup already written stands —
-   * composing still cannot fail the run, and the root still says `template`
-   * when nothing named it.
-   */
-  private async nameRoot(composed: readonly ComposedLevel[]): Promise<string | undefined> {
-    const below = composed[composed.length - 2];
-    if (below === undefined || this.summarizer === undefined) return undefined;
-    const kids: ChildSummary[] = below.nodes.map((n, i) => ({
-      index: i,
-      text: n.summary,
-      app: null,
-      url: null,
-      startSec: 0,
-      endSec: 0,
-      barrier: false,
-    }));
-    try {
-      const groups = await this.summarizer.compose(kids, {
-        level: composed.length,
-        single: true,
-      });
-      const text = groups[0]?.summary.trim();
-      return text !== undefined && text.length > 0 ? text : undefined;
-    } catch {
-      return undefined;
-    }
-  }
-
-  /**
-   * Adapts the provider to `composeLevels`' block-at-a-time contract: slice the
-   * block, let the model see 0..n-1, shift the answer back.
-   */
-  private partitioner(): Partitioner {
+  /** Adapts the provider to the ladder's contract. */
+  private composeFn(): ComposeFn {
     const summarizer = this.summarizer;
-    if (summarizer === undefined) throw new Error("partitioner() with no summarizer");
-    return async (children, block, level): Promise<ComposeGroup[]> => {
-      const slice = children.slice(block.start, block.end).map((c, i) => ({ ...c, index: i }));
-      const groups = await summarizer.compose(slice, { level });
-      return groups.map((g) => ({
-        start: g.start + block.start,
-        end: g.end + block.start,
-        summary: g.summary,
-      }));
-    };
+    if (summarizer === undefined) throw new Error("composeFn() with no summarizer");
+    return async (children, kind) => summarizer.compose(children, { kind });
   }
 
   /**
