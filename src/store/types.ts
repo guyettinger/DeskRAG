@@ -187,6 +187,30 @@ export interface TranscriptClipInsert {
 
 export type TranscriptClipRow = TranscriptClipInsert;
 
+/**
+ * Which producer wrote a composed summary — see `segment_summary.source`.
+ *
+ * Disclosure, not bookkeeping: a hierarchy composed structurally (no text model
+ * configured) must not be able to masquerade as one a model summarized.
+ */
+export type SummarySource = "llm" | "template";
+
+/** One parent -> child edge of the compositional segment hierarchy. */
+export interface SegmentTreeInsert {
+  sessionId: string;
+  parentId: string;
+  childId: string;
+}
+
+/** The composed summary of a level >= 1 segment. Leaves never have one. */
+export interface SegmentSummaryInsert {
+  segmentId: string;
+  text: string;
+  source: SummarySource;
+}
+
+export type SegmentSummaryRow = SegmentSummaryInsert;
+
 /** Patch the text columns of an already-persisted segment (represent/ fills these). */
 export interface SegmentPatch {
   digest?: string;
@@ -416,6 +440,41 @@ export interface Store {
   putTranscriptClips(rows: TranscriptClipInsert[]): Promise<void>;
   /** A session's clips in t_mono order. */
   getTranscriptClipsBySession(sessionId: string): TranscriptClipRow[];
+
+  // the compositional hierarchy (represent/compose/) — SQLite only, like trace_*
+
+  /**
+   * Parent -> child edges for composed levels. Idempotent: re-inserting an edge
+   * is a no-op, so the composing stage can run twice.
+   */
+  putSegmentTree(rows: SegmentTreeInsert[]): Promise<void>;
+  /** The direct children of a composed segment, or [] for a leaf. */
+  getSegmentChildren(parentId: string): string[];
+  /** The composed parent of a segment, or undefined for a root / a stray leaf. */
+  getSegmentParent(childId: string): string | undefined;
+  /**
+   * Every LEAF beneath a segment — the segment itself when it has no children.
+   *
+   * This is what Tier-2 scoping uses. Frame vectors denormalize `segment_ids` at
+   * represent time, long before composing runs, so a composed level can never
+   * appear in that field: scoping a parent hit directly would match zero frames
+   * and return empty with no error at all.
+   */
+  getDescendantLeaves(segmentId: string): string[];
+  /** Persist composed summaries, replacing any existing row for the same id. */
+  putSegmentSummaries(rows: SegmentSummaryInsert[]): Promise<void>;
+  /** One composed summary, or undefined for a leaf / an unknown id. */
+  getSegmentSummary(segmentId: string): SegmentSummaryRow | undefined;
+  /** Every composed summary in a session. */
+  getSegmentSummariesBySession(sessionId: string): SegmentSummaryRow[];
+  /**
+   * Delete segments by id — Lance vectors first, then the SQLite rows, the same
+   * order `deleteSession` uses.
+   *
+   * Composing may run twice, and a second root would make "the session's
+   * purpose" ambiguous with nothing able to say which was stale.
+   */
+  deleteSegments(ids: readonly string[]): Promise<void>;
   /** Add segment vectors, after their source text is already committed to SQLite. */
   putSegmentVectors(rows: SegmentVectorInsert[]): Promise<void>;
   /**
