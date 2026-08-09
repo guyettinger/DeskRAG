@@ -27,7 +27,7 @@ export interface OllamaSummaryOptions {
 }
 
 interface ChatResponse {
-  message?: { content?: string };
+  message?: { content?: string; thinking?: string };
 }
 
 export class OllamaSummaryProvider implements SummaryProvider {
@@ -55,6 +55,10 @@ export class OllamaSummaryProvider implements SummaryProvider {
         // A request, not a guarantee — parseComposeResponse still digs the
         // object out of whatever actually comes back.
         format: "json",
+        // We want a partition, not a monologue. MEASURED on qwen3-vl:4b: a
+        // 30-step prompt with thinking on never returned at all, where the same
+        // request with it off answered in 1.4s.
+        think: false,
         messages: [
           { role: "system", content: COMPOSE_SYSTEM },
           { role: "user", content: composePrompt(children, ctx.level) },
@@ -63,14 +67,28 @@ export class OllamaSummaryProvider implements SummaryProvider {
       this.fetchImpl,
     );
 
-    const content = res.message?.content ?? "";
+    // BOTH channels, content first.
+    //
+    // A thinking model routes its structured answer into `thinking` and leaves
+    // `content` EMPTY — measured on qwen3-vl:4b, which does this even with
+    // `think: false`, because Ollama applies the JSON format constraint to
+    // whichever channel the model writes. Reading only `content` makes this
+    // adapter silently incompatible with every thinking model, and silently is
+    // the operative word: the composer would just take the structural path
+    // forever and nothing would say why.
+    //
+    // This cannot widen what is accepted — the partition is validated
+    // downstream either way, and the malformed replies these models do produce
+    // (`"partition": 2` where `"start"` belongs) are still rejected wholesale.
+    const msg = res.message;
     // Indices are BLOCK-RELATIVE here: the composer slices before calling, so
     // the model only ever sees 0..n-1 and the caller shifts them back.
-    const groups = parseComposeResponse(content, 0);
+    const groups =
+      parseComposeResponse(msg?.content ?? "", children.length, 0) ??
+      parseComposeResponse(msg?.thinking ?? "", children.length, 0);
     if (groups === undefined) {
-      throw new Error(
-        `Ollama compose returned an unparseable partition: ${content.slice(0, 200)}`,
-      );
+      const seen = (msg?.content ?? "") || (msg?.thinking ?? "");
+      throw new Error(`Ollama compose returned an unparseable partition: ${seen.slice(0, 200)}`);
     }
     return groups;
   }

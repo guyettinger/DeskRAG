@@ -38,12 +38,80 @@ describe("OllamaSummaryProvider", () => {
     const p = new OllamaSummaryProvider({
       model: "qwen3:8b",
       fetchImpl: fakeFetch({
-        message: { content: '{"groups":[{"start":0,"end":2,"summary":"added numbers"}]}' },
+        message: { content: '{"groups":[{"start":0,"summary":"added numbers"}]}' },
       }),
     });
     expect(await p.compose(kids, { level: 1 })).toEqual([
       { start: 0, end: 2, summary: "added numbers" },
     ]);
+  });
+
+  it("reads the THINKING channel when content is empty", async () => {
+    // Measured on qwen3-vl:4b: a thinking model routes its structured answer
+    // into `thinking` and leaves `content` empty, even with think:false.
+    // Reading only `content` would make this adapter silently incompatible
+    // with every such model.
+    const p = new OllamaSummaryProvider({
+      model: "qwen3-vl:4b",
+      fetchImpl: fakeFetch({
+        message: {
+          content: "",
+          thinking: '{"groups":[{"start":0,"summary":"added numbers"}]}',
+        },
+      }),
+    });
+    expect(await p.compose(kids, { level: 1 })).toEqual([
+      { start: 0, end: 2, summary: "added numbers" },
+    ]);
+  });
+
+  it("prefers content over thinking when both parse", async () => {
+    const p = new OllamaSummaryProvider({
+      model: "qwen3:8b",
+      fetchImpl: fakeFetch({
+        message: {
+          content: '{"groups":[{"start":0,"summary":"the answer"}]}',
+          thinking: '{"groups":[{"start":0,"summary":"a draft"}]}',
+        },
+      }),
+    });
+    expect((await p.compose(kids, { level: 1 }))[0]!.summary).toBe("the answer");
+  });
+
+  it("still rejects a malformed partition found in thinking", async () => {
+    // The real failure these models produce: `"partition"` where `"start"`
+    // belongs. Reading a second channel must not widen what is accepted.
+    const p = new OllamaSummaryProvider({
+      model: "qwen3-vl:4b",
+      fetchImpl: fakeFetch({
+        message: {
+          content: "",
+          thinking: '{"groups":[{"start":0,"summary":"a"},{"partition":1}]}',
+        },
+      }),
+    });
+    await expect(p.compose(kids, { level: 1 })).rejects.toThrow(/unparseable/i);
+  });
+
+  it("asks for no monologue — a partition is not a reasoning task", async () => {
+    let body: unknown;
+    const capturing = (async (_url: string, init: { body: string }) => {
+      body = JSON.parse(init.body);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          message: { content: '{"groups":[{"start":0,"summary":"x"}]}' },
+        }),
+        text: async () => "",
+      } as unknown as Response;
+    }) as unknown as typeof globalThis.fetch;
+
+    await new OllamaSummaryProvider({ model: "m", fetchImpl: capturing }).compose(kids, {
+      level: 1,
+    });
+    // Measured: a 30-step prompt with thinking ON never returned at all.
+    expect((body as { think: boolean }).think).toBe(false);
   });
 
   it("THROWS on an unparseable reply — the composer decides what that means", async () => {

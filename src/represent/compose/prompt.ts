@@ -13,15 +13,33 @@
 
 import type { ChildSummary, ComposeGroup } from "./types.js";
 
+/**
+ * CUT POINTS, not ranges — and that was measured, not preferred.
+ *
+ * Asked for `{start, end}` ranges, the model returned a genuinely good
+ * three-task grouping of 24 steps that ended at index 23: it dropped the last
+ * step, so the covering check rejected all of it. Naming a run's END is the
+ * only thing it got wrong, and it is the one thing it never needs to say.
+ *
+ * Stating only where a run BEGINS makes a gap, an overlap and a short cover
+ * IMPOSSIBLE TO EXPRESS rather than rejected after the fact. Measured on one
+ * real 24-step block: 3 of 3 valid against 0 of 1.
+ *
+ * This is not a softening of the rejection rule. It changes what is ASKED for,
+ * never what is accepted: the cut points are still validated (ascending, first
+ * is 0, in range, integer) and a violation still discards the whole reply.
+ */
 export const COMPOSE_SYSTEM =
   "You group a user's recorded desktop activity into the tasks it composes. " +
-  "You are given an ordered, numbered list of consecutive steps. Partition it " +
-  "into contiguous runs, where each run is ONE thing the user was trying to " +
+  "You are given an ordered, numbered list of consecutive steps. Split it into " +
+  "contiguous runs, where each run is ONE thing the user was trying to " +
   "accomplish. Name each run in one short phrase stating the GOAL, not what was " +
   "on screen. Merge freely: fewer, larger runs are better than many small ones. " +
-  'Reply with JSON only: {"groups":[{"start":0,"end":3,"summary":"..."}]} where ' +
-  "start is inclusive, end is exclusive, the runs are in order, and together " +
-  "they cover every step exactly once. No preamble.";
+  'Reply with JSON only: {"groups":[{"start":0,"summary":"..."},{"start":5,"summary":"..."}]} ' +
+  "where `start` is the step number a run BEGINS at. The first run must start at " +
+  "0. Each run continues until the next one begins, so you never state where a " +
+  "run ends. If every step belongs to ONE task, reply with a single run " +
+  "starting at 0 — that is often the right answer for a short list. No preamble.";
 
 export function composePrompt(children: readonly ChildSummary[], level: number): string {
   const lines = children.map((c, i) => {
@@ -38,15 +56,28 @@ export function composePrompt(children: readonly ChildSummary[], level: number):
 }
 
 /**
- * Parse a model reply into groups, shifting indices by `offset` into the
- * level's own index space.
+ * Parse a model reply into groups, shifting indices into the level's own index
+ * space.
  *
- * Returns `undefined` for anything unparseable. It does NOT validate the
+ * The reply carries CUT POINTS; this closes them into ranges against `count`,
+ * so each run ends where the next begins and the last runs to the end of the
+ * block. Contiguity and coverage therefore come from the geometry — the model
+ * cannot state them wrongly because it never states them at all.
+ *
+ * Returns `undefined` for anything unparseable. It still does NOT validate the
  * partition — `validatePartition` does that, and the caller rejects wholesale.
- * Keeping the two apart is what lets one malformed reply be distinguished from
- * a well-formed reply that happens to be a bad partition.
+ * Keeping the two apart is what lets a malformed reply be distinguished from a
+ * well-formed reply that happens to be a bad partition (cut points out of
+ * order, or past the end).
+ *
+ * @param count  children in the block, so the final run can be closed.
+ * @param offset the block's start in the level's index space.
  */
-export function parseComposeResponse(raw: string, offset: number): ComposeGroup[] | undefined {
+export function parseComposeResponse(
+  raw: string,
+  count: number,
+  offset: number,
+): ComposeGroup[] | undefined {
   // Models wrap JSON in prose or a code fence often enough that finding the
   // object is worth doing; anything past that is the caller's problem.
   const start = raw.indexOf("{");
@@ -61,18 +92,23 @@ export function parseComposeResponse(raw: string, offset: number): ComposeGroup[
   }
 
   const groups = (parsed as { groups?: unknown }).groups;
-  if (!Array.isArray(groups)) return undefined;
+  if (!Array.isArray(groups) || groups.length === 0) return undefined;
 
-  const out: ComposeGroup[] = [];
+  const cuts: { start: number; summary: string }[] = [];
   for (const g of groups) {
-    const o = g as { start?: unknown; end?: unknown; summary?: unknown };
-    if (typeof o.start !== "number" || typeof o.end !== "number") return undefined;
-    out.push({
-      start: o.start + offset,
-      end: o.end + offset,
+    const o = g as { start?: unknown; summary?: unknown };
+    if (typeof o.start !== "number") return undefined;
+    cuts.push({
+      start: o.start,
       // A missing name is not a malformed reply — the caller rolls one up.
       summary: typeof o.summary === "string" ? o.summary : "",
     });
   }
-  return out;
+
+  // Close each cut against the next, and the last against the block's end.
+  return cuts.map((c, i) => ({
+    start: c.start + offset,
+    end: (i + 1 < cuts.length ? cuts[i + 1]!.start : count) + offset,
+    summary: c.summary,
+  }));
 }
