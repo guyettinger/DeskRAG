@@ -27,6 +27,15 @@ interface Props {
   totalSec: number;
   /** The plot column's measured width. 0 until the rail's observer first fires. */
   axisWidth: number;
+  /**
+   * The cursor is on this lane, and the hover card is answering about it.
+   *
+   * Passed down rather than read from a `:hover` selector: the card's focus is
+   * decided by `closest()` from ONE mousemove on the rail, and a CSS `:hover`
+   * would be a second, independent rule for the same fact — free to disagree
+   * with the card at exactly the lane boundaries where it matters.
+   */
+  hovered: boolean;
   /** Null when there is no video: the axis is real but nothing can be sought. */
   onSeek: ((sec: number) => void) | null;
   onInspect: (frameId: string) => void;
@@ -46,7 +55,7 @@ const thumbLeft = (sec: number, totalSec: number, axisWidth: number): number => 
  * builder in `session-tracks.ts` and never a new component here.
  */
 export function TrackLane(props: Props): React.JSX.Element {
-  const { lane } = props;
+  const { lane, hovered } = props;
   // An empty lane keeps its row but not its height. Absence still has to be
   // VISIBLE — "no scrolling recorded" is the payload, and a lane that vanished
   // would make a signal that was never captured indistinguishable from one this
@@ -61,6 +70,7 @@ export function TrackLane(props: Props): React.JSX.Element {
       data-lane={lane.id}
       data-shape={lane.shape}
       data-empty={empty || undefined}
+      data-hovered={hovered || undefined}
     >
       <div className="tracks__gutter">
         <span className="tracks__title mono">{lane.title}</span>

@@ -452,6 +452,7 @@ export function TrackRail({
                       lane={lane}
                       totalSec={totalSec}
                       axisWidth={axisWidth}
+                      hovered={hover?.laneId === lane.id}
                       onSeek={player ? seek : null}
                       onInspect={onInspect}
                     />

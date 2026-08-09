@@ -1886,6 +1886,29 @@ select {
   height: var(--lane-h-empty);
 }
 
+/* Which lane the card is about.
+   Without it the card names a lane and nothing on screen connects the name to
+   a row — the reader has to read the card to discover what they are pointing
+   at, which inverts the gesture. It also holds the focus visible during the
+   vertical travel between lanes, where the card's contents change fastest.
+
+   `--accent` and never a lane tone: this is the INSTRUMENT register
+   (selection and focus), which the rail's two-register rule keeps above the
+   OKLCH band every `--data-*` bar is drawn from. The wash matches the alpha
+   `.axtree__row--selected` already uses, halved — a lane is 32px tall and a
+   full-strength tint over one competes with the bars inside it.
+
+   `box-shadow`, never a border or a margin: it paints OUTSIDE the box, so the
+   gutter keeps its exact width and the lane titles do not shift by 2px as the
+   cursor moves down the rail — the same reason `.tracks__span` uses a ring. */
+.tracks__lane[data-hovered] {
+  background: rgba(124, 156, 255, 0.07);
+}
+.tracks__lane[data-hovered] .tracks__gutter {
+  box-shadow: inset 2px 0 0 var(--accent);
+  color: var(--text);
+}
+
 .tracks__lane:last-child {
   border-bottom: none;
 }
