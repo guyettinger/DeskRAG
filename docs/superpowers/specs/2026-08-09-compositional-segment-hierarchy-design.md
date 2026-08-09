@@ -495,31 +495,51 @@ longer (27–48 chars against 16–26) and there are more of them. So
 `showLabels: true` on composed lanes is correct: a withheld label is the
 contract working, not a defect.
 
-**3. Does `DEFAULT_RRF_K` still hold at six lanes? — INCONCLUSIVE, and left at 10.**
+**3. Does `DEFAULT_RRF_K` still hold at six lanes? — NO. Changed 10 → 5.**
 
-Swept over 8 known-answer queries (each a composed level's own summary text) on
-the one available recording — 42 segments:
+Re-swept 2026-08-09 on TWO real recordings, 87 segments, 30 known-answer
+queries (20 composed summaries, 10 leaf captions). The corpus now exceeds Tier
+1's `topN` of 50, so ranks are meaningful where the first attempt's 42-segment
+library returned everything:
 
-| k | mean rank of the correct segment |
-| --- | --- |
-| 5 | 21.50 |
-| **10 (current)** | 26.38 |
-| 20 | 26.63 |
-| 60 | 26.63 |
+| k | mean rank | recall@1 | recall@5 | mean (composed) | mean (leaf) |
+| --- | --- | --- | --- | --- | --- |
+| **5** | **25.43** | **27%** | **47%** | 37.45 | 1.40 |
+| 10 (was) | 29.17 | 20% | 33% | 42.80 | 1.90 |
+| 20 | 32.47 | 13% | 30% | 47.55 | 2.30 |
+| 60 | 35.77 | 7% | 23% | 50.60 | 6.10 |
 
-k=5 edges out k=10, but a single 29-second recording cannot distinguish them:
-the original sweep that set this constant used five known-answer queries over a
-REAL LIBRARY, and mean ranks in the twenties here reflect a 42-segment corpus
-where Tier 1's `topN` of 50 returns everything, not a ranking failure. **The
-constant is unchanged.** What the sweep does establish is that nothing
-INVERTED — the documented failure mode, a segment ranked 1st in two lanes
-landing 13th fused, does not appear at six lanes.
+Monotonic on every metric, and it is the documented theory doing what it
+predicts: one more lane widens the count term, so k must shrink to keep the
+rank term wider.
 
-Re-run this on a library of many recordings before touching `DEFAULT_RRF_K`.
+**THE ASYMMETRY THIS EXPOSED, WHICH NO k CAN FIX — a real limitation of §4.**
 
-**Found while running it:** `rrfK` belongs to `Tier1Options` and reaches the
-fusion only as `RetrieverOptions.tier1.rrfK`. Passing it at the top level is
-silently ignored — which is what an inert sweep looks like, since every k then
+A composed level has ONLY a summary: no digest, no caption, no app_caption, no
+transcript. It therefore participates in ONE dense lane where a leaf
+participates in three or four, and RRF is a SUM, so four mediocre ranks
+outscore one perfect rank. Measured over 20 composed queries whose own summary
+lane ranked them **#1 every single time**: NONE came first fused, and the ranks
+split bimodally — 3,4,4,4,4,5,5,9,11 then 26,29,29,30,32,33,34,34,35,36.
+
+    query "Start calculator"
+      correct (level:1): summary#1
+      winner  (action):  digest#25 caption#32 app_caption#1 transcript#13
+
+This is the failure `rrf.ts` already documents, now STRUCTURAL rather than a
+tuning artefact: the lane count differs by what a node IS. "Retrieval at
+altitude" therefore works far less well than §4 claims — a task is findable but
+rarely first.
+
+Fixing it means changing the fusion (a participation-normalized score, which
+discards the cross-lane agreement signal RRF was chosen for) or ranking
+altitudes separately and interleaving. Both are design changes and neither is
+made here. Leaf retrieval is unaffected and excellent (mean rank 1.40).
+
+**Found while running the first attempt:** `rrfK` belongs to `Tier1Options` and
+reaches the fusion only as `RetrieverOptions.tier1.rrfK`. Passing it at the top
+level is silently ignored — which looks exactly like an inert sweep, since every
+k then returns an identical ranking.
 returns an identical ranking.
 
 Record with the Recorder window closed to the tray. Its elapsed timer displays
