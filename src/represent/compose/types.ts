@@ -9,6 +9,13 @@
 
 import type { SummarySource } from "../../store/types.js";
 
+/**
+ * Which question a compose call asks — semantic, not numeric. Task splits
+ * actions into tasks; Process groups tasks into phases of work; Session names
+ * one whole session.
+ */
+export type LevelKind = "task" | "process" | "session";
+
 /** One node of the level being composed, as its parent-to-be sees it. */
 export interface ChildSummary {
   /** Position in the level's ordered array. */

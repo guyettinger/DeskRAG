@@ -1,54 +1,62 @@
 /**
- * The one prompt, for every level.
+ * Three prompts, one per level of the compositional hierarchy.
  *
- * At level 1 the input is action captions; at level 2 it is level-1 goals, and
- * composing goals into bigger goals is the same instruction with the depth
- * passed as context. Recursion needs exactly one prompt.
- *
- * It asks for the GOAL, not the appearance — which is the whole defect being
- * fixed. `CAPTION_SYSTEM` says "describe what is on screen", and running that
- * over a longer window produces a longer screenshot description, never a higher
- * altitude.
+ * The fixed ladder replaces the recursion: each level asks its own question,
+ * so the composition is not "bigger goals from smaller goals" (recursion) but
+ * a semantic progression from actions through tasks through work phases to a
+ * session name.
  */
 
-import type { ChildSummary, ComposeGroup } from "./types.js";
+import type { ChildSummary, ComposeGroup, LevelKind } from "./types.js";
 
-/**
- * CUT POINTS, not ranges — and that was measured, not preferred.
- *
- * Asked for `{start, end}` ranges, the model returned a genuinely good
- * three-task grouping of 24 steps that ended at index 23: it dropped the last
- * step, so the covering check rejected all of it. Naming a run's END is the
- * only thing it got wrong, and it is the one thing it never needs to say.
- *
- * Stating only where a run BEGINS makes a gap, an overlap and a short cover
- * IMPOSSIBLE TO EXPRESS rather than rejected after the fact. Measured on one
- * real 24-step block: 3 of 3 valid against 0 of 1.
- *
- * This is not a softening of the rejection rule. It changes what is ASKED for,
- * never what is accepted: the cut points are still validated (ascending, first
- * is 0, in range, integer) and a violation still discards the whole reply.
- */
-export const COMPOSE_SYSTEM =
-  "You group a user's recorded desktop activity into the tasks it composes. " +
-  "You are given an ordered, numbered list of consecutive steps. Split it into " +
-  "contiguous runs, where each run is ONE thing the user was trying to " +
-  "accomplish. Name each run in one short phrase stating the GOAL, not what was " +
-  "on screen. Merge freely: fewer, larger runs are better than many small ones. " +
+/** The cut-point contract, shared by every GROUPING prompt. */
+const CUT_POINTS =
   'Reply with JSON only: {"groups":[{"start":0,"summary":"..."},{"start":5,"summary":"..."}]} ' +
   "where `start` is the step number a run BEGINS at. The first run must start at " +
   "0. Each run continues until the next one begins, so you never state where a " +
-  "run ends. If every step belongs to ONE task, reply with a single run " +
-  "starting at 0 — that is often the right answer for a short list. No preamble.";
+  "run ends. If every step belongs to ONE run, reply with a single run starting " +
+  "at 0. No preamble.";
 
 /**
- * Naming the whole list as ONE thing — the question the root needs, which
- * partitioning never answers.
+ * LEVEL 1 — actions into TASKS.
  *
- * A separate system prompt rather than a flag inside COMPOSE_SYSTEM, because
- * the two ask for genuinely different work: "where does this split" against
- * "what was this". Its reply shape is deliberately the SAME single-cut-point
- * JSON, so the parser, the validator and the reject-wholesale rule are shared.
+ * This level already works: measured across five recordings of one task it
+ * produced six or seven semantically parallel tasks every time, with the
+ * calculator work as one 14-19 action task in all five. The wording is the
+ * former COMPOSE_SYSTEM, narrowed to actions.
+ */
+export const TASK_SYSTEM =
+  "You group a user's recorded desktop ACTIONS into the tasks they compose. " +
+  "You are given an ordered, numbered list of consecutive actions. Split it into " +
+  "contiguous runs, where each run is the smallest stretch you could name as a " +
+  "verb and an object — 'copy the result', 'start the calculator'. Name each run " +
+  "in one short phrase stating the GOAL, not what was on screen. " +
+  CUT_POINTS;
+
+/**
+ * LEVEL 2 — tasks into PHASES.
+ *
+ * A DIFFERENT question, which is the whole point of the fixed ladder. Asking
+ * "group these into larger ones" at every altitude is what produced levels that
+ * differed in size but not in kind — fan-out 1.6 by level 3, and 21 of 60
+ * parents holding a single child.
+ */
+export const PROCESS_SYSTEM =
+  "You group a user's recorded TASKS into the phases of work they form. A phase " +
+  "is a stretch of tasks serving one outcome — setting something up, doing the " +
+  "work, recording the result. You are given an ordered, numbered list of tasks. " +
+  "Split it into contiguous phases and name each in one short phrase stating the " +
+  "outcome it serves. If the tasks are all one phase, say so with a single run. " +
+  CUT_POINTS;
+
+/**
+ * SESSION — naming the whole list as ONE thing.
+ *
+ * The question the root needs, which partitioning never answers. A separate
+ * prompt rather than a flag in the grouping prompts, because the two ask for
+ * genuinely different work: "where does this split" against "what was this".
+ * Its reply shape is deliberately the SAME single-cut-point JSON, so the
+ * parser, the validator and the reject-wholesale rule are shared.
  */
 export const NAME_SYSTEM =
   "You name a stretch of a user's recorded desktop activity. You are given an " +
@@ -58,10 +66,20 @@ export const NAME_SYSTEM =
   'Reply with JSON only: {"groups":[{"start":0,"summary":"..."}]}. Exactly one ' +
   "entry, starting at 0. No preamble.";
 
+export function systemFor(kind: LevelKind): string {
+  switch (kind) {
+    case "task":
+      return TASK_SYSTEM;
+    case "process":
+      return PROCESS_SYSTEM;
+    case "session":
+      return NAME_SYSTEM;
+  }
+}
+
 export function composePrompt(
   children: readonly ChildSummary[],
-  level: number,
-  single = false,
+  kind: LevelKind,
 ): string {
   const lines = children.map((c, i) => {
     const app = c.app === null ? "" : `[${c.app}] `;
@@ -69,14 +87,14 @@ export function composePrompt(
     // spans lines would look like several steps to the model.
     return `${i}. ${app}${c.text.replace(/\s+/g, " ").trim()}`;
   });
-  if (single) {
+  if (kind === "session") {
     return `These ${children.length} activities are all part of one session.\nName the session.\n\n${lines.join("\n")}`;
   }
   const what =
-    level === 1
-      ? "These are individual actions."
-      : "These are already-grouped activities; group them into larger ones.";
-  return `${what}\nPartition these ${children.length} steps.\n\n${lines.join("\n")}`;
+    kind === "task"
+      ? `These are individual actions.\nPartition these ${children.length} actions.`
+      : `These are tasks the user performed.\nSplit these ${children.length} tasks into phases.`;
+  return `${what}\n\n${lines.join("\n")}`;
 }
 
 /**

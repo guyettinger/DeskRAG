@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { FakeSummaryProvider } from "../src/embed/summary.js";
 import { validatePartition } from "../src/represent/compose/agglomerate.js";
-import { composePrompt, parseComposeResponse } from "../src/represent/compose/prompt.js";
+import { composePrompt, parseComposeResponse, systemFor } from "../src/represent/compose/prompt.js";
 import type { ChildSummary } from "../src/represent/compose/types.js";
 
 const kid = (i: number, text: string, app: string | null = "Calculator"): ChildSummary => ({
@@ -15,23 +15,51 @@ const kid = (i: number, text: string, app: string | null = "Calculator"): ChildS
 });
 
 describe("composePrompt", () => {
-  it("numbers steps from zero and names the app", () => {
-    const p = composePrompt([kid(0, "clicked 7"), kid(1, "clicked +")], 1);
+  it("asks for TASKS from actions — a verb and an object", () => {
+    const p = composePrompt([kid(0, "clicked 7"), kid(1, "clicked +")], "task");
     expect(p).toContain("0. [Calculator] clicked 7");
     expect(p).toContain("1. [Calculator] clicked +");
-    expect(p).toContain("These are individual actions.");
+    expect(p).toMatch(/action/i);
   });
 
-  it("changes the framing above level 1", () => {
-    expect(composePrompt([kid(0, "a")], 2)).toContain("already-grouped");
+  it("asks for PHASES from tasks, which is a different question", () => {
+    const p = composePrompt([kid(0, "Start calculator"), kid(1, "Copy result")], "process");
+    expect(p).toMatch(/phase/i);
+    // The word that made every level identical must not appear.
+    expect(p).not.toMatch(/already-grouped activities/i);
+  });
+
+  it("asks for ONE NAME at the session, not a split", () => {
+    const p = composePrompt([kid(0, "a"), kid(1, "b")], "session");
+    expect(p).toMatch(/name the session/i);
   });
 
   it("collapses whitespace so a multi-line caption stays ONE step", () => {
-    expect(composePrompt([kid(0, "a\n\n  b")], 1)).toContain("0. [Calculator] a b");
+    expect(composePrompt([kid(0, "a\n\n  b")], "task")).toContain("0. [Calculator] a b");
   });
 
   it("omits the bracket when the app is unknown", () => {
-    expect(composePrompt([kid(0, "something", null)], 1)).toContain("0. something");
+    expect(composePrompt([kid(0, "something", null)], "task")).toContain("0. something");
+  });
+});
+
+describe("systemFor", () => {
+  it("gives each kind its own system prompt", () => {
+    const three = [systemFor("task"), systemFor("process"), systemFor("session")];
+    expect(new Set(three).size).toBe(3);
+  });
+
+  it("keeps the cut-point contract in every grouping prompt", () => {
+    for (const kind of ["task", "process"] as const) {
+      const s = systemFor(kind);
+      expect(s).toContain('"start"');
+      // Naming where a run ENDS is the one thing the model got wrong.
+      expect(s).toMatch(/never state where a run ends|until the next one begins/i);
+    }
+  });
+
+  it("asks the session prompt for exactly one entry", () => {
+    expect(systemFor("session")).toMatch(/exactly one/i);
   });
 });
 

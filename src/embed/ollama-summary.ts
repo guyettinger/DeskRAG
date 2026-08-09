@@ -12,10 +12,9 @@
  */
 
 import {
-  COMPOSE_SYSTEM,
-  NAME_SYSTEM,
   composePrompt,
   parseComposeResponse,
+  systemFor,
 } from "../represent/compose/prompt.js";
 import type { ChildSummary, ComposeGroup } from "../represent/compose/types.js";
 import { listModels, postJson, resolveOllamaHost } from "./ollama-client.js";
@@ -61,8 +60,8 @@ export class OllamaSummaryProvider implements SummaryProvider {
         // request with it off answered in 1.4s.
         think: false,
         messages: [
-          { role: "system", content: ctx.single === true ? NAME_SYSTEM : COMPOSE_SYSTEM },
-          { role: "user", content: composePrompt(children, ctx.level, ctx.single === true) },
+          { role: "system", content: systemFor(ctx.single === true ? "session" : ctx.level === 1 ? "task" : "process") },
+          { role: "user", content: composePrompt(children, ctx.single === true ? "session" : ctx.level === 1 ? "task" : "process") },
         ],
       },
       this.fetchImpl,
