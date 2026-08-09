@@ -1209,6 +1209,13 @@ export class DeskRagService {
           digestContext: digestContextFor(this.store, id),
         }).represent(id);
         segments += r.segmentCount;
+        // Compose BEFORE the lexical index, the same ordering the record path
+        // uses: summaries are a segment_fts view, and re-indexing without this
+        // would silently drop every one of them. It is also what lets an
+        // existing recording gain a hierarchy at all.
+        await new ComposeRepresenter(this.store, {
+          ...(prov.summarizer ? { summarizer: prov.summarizer } : {}),
+        }).represent(id);
         indexSegmentText(this.store, id);
       }
       this.emitIndexing({
