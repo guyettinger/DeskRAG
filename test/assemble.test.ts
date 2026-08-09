@@ -14,7 +14,7 @@ import { FrameIngestor, type SampledFrame } from "../src/capture/frame-ingest.js
 import { KeyframeBudget } from "../src/capture/keyframe-budget.js";
 import { FakeEmbeddingProvider } from "../src/embed/fake.js";
 import { BehaviorFeatureExtractor } from "../src/represent/behavior.js";
-import { Retriever } from "../src/retrieve/assemble.js";
+import { Retriever, collapseAncestors } from "../src/retrieve/assemble.js";
 import { TextViewSearcher, BehaviorViewSearcher } from "../src/retrieve/searchers.js";
 import type { RegionCropper } from "../src/represent/regions/cropper.js";
 import type { Box } from "../src/represent/regions/geometry.js";
@@ -282,5 +282,63 @@ describe("Retriever (assembly capstone)", () => {
     // Idempotent: the image stages associate too, and re-indexing re-runs this.
     expect(await associateFrames(store, sessionId)).toBe(1);
     expect(store.getFrame(a.frameId!)!.segmentIds.length).toBe(granularities.length);
+  });
+});
+
+/**
+ * The hierarchy's two retrieval rules, both pure.
+ *
+ * `collapseAncestors` removes the redundancy the hierarchy exists to remove,
+ * one layer up: without it, Tier 1 returns a task AND several of its own
+ * actions as separate results for the same query.
+ */
+describe("collapseAncestors", () => {
+  const tree: Record<string, string[]> = { root: ["task"], task: ["a", "b"] };
+  const childrenOf = (id: string): string[] => tree[id] ?? [];
+
+  it("keeps the higher-ranked of an ancestor/descendant pair", () => {
+    // Hits arrive best-first.
+    expect(collapseAncestors([{ segmentId: "task" }, { segmentId: "a" }], childrenOf)).toEqual([
+      { segmentId: "task" },
+    ]);
+    expect(collapseAncestors([{ segmentId: "a" }, { segmentId: "task" }], childrenOf)).toEqual([
+      { segmentId: "a" },
+    ]);
+  });
+
+  it("collapses across more than one generation", () => {
+    expect(collapseAncestors([{ segmentId: "root" }, { segmentId: "b" }], childrenOf)).toEqual([
+      { segmentId: "root" },
+    ]);
+    expect(collapseAncestors([{ segmentId: "b" }, { segmentId: "root" }], childrenOf)).toEqual([
+      { segmentId: "b" },
+    ]);
+  });
+
+  it("keeps unrelated hits — two siblings are two answers, not one", () => {
+    expect(collapseAncestors([{ segmentId: "a" }, { segmentId: "b" }], childrenOf)).toEqual([
+      { segmentId: "a" },
+      { segmentId: "b" },
+    ]);
+  });
+
+  it("preserves rank order among what it keeps", () => {
+    const out = collapseAncestors(
+      [{ segmentId: "a" }, { segmentId: "task" }, { segmentId: "b" }],
+      childrenOf,
+    );
+    expect(out.map((h) => h.segmentId)).toEqual(["a", "b"]);
+  });
+
+  it("is a no-op with no tree at all — every recording before composing", () => {
+    expect(collapseAncestors([{ segmentId: "x" }, { segmentId: "y" }], () => [])).toEqual([
+      { segmentId: "x" },
+      { segmentId: "y" },
+    ]);
+  });
+
+  it("carries the hit's other fields through untouched", () => {
+    const out = collapseAncestors([{ segmentId: "a", score: 0.9 }], childrenOf);
+    expect(out).toEqual([{ segmentId: "a", score: 0.9 }]);
   });
 });
