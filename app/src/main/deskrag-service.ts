@@ -1128,6 +1128,14 @@ export class DeskRagService {
       regionCounts,
       audio,
       transcriptClips: this.store.getTranscriptClipsBySession(sessionId),
+      // One read for the whole tree: every composed level's label, keyed by
+      // segment id. Empty for a session indexed before composing existed, in
+      // which case only the `action` lane appears.
+      summaries: new Map(
+        this.store
+          .getSegmentSummariesBySession(sessionId)
+          .map((s) => [s.segmentId, { text: s.text, source: s.source }]),
+      ),
     });
 
     // Only a FINISHED session is immutable. Caching an open one would freeze

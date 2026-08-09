@@ -16,8 +16,10 @@ import {
   markersLane,
   mouseSpeedLane,
   mouseXyLane,
+  levelIndex,
+  levelLanes,
+  levelTitle,
   scrollLane,
-  segmentLanes,
   transcriptLane,
   typingLane,
   webLane,
@@ -49,6 +51,7 @@ const input = (events: EventRow[], over: Partial<LaneInput> = {}): LaneInput => 
   regionCounts: new Map(),
   audio: [],
   transcriptClips: [],
+  summaries: new Map(),
   ...over,
 });
 
@@ -276,19 +279,95 @@ describe("finestGranularity", () => {
   });
 });
 
-describe("segmentLanes", () => {
-  it("emits ONE LANE PER GRANULARITY found in the data, not a hardcoded pair", () => {
-    const lanes = segmentLanes(
-      input([], { segments: [seg("a1", "action", 0, 4000), seg("t1", "task", 0, 10000)] }),
-    );
-    expect(lanes.map((l) => l.id)).toEqual(["seg-action", "seg-task"]);
-    expect(lanes[0]!.spans).toEqual([
-      { startSec: 0, endSec: 4, label: "window", tone: "neutral" },
-    ]);
+describe("levelTitle / levelIndex", () => {
+  it("titles levels from the bottom, with the root always 'session'", () => {
+    expect(levelTitle("action")).toBe("action");
+    expect(levelTitle("level:1")).toBe("task");
+    expect(levelTitle("level:2")).toBe("process");
+    // Past the third tier nobody has a word, so it is numbered rather than invented.
+    expect(levelTitle("level:3")).toBe("level 3");
+    expect(levelTitle("session")).toBe("session");
   });
 
-  it("prefers the caption as the span label and falls back to the digest", () => {
-    const lanes = segmentLanes(
+  it("returns null for anything that is not a hierarchy level", () => {
+    expect(levelTitle("nonsense")).toBeNull();
+    expect(levelIndex("nonsense")).toBeNull();
+    expect(levelIndex("level:0")).toBeNull();
+    expect(levelIndex("level:x")).toBeNull();
+  });
+
+  it("sorts coarse-first, with the root coarsest at any depth", () => {
+    expect(levelIndex("action")).toBe(0);
+    expect(levelIndex("level:1")).toBe(1);
+    expect(levelIndex("level:2")).toBe(2);
+    expect(levelIndex("session")).toBeGreaterThan(levelIndex("level:2")!);
+  });
+});
+
+describe("levelLanes", () => {
+  const summaries = (entries: [string, string, "llm" | "template"][]) =>
+    new Map(entries.map(([id, text, source]) => [id, { text, source }]));
+
+  it("orders coarse to fine, so the rail reads as an outline", () => {
+    const lanes = levelLanes(
+      input([], {
+        segments: [
+          seg("a1", "action", 0, 4000),
+          seg("t1", "level:1", 0, 10000),
+          seg("r1", "session", 0, 10000),
+        ],
+        summaries: summaries([
+          ["t1", "added two numbers", "llm"],
+          ["r1", "checked the arithmetic", "llm"],
+        ]),
+      }),
+    );
+    expect(lanes.map((l) => l.title)).toEqual(["session", "task", "action"]);
+    expect(lanes.map((l) => l.id)).toEqual(["seg-session", "seg-level:1", "seg-action"]);
+  });
+
+  it("labels a composed lane with its SUMMARY and shows it; a leaf shows nothing", () => {
+    const lanes = levelLanes(
+      input([], {
+        segments: [
+          seg("a1", "action", 0, 1000, { caption: "the PR page" }),
+          seg("t1", "level:1", 0, 1000),
+        ],
+        summaries: summaries([["t1", "added two numbers", "llm"]]),
+      }),
+    );
+    const task = lanes.find((l) => l.title === "task")!;
+    const action = lanes.find((l) => l.title === "action")!;
+
+    // A goal phrase is short, so labelFits usually passes and the bar reads.
+    expect(task.showLabels).toBe(true);
+    expect(task.spans![0]!.label).toBe("added two numbers");
+    // An action's label is a whole VLM caption — what labelFits exists to withhold.
+    expect(action.showLabels).toBe(false);
+    expect(action.spans![0]!.label).toBe("the PR page");
+  });
+
+  it("carries the depth so the renderer can indent, root deepest", () => {
+    const lanes = levelLanes(
+      input([], {
+        segments: [
+          seg("a1", "action", 0, 1000),
+          seg("t1", "level:1", 0, 1000),
+          seg("p1", "level:2", 0, 1000),
+          seg("r1", "session", 0, 1000),
+        ],
+        summaries: summaries([
+          ["t1", "t", "llm"],
+          ["p1", "p", "llm"],
+          ["r1", "r", "llm"],
+        ]),
+      }),
+    );
+    expect(lanes.map((l) => l.level)).toEqual([3, 2, 1, 0]);
+  });
+
+  it("prefers the caption as a LEAF span label and falls back to the digest", () => {
+    const lanes = levelLanes(
       input([], {
         segments: [
           seg("a1", "action", 0, 1000, { caption: "the PR page", digest: "clicked Files" }),
@@ -297,6 +376,47 @@ describe("segmentLanes", () => {
       }),
     );
     expect(lanes[0]!.spans!.map((s) => s.label)).toEqual(["the PR page", "typed a comment"]);
+  });
+
+  it("WARNS when a whole level was composed with no model", () => {
+    const lanes = levelLanes(
+      input([], {
+        segments: [seg("a1", "action", 0, 1000), seg("t1", "level:1", 0, 1000)],
+        summaries: summaries([["t1", "Calculator · 1 action · 1.0s", "template"]]),
+      }),
+    );
+    const task = lanes.find((l) => l.title === "task")!;
+    // `warning`, not `emptyReason`: the lane is full and looks healthy, and what
+    // is compromised is that nothing named it.
+    expect(task.warning).toMatch(/no text model/i);
+    expect(task.emptyReason).toBeNull();
+    // A leaf lane is not composed, so it can never carry this warning.
+    expect(lanes.find((l) => l.title === "action")!.warning).toBeNull();
+  });
+
+  it("does not warn when a model named any of the level", () => {
+    const lanes = levelLanes(
+      input([], {
+        segments: [
+          seg("a1", "action", 0, 1000),
+          seg("t1", "level:1", 0, 500),
+          seg("t2", "level:1", 500, 1000),
+        ],
+        summaries: summaries([
+          ["t1", "named by a model", "llm"],
+          ["t2", "rolled up", "template"],
+        ]),
+      }),
+    );
+    expect(lanes.find((l) => l.title === "task")!.warning).toBeNull();
+  });
+
+  it("ignores a granularity that is not part of the hierarchy", () => {
+    const lanes = levelLanes(
+      input([], { segments: [seg("a1", "action", 0, 1000), seg("x1", "task", 0, 1000)] }),
+    );
+    // `task` is retired: a stray row from some other source must not mint a lane.
+    expect(lanes.map((l) => l.id)).toEqual(["seg-action"]);
   });
 });
 

@@ -382,6 +382,17 @@ export interface TrackLaneDTO {
    * then the renderer paints the label only if it fits untruncated.
    */
   showLabels: boolean;
+  /**
+   * Depth in the compositional hierarchy — 0 for `action`, 1 for `task`, 2 for
+   * `process`, up to the root. `null` for every lane that is not part of the
+   * tree.
+   *
+   * REQUIRED rather than optional, the same rationale as `showLabels` and
+   * `TrackGroup`: the compiler then finds every builder and every fixture, so a
+   * lane cannot silently claim a depth it does not have. The renderer indents
+   * lane titles by it, which is what makes the rail read as an outline.
+   */
+  level: number | null;
   density?: TrackDensityDTO;
   spans?: TrackSpanDTO[];
   marks?: TrackMarkDTO[];
