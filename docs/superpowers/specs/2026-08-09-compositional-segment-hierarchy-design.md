@@ -1,0 +1,472 @@
+# Compositional segment hierarchy — Action → Task → Process → Session purpose
+
+Date: 2026-08-09
+Status: design, approved for planning
+
+## The problem, stated structurally
+
+On the Library rail, the `ACTION`, `TASK` and `CAPTION` lanes read as three
+drawings of one signal. They are.
+
+- `src/segment/types.ts` — `action` and `task` are both boundary-aware windows
+  over the **same** event timeline. They differ only in which boundary reasons
+  cut them (`action`: `scene_change`/`focus_change`/`bookmark`; `task`:
+  `focus_change`/`bookmark`) and in duration (`task.targetMs` is the session
+  length ÷ 2, clamped to 30–180s). A task is not a bigger *idea*; it is a
+  longer *box*.
+- `app/src/main/session-tracks.ts` — `segmentLabel` is
+  `caption ?? digest ?? boundaryReason`, so both lanes are labelled by a VLM
+  caption.
+- `captionLane` is `presenceLane(…, finestGranularity)`, and the finest
+  granularity is `action`. **The CAPTION lane is the ACTION lane filtered to
+  segments that got a caption** — identical spans, identical text.
+- `src/represent/caption/prompt.ts` instructs the VLM to *"Describe what is on
+  screen concisely and factually… One or two sentences"* over three sampled
+  keyframes. Run that over a 30-second window and the output is still a
+  screenshot description. **A task caption cannot sit at a higher altitude than
+  an action caption**: same model, same prompt, same kind of input, bigger box.
+
+So the hierarchy today is **temporal, not compositional**. Nothing in the
+pipeline ever takes N actions and asks *what did these accomplish together?*
+
+That is the layer this design adds. The levels above `action` need a different
+kind of input — the children's *text*, not more pixels — and a different
+question — *purpose*, not appearance.
+
+## Decisions taken
+
+| Decision | Choice |
+| --- | --- |
+| Level count | **Recursive until one root.** Level 0 is always Action, the root is always Session purpose; depth falls out of the recording. |
+| Where structure comes from | **Bottom-up contiguous agglomeration**, never top-down decomposition. |
+| Who judges coherence | **A local LLM partitions *and* names in one call**, with structural coherence as the fallback. |
+| Default install | The tree **always exists**; a configured model upgrades the prose. |
+| Rail vocabulary | Level 1 = `TASK`, level 2 = `PROCESS`, 3+ = `LEVEL N`, root = `SESSION`. |
+| Scope | All three pieces in one spec: the hierarchy, retrieval at altitude, and the Flows/Library readers. |
+
+### Why not top-down decomposition
+
+Handing the whole session's action summaries to an LLM and asking for a plan
+tree reads the most like a person's account of their own work, and it is ruled
+out twice. It does not scale — a 3h session has thousands of actions and they
+do not fit one context, so it fails exactly where hierarchy matters most. And it
+makes the *structure*, not only the prose, depend on a model the default install
+does not have. Bottom-up also keeps every node **grounded**: a parent's span is
+exactly the union of its children's, so no node can claim time nothing was
+recorded in.
+
+### Why the LLM judges the grouping and not only the naming
+
+Two reasons; the second is a defect in the purely structural version.
+
+1. **Naming is the test of a group.** If the model cannot name a run, it was not
+   one. Split the jobs — cosine picks the group, the model writes prose about it
+   — and the namer is stuck justifying a grouping it would not have chosen.
+   That is precisely how `"Recorder app capturing screen…"` ends up sitting at
+   task level today: the bug being fixed, reproduced one layer up.
+2. **Cosine coherence is biased against what a task is.** Embedding similarity
+   merges things that *look alike*. A task is usually goal-directed
+   *heterogeneity* — open terminal, run build, read error, edit file, run build
+   again. Those five actions are maximally dissimilar and span three apps with
+   several focus changes, so both the cosine term and the app/focus term shred
+   them; meanwhile a cosine grouper confidently fuses ten minutes of repetitive
+   scrolling into one "task". The structural signals are *correlates* of intent,
+   and this is the case where they are anti-correlated.
+
+**Point 2 is a hypothesis, not a finding.** It is measurable and the spec
+requires it to be measured (see Validation).
+
+### Scope note, recorded deliberately
+
+The recommendation was to spec the hierarchy alone and brainstorm retrieval and
+the readers afterwards, against a real recording — because what a good task
+summary actually looks like is the input to both, and neither is known yet. The
+full arc was chosen instead. Sections 5 and 6 therefore rest on one stated
+assumption: **that level-1 summaries are short goal phrases rather than
+screenshot descriptions.** If the first real recording falsifies that, sections
+5 and 6 need revisiting; section 3's prompt and fallback do not.
+
+## 1. Data model
+
+Levels are **`segment` rows**. `segment`'s shape is frozen — there is no
+migration mechanism, only `CREATE TABLE IF NOT EXISTS` on every open — so
+levels reuse the existing free-form `granularity TEXT`, and everything new is a
+table.
+
+- Level 0 keeps `granularity = "action"`. Those are today's rows, unchanged.
+- Composed levels are `"level:1"`, `"level:2"`, …
+- The root is `"session"`. Recursion stops when one node covers the recording,
+  so the top level always holds exactly one row.
+- **`task` is removed** — the granularity is deleted from `BASE_GRANULARITIES`
+  and no longer produced or read.
+
+### Existing data is discarded
+
+This change ships with a **data-dir reset**: no existing recording is migrated,
+re-indexed, or read. That is a deliberate authorization, and it removes work
+that would otherwise be required — no `task`-compatibility path on the rail, no
+rebuild banner, no re-index affordance, and no "does an old `app.db` gain the
+table" verification.
+
+It does **not** license changing `segment`'s shape. The absence of a migration
+mechanism is a permanent property of the store (`CREATE TABLE IF NOT EXISTS` on
+every open), so a column added now would still be unreachable on the next
+person's database without another reset. Levels stay `segment` rows keyed by the
+existing `granularity` column, and everything new stays a table — the sanctioned
+move, which costs almost nothing here.
+
+Two new tables:
+
+```sql
+CREATE TABLE IF NOT EXISTS segment_tree (
+  session_id TEXT NOT NULL REFERENCES session(id) ON DELETE CASCADE,
+  parent_id  TEXT NOT NULL REFERENCES segment(id) ON DELETE CASCADE,
+  child_id   TEXT NOT NULL REFERENCES segment(id) ON DELETE CASCADE,
+  PRIMARY KEY (parent_id, child_id)
+);
+CREATE INDEX IF NOT EXISTS idx_segtree_child   ON segment_tree(child_id);
+CREATE INDEX IF NOT EXISTS idx_segtree_session ON segment_tree(session_id);
+
+CREATE TABLE IF NOT EXISTS segment_summary (
+  segment_id TEXT PRIMARY KEY REFERENCES segment(id) ON DELETE CASCADE,
+  text       TEXT NOT NULL,
+  source     TEXT NOT NULL   -- 'llm' | 'template'
+);
+```
+
+**Edges are stored, not derived from spans.** A parent's span is exactly its
+children's union, so interval containment *looks* sufficient — until a parent
+with a single child has an identical span and containment cannot say which is
+which. Explicit edges are unambiguous and cost nothing.
+
+**The summary is not the `digest` column.** `digest` means templated text over a
+segment's *own events* and owns a Tier-1 vector namespace. A parent's summary is
+composed from *children*. Writing it into `digest` would put two different kinds
+of text in one similarity space — the exact thing `namespaceFor` exists to
+prevent.
+
+**`source` is disclosure, not bookkeeping.** It records which parents got a real
+sentence and which got a structural rollup, the same refusal to smooth over a
+real difference that `clockCalibrated` and `observations`/`sources` make.
+
+**Invariant:** a `segment_summary` row exists **iff** the segment is a composed
+level (≥ 1). Level 0 is labelled `caption ?? digest` as today — a summary of one
+action would only restate it.
+
+**`finestGranularity` is unaffected and must stay that way.** It picks the
+granularity with the most rows, which is `action` both before and after this
+change — composed levels are strictly fewer by construction. The transcript and
+caption presence lanes therefore keep keying on level 0, which is what they
+want: the finest granularity is the one that shows where a view actually starts
+and stops.
+
+**Deletion.** Both tables cascade from `session`/`segment`, so `deleteSession`
+needs no new explicit clear (unlike `region_fts`/`segment_fts`, which have no
+foreign key). This must be verified, not assumed.
+
+## 2. The composer
+
+New always-on stage `src/represent/compose/`, running **after** Digest, Caption
+and Transcript (it needs their text) and **before** the always-on `segment_fts`
+stage (so summaries reach the lexical lane).
+
+The judgment core is `compose/agglomerate.ts` — **pure TS**: children in, groups
+out, no store, no provider, root-testable like `track-buckets.ts` and
+`graph-view.ts`. The stage does the I/O.
+
+### Provider contract
+
+```ts
+export interface SummaryProvider {
+  readonly id: string;
+  readonly model: string;
+  compose(children: ChildSummary[], ctx: ComposeContext): Promise<ComposeGroup[]>;
+}
+
+export interface ChildSummary {
+  index: number;
+  text: string;
+  app: string | null;
+  url: string | null;
+  startSec: number;
+  endSec: number;
+}
+
+export interface ComposeGroup {
+  start: number;   // inclusive child index
+  end: number;     // exclusive child index
+  summary: string;
+}
+
+export interface ComposeContext {
+  /** 1 for the first composed level, 2 above it, and so on. */
+  level: number;
+}
+```
+
+The model returns **index ranges, never times**, so it can only choose cut
+points among children that exist and cannot invent a moment nothing was
+recorded in.
+
+**One prompt serves every level.** At level 1 the input is action captions; at
+level 2 it is level-1 goals, and composing goals into bigger goals is the same
+instruction with `level` passed as context. Recursion needs exactly one prompt.
+It asks for contiguous runs, each one thing the user was trying to accomplish,
+named in one short phrase stating the **goal, not the appearance**.
+
+The provider is local, over Ollama, with model discovery through `/api/tags` —
+never a hardcoded name, for the reason `listModels` already exists: Ollama's
+library now includes cloud-hosted models, and offering one in a local picker
+would route a user's activity off the machine. A `FakeSummaryProvider` keeps the
+suite deterministic and offline.
+
+### Validation is code, never a request to the model
+
+A returned partition must be contiguous, non-overlapping, covering, and must not
+cross a barrier. Any violation **rejects the whole response** and that block
+falls back to structural composition. It is **not repaired** — repairing a
+malformed partition means guessing intent, which is the rule
+`parseInterventionResponse` already sets in `trace/`: a malformed reply is
+refused, not widened.
+
+### Scale, without a seam trick
+
+Barriers (`bookmark`, session bounds) pre-split each level into blocks. A block
+longer than the batch cap is split further at its largest **structural**
+discontinuity — biggest gap, then focus change — deterministically, until every
+block fits one call. Groups never span a block, so there is no cross-batch
+stitching to get wrong.
+
+The batch cap starts at **24 children** and is a calibration target, not a
+tuned value: it trades context length against how often a real run is forced
+apart, and the first real recording is what sets it.
+
+Disclosed cost: on a very long level, a parent cannot span a forced cut.
+
+### Termination is enforced, not hoped for
+
+Each level must be **strictly smaller** than the one below. If the model returns
+a partition that does not shrink a block, that block takes the structural
+grouping, which always shrinks. Recursion stops when one node covers the
+recording; that node is the root, `granularity = "session"`, and its summary is
+the session's purpose.
+
+### Structural fallback — the always-on path
+
+Adjacent-sibling coherence from what is already on disk: same app, same `url`
+prefix, gap at the seam, boundary strength at the seam. Greedy-merge the
+best-scoring adjacent pair until the level's node count is **at most half** the
+level below it — which is what guarantees the strict shrinkage the recursion
+depends on.
+
+The parent's text is a rollup in `buildDigest`'s own vocabulary — apps spanned,
+typed text, click targets, child count — which is a concatenation discipline
+over text that already exists, not new extraction.
+
+This path is also the **control** the LLM is measured against.
+
+### Compose cannot fail the run
+
+A provider error, a timeout, an unparseable reply, or no Ollama at all each
+degrade that block to structural and stamp `source = 'template'`. Unlike
+Transcribing this needs no special dispensation, because there is no path where
+it throws.
+
+## 3. The rail
+
+**Lanes are ordered coarse → fine, top-down**, reversing today's arrangement.
+`SESSION` above `PROCESS` above `TASK` above `ACTION`, so each bar visibly
+contains the bars beneath it and the rail reads as an outline. `segmentLanes`
+stops sorting alphabetically and orders by level; `bandedLanes` keeps them all
+in the `segments` band.
+
+**Titles** index from the bottom: level 1 = `TASK`, level 2 = `PROCESS`, 3+ =
+`LEVEL 3`, `LEVEL 4`, root always `SESSION`. A five-deep recording reads
+`SESSION · LEVEL 4 · LEVEL 3 · PROCESS · TASK · ACTION` — the named levels stay
+at the bottom where they are familiar, the generic ones sit where nobody has a
+word anyway.
+
+**`TrackLaneDTO` gains a required `level: number | null`** (null for every
+non-hierarchy lane), so the renderer can indent lane titles by depth. Required,
+not optional, for the reason `showLabels` and `TrackGroup` are: the compiler
+then finds every builder and every fixture.
+
+**Composed levels set `showLabels: true`; `action` keeps `false`.** This is the
+direct fix for the reported defect. A level summary is a short goal phrase by
+construction, so `labelFits` will usually pass and the TASK bar can be *read*.
+An action's label is a whole VLM caption sentence — exactly what `labelFits`
+exists to withhold — and that text stays in the hover card.
+
+**The CAPTION lane stops carrying text.** It becomes a thin presence strip
+(`showLabels: false`), keeping its one real diagnostic — which actions got a VLM
+caption and which did not — and dropping the duplicate prose. Its `emptyReason`
+is unchanged.
+
+**`source` surfaces through `warning`, not a lane.** A level whose parents are
+all `template` sets a lane warning saying the structure is there but no text
+model wrote it. That is `warning`'s exact purpose — a full, healthy-looking lane
+whose content was silently degraded — and it stops a structurally-composed
+hierarchy from masquerading as a summarized one.
+
+**Ancestry is already free.** The hover card resolves every lane at the cursor
+and reports unfocused ones as dimmed context rows, so hovering a TASK bar
+already shows its `SESSION` and `PROCESS` above and its `ACTION` below. Pointing
+at a level gets the focus block — summary, child count, source — and the rest is
+the chain it sits in. No new interaction.
+
+**Noted, not built:** hovering a composed span could highlight its child spans
+(cheap now that `segment_tree` exists, but a new interaction on a surface that
+has just settled). Depth adds ~32px per level to a rail whose default height is
+262px; bands collapse, so it degrades correctly, but a deep recording will want
+a drag.
+
+## 4. Retrieval at altitude
+
+**A `summary` view joins Tier 1 as a sixth lane.** Namespace is
+`namespaceFor("summary", textEmbedder)` — the same embedder digest already uses,
+since `view` is part of the namespace, so it is a distinct physical table at no
+extra provider cost. The space exists whenever the digest space does, and
+`buildRetriever` gates on `listVectorSpaces()` exactly as it must for caption
+and transcript (`searchSegments` throws on an unregistered namespace).
+
+**`DEFAULT_RRF_K` must be re-swept.** It is 10 rather than the published 60
+because five lanes over a few-hundred-segment corpus make the lane-count term
+span 5×. A sixth lane changes that term, and the constant is documented as
+*inverting* the ranking when wrong — a segment ranked 1st in two lanes came 13th
+fused. Re-run the known-answer sweep; do not assume 10 still holds.
+
+**`segment_fts` gains the summary text.** That stage is always-on and already
+runs last, so on a default install with no dense summary lane, exact-term
+lexical search still reaches a task by name. It is the only route from a query
+to a task without a model, and it falls straight out of the stage ordering.
+
+**Ancestor/descendant results collapse.** A parent's span contains its
+children's, so Tier 1 will return a TASK *and* several of its ACTIONs as
+separate results — the reported defect, reproduced in the result list. When an
+ancestor and a descendant both survive, keep whichever ranked higher and attach
+the other as context, never as a second result. A moment belongs to one place in
+the tree.
+
+**Tier-2 scoping expands to leaves — the failure that would be silent.** Tier 2
+scopes frames by `array_has_any(segment_ids, [...])` against a field
+**denormalized onto the frame vectors in Lance**, written by `FrameRepresenter`
+long before compose runs. Composed levels can never appear in it, so a TASK hit
+would scope to zero frames and Tier 2 would return empty — no error, no
+diagnostic, the same shape as the frame↔segment bug already documented.
+
+Three ways out; the third is chosen:
+
+1. rewrite the denormalized field after composing — a Lance rewrite of every
+   frame vector, for data that is derivable;
+2. run compose earlier — impossible, it needs captions, which need frames;
+3. **expand at query time**: a parent hit resolves through `segment_tree` to its
+   descendant leaves, and Tier 2 scopes on those. No storage change, no rewrite,
+   nothing to drift.
+
+The same relation gives `frame_segment` rows for parents for free: **a parent's
+frames are exactly the union of its children's frames.** Deriving it that way
+rather than re-applying `segmentIdsForFrame` leaves the window rule with no
+second implementation to drift from — the failure `ax-dump`/`ax-exec` already
+paid for.
+
+**Hits carry their altitude.** `FrameHitDTO` and `ResultDetailDTO` gain the
+level and the enclosing task's summary, so a frame result reads *"in: renamed
+the capture clock"*. That is the payoff even when the thing retrieved is a
+single frame.
+
+## 5. Flows and the Library
+
+**A route keeps its key and gains a name.** Route identity stays the deduped
+`labelNode` sequence. That key was reached by measuring two stricter ones that
+both failed — edge-id and node-id sequences each gave 9 routes all ×1 on a real
+9-recording graph, where the label sequence gave 5 with one at ×5. Re-keying on
+summaries would be a fourth experiment, and worse: summaries are
+**nondeterministic**, so a route's identity would change on every re-index.
+Names change; identities must not.
+
+**The name comes from provenance, never from traversal.** A `TraceEdge` source
+carries `{sessionId, tMonoStart, tMonoEnd}`, so each edge resolves to the
+composed segments covering that span in that recording. Walk up from level 1 and
+take the **lowest level at which a single node covers the majority of the
+route's recorded time** — naming a route at the altitude it actually occupies
+rather than a fixed one. If no level qualifies, the route keeps today's label
+sequence, which is the honest answer for a route that is not one task.
+
+Routes are unions across recordings, so recordings will sometimes disagree. Show
+the dominant summary **with its count**, never a merged sentence — the
+`observations`/`sources` rule: both are shown, neither is smoothed.
+
+**The Library gets the session's purpose from the root segment.**
+`granularity = "session"` has exactly one row per recording and its summary *is*
+the purpose. The session DTO gains required `purpose: string | null` and
+`purposeSource: 'llm' | 'template' | null`. The same string makes a good stage
+header on the player, which currently carries only the total.
+
+`null` remains a real state even with a reset — a recording that has been
+captured but not yet indexed has no root segment — so the list falls back to
+what it shows today and asserts nothing false. No rebuild banner is needed,
+because there is no pre-change data to rebuild.
+
+## 6. Testing
+
+**Root suite, deterministic.** `compose/agglomerate.ts` is pure, so the
+partition rules test directly:
+
+- contiguity, non-overlap, covering;
+- barrier inviolability (no group crosses a `bookmark`);
+- a malformed partition is **rejected wholesale**, not repaired — proven with a
+  fake provider that deliberately returns one;
+- strict shrinkage per level, and termination at exactly one root;
+- **translation invariance**: a uniform time shift must not change the grouping,
+  the trap that `thumbPlacement` and `Path.curve` span-splitting both hit.
+
+**Default configuration first.** Every compose test runs with **no provider** as
+well as with the fake. The zero-results bug survived because every retrieval
+test built a `Retriever` with an image embedder the shipped default does not
+have; the equivalent mistake here is testing composition only where a summarizer
+exists.
+
+**Store tests.** Round-trip both tables, and verify cascade-on-delete by
+deleting a session and checking that its tree and summary rows go with it. The
+"does an old `app.db` gain the table" check that `transcript_clip` needed is
+**not** required here — existing data is discarded (see §1).
+
+## 7. Validation against a real recording
+
+Three things the suite structurally cannot see. Each is a required measurement,
+not an assumption.
+
+1. **Do LLM cuts beat structural cuts?** Compose one real multi-app session both
+   ways and compare the level-1 cuts against what the recording actually did —
+   the method that calibrated `mpdecimate`'s `lo` against a contact sheet rather
+   than a target count. This settles the anti-correlation claim above, in either
+   direction.
+2. **Do level summaries fit?** `labelFits` withholds a label that cannot be
+   drawn untruncated, so whether the TASK bar can be read is a fact about prose
+   length against real bar widths, measured in the running app.
+3. **Does `DEFAULT_RRF_K` still hold at six lanes?** Re-run the known-answer
+   sweep on a real library; k ∈ {5, 10, 20} was flat at five lanes and 60
+   degraded, but that was five.
+
+Record with the Recorder window closed to the tray. Its elapsed timer displays
+milliseconds, which changes every sampled frame and defeats decimation entirely
+— any keyframe-derived measurement taken with it visible is meaningless, and
+level 0 is built from keyframes.
+
+## Build order
+
+Following the dependency direction the repo already uses:
+
+1. `store/` — the two tables, their reads, cascade verification.
+2. `embed/` — the `SummaryProvider` interface, the Ollama adapter, the fake.
+3. `represent/compose/` — `agglomerate.ts` pure core, then the stage; structural
+   fallback first, so the always-on path exists before the model path.
+4. Stage ordering in `DeskRagService` — after Caption/Transcript, before FTS.
+5. Rail — `session-tracks.ts` projection, `TrackLaneDTO.level`, `TrackRail`
+   ordering and indent. **Stop here and run Validation 1 and 2.**
+6. Retrieval — `summary` view + space, Tier-1 lane, leaf expansion in Tier 2,
+   ancestor/descendant collapse, DTO altitude. **Run Validation 3.**
+7. Flows route naming, Library purpose, rebuild affordance.
+
+Steps 1–5 are the piece that produces evidence; 6 and 7 rest on the assumption
+recorded in the scope note above.

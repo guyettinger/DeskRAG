@@ -124,7 +124,6 @@ export function LibraryScreen({ openAt, onOpened }: Props = {}): React.JSX.Eleme
                   ) : (
                     <span className="frame__noimg">no keyframe</span>
                   )}
-                  {s.hasVideo && <span className="sessioncard__badge mono">VIDEO</span>}
                 </div>
                 {/* The list IDENTIFIES a recording; the stage header SPECIFIES
                     it. So the row carries a coarse duration and a frame count
