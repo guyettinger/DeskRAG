@@ -1,167 +1,218 @@
 /**
- * The recursion: merge adjacent siblings into parents, level by level, until one
- * node covers the recording.
+ * The FIXED ladder: actions -> tasks -> phases -> one root.
  *
- * Bottom-up rather than top-down, for two reasons. It SCALES — a 3h session has
- * thousands of actions and they do not fit one context, which is exactly where
- * a hierarchy matters most. And every node stays GROUNDED: a parent's span is
- * exactly the union of its children's, so no node can claim time nothing was
- * recorded in.
+ * Three levels, never more, each asking its OWN question. It replaced a
+ * recursion whose levels differed in SIZE but not in KIND — measured across
+ * five real recordings, fan-out collapsed to 1.6 by level 3 and 21 of 60
+ * parents held a single child, half of those repeating that child's name.
  *
- * Pure. The model arrives as an injected `Partitioner`, so this file has no
+ * Pure. The model arrives as an injected `ComposeFn`, so this file has no
  * provider, no store and no I/O.
  */
 
-import {
-  DEFAULT_BATCH_CAP,
-  splitIntoBlocks,
-  structuralRanges,
-  validatePartition,
-} from "./agglomerate.js";
+import { DEFAULT_BATCH_CAP, splitIntoBlocks, structuralRanges, validatePartition } from "./agglomerate.js";
+import { LEVEL_GRANULARITY, levelQualifies } from "./admission.js";
 import { rollupText } from "./rollup.js";
-import type {
-  Block,
-  ChildSummary,
-  ComposedLevel,
-  ComposedNode,
-  Partitioner,
-} from "./types.js";
+import type { SummarySource } from "../../store/types.js";
+import type { Block, ChildSummary, ComposeGroup, Ladder, LadderChild, LadderNode, LevelKind } from "./types.js";
 
-/**
- * A stop the geometry should already guarantee — every level at least halves.
- * Cheap insurance against a loop, and the reason the tail below exists.
- */
-export const MAX_DEPTH = 8;
+/** The ladder, in order. `modelOnly` levels do not fall back structurally. */
+export const LEVELS: readonly { kind: LevelKind; modelOnly: boolean }[] = [
+  { kind: "task", modelOnly: false },
+  // A phase is a SEMANTIC judgment. Halving tasks into positional pairs is not
+  // one, so without a model there is simply no Process level — the hierarchy is
+  // Action -> Task -> Session, which is still complete.
+  { kind: "process", modelOnly: true },
+];
 
-export interface ComposeLevelsOptions {
-  partitioner?: Partitioner;
+export type ComposeFn = (
+  children: readonly ChildSummary[],
+  kind: LevelKind,
+) => Promise<ComposeGroup[]>;
+
+export interface ComposeLadderOptions {
+  compose?: ComposeFn;
   batchCap?: number;
-  maxDepth?: number;
 }
 
-export async function composeLevels(
+export async function composeLadder(
   leaves: readonly ChildSummary[],
-  opts: ComposeLevelsOptions = {},
-): Promise<ComposedLevel[]> {
-  if (leaves.length === 0) return [];
+  opts: ComposeLadderOptions = {},
+): Promise<Ladder> {
+  if (leaves.length === 0) return { nodes: [] };
   const cap = opts.batchCap ?? DEFAULT_BATCH_CAP;
-  const maxDepth = opts.maxDepth ?? MAX_DEPTH;
+  const nodes: LadderNode[] = [];
 
-  const out: ComposedLevel[] = [];
-  let children: ChildSummary[] = leaves.map((c, i) => ({ ...c, index: i }));
-  let level = 1;
+  /** The current frontier: what the next level would compose. */
+  let frontier: { ref: LadderChild; child: ChildSummary }[] = leaves.map((c, i) => ({
+    ref: { kind: "leaf", index: i },
+    child: { ...c, index: i },
+  }));
 
-  while (children.length > 1 && level <= maxDepth) {
-    const nodes = await composeOneLevel(children, level, cap, opts.partitioner);
-    // A level that failed to shrink would loop forever. Wrapping everything into
-    // one node terminates AND is honest: "this could not be subdivided further".
-    // Reachable only when every block is a single child — i.e. a bookmark
-    // between every pair.
-    const shrunk =
-      nodes.length < children.length
-        ? nodes
-        : [rollupNode(children, { start: 0, end: children.length }, level)];
+  for (const level of LEVELS) {
+    if (frontier.length < 2) break;
+    const children = frontier.map((f, i) => ({ ...f.child, index: i }));
+    const groups = await composeOneLevel(children, level, cap, opts.compose);
+    if (groups === undefined) continue; // model-only level with no model
 
-    out.push({ level, nodes: shrunk });
-    const below = children;
-    children = shrunk.map((n, i) => liftNode(below, n, i));
-    level += 1;
+    if (!levelQualifies(groups.map((g) => g.range.end - g.range.start), frontier.length)) {
+      // Never created. The level above adopts this frontier unchanged.
+      continue;
+    }
+
+    const next: typeof frontier = [];
+    for (const g of groups) {
+      const members = frontier.slice(g.range.start, g.range.end);
+      // ELIDED: a lone child is adopted by the level above rather than wrapped
+      // in a node that could only restate it.
+      if (members.length === 1) {
+        next.push(members[0]!);
+        continue;
+      }
+      nodes.push({
+        granularity: LEVEL_GRANULARITY[level.kind],
+        children: members.map((m) => m.ref),
+        summary: g.summary,
+        source: g.source,
+      });
+      next.push({
+        ref: { kind: "node", index: nodes.length - 1 },
+        child: liftChild(members.map((m) => m.child), g.summary),
+      });
+    }
+    frontier = next;
   }
 
-  // A single leaf gets a root of its own, and a depth cap reached without one
-  // still gets it, so a caller can always rely on "the last level holds exactly
-  // one node".
-  if (children.length !== 1 || out.length === 0) {
-    out.push({
-      level,
-      nodes: [rollupNode(children, { start: 0, end: children.length }, level)],
-    });
+  // The ROOT always exists and is exempt from elision: it answers a different
+  // question from its child rather than restating it.
+  nodes.push(await makeRoot(frontier, opts.compose));
+  return { nodes };
+}
+
+/** A group as the ladder needs it: a range plus who named it. */
+interface LevelGroup {
+  range: Block;
+  summary: string;
+  source: SummarySource;
+}
+
+/**
+ * One level's groups, or `undefined` when a model-only level has no model.
+ *
+ * Blocks, validation, wholesale rejection and the structural fallback are all
+ * unchanged — every one of them cost a measurement.
+ */
+async function composeOneLevel(
+  children: readonly ChildSummary[],
+  level: { kind: LevelKind; modelOnly: boolean },
+  cap: number,
+  compose: ComposeFn | undefined,
+): Promise<LevelGroup[] | undefined> {
+  if (level.modelOnly && compose === undefined) return undefined;
+  const out: LevelGroup[] = [];
+  for (const block of splitIntoBlocks(children, cap)) {
+    const size = block.end - block.start;
+    let accepted: LevelGroup[] | undefined;
+
+    if (compose !== undefined && size > 1) {
+      const slice = children.slice(block.start, block.end).map((c, i) => ({ ...c, index: i }));
+      let groups;
+      try {
+        groups = await compose(slice, level.kind);
+      } catch {
+        // Composing NEVER fails the run.
+        groups = undefined;
+      }
+      const shifted = groups?.map((g) => ({
+        start: g.start + block.start,
+        end: g.end + block.start,
+        summary: g.summary,
+      }));
+      if (
+        shifted !== undefined &&
+        validatePartition(shifted, block.start, block.end) &&
+        shifted.length < size
+      ) {
+        accepted = shifted.map((g) => ({
+          range: { start: g.start, end: g.end },
+          summary:
+            g.summary.trim().length > 0
+              ? g.summary.trim()
+              : rollupText(children, { start: g.start, end: g.end }, levelNumber(level.kind)),
+          source: "llm" as const,
+        }));
+      }
+      // Rejected WHOLESALE — not repaired. Nothing the model said survives.
+    }
+
+    if (accepted === undefined) {
+      // A model-only level gets no structural groups at all: returning the
+      // block unchanged means it cannot qualify, so the level is skipped.
+      if (level.modelOnly) return undefined;
+      accepted = structuralRanges(children, block).map((r) => ({
+        range: r,
+        summary: rollupText(children, r, levelNumber(level.kind)),
+        source: "template" as const,
+      }));
+    }
+    out.push(...accepted);
   }
   return out;
 }
 
-async function composeOneLevel(
-  children: readonly ChildSummary[],
-  level: number,
-  cap: number,
-  partitioner: Partitioner | undefined,
-): Promise<ComposedNode[]> {
-  const nodes: ComposedNode[] = [];
-  for (const block of splitIntoBlocks(children, cap)) {
-    nodes.push(...(await composeBlock(children, block, level, partitioner)));
-  }
-  return nodes;
+/** `rollupText` still keys on a level NUMBER: level 1 tallies, above it composes. */
+function levelNumber(kind: LevelKind): number {
+  return kind === "task" ? 1 : 2;
 }
 
-async function composeBlock(
-  children: readonly ChildSummary[],
-  block: Block,
-  level: number,
-  partitioner: Partitioner | undefined,
-): Promise<ComposedNode[]> {
-  const size = block.end - block.start;
-  if (size <= 1) return [rollupNode(children, block, level)];
-
-  if (partitioner !== undefined) {
-    let groups;
+/** The root: one call asking what the whole recording was for. */
+async function makeRoot(
+  frontier: readonly { ref: LadderChild; child: ChildSummary }[],
+  compose: ComposeFn | undefined,
+): Promise<LadderNode> {
+  const children = frontier.map((f, i) => ({ ...f.child, index: i }));
+  const fallback = rollupText(children, { start: 0, end: children.length }, 2);
+  if (compose !== undefined) {
     try {
-      groups = await partitioner(children, block, level);
+      const groups = await compose(children, "session");
+      const text = groups[0]?.summary.trim();
+      if (text !== undefined && text.length > 0) {
+        return {
+          granularity: LEVEL_GRANULARITY.session,
+          children: frontier.map((f) => f.ref),
+          summary: text,
+          source: "llm",
+        };
+      }
     } catch {
-      // Composing NEVER fails the run: an unreachable daemon, a timeout or a
-      // torn response all degrade to the structural path.
-      groups = undefined;
+      // Falls through to the rollup: the root still exists and still says
+      // `template`, so a root nothing named discloses it.
     }
-    if (
-      groups !== undefined &&
-      validatePartition(groups, block.start, block.end) &&
-      groups.length < size
-    ) {
-      return groups.map((g) => ({
-        range: { start: g.start, end: g.end },
-        summary:
-          g.summary.trim().length > 0
-            ? g.summary.trim()
-            : rollupText(children, { start: g.start, end: g.end }, level),
-        source: "llm" as const,
-      }));
-    }
-    // Rejected WHOLESALE — not repaired. Nothing the model said survives, not
-    // the ranges and not the names. Repairing a malformed partition means
-    // guessing intent, the rule `parseInterventionResponse` sets in `trace/`.
   }
-
-  return structuralRanges(children, block).map((r) => rollupNode(children, r, level));
-}
-
-function rollupNode(
-  children: readonly ChildSummary[],
-  range: Block,
-  level: number,
-): ComposedNode {
-  return { range, summary: rollupText(children, range, level), source: "template" };
-}
-
-/** Turn a composed parent into a child of the level above it. */
-function liftNode(
-  children: readonly ChildSummary[],
-  n: ComposedNode,
-  index: number,
-): ChildSummary {
-  const slice = children.slice(n.range.start, n.range.end);
-  const first = slice[0]!;
-  const last = slice[slice.length - 1]!;
-  // One app only when EVERY child agrees: a parent spanning two applications is
-  // not "in" either of them, and claiming one would feed a false signal upward.
-  const app = slice.every((c) => c.app === first.app) ? first.app : null;
-  const url = slice.every((c) => c.url === first.url) ? first.url : null;
   return {
-    index,
-    text: n.summary,
+    granularity: LEVEL_GRANULARITY.session,
+    children: frontier.map((f) => f.ref),
+    summary: fallback,
+    source: "template",
+  };
+}
+
+/** Turn a composed group into a child of the level above it. */
+function liftChild(members: readonly ChildSummary[], summary: string): ChildSummary {
+  const first = members[0]!;
+  const last = members[members.length - 1]!;
+  // One app only when EVERY member agrees: a parent spanning two applications
+  // is not "in" either, and claiming one would feed a false signal upward.
+  const app = members.every((c) => c.app === first.app) ? first.app : null;
+  const url = members.every((c) => c.url === first.url) ? first.url : null;
+  return {
+    index: 0,
+    text: summary,
     app,
     url,
     startSec: first.startSec,
     endSec: last.endSec,
-    // A parent inherits its FIRST child's barrier, so a bookmark keeps barring
+    // A parent inherits its FIRST member's barrier, so a bookmark keeps barring
     // all the way up rather than being swallowed at level 1.
     barrier: first.barrier,
   };

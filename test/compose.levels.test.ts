@@ -1,156 +1,224 @@
 import { describe, expect, it } from "vitest";
-import { composeLevels } from "../src/represent/compose/levels.js";
-import type { Block, ChildSummary, ComposeGroup } from "../src/represent/compose/types.js";
+import { composeLadder } from "../src/represent/compose/levels.js";
+import type { ChildSummary, ComposeGroup, Ladder, LevelKind } from "../src/represent/compose/types.js";
 
 function leaves(n: number, over: (i: number) => Partial<ChildSummary> = () => ({})) {
   return Array.from(
     { length: n },
     (_, i): ChildSummary => ({
-      index: i,
-      text: `action ${i}`,
-      app: "Calculator",
-      url: null,
-      startSec: i,
-      endSec: i + 1,
-      barrier: false,
-      ...over(i),
+      index: i, text: `action ${i}`, app: "Calculator", url: null,
+      startSec: i, endSec: i + 1, barrier: false, ...over(i),
     }),
   );
 }
 
-/** Pairs children up and names each pair — a well-behaved model. */
-const pairwise = async (
-  _children: readonly ChildSummary[],
-  block: Block,
-): Promise<ComposeGroup[]> => {
-  const out: ComposeGroup[] = [];
-  for (let i = block.start; i < block.end; i += 2) {
-    out.push({ start: i, end: Math.min(i + 2, block.end), summary: `run ${i}` });
-  }
-  return out;
-};
+const grans = (l: Ladder): string[] => l.nodes.map((n) => n.granularity);
+const root = (l: Ladder) => l.nodes[l.nodes.length - 1]!;
 
-describe("composeLevels", () => {
-  it("recurses to exactly one root", async () => {
-    const out = await composeLevels(leaves(8), { partitioner: pairwise });
-    expect(out.length).toBeGreaterThan(0);
-    expect(out[out.length - 1]!.nodes).toHaveLength(1);
+/** Groups children into runs of `size`, naming each. */
+const chunk =
+  (size: number) =>
+  async (children: readonly ChildSummary[], kind: LevelKind): Promise<ComposeGroup[]> => {
+    if (kind === "session") return [{ start: 0, end: children.length, summary: "the session" }];
+    const out: ComposeGroup[] = [];
+    for (let i = 0; i < children.length; i += size) {
+      out.push({ start: i, end: Math.min(i + size, children.length), summary: `${kind} ${i}` });
+    }
+    return out;
+  };
+
+describe("composeLadder", () => {
+  it("produces AT MOST three composed levels, whatever the input", async () => {
+    const l = await composeLadder(leaves(200), { compose: chunk(2) });
+    const kinds = new Set(grans(l));
+    expect([...kinds].every((g) => ["level:1", "level:2", "session"].includes(g))).toBe(true);
   });
 
-  it("numbers levels from 1 upward", async () => {
-    const out = await composeLevels(leaves(8), { partitioner: pairwise });
-    expect(out.map((l) => l.level)).toEqual(out.map((_, i) => i + 1));
+  it("builds Task, Process and Session when both levels qualify", async () => {
+    const l = await composeLadder(leaves(16), { compose: chunk(2) });
+    expect(grans(l)).toContain("level:1");
+    expect(grans(l)).toContain("level:2");
+    expect(root(l).granularity).toBe("session");
   });
 
-  it("every level is strictly smaller than the one below", async () => {
-    const out = await composeLevels(leaves(16), { partitioner: pairwise });
-    let prev = 16;
-    for (const l of out) {
-      expect(l.nodes.length).toBeLessThan(prev);
-      prev = l.nodes.length;
+  it("orders nodes topologically — a child always precedes its parent", async () => {
+    const l = await composeLadder(leaves(16), { compose: chunk(2) });
+    l.nodes.forEach((n, i) => {
+      for (const c of n.children) if (c.kind === "node") expect(c.index).toBeLessThan(i);
+    });
+  });
+
+  it("SKIPS a level that does not shrink, and the level above adopts its children", async () => {
+    // One group per task at the process level: no shrink, so no level:2 at all.
+    const noProcess = async (
+      children: readonly ChildSummary[],
+      kind: LevelKind,
+    ): Promise<ComposeGroup[]> => {
+      if (kind === "session") return [{ start: 0, end: children.length, summary: "s" }];
+      if (kind === "process")
+        return children.map((_, i) => ({ start: i, end: i + 1, summary: `p${i}` }));
+      return chunk(2)(children, kind);
+    };
+    const l = await composeLadder(leaves(8), { compose: noProcess });
+    expect(grans(l)).not.toContain("level:2");
+    // The root adopted the TASKS directly.
+    expect(root(l).children.length).toBeGreaterThan(1);
+    for (const c of root(l).children) {
+      expect(c.kind === "node" && l.nodes[c.index]!.granularity === "level:1").toBe(true);
     }
   });
 
-  it("each level covers its children exactly, contiguously", async () => {
-    const out = await composeLevels(leaves(9), { partitioner: pairwise });
-    let below = 9;
-    for (const l of out) {
-      let cursor = 0;
-      for (const n of l.nodes) {
-        expect(n.range.start).toBe(cursor);
-        cursor = n.range.end;
-      }
-      expect(cursor).toBe(below);
-      below = l.nodes.length;
+  it("falls back structurally at TASK when the model returns one group per child, and SKIPS process", async () => {
+    // One group per child never shrinks, so the reply is rejected wholesale at
+    // both levels. `task` has a structural fallback and therefore still
+    // qualifies; `process` is model-only, so it is skipped and the root adopts
+    // the tasks.
+    const onePer = async (
+      children: readonly ChildSummary[],
+      kind: LevelKind,
+    ): Promise<ComposeGroup[]> => {
+      if (kind === "session") return [{ start: 0, end: children.length, summary: "s" }];
+      return children.map((_, i) => ({ start: i, end: i + 1, summary: `x${i}` }));
+    };
+    const l = await composeLadder(leaves(6), { compose: onePer });
+    const tasks = l.nodes.filter((n) => n.granularity === "level:1");
+    expect(tasks.length).toBeGreaterThan(0);
+    expect(tasks.every((n) => n.source === "template")).toBe(true);
+    expect(grans(l)).not.toContain("level:2");
+    // Elision means the root adopts leftover ACTIONS directly beside the task:
+    // structural halving is LOPSIDED (six uniform actions merge leftmost-first
+    // into 4 + 1 + 1), so the two singleton groups are elided rather than
+    // wrapped in nodes that could only restate them.
+    expect(
+      root(l).children.some(
+        (c) => c.kind === "node" && l.nodes[c.index]!.granularity === "level:1",
+      ),
+    ).toBe(true);
+    expect(root(l).children.some((c) => c.kind === "leaf")).toBe(true);
+  });
+
+  it("SKIPS level:1 when a bookmark bars every pair — the root adopts the ACTIONS", async () => {
+    // Every child is its own block, so every group holds exactly one child and
+    // the level composes nothing. A barrier between every pair is the ONE way
+    // level:1 fails admission: the structural fallback always halves otherwise.
+    const kids = leaves(4, (i) => (i > 0 ? { barrier: true } : {}));
+    const l = await composeLadder(kids, { compose: chunk(2) });
+    expect(grans(l)).toEqual(["session"]);
+    expect(root(l).children).toHaveLength(4);
+    expect(root(l).children.every((c) => c.kind === "leaf")).toBe(true);
+  });
+
+  it("ELIDES a single-child node — the grandparent adopts the child", async () => {
+    // Level 1 pairs; level 2 leaves the last task alone.
+    const lonely = async (
+      children: readonly ChildSummary[],
+      kind: LevelKind,
+    ): Promise<ComposeGroup[]> => {
+      if (kind === "session") return [{ start: 0, end: children.length, summary: "s" }];
+      if (kind === "process")
+        return [
+          { start: 0, end: children.length - 1, summary: "phase" },
+          { start: children.length - 1, end: children.length, summary: "alone" },
+        ];
+      return chunk(2)(children, kind);
+    };
+    const l = await composeLadder(leaves(12), { compose: lonely });
+    // No node anywhere holds exactly one child...
+    for (const n of l.nodes) {
+      if (n.granularity === "session") continue;
+      expect(n.children.length).toBeGreaterThan(1);
     }
+    // ...and the lone task was adopted by the root, so an edge spans two levels.
+    const adopted = root(l).children.filter(
+      (c) => c.kind === "node" && l.nodes[c.index]!.granularity === "level:1",
+    );
+    expect(adopted.length).toBe(1);
   });
 
-  it("marks LLM-named nodes 'llm' and rolled-up ones 'template'", async () => {
-    const withModel = await composeLevels(leaves(4), { partitioner: pairwise });
-    expect(withModel[0]!.nodes.every((n) => n.source === "llm")).toBe(true);
-    expect(withModel[0]!.nodes[0]!.summary).toBe("run 0");
-
-    const noModel = await composeLevels(leaves(4));
-    expect(noModel[0]!.nodes.every((n) => n.source === "template")).toBe(true);
-    expect(noModel[0]!.nodes[0]!.summary).toContain("Calculator");
+  it("the ROOT is exempt from elision — one child is correct there", async () => {
+    const oneProcess = async (
+      children: readonly ChildSummary[],
+      kind: LevelKind,
+    ): Promise<ComposeGroup[]> => {
+      if (kind === "session") return [{ start: 0, end: children.length, summary: "the whole thing" }];
+      if (kind === "process") return [{ start: 0, end: children.length, summary: "one phase" }];
+      return chunk(2)(children, kind);
+    };
+    const l = await composeLadder(leaves(8), { compose: oneProcess });
+    expect(root(l).granularity).toBe("session");
+    expect(root(l).children).toHaveLength(1);
+    expect(root(l).summary).toBe("the whole thing");
   });
 
-  it("REJECTS a malformed partition wholesale rather than repairing it", async () => {
-    const broken = async (): Promise<ComposeGroup[]> => [
-      { start: 0, end: 2, summary: "a" },
-      { start: 3, end: 4, summary: "b" }, // gap at 2
-    ];
-    const out = await composeLevels(leaves(4), { partitioner: broken });
-    // Nothing the model said survives — not the ranges, not the names.
-    expect(out[0]!.nodes.every((n) => n.source === "template")).toBe(true);
-    expect(out[0]!.nodes.map((n) => n.summary)).not.toContain("a");
+  it("PROCESS IS MODEL-ONLY — no summarizer means no level:2", async () => {
+    const l = await composeLadder(leaves(12));
+    expect(grans(l)).toContain("level:1");
+    expect(grans(l)).not.toContain("level:2");
+    expect(root(l).granularity).toBe("session");
   });
 
-  it("falls back when a partition does not shrink its block", async () => {
-    const identity = async (
-      _c: readonly ChildSummary[],
-      block: Block,
-    ): Promise<ComposeGroup[]> =>
-      Array.from({ length: block.end - block.start }, (_, k) => ({
-        start: block.start + k,
-        end: block.start + k + 1,
-        summary: "no",
-      }));
-    const out = await composeLevels(leaves(4), { partitioner: identity });
-    expect(out[out.length - 1]!.nodes).toHaveLength(1);
-    expect(out[0]!.nodes.every((n) => n.source === "template")).toBe(true);
+  it("still builds TASKS structurally with no summarizer", async () => {
+    const l = await composeLadder(leaves(12));
+    const tasks = l.nodes.filter((n) => n.granularity === "level:1");
+    expect(tasks.length).toBeGreaterThan(0);
+    expect(tasks.every((n) => n.source === "template")).toBe(true);
   });
 
-  it("falls back when the partitioner throws — composing never fails the run", async () => {
+  it("rejects a malformed partition WHOLESALE and falls back structurally", async () => {
+    const broken = async (
+      children: readonly ChildSummary[],
+      kind: LevelKind,
+    ): Promise<ComposeGroup[]> => {
+      if (kind === "session") return [{ start: 0, end: children.length, summary: "s" }];
+      // A gap: neither the ranges nor the names may survive.
+      return [
+        { start: 0, end: 2, summary: "a" },
+        { start: 3, end: children.length, summary: "b" },
+      ];
+    };
+    const l = await composeLadder(leaves(8), { compose: broken });
+    const tasks = l.nodes.filter((n) => n.granularity === "level:1");
+    expect(tasks.every((n) => n.source === "template")).toBe(true);
+    expect(tasks.map((n) => n.summary)).not.toContain("a");
+  });
+
+  it("never fails the run when the model throws", async () => {
     const boom = async (): Promise<ComposeGroup[]> => {
       throw new Error("ollama is not running");
     };
-    const out = await composeLevels(leaves(4), { partitioner: boom });
-    expect(out[out.length - 1]!.nodes).toHaveLength(1);
-    expect(out[0]!.nodes.every((n) => n.source === "template")).toBe(true);
+    const l = await composeLadder(leaves(8), { compose: boom });
+    expect(root(l).granularity).toBe("session");
+    expect(root(l).source).toBe("template");
   });
 
-  it("rolls up a group the model left unnamed, rather than storing an empty label", async () => {
-    const unnamed = async (
-      _c: readonly ChildSummary[],
-      block: Block,
-    ): Promise<ComposeGroup[]> => [
-      { start: block.start, end: block.start + 2, summary: "   " },
-      { start: block.start + 2, end: block.end, summary: "named" },
-    ];
-    const out = await composeLevels(leaves(4), { partitioner: unnamed });
-    expect(out[0]!.nodes[0]!.summary).toContain("Calculator");
-    expect(out[0]!.nodes[1]!.summary).toBe("named");
+  it("returns an empty ladder for no leaves", async () => {
+    expect((await composeLadder([])).nodes).toEqual([]);
+  });
+
+  it("gives a single leaf a root of its own", async () => {
+    const l = await composeLadder(leaves(1), { compose: chunk(2) });
+    expect(root(l).granularity).toBe("session");
+    expect(root(l).children).toEqual([{ kind: "leaf", index: 0 }]);
   });
 
   it("never merges across a barrier", async () => {
-    const kids = leaves(4, (i) => (i === 2 ? { barrier: true } : {}));
-    const out = await composeLevels(kids, { partitioner: pairwise });
-    expect(out[0]!.nodes.some((n) => n.range.start < 2 && n.range.end > 2)).toBe(false);
-  });
-
-  it("returns one root node for a single leaf", async () => {
-    const out = await composeLevels(leaves(1), { partitioner: pairwise });
-    expect(out[out.length - 1]!.nodes).toHaveLength(1);
-    expect(out[out.length - 1]!.nodes[0]!.range).toEqual({ start: 0, end: 1 });
-  });
-
-  it("returns [] for no leaves", async () => {
-    expect(await composeLevels([])).toEqual([]);
-  });
-
-  it("still reaches one root when the depth cap bites", async () => {
-    const out = await composeLevels(leaves(64), { partitioner: pairwise, maxDepth: 2 });
-    expect(out[out.length - 1]!.nodes).toHaveLength(1);
+    const kids = leaves(8, (i) => (i === 4 ? { barrier: true } : {}));
+    const l = await composeLadder(kids, { compose: chunk(8) });
+    const leafIdx = (n: { children: { kind: string; index: number }[] }) =>
+      n.children.filter((c) => c.kind === "leaf").map((c) => c.index);
+    for (const n of l.nodes) {
+      if (n.granularity !== "level:1") continue;
+      const idx = leafIdx(n);
+      // No task may contain leaves from both sides of the bookmark.
+      expect(idx.some((i) => i < 4) && idx.some((i) => i >= 4)).toBe(false);
+    }
   });
 
   it("is translation invariant", async () => {
-    const base = leaves(8);
+    const base = leaves(12);
     const shifted = base.map((c) => ({
-      ...c,
-      startSec: c.startSec + 4242.4242,
-      endSec: c.endSec + 4242.4242,
+      ...c, startSec: c.startSec + 4242.4242, endSec: c.endSec + 4242.4242,
     }));
-    expect(await composeLevels(shifted)).toEqual(await composeLevels(base));
+    expect(await composeLadder(shifted)).toEqual(await composeLadder(base));
   });
 });

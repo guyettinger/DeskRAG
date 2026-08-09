@@ -49,33 +49,6 @@ export interface ComposeGroup {
   summary: string;
 }
 
-/** One composed parent: what it covers, what it is called, and who named it. */
-export interface ComposedNode {
-  range: Block;
-  summary: string;
-  source: SummarySource;
-}
-
-/** One whole level of the tree. `level` is 1-based; level 0 is the input leaves. */
-export interface ComposedLevel {
-  level: number;
-  nodes: ComposedNode[];
-}
-
-/**
- * Proposes a partition of one block. Injected, so the recursion stays pure and
- * the suite can drive a model-shaped path with no model.
- *
- * May return anything at all, including a malformed partition. The caller
- * validates and REJECTS WHOLESALE; it never repairs. Repairing means guessing
- * intent, the rule `parseInterventionResponse` already sets in `trace/`.
- */
-export type Partitioner = (
-  children: readonly ChildSummary[],
-  block: Block,
-  level: number,
-) => Promise<ComposeGroup[]>;
-
 /**
  * A reference from a ladder node to one of its children.
  *

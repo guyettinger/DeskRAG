@@ -212,8 +212,6 @@ export {
 } from "./represent/compose/compose-representer.js";
 export type {
   ChildSummary,
-  ComposedLevel,
-  ComposedNode,
   ComposeGroup,
 } from "./represent/compose/types.js";
 /**
