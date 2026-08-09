@@ -13,6 +13,7 @@
 
 import {
   COMPOSE_SYSTEM,
+  NAME_SYSTEM,
   composePrompt,
   parseComposeResponse,
 } from "../represent/compose/prompt.js";
@@ -60,8 +61,8 @@ export class OllamaSummaryProvider implements SummaryProvider {
         // request with it off answered in 1.4s.
         think: false,
         messages: [
-          { role: "system", content: COMPOSE_SYSTEM },
-          { role: "user", content: composePrompt(children, ctx.level) },
+          { role: "system", content: ctx.single === true ? NAME_SYSTEM : COMPOSE_SYSTEM },
+          { role: "user", content: composePrompt(children, ctx.level, ctx.single === true) },
         ],
       },
       this.fetchImpl,

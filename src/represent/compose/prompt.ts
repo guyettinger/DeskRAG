@@ -41,13 +41,37 @@ export const COMPOSE_SYSTEM =
   "run ends. If every step belongs to ONE task, reply with a single run " +
   "starting at 0 — that is often the right answer for a short list. No preamble.";
 
-export function composePrompt(children: readonly ChildSummary[], level: number): string {
+/**
+ * Naming the whole list as ONE thing — the question the root needs, which
+ * partitioning never answers.
+ *
+ * A separate system prompt rather than a flag inside COMPOSE_SYSTEM, because
+ * the two ask for genuinely different work: "where does this split" against
+ * "what was this". Its reply shape is deliberately the SAME single-cut-point
+ * JSON, so the parser, the validator and the reject-wholesale rule are shared.
+ */
+export const NAME_SYSTEM =
+  "You name a stretch of a user's recorded desktop activity. You are given an " +
+  "ordered, numbered list of the activities it is made of. Reply with ONE short " +
+  "phrase naming what the user was accomplishing overall — the GOAL, not what " +
+  "was on screen, and not a list. " +
+  'Reply with JSON only: {"groups":[{"start":0,"summary":"..."}]}. Exactly one ' +
+  "entry, starting at 0. No preamble.";
+
+export function composePrompt(
+  children: readonly ChildSummary[],
+  level: number,
+  single = false,
+): string {
   const lines = children.map((c, i) => {
     const app = c.app === null ? "" : `[${c.app}] `;
     // Collapse whitespace: a VLM caption can be several lines, and a step that
     // spans lines would look like several steps to the model.
     return `${i}. ${app}${c.text.replace(/\s+/g, " ").trim()}`;
   });
+  if (single) {
+    return `These ${children.length} activities are all part of one session.\nName the session.\n\n${lines.join("\n")}`;
+  }
   const what =
     level === 1
       ? "These are individual actions."

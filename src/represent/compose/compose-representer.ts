@@ -22,7 +22,7 @@ import type {
   Store,
 } from "../../store/types.js";
 import { composeLevels } from "./levels.js";
-import type { ChildSummary, ComposeGroup, Partitioner } from "./types.js";
+import type { ChildSummary, ComposedLevel, ComposeGroup, Partitioner } from "./types.js";
 
 /** Level 0 — the only granularity segmentation itself produces. */
 export const LEAF_GRANULARITY = "action";
@@ -123,6 +123,30 @@ export class ComposeRepresenter {
       below = next;
     }
 
+    // NAME THE ROOT, when composing did not.
+    //
+    // The root's summary is the session's PURPOSE — the one string a reader
+    // sees in the Library — and partitioning never produces it: the final
+    // collapse asks the model to split a two-item list, which it answers with
+    // two groups every time (3 of 3 trials on a real recording), and two does
+    // not shrink so it is correctly rejected. Naming is a different question,
+    // so it gets its own call rather than a looser acceptance rule.
+    const rootSummaryRow = summaries[summaries.length - 1];
+    if (
+      this.summarizer !== undefined &&
+      rootSummaryRow !== undefined &&
+      rootSummaryRow.source === "template" &&
+      children.length > 1
+    ) {
+      const named = await this.nameRoot(composed);
+      if (named !== undefined) {
+        rootSummaryRow.text = named;
+        rootSummaryRow.source = "llm";
+        rootSummary = named;
+        llmNodes += 1;
+      }
+    }
+
     // SQLite rows first, then the edges that reference them, then the text.
     await this.store.putSegments(segments);
     await this.store.putSegmentTree(edges);
@@ -170,6 +194,38 @@ export class ComposeRepresenter {
       endSec: (s.tMonoEnd - origin) / 1000,
       barrier: s.boundaryReason === "bookmark",
     }));
+  }
+
+  /**
+   * One call asking what the whole session WAS, from the summaries of the level
+   * directly beneath the root.
+   *
+   * Returns undefined on any failure, so the rollup already written stands —
+   * composing still cannot fail the run, and the root still says `template`
+   * when nothing named it.
+   */
+  private async nameRoot(composed: readonly ComposedLevel[]): Promise<string | undefined> {
+    const below = composed[composed.length - 2];
+    if (below === undefined || this.summarizer === undefined) return undefined;
+    const kids: ChildSummary[] = below.nodes.map((n, i) => ({
+      index: i,
+      text: n.summary,
+      app: null,
+      url: null,
+      startSec: 0,
+      endSec: 0,
+      barrier: false,
+    }));
+    try {
+      const groups = await this.summarizer.compose(kids, {
+        level: composed.length,
+        single: true,
+      });
+      const text = groups[0]?.summary.trim();
+      return text !== undefined && text.length > 0 ? text : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   /**
