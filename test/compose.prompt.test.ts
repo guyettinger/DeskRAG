@@ -134,8 +134,8 @@ describe("FakeSummaryProvider", () => {
   it("is deterministic and covers every child exactly once", async () => {
     const kids = [kid(0, "a"), kid(1, "b"), kid(2, "c")];
     const p = new FakeSummaryProvider(2);
-    const first = await p.compose(kids, { level: 1 });
-    expect(first).toEqual(await p.compose(kids, { level: 1 }));
+    const first = await p.compose(kids, { kind: "task" });
+    expect(first).toEqual(await p.compose(kids, { kind: "task" }));
 
     let cursor = 0;
     for (const g of first) {

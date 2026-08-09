@@ -171,8 +171,8 @@ describe("ComposeRepresenter", () => {
     const provider = {
       id: "t",
       model: "t",
-      compose: async (kids: readonly { text: string }[], ctx: { single?: boolean }) => {
-        if (ctx.single === true) return [{ start: 0, end: 1, summary: "debugged the clock" }];
+      compose: async (kids: readonly { text: string }[], ctx: { kind: string }) => {
+        if (ctx.kind === "session") return [{ start: 0, end: 1, summary: "debugged the clock" }];
         // Mimics the real failure: asked to SPLIT a two-item list it returns
         // two groups, which cannot shrink and is therefore rejected — so the
         // root comes back a rollup.
@@ -202,8 +202,8 @@ describe("ComposeRepresenter", () => {
     const provider = {
       id: "t",
       model: "t",
-      compose: async (kids: readonly { text: string }[], ctx: { single?: boolean }) => {
-        if (ctx.single === true) throw new Error("ollama went away");
+      compose: async (kids: readonly { text: string }[], ctx: { kind: string }) => {
+        if (ctx.kind === "session") throw new Error("ollama went away");
         const out = [];
         const step = kids.length === 2 ? 1 : 2;
         for (let i = 0; i < kids.length; i += step) {
@@ -229,8 +229,8 @@ describe("ComposeRepresenter", () => {
     const provider = {
       id: "t",
       model: "t",
-      compose: async (kids: readonly { text: string }[], ctx: { single?: boolean }) => {
-        if (ctx.single === true) {
+      compose: async (kids: readonly { text: string }[], ctx: { kind: string }) => {
+        if (ctx.kind === "session") {
           singleCalls += 1;
           return [{ start: 0, end: 1, summary: "should not be needed" }];
         }

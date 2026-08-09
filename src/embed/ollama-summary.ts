@@ -60,8 +60,8 @@ export class OllamaSummaryProvider implements SummaryProvider {
         // request with it off answered in 1.4s.
         think: false,
         messages: [
-          { role: "system", content: systemFor(ctx.single === true ? "session" : ctx.level === 1 ? "task" : "process") },
-          { role: "user", content: composePrompt(children, ctx.single === true ? "session" : ctx.level === 1 ? "task" : "process") },
+          { role: "system", content: systemFor(ctx.kind) },
+          { role: "user", content: composePrompt(children, ctx.kind) },
         ],
       },
       this.fetchImpl,

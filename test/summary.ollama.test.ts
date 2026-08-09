@@ -41,7 +41,7 @@ describe("OllamaSummaryProvider", () => {
         message: { content: '{"groups":[{"start":0,"summary":"added numbers"}]}' },
       }),
     });
-    expect(await p.compose(kids, { level: 1 })).toEqual([
+    expect(await p.compose(kids, { kind: "task" })).toEqual([
       { start: 0, end: 2, summary: "added numbers" },
     ]);
   });
@@ -60,7 +60,7 @@ describe("OllamaSummaryProvider", () => {
         },
       }),
     });
-    expect(await p.compose(kids, { level: 1 })).toEqual([
+    expect(await p.compose(kids, { kind: "task" })).toEqual([
       { start: 0, end: 2, summary: "added numbers" },
     ]);
   });
@@ -75,7 +75,7 @@ describe("OllamaSummaryProvider", () => {
         },
       }),
     });
-    expect((await p.compose(kids, { level: 1 }))[0]!.summary).toBe("the answer");
+    expect((await p.compose(kids, { kind: "task" }))[0]!.summary).toBe("the answer");
   });
 
   it("still rejects a malformed partition found in thinking", async () => {
@@ -90,7 +90,7 @@ describe("OllamaSummaryProvider", () => {
         },
       }),
     });
-    await expect(p.compose(kids, { level: 1 })).rejects.toThrow(/unparseable/i);
+    await expect(p.compose(kids, { kind: "task" })).rejects.toThrow(/unparseable/i);
   });
 
   it("asks for no monologue — a partition is not a reasoning task", async () => {
@@ -108,7 +108,7 @@ describe("OllamaSummaryProvider", () => {
     }) as unknown as typeof globalThis.fetch;
 
     await new OllamaSummaryProvider({ model: "m", fetchImpl: capturing }).compose(kids, {
-      level: 1,
+      kind: "task",
     });
     // Measured: a 30-step prompt with thinking ON never returned at all.
     expect((body as { think: boolean }).think).toBe(false);
@@ -119,7 +119,7 @@ describe("OllamaSummaryProvider", () => {
       model: "qwen3:8b",
       fetchImpl: fakeFetch({ message: { content: "I cannot help with that." } }),
     });
-    await expect(p.compose(kids, { level: 1 })).rejects.toThrow(/unparseable/i);
+    await expect(p.compose(kids, { kind: "task" })).rejects.toThrow(/unparseable/i);
   });
 
   it("throws on an empty reply rather than returning no groups", async () => {
@@ -127,7 +127,7 @@ describe("OllamaSummaryProvider", () => {
       model: "qwen3:8b",
       fetchImpl: fakeFetch({}),
     });
-    await expect(p.compose(kids, { level: 1 })).rejects.toThrow(/unparseable/i);
+    await expect(p.compose(kids, { kind: "task" })).rejects.toThrow(/unparseable/i);
   });
 
   it("throws on a non-2xx, rather than returning a guess", async () => {
@@ -135,7 +135,49 @@ describe("OllamaSummaryProvider", () => {
       model: "qwen3:8b",
       fetchImpl: fakeFetch({ error: "model not found" }, false),
     });
-    await expect(p.compose(kids, { level: 1 })).rejects.toThrow();
+    await expect(p.compose(kids, { kind: "task" })).rejects.toThrow();
+  });
+
+  it("sends the PHASE prompt for a process, not the task one", async () => {
+    let body: unknown;
+    const capturing = (async (_url: string, init: { body: string }) => {
+      body = JSON.parse(init.body);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          message: { content: '{"groups":[{"start":0,"summary":"x"}]}' },
+        }),
+        text: async () => "",
+      } as unknown as Response;
+    }) as unknown as typeof globalThis.fetch;
+
+    await new OllamaSummaryProvider({ model: "m", fetchImpl: capturing }).compose(kids, {
+      kind: "process",
+    });
+    const sys = (body as { messages: { content: string }[] }).messages[0]!.content;
+    expect(sys).toMatch(/phase/i);
+  });
+
+  it("sends a DIFFERENT system prompt for each kind", async () => {
+    const seen: string[] = [];
+    const capturing = (async (_url: string, init: { body: string }) => {
+      seen.push(JSON.parse(init.body).messages[0].content);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          message: { content: '{"groups":[{"start":0,"summary":"x"}]}' },
+        }),
+        text: async () => "",
+      } as unknown as Response;
+    }) as unknown as typeof globalThis.fetch;
+
+    const p = new OllamaSummaryProvider({ model: "m", fetchImpl: capturing });
+    for (const kind of ["task", "process", "session"] as const) {
+      await p.compose(kids, { kind });
+    }
+    expect(new Set(seen).size).toBe(3);
   });
 
   it("reports its namespace parts", () => {

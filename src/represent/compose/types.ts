@@ -10,9 +10,12 @@
 import type { SummarySource } from "../../store/types.js";
 
 /**
- * Which question a compose call asks — semantic, not numeric. Task splits
- * actions into tasks; Process groups tasks into phases of work; Session names
- * one whole session.
+ * WHICH question a compose call is asking.
+ *
+ * Semantic rather than numeric, so the provider interface carries meaning and a
+ * future adapter can phrase each kind however its model prefers. It replaced
+ * `{ level: number, single?: boolean }`, which could not express three distinct
+ * prompts.
  */
 export type LevelKind = "task" | "process" | "session";
 

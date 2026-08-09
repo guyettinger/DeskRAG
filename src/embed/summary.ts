@@ -10,21 +10,11 @@
  * `ollama-summary.ts` is barrel-safe too (plain fetch, no native module).
  */
 
-import type { ChildSummary, ComposeGroup } from "../represent/compose/types.js";
+import type { ChildSummary, ComposeGroup, LevelKind } from "../represent/compose/types.js";
 
 export interface ComposeContext {
-  /** 1 for the first composed level, 2 above it, and so on. */
-  level: number;
-  /**
-   * Name the whole list as ONE activity rather than splitting it.
-   *
-   * Naming a session is a different question from partitioning it, and asking
-   * the partitioning question never yields the answer: measured on
-   * qwen3-vl:4b, a two-item list came back as two groups in 3 of 3 trials,
-   * which cannot shrink and is therefore always rejected. The root — the one
-   * summary a reader sees in the Library — was a rollup every single time.
-   */
-  single?: boolean;
+  /** WHICH question this call asks — the adapter maps it to a system prompt. */
+  kind: LevelKind;
 }
 
 export interface SummaryProvider {
