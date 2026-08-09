@@ -56,11 +56,26 @@ permissions, and how it's wired.
 
 ## Quick start
 
+Two prerequisites, and DeskRAG refuses to record without either: **ffmpeg 5.1+**
+is the capture pipeline, and **`swiftc`** builds the `ax-dump` sidecar that reads
+the device timebase.
+
+```bash
+brew install ffmpeg      # 5.1 or newer
+xcode-select --install   # swiftc, for the sidecar
+```
+
 ```bash
 npm install         # the library (root) — Node-ABI native modules for the test suite
 npm run app:install # the app (own node_modules) — postinstall builds better-sqlite3 for Electron
+npm run build:ax    # the ax-dump / ax-exec sidecars — required to record at all
 npm run app:dev     # build the library, then launch the app
 ```
+
+Transcription (`brew install whisper-cpp`) and the Ollama-backed caption and
+embedding providers are optional — a missing one disables exactly that feature.
+See [Setup](./docs/setup.md) for permissions and [Providers](./docs/providers.md)
+for what runs where.
 
 To use the library directly instead:
 

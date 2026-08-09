@@ -74,3 +74,20 @@ choice.
 Failure policy differs by role, on purpose: `OllamaTextEmbedding.embed` **throws** (a
 missing vector must not look like a clean write), while `OllamaCaptionProvider.caption`
 returns `""` (a missing caption is recoverable by reconciliation).
+
+### Getting a daemon and its weights
+
+```bash
+brew install --cask ollama-app   # a CASK, not a formula; links `ollama` and installs the app
+ollama serve                     # or open /Applications/Ollama.app to keep it running at login
+ollama pull nomic-embed-text     # 274 MB — text embedding
+ollama pull qwen3-vl:4b          # 3.3 GB — VLM captions
+```
+
+Because the picker reads `/api/tags`, **a freshly installed daemon offers an empty
+vision-model list** — `ollama.visionModels()` returns `[]` until something is
+pulled, which looks identical to a daemon that isn't running. Check with
+`curl -s localhost:11434/api/tags` before assuming the connection is at fault.
+
+Neither model is required. Without them Ollama's roles stay unavailable and the
+ONNX providers, capture, indexing, lexical search and Flows are all unaffected.
