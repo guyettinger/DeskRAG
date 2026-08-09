@@ -37,6 +37,7 @@ import {
   CaptionRepresenter,
   AppCaptionRepresenter,
   ComposeRepresenter,
+  ROOT_GRANULARITY,
   OllamaSummaryProvider,
   RegionRepresenter,
   TranscriptRepresenter,
@@ -1015,6 +1016,13 @@ export class DeskRagService {
   listSessions(): SessionSummaryDTO[] {
     return this.store.listSessions().map((s) => {
       const firstKeyframe = this.store.getFramesBySession(s.id).find((f) => f.blobId);
+      // One node per recording, so this is one row — not a scan. `getSegment`
+      // per keyframe is the shape `sessionDetail` deliberately avoids, and the
+      // same reasoning applies here.
+      const root = this.store
+        .getSegmentsBySession(s.id)
+        .find((seg) => seg.granularity === ROOT_GRANULARITY);
+      const purpose = root === undefined ? undefined : this.store.getSegmentSummary(root.id);
       return {
         id: s.id,
         startedAt: s.startedAt,
@@ -1026,6 +1034,8 @@ export class DeskRagService {
         sizeBytes: s.byteLength,
         hasVideo: s.videoBlobId !== null,
         posterUrl: firstKeyframe?.blobId ? `deskrag://frame/${firstKeyframe.blobId}` : null,
+        purpose: purpose?.text ?? null,
+        purposeSource: purpose?.source ?? null,
       };
     });
   }

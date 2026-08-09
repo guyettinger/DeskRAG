@@ -740,7 +740,7 @@ a:focus-visible {
    what that moment was part of. Dimmed and clamped to one line: it is context
    for the digest above it, not a second answer. */
 .frame__task {
-  font-size: var(--t-tiny);
+  font-size: var(--t-micro);
   color: var(--muted);
   margin-top: var(--s1);
   display: -webkit-box;
@@ -1227,6 +1227,22 @@ select {
 .sessioncard__when {
   font-size: var(--t-body);
   color: var(--text);
+}
+/* What the recording was for. Two lines at most: this column is ~300px and the
+   row's job is to IDENTIFY a recording, not to specify it. A rollup is dimmed
+   so a tally cannot pass for a sentence somebody wrote. */
+.sessioncard__purpose {
+  font-size: var(--t-meta);
+  color: var(--text);
+  margin-top: 1px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.sessioncard__purpose.is-rollup {
+  color: var(--muted-dim);
+  font-style: italic;
 }
 /* One line, always. `durationShort` is what makes that true — the full
    `00:00:32.807 · 29 frames · 12 MB` wrapped every row in this column. */

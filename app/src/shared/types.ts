@@ -250,6 +250,22 @@ export interface SessionSummaryDTO {
   hasVideo: boolean;
   /** deskrag://frame/<blobId> of the first keyframe, for the list thumbnail. */
   posterUrl: string | null;
+  /**
+   * What the recording was FOR — the summary of its root segment, the one node
+   * covering the whole session.
+   *
+   * Null for a session captured but not yet indexed, in which case the list
+   * shows what it always did and asserts nothing false.
+   */
+  purpose: string | null;
+  /**
+   * Which path produced `purpose`; null whenever `purpose` is.
+   *
+   * "template" means the tree was composed structurally because no text model
+   * was configured, so the string is a rollup rather than a sentence. Disclosed
+   * rather than smoothed over, the same rule the rail's lane `warning` follows.
+   */
+  purposeSource: "llm" | "template" | null;
 }
 
 export interface SessionVideoDTO {
