@@ -497,17 +497,22 @@ contract working, not a defect.
 
 **3. Does `DEFAULT_RRF_K` still hold at six lanes? — NO. Changed 10 → 5.**
 
-Re-swept 2026-08-09 on TWO real recordings, 87 segments, 30 known-answer
-queries (20 composed summaries, 10 leaf captions). The corpus now exceeds Tier
-1's `topN` of 50, so ranks are meaningful where the first attempt's 42-segment
+Re-swept 2026-08-09 on THREE real recordings, 151 segments, 44 known-answer
+queries (34 composed summaries, 10 leaf captions). The corpus exceeds Tier 1's
+`topN` of 50, so ranks are meaningful where the first attempt's 42-segment
 library returned everything:
 
 | k | mean rank | recall@1 | recall@5 | mean (composed) | mean (leaf) |
 | --- | --- | --- | --- | --- | --- |
-| **5** | **25.43** | **27%** | **47%** | 37.45 | 1.40 |
-| 10 (was) | 29.17 | 20% | 33% | 42.80 | 1.90 |
-| 20 | 32.47 | 13% | 30% | 47.55 | 2.30 |
-| 60 | 35.77 | 7% | 23% | 50.60 | 6.10 |
+| **5** | **21.18** | **18%** | **52%** | 26.94 | 1.60 |
+| 10 (was) | 28.55 | 14% | 27% | 36.35 | 2.00 |
+| 20 | 33.36 | 11% | 20% | 42.44 | 2.50 |
+| 60 | 40.39 | 9% | 18% | 51.00 | 4.30 |
+
+The margin widens with corpus size: at two recordings the same sweep gave
+recall@5 of 47% vs 33% at k=5/10, against 52% vs 27% here. recall@1 is NOT
+comparable between those runs — the query mix changed, since leaves (the ones
+that land first) went from 10 of 30 to 10 of 44.
 
 Monotonic on every metric, and it is the documented theory doing what it
 predicts: one more lane widens the count term, so k must shrink to keep the
