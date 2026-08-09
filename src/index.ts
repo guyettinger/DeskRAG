@@ -22,6 +22,15 @@
 export * from "./embed/types.js";
 export { FakeEmbeddingProvider, FakeMultiVectorProvider } from "./embed/fake.js";
 export { OllamaTextEmbedding } from "./embed/ollama.js";
+/**
+ * The composing provider — it partitions a level AND names each run in one
+ * call. Barrel-safe like every other Ollama adapter: plain fetch, no native
+ * module, so importing the package loads nothing until it runs.
+ */
+export { FakeSummaryProvider } from "./embed/summary.js";
+export type { ComposeContext, SummaryProvider } from "./embed/summary.js";
+export { OllamaSummaryProvider, listSummaryModels } from "./embed/ollama-summary.js";
+export type { OllamaSummaryOptions } from "./embed/ollama-summary.js";
 
 /**
  * store/ — the dual-store seam. SQLite is the relational source of truth and the
