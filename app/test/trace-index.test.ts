@@ -13,6 +13,14 @@ const usKeymap = {
 
 const displays = [{ id: "D1", x: 0, y: 0, w: 2560, h: 1440, scale: 2, primary: true }];
 
+/**
+ * The capture clock bridge, faked. `deviceClockSource` is REQUIRED and has no
+ * default — a session that cannot calibrate refuses to start — so every session
+ * needs one even here, where the events are scripted with their own `t_mono`
+ * and no device stamp is ever converted.
+ */
+const deviceClockSource = { read: async (): Promise<number> => 0 };
+
 let dir: string;
 let store: DualStore;
 
@@ -28,7 +36,7 @@ afterEach(() => {
 
 /** Record a session from a scripted event list, then index its trace. */
 async function record(events: EmittedEvent[]): Promise<{ sessionId: string }> {
-  const session = new CaptureSession(store);
+  const session = new CaptureSession(store, { deviceClockSource });
   session.addProducer(new SyntheticInputProducer("script", events));
   const sessionId = await session.start();
   await session.stop();
@@ -49,7 +57,7 @@ const key = (tMono: number, keycode: number, modifiers: string[] = []): EmittedE
 
 describe("indexTrace", () => {
   it("returns undefined for a session with no events", async () => {
-    const session = new CaptureSession(store);
+    const session = new CaptureSession(store, { deviceClockSource });
     const sessionId = await session.start();
     await session.stop();
     expect(await indexTrace(store, sessionId)).toBeUndefined();
@@ -212,7 +220,7 @@ describe("rebuildGraph", () => {
   });
 
   it("skips sessions with no events instead of giving them a node", async () => {
-    const empty = new CaptureSession(store);
+    const empty = new CaptureSession(store, { deviceClockSource });
     await empty.start();
     await empty.stop();
     await record([{ kind: "keymap_change", data: usKeymap, tMono: 0 }, ...click(100, 500, 300)]);
