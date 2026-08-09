@@ -194,19 +194,41 @@ export interface ChildSummary {
 
 export interface ComposeGroup {
   start: number;   // inclusive child index
-  end: number;     // exclusive child index
+  end: number;     // exclusive child index — DERIVED, see below
   summary: string;
 }
 
 export interface ComposeContext {
   /** 1 for the first composed level, 2 above it, and so on. */
   level: number;
+  /** Name the whole list as ONE activity rather than splitting it. */
+  single?: boolean;
 }
 ```
 
-The model returns **index ranges, never times**, so it can only choose cut
-points among children that exist and cannot invent a moment nothing was
-recorded in.
+The model works in **indices, never times**, so it can only choose cut points
+among children that exist and cannot invent a moment nothing was recorded in.
+
+**It is asked for CUT POINTS, not ranges — amended 2026-08-09 after measuring.**
+Asked for `{start, end}`, `qwen3-vl:4b` returned a genuinely good three-task
+grouping of 24 real steps that ended at index **23**: it dropped the last step,
+so the covering check discarded all of it. Naming where a run ENDS is the only
+thing it got wrong, and it is the one thing it never needs to say. The model now
+states only where each run BEGINS; `parseComposeResponse` closes each cut
+against the next and the last against the block's end, so a gap, an overlap and
+a short cover are **impossible to express** rather than rejected after the fact.
+
+This does not soften the reject-wholesale rule — it changes what is ASKED for,
+never what is accepted. Cut points are still validated (ascending, first is 0,
+in range, integer) and a violation still discards the whole reply. Measured on
+one real recording, model-named nodes went **3 of 31 → 8 of 9**.
+
+**The ROOT gets its own call** (`single: true`, `NAME_SYSTEM`). The final
+collapse asks the model to split a two-item list, which it answers with two
+groups every time (3 of 3 trials) — two does not shrink, so it is correctly
+rejected and the session's purpose was a rollup on every run. Naming is a
+different question from splitting. Failure leaves the rollup standing with
+`source: "template"`, so composing still cannot fail the run.
 
 **One prompt serves every level.** At level 1 the input is action captions; at
 level 2 it is level-1 goals, and composing goals into bigger goals is the same
@@ -219,6 +241,16 @@ never a hardcoded name, for the reason `listModels` already exists: Ollama's
 library now includes cloud-hosted models, and offering one in a local picker
 would route a user's activity off the machine. A `FakeSummaryProvider` keeps the
 suite deterministic and offline.
+
+**Two adapter facts, both measured on `qwen3-vl:4b` and both silent failures.**
+A THINKING model routes its structured answer into `message.thinking` and leaves
+`content` empty — even with `think: false`, because Ollama applies the JSON
+format constraint to whichever channel the model writes. Reading only `content`
+made the adapter silently incompatible with every thinking model: the composer
+would take the structural path forever with nothing saying why. Both channels
+are read, content first, and the partition is validated either way. And thinking
+ON never returned at all on a 30-step prompt, where `think: false` answered in
+1.4s — so the request asks for a partition, not a monologue.
 
 ### Validation is code, never a request to the model
 
@@ -434,19 +466,38 @@ deleting a session and checking that its tree and summary rows go with it. The
 ## 7. Validation against a real recording
 
 Three things the suite structurally cannot see. Each is a required measurement,
-not an assumption.
+not an assumption. **1 and 2 were run on 2026-08-09** against one real 29.2s
+recording (30 actions, Calculator → TextEdit → Electron), `qwen3-vl:4b`.
 
-1. **Do LLM cuts beat structural cuts?** Compose one real multi-app session both
-   ways and compare the level-1 cuts against what the recording actually did —
-   the method that calibrated `mpdecimate`'s `lo` against a contact sheet rather
-   than a target count. This settles the anti-correlation claim above, in either
-   direction.
-2. **Do level summaries fit?** `labelFits` withholds a label that cannot be
-   drawn untruncated, so whether the TASK bar can be read is a fact about prose
-   length against real bar widths, measured in the running app.
-3. **Does `DEFAULT_RRF_K` still hold at six lanes?** Re-run the known-answer
-   sweep on a real library; k ∈ {5, 10, 20} was flat at five lanes and 60
-   degraded, but that was five.
+**1. Do LLM cuts beat structural cuts? — YES, and not for the predicted reason.**
+
+| | levels | level-1 nodes | model-named | time |
+| --- | --- | --- | --- | --- |
+| structural (control) | 16/8/4/2/1 | 16 | 0 of 31 | 105ms |
+| LLM, range contract | 16/8/4/2/1 | 16 (all rejected) | 3 of 31 | 14.5s |
+| LLM, cut points | 6/2/1 | 6 | 8 of 9 | 6.0s |
+
+The anti-correlation claim above predicted structural coherence would SHRED
+cross-app workflows. What it actually did was strand **eleven single-action
+"tasks"**: greedy pairwise merging chains the best seams into one 10-action
+group and leaves the rest alone, and a one-action task is not a task. The LLM
+also produced a shallower, better-shaped tree (3 levels against 5) because it
+merges at a semantically meaningful rate rather than halving. Sample level-1
+names: *"Verify calculator operation during recording"*, *"Document creation"*,
+*"Screen recording setup"*.
+
+**2. Do level summaries fit? — YES, and nothing truncates.**
+
+On the rail, with LLM summaries: the `task` lane painted **3 of 5** labels, the
+`session` lane 1 of 1 (*"checking electron setup"*), and **0 labels truncated
+anywhere**. Templated rollups paint far less — 1 of 7–15 — because they are
+longer (27–48 chars against 16–26) and there are more of them. So
+`showLabels: true` on composed lanes is correct: a withheld label is the
+contract working, not a defect.
+
+**3. Does `DEFAULT_RRF_K` still hold at six lanes? — NOT YET RUN.** Re-run the
+known-answer sweep on a real library; k ∈ {5, 10, 20} was flat at five lanes and
+60 degraded, but that was five.
 
 Record with the Recorder window closed to the tray. Its elapsed timer displays
 milliseconds, which changes every sampled frame and defeats decimation entirely
