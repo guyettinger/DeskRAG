@@ -721,6 +721,7 @@ export class DeskRagService {
       run: async () => {
         const r = await new ComposeRepresenter(this.store, {
           ...(prov.summarizer ? { summarizer: prov.summarizer } : {}),
+          summaryEmbedder: prov.textEmbedder,
         }).represent(sessionId);
         if (r.nodes === 0) return;
         // Say WHICH path produced the tree: a structurally-composed hierarchy
@@ -804,7 +805,9 @@ export class DeskRagService {
     // unregistered namespace, and caption/transcript are absent by default.
     const registered = new Set(this.store.listVectorSpaces().map((s) => s.namespace));
     const searchers: ViewSearcher[] = [];
-    for (const view of ["digest", "caption", "app_caption", "transcript"] as const) {
+    // `summary` is the composed levels — a task or a process answering at its
+    // own altitude, rather than a 900ms action standing in for one.
+    for (const view of ["digest", "summary", "caption", "app_caption", "transcript"] as const) {
       const s = new TextViewSearcher(prov.textEmbedder, view);
       if (registered.has(s.namespace)) searchers.push(s);
     }
@@ -1215,6 +1218,7 @@ export class DeskRagService {
         // existing recording gain a hierarchy at all.
         await new ComposeRepresenter(this.store, {
           ...(prov.summarizer ? { summarizer: prov.summarizer } : {}),
+          summaryEmbedder: prov.textEmbedder,
         }).represent(id);
         indexSegmentText(this.store, id);
       }

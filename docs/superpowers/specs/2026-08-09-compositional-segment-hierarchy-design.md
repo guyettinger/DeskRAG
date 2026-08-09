@@ -495,9 +495,32 @@ longer (27–48 chars against 16–26) and there are more of them. So
 `showLabels: true` on composed lanes is correct: a withheld label is the
 contract working, not a defect.
 
-**3. Does `DEFAULT_RRF_K` still hold at six lanes? — NOT YET RUN.** Re-run the
-known-answer sweep on a real library; k ∈ {5, 10, 20} was flat at five lanes and
-60 degraded, but that was five.
+**3. Does `DEFAULT_RRF_K` still hold at six lanes? — INCONCLUSIVE, and left at 10.**
+
+Swept over 8 known-answer queries (each a composed level's own summary text) on
+the one available recording — 42 segments:
+
+| k | mean rank of the correct segment |
+| --- | --- |
+| 5 | 21.50 |
+| **10 (current)** | 26.38 |
+| 20 | 26.63 |
+| 60 | 26.63 |
+
+k=5 edges out k=10, but a single 29-second recording cannot distinguish them:
+the original sweep that set this constant used five known-answer queries over a
+REAL LIBRARY, and mean ranks in the twenties here reflect a 42-segment corpus
+where Tier 1's `topN` of 50 returns everything, not a ranking failure. **The
+constant is unchanged.** What the sweep does establish is that nothing
+INVERTED — the documented failure mode, a segment ranked 1st in two lanes
+landing 13th fused, does not appear at six lanes.
+
+Re-run this on a library of many recordings before touching `DEFAULT_RRF_K`.
+
+**Found while running it:** `rrfK` belongs to `Tier1Options` and reaches the
+fusion only as `RetrieverOptions.tier1.rrfK`. Passing it at the top level is
+silently ignored — which is what an inert sweep looks like, since every k then
+returns an identical ranking.
 
 Record with the Recorder window closed to the tray. Its elapsed timer displays
 milliseconds, which changes every sampled frame and defeats decimation entirely

@@ -13,6 +13,7 @@
 
 import { ulid } from "ulid";
 import type { SummaryProvider } from "../../embed/summary.js";
+import { namespaceFor, type EmbeddingProvider } from "../../embed/types.js";
 import type {
   EventRow,
   SegmentInsert,
@@ -33,6 +34,15 @@ export const ROOT_GRANULARITY = "session";
 
 export interface ComposeRepresenterOptions {
   summarizer?: SummaryProvider;
+  /**
+   * Embeds composed summaries into the `summary` view, making a level
+   * retrievable at its own altitude.
+   *
+   * The SAME embedder digest uses — `view` is part of the namespace, so this is
+   * a distinct physical table at no extra provider cost. Omit it and the tree is
+   * still built and still reaches the lexical lane; only the dense lane is lost.
+   */
+  summaryEmbedder?: EmbeddingProvider;
   mintId?: () => string;
   batchCap?: number;
 }
@@ -49,16 +59,25 @@ export interface ComposeResult {
 
 export class ComposeRepresenter {
   private readonly summarizer: SummaryProvider | undefined;
+  private readonly summaryEmbedder: EmbeddingProvider | undefined;
   private readonly mintId: () => string;
   private readonly batchCap: number | undefined;
+  /** The `summary` space, or null when no embedder was given. */
+  readonly namespace: string | null;
+  private spaceReady = false;
 
   constructor(
     private readonly store: Store,
     opts: ComposeRepresenterOptions = {},
   ) {
     this.summarizer = opts.summarizer;
+    this.summaryEmbedder = opts.summaryEmbedder;
     this.mintId = opts.mintId ?? (() => ulid());
     this.batchCap = opts.batchCap;
+    this.namespace =
+      this.summaryEmbedder === undefined
+        ? null
+        : namespaceFor("summary", this.summaryEmbedder);
   }
 
   async represent(sessionId: string): Promise<ComposeResult> {
@@ -151,6 +170,7 @@ export class ComposeRepresenter {
     await this.store.putSegments(segments);
     await this.store.putSegmentTree(edges);
     await this.store.putSegmentSummaries(summaries);
+    await this.embedSummaries(summaries, sessionId);
     await this.linkFrames(segments.map((s) => s.id));
 
     return { levels: composed.length, nodes: segments.length, llmNodes, rootSummary };
@@ -194,6 +214,43 @@ export class ComposeRepresenter {
       endSec: (s.tMonoEnd - origin) / 1000,
       barrier: s.boundaryReason === "bookmark",
     }));
+  }
+
+  /**
+   * The `summary` view — a level retrievable at its OWN altitude, so "when did
+   * I file the expense report" can return the task rather than a 900ms action.
+   *
+   * Text is already committed above, so a crash here leaves a re-embeddable row
+   * rather than an orphan vector. `replaceSegmentVectors`, never
+   * `putSegmentVectors`: this stage runs again on every re-index, and a bare add
+   * would leave two vectors under one id that `reconcile()` can never prune.
+   */
+  private async embedSummaries(
+    summaries: readonly SegmentSummaryInsert[],
+    sessionId: string,
+  ): Promise<void> {
+    const embedder = this.summaryEmbedder;
+    if (embedder === undefined || this.namespace === null || summaries.length === 0) return;
+    if (!this.spaceReady) {
+      await this.store.registerVectorSpace({
+        namespace: this.namespace,
+        view: "summary",
+        providerId: embedder.id,
+        model: embedder.model,
+        dimensions: embedder.dimensions,
+        sharedTextSpace: false,
+      });
+      this.spaceReady = true;
+    }
+    const vectors = await embedder.embed(summaries.map((s) => s.text));
+    await this.store.replaceSegmentVectors(
+      summaries.map((s, i) => ({
+        segmentId: s.segmentId,
+        sessionId,
+        namespace: this.namespace!,
+        vector: vectors[i]!,
+      })),
+    );
   }
 
   /**
