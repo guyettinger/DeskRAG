@@ -800,6 +800,27 @@ export class DeskRagService {
 
   // --- search ---------------------------------------------------------------
 
+  /**
+   * Walk UP from a segment to the nearest composed parent and take its summary.
+   *
+   * NEAREST, not the root: the root's summary is the whole session's purpose,
+   * which is true of every hit in that recording and therefore tells a reader
+   * nothing about this one. Null all the way up is the honest answer for a
+   * recording indexed before composing existed.
+   */
+  private taskSummaryFor(segmentId: string | null): string | null {
+    if (segmentId === null) return null;
+    let cur = this.store.getSegmentParent(segmentId);
+    const seen = new Set<string>([segmentId]);
+    while (cur !== undefined && !seen.has(cur)) {
+      seen.add(cur);
+      const summary = this.store.getSegmentSummary(cur);
+      if (summary !== undefined) return summary.text;
+      cur = this.store.getSegmentParent(cur);
+    }
+    return null;
+  }
+
   private buildRetriever(prov: Providers): Retriever {
     // Only query text spaces that actually exist — searchSegments throws on an
     // unregistered namespace, and caption/transcript are absent by default.
@@ -906,6 +927,7 @@ export class DeskRagService {
         width: frame?.width ?? 0,
         height: frame?.height ?? 0,
         segmentDigest: seg?.digest ?? null,
+        taskSummary: this.taskSummaryFor(seg?.id ?? null),
         thumbUrl: frame?.blobId ? `deskrag://frame/${frame.blobId}` : null,
         highlightCount: highlights.length,
       };
@@ -967,6 +989,7 @@ export class DeskRagService {
     }));
     return {
       frameId,
+      taskSummary: this.taskSummaryFor(seg?.id ?? null),
       imageUrl: frame.blobId ? `deskrag://frame/${frame.blobId}` : null,
       width: frame.width,
       height: frame.height,

@@ -164,6 +164,18 @@ export interface FrameHitDTO {
   width: number;
   height: number;
   segmentDigest: string | null;
+  /**
+   * The summary of the LOWEST composed level containing this hit — the answer
+   * to "what was I doing?" when the thing retrieved is a single frame.
+   *
+   * The nearest ancestor, never the root: the root's summary is the whole
+   * session's purpose, which is true of every hit in that recording and so
+   * tells a reader nothing about this one.
+   *
+   * Null for a recording indexed before composing, or one whose tree has no
+   * level above its leaves.
+   */
+  taskSummary: string | null;
   /** deskrag://frame/<blobId> URL, or null when the frame has no keyframe. */
   thumbUrl: string | null;
   highlightCount: number;
@@ -208,6 +220,18 @@ export interface ResultDetailDTO {
     caption: string | null;
     transcript: string | null;
   } | null;
+  /**
+   * The summary of the LOWEST composed level containing this hit — the answer
+   * to "what was I doing?" when the thing retrieved is a single frame.
+   *
+   * The nearest ancestor, never the root: the root's summary is the whole
+   * session's purpose, which is true of every hit in that recording and so
+   * tells a reader nothing about this one.
+   *
+   * Null for a recording indexed before composing, or one whose tree has no
+   * level above its leaves.
+   */
+  taskSummary: string | null;
   ax: UIElementDTO[];
   highlights: HighlightDTO[];
 }

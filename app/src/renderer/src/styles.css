@@ -736,6 +736,18 @@ a:focus-visible {
   color: var(--muted-dim);
   font-style: italic;
 }
+/* The task a hit happened inside — retrieval finding a moment, and then saying
+   what that moment was part of. Dimmed and clamped to one line: it is context
+   for the digest above it, not a second answer. */
+.frame__task {
+  font-size: var(--t-tiny);
+  color: var(--muted);
+  margin-top: var(--s1);
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 .frame__foot {
   display: flex;
   justify-content: space-between;

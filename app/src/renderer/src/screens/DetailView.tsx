@@ -171,6 +171,13 @@ export function DetailView({ frameId, onClose, onOpenRecording }: Props): React.
                 )}
               </div>
 
+              {/* The task this frame happened inside, above its own text: the
+                  wider answer comes first. Unlike the search card, which
+                  withholds the line, this names the field even when empty —
+                  the same rule every field here follows, because an inspection
+                  surface makes absence VISIBLE while a dense result list would
+                  just carry one more dim row per card. */}
+              <Section label="Task" text={detail.taskSummary} />
               <Section label="Digest" text={detail.segment?.digest} />
               <Section label="Caption" text={detail.segment?.caption} />
               <Section label="Transcript" text={detail.segment?.transcript} />
