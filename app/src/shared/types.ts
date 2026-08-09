@@ -657,6 +657,24 @@ export interface FlowRouteDTO {
   count: number;
   /** "TextEdit → Google Chrome → github.com/user/repo", from the node labels. */
   label: string;
+  /**
+   * What the route DOES, from the composed level covering its recordings — the
+   * lowest level at which one node covers the majority of a walk.
+   *
+   * Null when no level qualifies, which is the honest answer for a route that
+   * is not one task; the caller falls back to `label`. Never part of the route
+   * KEY: summaries are nondeterministic, so keying on them would change a
+   * route's identity on every re-index.
+   */
+  name: string | null;
+  /**
+   * How many of this route's recordings agreed on `name`.
+   *
+   * Shown rather than smoothed over, the `observations`/`sources` rule: several
+   * recordings sharing a shape can disagree about what they were for, and the
+   * dominant name winning is not the same as unanimity.
+   */
+  nameObservations: number;
   /** For highlighting the route on the canvas. */
   nodeIds: string[];
   edgeIds: string[];

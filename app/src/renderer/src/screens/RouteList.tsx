@@ -49,12 +49,31 @@ export function RouteList({
               <button
                 className={`routes__item${selectedId === r.id ? " is-active" : ""}`}
                 onClick={() => onSelect(selectedId === r.id ? null : r.id)}
-                title={`${r.count} recording${r.count === 1 ? "" : "s"} took this path`}
+                title={
+                  `${r.count} recording${r.count === 1 ? "" : "s"} took this path` +
+                  // Agreement is REPORTED, never smoothed over: recordings that
+                  // share a shape can disagree about what they were for.
+                  (r.name !== null && r.nameObservations < r.count
+                    ? ` · ${r.nameObservations} of them called it “${r.name}”`
+                    : "")
+                }
               >
                 <span className={`routes__count${r.count > 1 ? " is-repeated" : ""}`}>
                   ×{r.count}
                 </span>
-                <span className="routes__label">{r.label}</span>
+                {/* WHAT the route does leads; WHERE it went becomes the
+                    subtitle. A name is null when no composed level covers the
+                    majority of a walk — the honest answer for a route that is
+                    not one task — and the place sequence then stands alone,
+                    exactly as it did before names existed. */}
+                {r.name !== null ? (
+                  <span className="routes__named">
+                    <span className="routes__label">{r.name}</span>
+                    <span className="routes__where mono">{r.label}</span>
+                  </span>
+                ) : (
+                  <span className="routes__label">{r.label}</span>
+                )}
                 <span className="routes__steps mono">
                   {r.edgeIds.length} step{r.edgeIds.length === 1 ? "" : "s"}
                 </span>

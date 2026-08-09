@@ -98,6 +98,7 @@ import {
   buildSessionTracks,
   laneOriginOf,
   laneSec,
+  levelIndex,
   type AudioLaneInput,
 } from "./session-tracks.js";
 import { peakCountFor, type AudioBlobPeaks } from "./track-buckets.js";
@@ -1346,7 +1347,25 @@ export class DeskRagService {
         sessionStart: (sessionId) => startedAt.get(sessionId),
         laneOrigin: (sessionId) => origins.get(sessionId) ?? 0,
       }),
-      routes: frequentRoutes(graph),
+      // The only I/O the routes need: which composed levels cover a walk, and
+      // by how much. `graph-view.ts` stays a pure projection.
+      routes: frequentRoutes(graph, (span) => {
+        const summaries = new Map(
+          this.store.getSegmentSummariesBySession(span.sessionId).map((s) => [s.segmentId, s]),
+        );
+        const out = [];
+        for (const seg of this.store.getSegmentsBySession(span.sessionId)) {
+          const summary = summaries.get(seg.id);
+          if (summary === undefined) continue;
+          const level = levelIndex(seg.granularity);
+          if (level === null || level < 1) continue;
+          const coveredMs =
+            Math.min(seg.tMonoEnd, span.tMonoEnd) - Math.max(seg.tMonoStart, span.tMonoStart);
+          if (coveredMs <= 0) continue;
+          out.push({ text: summary.text, level, coveredMs });
+        }
+        return out;
+      }),
     };
   }
 }

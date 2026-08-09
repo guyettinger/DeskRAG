@@ -2428,6 +2428,11 @@ select {
 }
 .routes__count.is-repeated { color: var(--accent); font-weight: 600; }
 .routes__label { line-height: 1.35; overflow-wrap: anywhere; }
+/* WHAT the route does, over WHERE it went. The place sequence drops to the
+   subtitle rather than being dropped: it is what the route is KEYED on, so it
+   stays visible even once a name exists. */
+.routes__named { display: grid; gap: var(--s0); min-width: 0; }
+.routes__where { font-size: var(--t-micro); color: var(--muted-dim); overflow-wrap: anywhere; }
 .routes__steps { grid-column: 2; font-size: var(--t-micro); color: var(--muted-dim); }
 
 .gcanvas {
