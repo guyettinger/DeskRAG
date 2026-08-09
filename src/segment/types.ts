@@ -66,6 +66,18 @@ export interface SegmenterOptions {
   granularities?: GranularityConfig[];
 }
 
+/**
+ * Level 0 of the hierarchy, and the ONLY granularity segmentation produces.
+ *
+ * `task` used to live here as a second, LONGER window over the same event
+ * timeline — which is exactly why the rail's ACTION and TASK lanes read as one
+ * signal drawn twice: they differed only in duration and in which boundary
+ * reasons cut them, and both were labelled by the same VLM caption.
+ *
+ * Height in the hierarchy is now COMPOSED from what actions mean together
+ * (`represent/compose/`), never cut from a bigger box. A bigger box cannot
+ * produce a higher altitude — the captioner describes a screen either way.
+ */
 export const BASE_GRANULARITIES: GranularityConfig[] = [
   {
     name: "action",
@@ -77,33 +89,25 @@ export const BASE_GRANULARITIES: GranularityConfig[] = [
     cutReasons: ["scene_change", "focus_change", "bookmark"],
     subdivide: false,
   },
-  {
-    name: "task",
-    targetMs: 180_000,
-    strideMs: 90_000,
-    boundaryAware: true,
-    cutReasons: ["focus_change", "bookmark"],
-  },
 ];
 
 export const DEFAULT_DWELL_GAP_MS = 3_000;
 export const DEFAULT_BURST_GAP_MS = 1_500;
 
 /**
- * Task's targetMs/strideMs scale to the session's own length so a short
- * recording doesn't collapse into one giant window (clamped to [30s, 180s]);
- * action is unaffected — its 10s cap only ever subdivides a span between real
- * boundaries, so it stays meaningful at any session length.
+ * The seam where a granularity could scale with session length.
+ *
+ * Nothing scales today. It existed for `task`, whose window was clamped to
+ * [30s, 180s] of the session's own length so a short recording did not collapse
+ * into one giant box — and `task` is gone. `action` never needed it: its 10s cap
+ * only ever subdivides a span between real boundaries, so it stays meaningful at
+ * any session length, and every level above it is composed rather than windowed.
  */
 export function resolveGranularities(
-  endTMono: number,
+  _endTMono: number,
   base: GranularityConfig[] = BASE_GRANULARITIES,
 ): GranularityConfig[] {
-  return base.map((g) => {
-    if (g.name !== "task") return g;
-    const targetMs = Math.min(180_000, Math.max(30_000, Math.round(endTMono / 2)));
-    return { ...g, targetMs, strideMs: targetMs / 2 };
-  });
+  return base;
 }
 
 /** Minimal event shape the boundary detector needs (EventRow is compatible). */

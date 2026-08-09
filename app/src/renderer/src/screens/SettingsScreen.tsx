@@ -7,6 +7,7 @@ import type {
   ProviderSettingsView,
   SettingsPatch,
   SettingsView,
+  SummaryProvider,
   TextProvider,
 } from "@shared/types";
 import { api } from "../api.js";
@@ -34,6 +35,7 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
   const [env, setEnv] = useState<EnvInfo | null>(null);
   const [saved, setSaved] = useState(false);
   const [visionModels, setVisionModels] = useState<string[]>([]);
+  const [chatModels, setChatModels] = useState<string[]>([]);
   const [download, setDownload] = useState<ModelDownloadProgress | null>(null);
   const [reindexing, setReindexing] = useState(false);
   const [searchReindexing, setSearchReindexing] = useState(false);
@@ -54,6 +56,7 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
   const load = (): void => {
     api.settings.get().then(setS);
     api.ollama.visionModels().then(setVisionModels);
+    api.ollama.chatModels().then(setChatModels);
     refreshEnv();
   };
   useEffect(load, []);
@@ -287,6 +290,29 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
 
         <div className="form-row">
           <div>
+            <label>Task summaries</label>
+            <div className="desc">
+              {chatModels.length > 0
+                ? "A local LLM groups actions into tasks and names each one"
+                : "No local chat model — run: ollama pull qwen3:4b"}
+            </div>
+          </div>
+          <select
+            value={p.summaryProvider}
+            disabled={chatModels.length === 0 && p.summaryProvider === "none"}
+            onChange={(e) =>
+              void patchProviders({ summaryProvider: e.target.value as SummaryProvider })
+            }
+          >
+            {/* "None" still builds the whole hierarchy — structurally, with
+                templated rollups. This picker only changes the prose. */}
+            <option value="none">None (structural)</option>
+            <option value="ollama">Ollama (local LLM)</option>
+          </select>
+        </div>
+
+        <div className="form-row">
+          <div>
             <label>Rerank (Tier 4)</label>
             <div className="desc">A cross-encoder reorders the top text results</div>
           </div>
@@ -368,6 +394,30 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
               </option>
             ))}
             {visionModels.length === 0 && <option value={p.ollamaCaptionModel}>—</option>}
+          </select>
+        </div>
+        <div className="form-row">
+          <div>
+            <label>Summary model</label>
+            <div className="desc">
+              {chatModels.length > 0
+                ? "Chat models pulled on this machine"
+                : "None pulled — run: ollama pull qwen3:4b"}
+            </div>
+          </div>
+          <select
+            value={p.ollamaSummaryModel}
+            disabled={chatModels.length === 0}
+            onChange={(e) => void patchProviders({ ollamaSummaryModel: e.target.value })}
+          >
+            {/* /api/tags again, same reason: a cloud-hosted entry offered here
+                would send a recording's own text off the machine. */}
+            {chatModels.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+            {chatModels.length === 0 && <option value={p.ollamaSummaryModel}>—</option>}
           </select>
         </div>
       </div>

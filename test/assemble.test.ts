@@ -219,12 +219,14 @@ describe("Retriever (assembly capstone)", () => {
     await associateFrames(store, sessionId);
     await new Representer(store, { digestEmbedder: fake, behavior }).represent(sessionId);
 
-    // Both frames sit in the same task segment. Only frame B shows the button.
-    const task = store.getSegmentsBySession(sessionId).find((s) => s.granularity === "task")!;
+    // Both frames sit in the SAME segment — one focus_change at t=0 means
+    // segmentation cuts once — so segment-level scoring cannot separate them.
+    // Only frame B shows the button.
+    const seg = store.getSegmentsBySession(sessionId).find((s) => s.granularity === "action")!;
     await store.putRegions([
-      { id: ulid(), frameId: a.frameId!, segmentId: task.id, sessionId, x: 0, y: 0, w: 10, h: 10,
+      { id: ulid(), frameId: a.frameId!, segmentId: seg.id, sessionId, x: 0, y: 0, w: 10, h: 10,
         source: "ax", role: "button", label: "Cancel", priority: 1 },
-      { id: ulid(), frameId: b.frameId!, segmentId: task.id, sessionId, x: 0, y: 0, w: 10, h: 10,
+      { id: ulid(), frameId: b.frameId!, segmentId: seg.id, sessionId, x: 0, y: 0, w: 10, h: 10,
         source: "ax", role: "button", label: "Publish", priority: 1 },
     ]);
 
@@ -255,7 +257,7 @@ describe("Retriever (assembly capstone)", () => {
     expect([frameA, frameB].every((id) => res.frames.some((f) => f.frameId === id))).toBe(true);
   });
 
-  it("associateFrames links a frame to BOTH its action and its task segment", async () => {
+  it("associateFrames links a frame to every level-0 segment covering it", async () => {
     const sessionId = ulid();
     await store.putSession({ id: sessionId, startedAt: 1000, epochMono: 0 });
     await store.putEvents([
@@ -273,7 +275,9 @@ describe("Retriever (assembly capstone)", () => {
     const granularities = store
       .getFrame(a.frameId!)!
       .segmentIds.map((id) => store.getSegment(id)!.granularity);
-    expect(new Set(granularities)).toEqual(new Set(["action", "task"]));
+    // Segmentation produces level 0 only; the composed levels get their frame
+    // links from `ComposeRepresenter`, as the union of their children's.
+    expect(new Set(granularities)).toEqual(new Set(["action"]));
 
     // Idempotent: the image stages associate too, and re-indexing re-runs this.
     expect(await associateFrames(store, sessionId)).toBe(1);

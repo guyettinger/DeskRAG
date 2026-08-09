@@ -36,15 +36,27 @@ export type TextProvider = "ollama" | "onnx";
 export type ImageProvider = "none" | "nomic" | "colsmol";
 export type CaptionProvider = "none" | "ollama";
 export type RerankProvider = "none" | "onnx";
+/**
+ * The model that composes actions into tasks and names each one.
+ *
+ * "none" does NOT disable the hierarchy — the tree is always built, from
+ * structural coherence, and every node gets a templated rollup. A model
+ * upgrades the prose without changing the shape, which is why this is the one
+ * provider whose absence costs no capability.
+ */
+export type SummaryProvider = "none" | "ollama";
 
 export interface ProviderSettingsView {
   ollamaHost: string;
   ollamaModel: string;
   /** The VLM used for captions — distinct from the embedding model. */
   ollamaCaptionModel: string;
+  /** The chat model used to compose and name levels — distinct from both above. */
+  ollamaSummaryModel: string;
   textProvider: TextProvider;
   imageProvider: ImageProvider;
   captionProvider: CaptionProvider;
+  summaryProvider: SummaryProvider;
   rerankProvider: RerankProvider;
   /** "" means managed downloads under the app data dir. */
   localModels: { dir: string };
@@ -682,6 +694,11 @@ export interface DeskRagApi {
      * would route screenshots off the device.
      */
     visionModels(): Promise<string[]>;
+    /**
+     * Chat-capable models resident on THIS machine — the ones that can compose
+     * and name levels. Same /api/tags rule and the same reason.
+     */
+    chatModels(): Promise<string[]>;
   };
   system: {
     env(): Promise<EnvInfo>;
@@ -753,6 +770,7 @@ export const IPC = {
   flowsGraph: "flows:graph",
   modelDownloadEvent: "models:download-event",
   ollamaVisionModels: "ollama:vision-models",
+  ollamaChatModels: "ollama:chat-models",
   systemEnv: "system:env",
   systemReset: "system:reset",
 } as const;

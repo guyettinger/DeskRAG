@@ -195,6 +195,28 @@ export { associateFrameAx, nearestFrameId } from "./represent/frame-ax.js";
  */
 export { indexSegmentText, type SegmentTextResult } from "./represent/segment-text.js";
 /**
+ * The compositional hierarchy. Level 0 is windowed by `segment/`; every level
+ * above it is COMPOSED here from what those actions mean together, up to one
+ * root whose summary is the session's purpose.
+ *
+ * Always on: the structural path needs no provider, and a configured
+ * `SummaryProvider` upgrades the prose without changing the shape.
+ */
+export {
+  ComposeRepresenter,
+  LEAF_GRANULARITY,
+  LEVEL_PREFIX,
+  ROOT_GRANULARITY,
+  type ComposeRepresenterOptions,
+  type ComposeResult,
+} from "./represent/compose/compose-representer.js";
+export type {
+  ChildSummary,
+  ComposedLevel,
+  ComposedNode,
+  ComposeGroup,
+} from "./represent/compose/types.js";
+/**
  * Typed text runs coalesced at SESSION scope — deliberately a different
  * grouping policy from `groupGestures`, which must flush on any non-key event
  * because a replayable `type` action has to be contiguous. See typed-runs.ts.

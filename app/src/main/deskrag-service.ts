@@ -36,6 +36,8 @@ import {
   FrameRepresenter,
   CaptionRepresenter,
   AppCaptionRepresenter,
+  ComposeRepresenter,
+  OllamaSummaryProvider,
   RegionRepresenter,
   TranscriptRepresenter,
   StoredAxProvider,
@@ -52,6 +54,7 @@ import {
   type ImageEmbeddingProvider,
   type MultiVectorProvider,
   type CaptionProvider as LibCaptionProvider,
+  type SummaryProvider as LibSummaryProvider,
   type BlobRow,
   type Reranker,
   type ViewSearcher,
@@ -111,6 +114,12 @@ interface Providers {
   /** Late-interaction visual path. Mutually exclusive with imageEmbedder. */
   patchEmbedder: MultiVectorProvider | null;
   captioner: LibCaptionProvider | null;
+  /**
+   * Composes actions into named levels. Null does NOT disable the hierarchy —
+   * the tree is always built, structurally, and every node gets a templated
+   * rollup. This only upgrades the prose.
+   */
+  summarizer: LibSummaryProvider | null;
   reranker: Reranker | null;
 }
 
@@ -337,6 +346,15 @@ export class DeskRagService {
       });
     }
 
+    // --- summarizer (composes and NAMES levels; absence costs prose, not shape)
+    let summarizer: LibSummaryProvider | null = null;
+    if (p.summaryProvider === "ollama") {
+      summarizer = new OllamaSummaryProvider({
+        host: p.ollamaHost,
+        model: p.ollamaSummaryModel,
+      });
+    }
+
     // --- reranker (Tier 4 is a refinement: degrade, never throw) --------------
     let reranker: Reranker | null = null;
     if (p.rerankProvider === "onnx") {
@@ -363,6 +381,7 @@ export class DeskRagService {
       imageEmbedder,
       patchEmbedder,
       captioner,
+      summarizer,
       reranker,
     };
   }
@@ -692,11 +711,31 @@ export class DeskRagService {
       });
     }
 
+    // Compose the hierarchy: actions -> tasks -> processes -> one root whose
+    // summary is the session's purpose. AFTER Digest/Captions/Transcribing,
+    // because it reads their text; BEFORE "Search index", so summaries reach the
+    // lexical lane. Always on — the structural path needs no provider, and
+    // composing can never fail the run.
+    stages.push({
+      name: "Composing",
+      run: async () => {
+        const r = await new ComposeRepresenter(this.store, {
+          ...(prov.summarizer ? { summarizer: prov.summarizer } : {}),
+        }).represent(sessionId);
+        if (r.nodes === 0) return;
+        // Say WHICH path produced the tree: a structurally-composed hierarchy
+        // must not read as a summarized one.
+        const how = r.llmNodes === 0 ? "structural" : `${r.llmNodes} summarized`;
+        return { stage: `Composing — ${r.levels} levels, ${r.nodes} nodes (${how})` };
+      },
+    });
+
     // After every text-writing stage, because it reads what they wrote: digest,
-    // caption, app_caption and transcript are produced by four stages under four
-    // different provider configurations, and one reader at the end sees whatever
-    // actually landed. Needs no provider, so it always runs — on a default
-    // install this lane is the only route from a query to an exact term.
+    // caption, app_caption, transcript and the composed summaries are produced
+    // by five stages under five different provider configurations, and one
+    // reader at the end sees whatever actually landed. Needs no provider, so it
+    // always runs — on a default install this lane is the only route from a
+    // query to an exact term.
     stages.push({
       name: "Search index",
       run: async () => indexSegmentText(this.store, sessionId),

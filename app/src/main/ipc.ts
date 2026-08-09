@@ -69,6 +69,12 @@ export function registerIpc(
     return listVisionModels(settings.view().providers.ollamaHost);
   });
 
+  /** Chat-capable models — the ones that can compose and name levels. */
+  ipcMain.handle(IPC.ollamaChatModels, async (): Promise<string[]> => {
+    const { listSummaryModels } = await import("deskrag");
+    return listSummaryModels(settings.view().providers.ollamaHost);
+  });
+
   ipcMain.handle(IPC.systemEnv, () => envInfo(service));
   ipcMain.handle(IPC.systemReset, () => resetApp());
 }

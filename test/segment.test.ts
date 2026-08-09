@@ -262,35 +262,31 @@ describe("BASE_GRANULARITIES", () => {
     expect(action.subdivide).toBe(false);
   });
 
-  it("leaves task cutting only at the big semantic switches", () => {
-    const task = BASE_GRANULARITIES.find((g) => g.name === "task")!;
-    expect(task.cutReasons).toEqual(["focus_change", "bookmark"]);
-    expect(task.subdivide).toBeUndefined(); // undefined means subdivide
+  it("produces ONE granularity — everything above action is composed, not windowed", () => {
+    // `task` used to live here as a longer window over the same timeline, which
+    // is why the rail drew ACTION and TASK as one signal twice. A bigger box
+    // cannot yield a higher altitude; `represent/compose/` builds those levels.
+    expect(BASE_GRANULARITIES.map((g) => g.name)).toEqual(["action"]);
   });
 });
 
 describe("resolveGranularities", () => {
-  it("keeps action fixed and scales task's window to session length, floored at 30s", () => {
-    const gs = resolveGranularities(8000); // 8s session
-    const action = gs.find((g) => g.name === "action")!;
-    const task = gs.find((g) => g.name === "task")!;
-    expect(action.targetMs).toBe(10_000);
-    expect(task.targetMs).toBe(30_000); // clamp(4000, 30_000, 180_000) -> floor
-    expect(task.strideMs).toBe(15_000);
+  it("returns the base set unchanged at any session length", () => {
+    // The clamping this used to do existed solely for `task`. `action`'s 10s cap
+    // only ever subdivides a span between real boundaries, so it needs no
+    // scaling — it is meaningful for an 8s recording and a 17m one alike.
+    for (const endTMono of [8_000, 200_000, 1_000_000]) {
+      const gs = resolveGranularities(endTMono);
+      expect(gs.map((g) => g.name)).toEqual(["action"]);
+      expect(gs.find((g) => g.name === "action")!.targetMs).toBe(10_000);
+    }
   });
 
-  it("caps task's window at 180s for a long session", () => {
-    const gs = resolveGranularities(1_000_000); // ~16.7 minutes
-    const task = gs.find((g) => g.name === "task")!;
-    expect(task.targetMs).toBe(180_000);
-    expect(task.strideMs).toBe(90_000);
-  });
-
-  it("scales smoothly between the floor and the ceiling", () => {
-    const gs = resolveGranularities(200_000); // 200s session -> raw 100s, within bounds
-    const task = gs.find((g) => g.name === "task")!;
-    expect(task.targetMs).toBe(100_000);
-    expect(task.strideMs).toBe(50_000);
+  it("passes an explicit base through untouched", () => {
+    const base = [
+      { name: "custom", targetMs: 1234, strideMs: 1234, boundaryAware: true },
+    ];
+    expect(resolveGranularities(999_999, base)).toEqual(base);
   });
 });
 
@@ -313,7 +309,7 @@ describe("Segmenter (integration)", () => {
     if (endedAt !== null) await store.endSession(sessionId, endedAt);
   }
 
-  it("segments a session at multiple granularities and persists them", async () => {
+  it("segments a session into level-0 actions and persists them", async () => {
     const sessionId = ulid();
     const mkEv = (tMono: number, kind: string): EventInsert => ({ id: ulid(), sessionId, tMono, kind });
     // started at wall 1000, ended at 9000 -> wall duration 8000ms; last event 6000 -> endTMono = 8000.
@@ -326,18 +322,16 @@ describe("Segmenter (integration)", () => {
     const result = await new Segmenter(store).segment(sessionId);
     expect(result.endTMono).toBe(8000);
     expect(result.byGranularity.action).toHaveLength(2);
-    expect(result.byGranularity.task).toHaveLength(2); // was 1 — task now cuts at focus_change too
+    // Segmenting produces level 0 ONLY. Levels above it are composed from what
+    // these actions mean together, by `represent/compose/`, and do not exist
+    // until that stage runs.
+    expect(Object.keys(result.byGranularity)).toEqual(["action"]);
 
     const segs = store.getSegmentsBySession(sessionId);
-    expect(segs).toHaveLength(4); // was 3
+    expect(segs).toHaveLength(2);
 
     const actions = segs.filter((s) => s.granularity === "action");
     expect(actions.map((s) => [s.tMonoStart, s.tMonoEnd, s.boundaryReason])).toEqual([
-      [0, 5000, "session_start"],
-      [5000, 8000, "focus_change"],
-    ]);
-    const tasks = segs.filter((s) => s.granularity === "task");
-    expect(tasks.map((s) => [s.tMonoStart, s.tMonoEnd, s.boundaryReason])).toEqual([
       [0, 5000, "session_start"],
       [5000, 8000, "focus_change"],
     ]);

@@ -297,7 +297,7 @@ describe("Representer (integration)", () => {
     const rep = new Representer(store, { digestEmbedder });
     const result = await rep.represent(sessionId);
 
-    expect(result.segmentCount).toBe(4); // 2 actions + 2 tasks (task now cuts at focus_change too)
+    expect(result.segmentCount).toBe(2); // 2 actions — level 0 is all segmentation emits
     expect(result.digestNamespace).toBe("digest:fake:m:8");
     expect(result.behaviorNamespace).toBe("behavior:builtin:input-dynamics-v1:12");
 
@@ -312,13 +312,13 @@ describe("Representer (integration)", () => {
     // Every segment has a digest AND a behavior vector in Lance.
     const [dq] = await digestEmbedder.embed(["query"]);
     const digestHits = await store.searchSegments(result.digestNamespace, dq!, 50);
-    expect(digestHits).toHaveLength(4); // 2 actions + 2 tasks
+    expect(digestHits).toHaveLength(2); // 2 actions — level 0 is all there is here
     const behaviorHits = await store.searchSegments(
       result.behaviorNamespace,
       new Float32Array(12),
       50,
     );
-    expect(behaviorHits).toHaveLength(4);
+    expect(behaviorHits).toHaveLength(2);
 
     // Nothing missing, nothing orphaned: the enrich write path is consistent.
     const rec = await store.reconcile();

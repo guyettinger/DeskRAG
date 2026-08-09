@@ -2,13 +2,13 @@
  * The lexical index pass — the LAST represent stage, and deliberately a
  * separate one.
  *
- * A segment's searchable text is spread across four views written by four
+ * A segment's searchable text is spread across five views written by five
  * stages that run at different times and under different provider
  * configurations: `digest` (always), `caption` and `app_caption` (a captioner),
- * `transcript` (audio + a whisper binary). Indexing from inside each of them
- * would mean four call sites racing to rewrite one row, each seeing only its
- * own fragment. One reader at the end sees whatever actually landed, and is
- * idempotent by construction.
+ * `transcript` (audio + a whisper binary), and `summary` (always, on composed
+ * levels only). Indexing from inside each of them would mean five call sites
+ * racing to rewrite one row, each seeing only its own fragment. One reader at
+ * the end sees whatever actually landed, and is idempotent by construction.
  *
  * It needs no provider, so it always runs — which matters, because the lexical
  * lane is the only path a default install has to an exact term.
@@ -40,6 +40,10 @@ export function indexSegmentText(store: Store, sessionId: string): SegmentTextRe
       seg.caption,
       store.getAppCaption(seg.id),
       seg.transcript,
+      // A composed level carries no digest or caption of its own — the summary
+      // IS its text. Without this a task is unreachable by an exact term, and
+      // on a default install that is the only route to one at all.
+      store.getSegmentSummary(seg.id)?.text,
     ].filter((t): t is string => typeof t === "string" && t.trim().length > 0);
     // Written even when empty: indexSegmentText deletes first, so a segment
     // whose text was removed stops matching instead of answering with stale text.
