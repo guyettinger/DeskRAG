@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { rollupText } from "../src/represent/compose/rollup.js";
+import { MAX_ROLLUP_CHARS, rollupText } from "../src/represent/compose/rollup.js";
 import type { ChildSummary } from "../src/represent/compose/types.js";
 
 function kid(i: number, over: Partial<ChildSummary> = {}): ChildSummary {
@@ -23,10 +23,47 @@ describe("rollupText", () => {
     );
   });
 
-  it("says 'groups' above level 1, because its children are not actions", () => {
-    expect(rollupText([kid(0), kid(1)], { start: 0, end: 2 }, 2)).toBe(
-      "Calculator · 2 groups · 2.0s",
+  /**
+   * The chain that a tally used to sever. Measured on a real library, levels 3
+   * and 4 were 100% structural, so every root was named from strings like
+   * "Electron · 2 groups · 25.1s" — and the root's naming call had nothing but
+   * app names in a tally to abstract.
+   */
+  it("ABOVE LEVEL 1 it composes from the children's own names", () => {
+    const kids = [kid(0, { text: "Start calculator" }), kid(1, { text: "Copy result" })];
+    expect(rollupText(kids, { start: 0, end: 2 }, 2)).toBe("Start calculator; Copy result");
+  });
+
+  it("dedupes repeated child names in first-seen order", () => {
+    const kids = [
+      kid(0, { text: "Record screen" }),
+      kid(1, { text: "Add numbers" }),
+      kid(2, { text: "Record screen" }),
+    ];
+    expect(rollupText(kids, { start: 0, end: 3 }, 2)).toBe("Record screen; Add numbers");
+  });
+
+  it("caps a deep composition, since names concatenate up the tree", () => {
+    const kids = Array.from({ length: 40 }, (_, i) =>
+      kid(i, { text: `a reasonably wordy child summary number ${i}` }),
     );
+    const out = rollupText(kids, { start: 0, end: 40 }, 3);
+    expect(out.length).toBeLessThanOrEqual(MAX_ROLLUP_CHARS + 1);
+    expect(out.endsWith("…")).toBe(true);
+  });
+
+  it("falls back to the tally above level 1 when every child is unnamed", () => {
+    const kids = [kid(0, { text: "" }), kid(1, { text: "   " })];
+    // Better a tally than an empty summary: absence must not look like silence.
+    expect(rollupText(kids, { start: 0, end: 2 }, 2)).toBe("Calculator · 2 groups · 2.0s");
+  });
+
+  it("LEVEL 1 keeps the tally — its children are whole VLM captions", () => {
+    const kids = [
+      kid(0, { text: "A long screenshot description of the calculator window and its state" }),
+      kid(1, { text: "Another long screenshot description of a text editor window" }),
+    ];
+    expect(rollupText(kids, { start: 0, end: 2 }, 1)).toBe("Calculator · 2 actions · 2.0s");
   });
 
   it("uses the singular for one child", () => {
