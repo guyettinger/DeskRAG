@@ -165,6 +165,13 @@ export function TrackRail({
   const totalSec = tracks?.totalSec ?? 0;
   const bands = useMemo(() => (tracks ? groupLanes(tracks.lanes) : []), [tracks]);
   const preRoll = useMemo(() => (tracks ? preRollSec(tracks.lanes) : 0), [tracks]);
+  // The root's depth, which varies with the recording — a 20s clip composes two
+  // levels where a long session composes five. Lane titles indent by how far
+  // they sit BELOW it, so the gutter reads as an outline either way.
+  const maxLevel = useMemo(
+    () => (tracks ? Math.max(0, ...tracks.lanes.map((l) => l.level ?? 0)) : 0),
+    [tracks],
+  );
   const ticks = useMemo(() => rulerTicks(totalSec, axisWidth), [totalSec, axisWidth]);
   /**
    * Room for the pre-roll's words before the first tick after 0:00.
@@ -453,6 +460,7 @@ export function TrackRail({
                       totalSec={totalSec}
                       axisWidth={axisWidth}
                       hovered={hover?.laneId === lane.id}
+                      maxLevel={maxLevel}
                       onSeek={player ? seek : null}
                       onInspect={onInspect}
                     />

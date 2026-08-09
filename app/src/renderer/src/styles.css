@@ -1933,6 +1933,12 @@ select {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* Hierarchy depth reads as indentation — the root flush left, each level a
+     step in — so the gutter is an outline of the recording. Set inline by
+     `TrackLane` as `maxLevel - lane.level`; absent (and therefore 0) on every
+     lane that is not part of the tree. The spacing scale, never a px literal:
+     a raw number here is exactly the regression that scale exists to stop. */
+  padding-left: calc(var(--lane-depth, 0) * var(--s2));
 }
 
 .tracks__warn {

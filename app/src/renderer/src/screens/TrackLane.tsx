@@ -36,6 +36,15 @@ interface Props {
    * with the card at exactly the lane boundaries where it matters.
    */
   hovered: boolean;
+  /**
+   * The deepest `level` on the rail, so a lane can be indented by how far it
+   * sits BELOW the root.
+   *
+   * Depth alone will not do: `level` counts up from `action`, and the outline
+   * has to read downward from the coarsest lane, whose depth varies with the
+   * recording.
+   */
+  maxLevel: number;
   /** Null when there is no video: the axis is real but nothing can be sought. */
   onSeek: ((sec: number) => void) | null;
   onInspect: (frameId: string) => void;
@@ -73,7 +82,18 @@ export function TrackLane(props: Props): React.JSX.Element {
       data-hovered={hovered || undefined}
     >
       <div className="tracks__gutter">
-        <span className="tracks__title mono">{lane.title}</span>
+        <span
+          className="tracks__title mono"
+          // Hierarchy depth reads as indentation: the root sits flush left and
+          // each level steps in, so the gutter is an outline of the recording.
+          style={
+            lane.level === null
+              ? undefined
+              : ({ "--lane-depth": String(props.maxLevel - lane.level) } as React.CSSProperties)
+          }
+        >
+          {lane.title}
+        </span>
         {lane.warning && (
           <span className="tracks__warn" title={lane.warning}>
             !
