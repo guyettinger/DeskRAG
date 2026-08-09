@@ -33,20 +33,20 @@
  * That table was taken at FIVE lanes and could not separate 5 from 10 — anything
  * in 5..20 looked equivalent at five queries.
  *
- * RE-SWEPT AT SIX LANES (2026-08-09), after `summary` joined Tier 1: THREE real
- * recordings, 151 segments, 44 known-answer queries. k=5 wins monotonically on
+ * RE-SWEPT AT SIX LANES (2026-08-09), after `summary` joined Tier 1: FOUR real
+ * recordings, 183 segments, 53 known-answer queries. k=5 wins monotonically on
  * every metric, which is the theory above doing what it predicts — one more lane
  * widens the count term, so k must shrink to keep the rank term wider:
  *
  *     k:               5      10     20     60
- *     mean rank     21.18  28.55  33.36  40.39
- *     recall@5        52%    27%    20%    18%
- *     mean (leaf)    1.60   2.00   2.50   4.30
+ *     mean rank     19.02  25.04  32.60  43.28
+ *     recall@5        58%    28%    15%     6%
+ *     mean (leaf)    1.40   1.90   3.70  11.10
  *
- * The margin WIDENS with corpus size — at two recordings (87 segments) the same
- * sweep gave 47% vs 33% at k=5/10, against 52% vs 27% here. Do not compare
- * recall@1 between those runs: the query MIX changed (leaves, which land first,
- * went from 10 of 30 to 10 of 44), so only the ordering across k is comparable.
+ * The margin WIDENS with corpus size, swept four times as the library grew:
+ * recall@5 at k=5 against k=10 went 47/33 (87 segments), 52/27 (151), 58/28
+ * (183). Do not compare recall@1 between those runs — the query MIX changed as
+ * composed levels accumulated, so only the ordering across k is comparable.
  *
  * THE ASYMMETRY THIS SWEEP EXPOSED, WHICH k CANNOT FIX. A composed level
  * (`level:N`, `session`) has ONLY a summary — no digest, no caption, no
