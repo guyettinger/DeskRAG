@@ -75,3 +75,37 @@ export type Partitioner = (
   block: Block,
   level: number,
 ) => Promise<ComposeGroup[]>;
+
+/**
+ * A reference from a ladder node to one of its children.
+ *
+ * TAGGED because the tree is NOT level-uniform: a node whose only child was
+ * elided points at that child directly, so a `level:2` node may hold a
+ * `level:1` node or even a leaf. `getDescendantLeaves` walks to leaves and
+ * `collapseAncestors` walks children, so neither notices.
+ */
+export type LadderChild =
+  | { kind: "leaf"; index: number }
+  | { kind: "node"; index: number };
+
+export interface LadderNode {
+  /** The row's `granularity`: "level:1" | "level:2" | "session". */
+  granularity: string;
+  children: LadderChild[];
+  summary: string;
+  source: SummarySource;
+}
+
+/**
+ * The composed tree as an explicit graph.
+ *
+ * Replaces the old per-level `ComposedLevel[]` with its index ranges, which
+ * could only describe a UNIFORM tree — every node's children exactly one level
+ * down. Elision breaks that, so the shape has to say which child it means.
+ *
+ * Topologically ordered: a node's children always precede it, and the ROOT is
+ * last, so a single forward pass can mint ids.
+ */
+export interface Ladder {
+  nodes: LadderNode[];
+}
