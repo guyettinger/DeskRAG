@@ -1166,8 +1166,9 @@ export class DeskRagService {
       audio,
       transcriptClips: this.store.getTranscriptClipsBySession(sessionId),
       // One read for the whole tree: every composed level's label, keyed by
-      // segment id. Empty for a session indexed before composing existed, in
-      // which case only the `action` lane appears.
+      // segment id. Empty for a session indexed before composing existed —
+      // see `LaneInput.summaries` in session-tracks.ts for what that does to
+      // the rail's lanes.
       summaries: new Map(
         this.store
           .getSegmentSummariesBySession(sessionId)

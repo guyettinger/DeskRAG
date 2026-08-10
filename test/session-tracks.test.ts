@@ -384,10 +384,7 @@ describe("levelLanes", () => {
         ],
       }),
     );
-    // Seeded empty task/process lanes now sort ahead of action (coarse-first),
-    // so the action lane is found by title rather than assumed to be first.
-    const action = lanes.find((l) => l.title === "action")!;
-    expect(action.spans!.map((s) => s.label)).toEqual(["the PR page", "typed a comment"]);
+    expect(lanes[0]!.spans!.map((s) => s.label)).toEqual(["the PR page", "typed a comment"]);
   });
 
   it("WARNS when a whole level was composed with no model", () => {
@@ -428,9 +425,23 @@ describe("levelLanes", () => {
       input([], { segments: [seg("a1", "action", 0, 1000), seg("x1", "task", 0, 1000)] }),
     );
     // `task` is retired: a stray row from some other source must not mint a lane.
-    // The fixed ladder still seeds empty task/process lanes for this recording
-    // (it has segments, just none composed), so those two survive alongside it.
-    expect(lanes.map((l) => l.id)).toEqual(["seg-level:2", "seg-level:1", "seg-action"]);
+    // No `session` row exists, so seeding does not fire either — see the next
+    // test for that rule pinned directly.
+    expect(lanes.map((l) => l.id)).toEqual(["seg-action"]);
+  });
+
+  it("seeds nothing for a session with only action rows — it was never composed, and only the ROOT row proves composing ran", () => {
+    const lanes = levelLanes(
+      input([], { segments: [seg("a1", "action", 0, 1000), seg("a2", "action", 1000, 2000)] }),
+    );
+    // `composeLadder` writes a `session` row on every run where composing
+    // executed at all, even a one-action session. So no root row means
+    // exactly one thing: this recording predates the compose stage and was
+    // never reindexed — not "composed, but nothing grouped". Seeding task/
+    // process lanes here would assert a false cause for that state, which is
+    // exactly the bug the reviewer caught: "no tasks composed" and "no
+    // distinct phases" are mutually contradictory, and both would be false.
+    expect(lanes.map((l) => l.id)).toEqual(["seg-action"]);
   });
 
   it("shows an EMPTY process lane when the recording has no phases", () => {
@@ -634,10 +645,6 @@ describe("buildSessionTracks", () => {
       "apps",
       "web",
       "ax",
-      // The recording has only action rows, but the ladder is FIXED: empty
-      // process/task lanes are seeded coarse-first ahead of the real one.
-      "seg-level:2",
-      "seg-level:1",
       "seg-action",
       "caption",
       "transcript",

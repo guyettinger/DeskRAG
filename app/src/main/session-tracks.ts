@@ -6,8 +6,10 @@
  * lane's arithmetic in the fast ROOT suite (the same arrangement as
  * `graph-view.ts` and `graph-layout.ts`).
  *
- * Four shapes, and the lane COUNT is now variable: the hierarchy contributes
- * one lane per level, and depth falls out of the recording. A new signal is a
+ * Four shapes. The composed hierarchy is a FIXED three-level ladder (task,
+ * process, session) rather than a variable-depth recursion, so it contributes
+ * at most four lanes — action plus the three composed ones — never more, and
+ * never fewer once a session has been composed at all. A new signal is a
  * builder here plus a line in `buildSessionTracks` — never a new renderer
  * component.
  */
@@ -16,6 +18,7 @@ import {
   DEFAULT_BURST_GAP_MS,
   DEFAULT_DWELL_GAP_MS,
   LEAF_GRANULARITY,
+  LEVEL_GRANULARITY,
   LEVEL_PREFIX,
   MEANINGFUL_INPUT_KINDS,
   ROOT_GRANULARITY,
@@ -86,9 +89,11 @@ export interface LaneInput {
   /**
    * Composed summaries by segment id — the label of every level above 0.
    *
-   * Empty for a session indexed before composing existed, in which case the
-   * task/process lanes are still seeded (the ladder is FIXED) but come back
-   * empty rather than absent — see `levelLanes`'s seeding step.
+   * Empty for a session indexed before composing existed, in which case only
+   * the `action` lane appears and nothing claims otherwise — see
+   * `levelLanes`'s seeding step, gated on the ROOT row rather than on any
+   * segment existing, precisely so this case is not confused with "composed
+   * but produced nothing".
    */
   summaries: ReadonlyMap<string, { text: string; source: SummarySource }>;
 }
@@ -415,12 +420,16 @@ function segmentLabel(s: SegmentRow): string {
 /**
  * The ladder is FIXED at three composed levels, so there is no generic
  * `level N` any more — `levelTitle` cannot be handed a `level:3`.
+ *
+ * Keyed off `LEVEL_GRANULARITY`, the library's own kind→granularity table,
+ * rather than hand-typing "level:1"/"level:2" a second time — two readers of
+ * one mapping is the drift hazard `ax-dump`/`ax-exec` already cost this repo.
  */
 const LEVEL_NAMES: Record<string, string> = {
-  action: "action",
-  "level:1": "task",
-  "level:2": "process",
-  session: "session",
+  [LEAF_GRANULARITY]: "action",
+  [LEVEL_GRANULARITY.task]: "task",
+  [LEVEL_GRANULARITY.process]: "process",
+  [LEVEL_GRANULARITY.session]: "session",
 };
 
 /** Display name for a granularity, or null when it is not a hierarchy level. */
@@ -462,8 +471,17 @@ export function levelLanes(input: LaneInput): LaneBody[] {
   // A recording with no phases still gets a PROCESS lane, empty. The rail's
   // rule is that absence is the payload: a MISSING lane says this build does
   // not know about processes, an EMPTY one says this recording had none.
-  if (byGranularity.size > 0) {
-    for (const g of ["level:1", "level:2"]) {
+  //
+  // Gated on the ROOT row, not on any segment existing: `composeLadder` writes
+  // a `session` row on every run where composing executed at all, even a
+  // one-action session, so a root's ABSENCE is the marker for "this recording
+  // predates the compose stage, never reindexed" — the same reasoning
+  // `session_clock`'s absence uses to mark pre-calibration recordings. Seeding
+  // on `byGranularity.size > 0` instead would claim a false cause (a model
+  // that "declined to group" or tasks that "all served one outcome") for a
+  // model that never ran at all.
+  if (byGranularity.has(ROOT_GRANULARITY)) {
+    for (const g of [LEVEL_GRANULARITY.task, LEVEL_GRANULARITY.process]) {
       if (!byGranularity.has(g)) byGranularity.set(g, []);
     }
   }
