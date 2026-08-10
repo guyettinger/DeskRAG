@@ -3,6 +3,12 @@
 Date: 2026-08-09
 Status: design, approved for planning
 
+> **Superseded in part** by `2026-08-09-fixed-segment-hierarchy-design.md`
+> (2026-08-09): the "recursive until one root" decision is reversed there, on
+> measured evidence. Everything else in this document — the storage model, the
+> cut-point contract, the compositional rollup, retrieval at altitude, and the
+> Flows and Library readers — still stands.
+
 ## The problem, stated structurally
 
 On the Library rail, the `ACTION`, `TASK` and `CAPTION` lanes read as three

@@ -90,9 +90,12 @@ is correct, because it answers a different question from its child rather than
 restating it (`NAME_SYSTEM`, not a grouping call).
 
 **`level:1` can itself fail admission**, and the rule is the same: no Task rows,
-and `session` adopts the ACTIONS directly. A three-action recording where the
-model declines to group is a real case, and it produces Action → Session rather
-than an invented middle.
+and `session` adopts the ACTIONS directly. Unlike Process, `task` is not
+model-only — a declined or malformed reply falls back to `structuralRanges`,
+which always halves and so always qualifies once there are ≥2 children. The
+reachable case is a BOOKMARK barring every pair, so every block holds exactly
+one child and the level composes nothing (plus the trivial case of a frontier
+smaller than 2) — not a model that quietly declined to group.
 
 **The root keeps its own call.** Unchanged: asking a model to SPLIT a two-item
 list returns two groups every time (3 of 3 trials), which cannot shrink and is
@@ -178,21 +181,39 @@ many levels exist.
 
 ## 5. Validation against the real recordings
 
-Every before-number exists, so this is a straight comparison across the same five
-recordings:
+Measured by re-composing the same five recordings on the very database the
+before-numbers came from:
 
-| | before | target |
+| | before | after |
 | --- | --- | --- |
-| single-child parents | 21 of 60 | **0** |
+| composed parents | 60 | 37 |
+| single-child parents | 21 of 60 (35%) | **0 of 37** |
+| single-child ROOTS (exempt by design) | — | 0 of 5 |
 | …duplicating the child's name | 11 | **0** |
-| mean fan-out, `level:2` | 2.1 | ≥2 by construction |
-| depth per recording | 4,3,4,4,4 | ≤3 composed |
-| recordings where Process qualifies | n/a | **report it** |
+| mean fan-out, `level:1` | 5.1 | 5.92 |
+| mean fan-out, `level:2` | 2.1 | 3.0 |
+| mean fan-out, `level:3` | 1.6 | *level:3 no longer exists* |
+| mean fan-out, `session` | — | 4.4 |
+| depth per recording | 4,3,4,4,4 | 3,3,2,2,3 |
+| recordings where Process qualifies | n/a | **3 of 5** |
+| `segment_summary.source` | — | 32 llm / 5 template |
 
-That last row is the open question and is deliberately not prejudged. **If
-Process qualifies on none of the five, the honest reading is that a 30-second
-recording has one phase** — a finding about the data, not a bug — and the ladder
-still delivers three levels with distinct definitions.
+Process qualifies on AK37HB (25.0s), SA78MQ (31.3s) and 7M7C86 (29.2s); not on
+VAGCKQ (26.1s) or 60Q8BS (30.0s). This document had predicted Process would
+often fail admission on ~30s recordings and treated that as a finding about the
+data; **3 of 5 is better than predicted**, and the reading stands for the
+other two — a recording this short may genuinely have one phase.
+
+**The zero-duplication figure needs one qualification.** A broader query — any
+parent SHARING a summary string with a child, not only a parent whose ONLY
+child shares it — finds exactly one: a `level:2` "record screen" holding TWO
+children, one of them a `level:1` also named "record screen". That parent
+genuinely composes two things and merely reuses one child's name; it is not
+the single-child-chain defect this table measures, and the count above is
+correctly zero for what it measures. Driving the app confirmed the rail
+renders `SESSION · PROCESS · TASK · ACTION` top to bottom, a recording with no
+Process shows that lane empty with its `emptyReason` rather than vanishing,
+and nothing truncates.
 
 Re-checked afterwards but NOT gated on:
 
