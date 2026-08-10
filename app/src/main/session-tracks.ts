@@ -86,8 +86,9 @@ export interface LaneInput {
   /**
    * Composed summaries by segment id — the label of every level above 0.
    *
-   * Empty for a session indexed before composing existed, in which case only
-   * the `action` lane appears and nothing claims otherwise.
+   * Empty for a session indexed before composing existed, in which case the
+   * task/process lanes are still seeded (the ladder is FIXED) but come back
+   * empty rather than absent — see `levelLanes`'s seeding step.
    */
   summaries: ReadonlyMap<string, { text: string; source: SummarySource }>;
 }
@@ -412,19 +413,19 @@ function segmentLabel(s: SegmentRow): string {
 }
 
 /**
- * Display names for the first three depths. Past them a level is numbered,
- * which is honest: nobody has a word for the fourth tier of abstraction.
+ * The ladder is FIXED at three composed levels, so there is no generic
+ * `level N` any more — `levelTitle` cannot be handed a `level:3`.
  */
-const LEVEL_NAMES = ["action", "task", "process"];
+const LEVEL_NAMES: Record<string, string> = {
+  action: "action",
+  "level:1": "task",
+  "level:2": "process",
+  session: "session",
+};
 
 /** Display name for a granularity, or null when it is not a hierarchy level. */
 export function levelTitle(granularity: string): string | null {
-  if (granularity === LEAF_GRANULARITY) return LEVEL_NAMES[0]!;
-  if (granularity === ROOT_GRANULARITY) return "session";
-  if (!granularity.startsWith(LEVEL_PREFIX)) return null;
-  const n = Number(granularity.slice(LEVEL_PREFIX.length));
-  if (!Number.isInteger(n) || n < 1) return null;
-  return LEVEL_NAMES[n] ?? `level ${n}`;
+  return LEVEL_NAMES[granularity] ?? null;
 }
 
 /**
@@ -458,6 +459,15 @@ export function levelLanes(input: LaneInput): LaneBody[] {
     byGranularity.set(s.granularity, list);
   }
 
+  // A recording with no phases still gets a PROCESS lane, empty. The rail's
+  // rule is that absence is the payload: a MISSING lane says this build does
+  // not know about processes, an EMPTY one says this recording had none.
+  if (byGranularity.size > 0) {
+    for (const g of ["level:1", "level:2"]) {
+      if (!byGranularity.has(g)) byGranularity.set(g, []);
+    }
+  }
+
   // The root's DEPTH is one past the deepest numbered level, so indentation is
   // monotone. Its sort key is the sentinel; the two are different questions.
   const numbered = [...byGranularity.keys()]
@@ -489,7 +499,12 @@ export function levelLanes(input: LaneInput): LaneBody[] {
           label: composed ? (input.summaries.get(s.id)?.text ?? "summary missing") : segmentLabel(s),
           tone: BOUNDARY_TONE[s.boundaryReason ?? "window"] ?? "neutral",
         })),
-        emptyReason: null,
+        emptyReason:
+          composed && sorted.length === 0
+            ? granularity === "level:2"
+              ? "no distinct phases in this recording — its tasks all served one outcome"
+              : "no tasks composed — the model declined to group these actions"
+            : null,
         // `warning`, not `emptyReason`: the lane is full and healthy-looking,
         // and what is compromised is that no model named any of it.
         warning:

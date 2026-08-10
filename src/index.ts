@@ -210,9 +210,15 @@ export {
   type ComposeRepresenterOptions,
   type ComposeResult,
 } from "./represent/compose/compose-representer.js";
+export { LEVELS, composeLadder, type ComposeFn } from "./represent/compose/levels.js";
+export { LEVEL_GRANULARITY, levelQualifies } from "./represent/compose/admission.js";
 export type {
   ChildSummary,
   ComposeGroup,
+  Ladder,
+  LadderChild,
+  LadderNode,
+  LevelKind,
 } from "./represent/compose/types.js";
 /**
  * Typed text runs coalesced at SESSION scope — deliberately a different

@@ -284,8 +284,10 @@ describe("levelTitle / levelIndex", () => {
     expect(levelTitle("action")).toBe("action");
     expect(levelTitle("level:1")).toBe("task");
     expect(levelTitle("level:2")).toBe("process");
-    // Past the third tier nobody has a word, so it is numbered rather than invented.
-    expect(levelTitle("level:3")).toBe("level 3");
+    // The ladder is FIXED at three composed levels now, so there is no generic
+    // `level N` fallback any more — a `level:3` granularity can never be
+    // produced, and levelTitle must not invent a name for it.
+    expect(levelTitle("level:3")).toBeNull();
     expect(levelTitle("session")).toBe("session");
   });
 
@@ -322,8 +324,15 @@ describe("levelLanes", () => {
         ]),
       }),
     );
-    expect(lanes.map((l) => l.title)).toEqual(["session", "task", "action"]);
-    expect(lanes.map((l) => l.id)).toEqual(["seg-session", "seg-level:1", "seg-action"]);
+    // No level:2 rows exist, but the ladder is FIXED: an empty process lane is
+    // seeded between session and task rather than omitted.
+    expect(lanes.map((l) => l.title)).toEqual(["session", "process", "task", "action"]);
+    expect(lanes.map((l) => l.id)).toEqual([
+      "seg-session",
+      "seg-level:2",
+      "seg-level:1",
+      "seg-action",
+    ]);
   });
 
   it("labels a composed lane with its SUMMARY and shows it; a leaf shows nothing", () => {
@@ -375,7 +384,10 @@ describe("levelLanes", () => {
         ],
       }),
     );
-    expect(lanes[0]!.spans!.map((s) => s.label)).toEqual(["the PR page", "typed a comment"]);
+    // Seeded empty task/process lanes now sort ahead of action (coarse-first),
+    // so the action lane is found by title rather than assumed to be first.
+    const action = lanes.find((l) => l.title === "action")!;
+    expect(action.spans!.map((s) => s.label)).toEqual(["the PR page", "typed a comment"]);
   });
 
   it("WARNS when a whole level was composed with no model", () => {
@@ -416,7 +428,48 @@ describe("levelLanes", () => {
       input([], { segments: [seg("a1", "action", 0, 1000), seg("x1", "task", 0, 1000)] }),
     );
     // `task` is retired: a stray row from some other source must not mint a lane.
-    expect(lanes.map((l) => l.id)).toEqual(["seg-action"]);
+    // The fixed ladder still seeds empty task/process lanes for this recording
+    // (it has segments, just none composed), so those two survive alongside it.
+    expect(lanes.map((l) => l.id)).toEqual(["seg-level:2", "seg-level:1", "seg-action"]);
+  });
+
+  it("shows an EMPTY process lane when the recording has no phases", () => {
+    const lanes = levelLanes(
+      input([], {
+        segments: [
+          seg("a1", "action", 0, 1000),
+          seg("t1", "level:1", 0, 1000),
+          seg("r1", "session", 0, 1000),
+        ],
+        summaries: new Map([
+          ["t1", { text: "a task", source: "llm" as const }],
+          ["r1", { text: "the session", source: "llm" as const }],
+        ]),
+      }),
+    );
+    const process = lanes.find((l) => l.title === "process");
+    // A MISSING lane says "this build does not know about processes"; an EMPTY
+    // one says "this recording did not have any". Different facts.
+    expect(process).toBeDefined();
+    expect(process!.emptyReason).toMatch(/no distinct phases/i);
+    expect(process!.spans).toEqual([]);
+  });
+
+  it("keeps the process lane ordered between session and task", () => {
+    const lanes = levelLanes(
+      input([], {
+        segments: [
+          seg("a1", "action", 0, 1000),
+          seg("t1", "level:1", 0, 1000),
+          seg("r1", "session", 0, 1000),
+        ],
+        summaries: new Map([
+          ["t1", { text: "a task", source: "llm" as const }],
+          ["r1", { text: "the session", source: "llm" as const }],
+        ]),
+      }),
+    );
+    expect(lanes.map((l) => l.title)).toEqual(["session", "process", "task", "action"]);
   });
 });
 
@@ -581,6 +634,10 @@ describe("buildSessionTracks", () => {
       "apps",
       "web",
       "ax",
+      // The recording has only action rows, but the ladder is FIXED: empty
+      // process/task lanes are seeded coarse-first ahead of the real one.
+      "seg-level:2",
+      "seg-level:1",
       "seg-action",
       "caption",
       "transcript",
