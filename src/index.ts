@@ -22,6 +22,15 @@
 export * from "./embed/types.js";
 export { FakeEmbeddingProvider, FakeMultiVectorProvider } from "./embed/fake.js";
 export { OllamaTextEmbedding } from "./embed/ollama.js";
+/**
+ * The composing provider — it partitions a level AND names each run in one
+ * call. Barrel-safe like every other Ollama adapter: plain fetch, no native
+ * module, so importing the package loads nothing until it runs.
+ */
+export { FakeSummaryProvider } from "./embed/summary.js";
+export type { ComposeContext, SummaryProvider } from "./embed/summary.js";
+export { OllamaSummaryProvider, listSummaryModels } from "./embed/ollama-summary.js";
+export type { OllamaSummaryOptions } from "./embed/ollama-summary.js";
 
 /**
  * store/ — the dual-store seam. SQLite is the relational source of truth and the
@@ -185,6 +194,32 @@ export { associateFrameAx, nearestFrameId } from "./represent/frame-ax.js";
  * `associateFrames` it always runs.
  */
 export { indexSegmentText, type SegmentTextResult } from "./represent/segment-text.js";
+/**
+ * The compositional hierarchy. Level 0 is windowed by `segment/`; every level
+ * above it is COMPOSED here from what those actions mean together, up to one
+ * root whose summary is the session's purpose.
+ *
+ * Always on: the structural path needs no provider, and a configured
+ * `SummaryProvider` upgrades the prose without changing the shape.
+ */
+export {
+  ComposeRepresenter,
+  LEAF_GRANULARITY,
+  LEVEL_PREFIX,
+  ROOT_GRANULARITY,
+  type ComposeRepresenterOptions,
+  type ComposeResult,
+} from "./represent/compose/compose-representer.js";
+export { LEVELS, composeLadder, type ComposeFn } from "./represent/compose/levels.js";
+export { LEVEL_GRANULARITY, levelQualifies } from "./represent/compose/admission.js";
+export type {
+  ChildSummary,
+  ComposeGroup,
+  Ladder,
+  LadderChild,
+  LadderNode,
+  LevelKind,
+} from "./represent/compose/types.js";
 /**
  * Typed text runs coalesced at SESSION scope — deliberately a different
  * grouping policy from `groupGestures`, which must flush on any non-key event

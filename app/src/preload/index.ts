@@ -61,6 +61,7 @@ const api: DeskRagApi = {
   },
   ollama: {
     visionModels: () => ipcRenderer.invoke(IPC.ollamaVisionModels),
+    chatModels: () => ipcRenderer.invoke(IPC.ollamaChatModels),
   },
   system: {
     env: () => ipcRenderer.invoke(IPC.systemEnv),

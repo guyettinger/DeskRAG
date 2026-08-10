@@ -222,6 +222,11 @@ function FrameCard({
           <div className={`frame__digest${hit.segmentDigest ? "" : " empty"}`}>
             {hit.segmentDigest ?? "no digest"}
           </div>
+          {/* Withheld entirely when null — an empty "in:" would assert a
+              hierarchy the recording does not have. */}
+          {hit.taskSummary !== null && (
+            <div className="frame__task">in: {hit.taskSummary}</div>
+          )}
           <div className="frame__foot">
             <span>{wallClock(hit.wallClock)}</span>
             <span className="score">{hit.score.toFixed(3)}</span>

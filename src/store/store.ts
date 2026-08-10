@@ -35,6 +35,10 @@ import type {
   SearchHit,
   SegmentInsert,
   SegmentPatch,
+  SegmentSummaryInsert,
+  SegmentSummaryRow,
+  SegmentTreeInsert,
+  SummarySource,
   TranscriptClipInsert,
   TranscriptClipRow,
   SegmentRow,
@@ -212,6 +216,42 @@ export class DualStore implements Store {
       selectSegmentAppCaption: db.prepare(
         "SELECT text FROM segment_app_caption WHERE segment_id = ?",
       ),
+      insertSegmentTreeEdge: db.prepare(
+        `INSERT INTO segment_tree(session_id, parent_id, child_id) VALUES (?, ?, ?)
+         ON CONFLICT(parent_id, child_id) DO NOTHING`,
+      ),
+      selectSegmentChildren: db.prepare(
+        "SELECT child_id FROM segment_tree WHERE parent_id = ?",
+      ),
+      selectSegmentParent: db.prepare(
+        "SELECT parent_id FROM segment_tree WHERE child_id = ?",
+      ),
+      // One recursive walk in SQL rather than N round-trips from the caller.
+      // The NOT EXISTS is what makes it return LEAVES specifically — and a node
+      // with no children satisfies it immediately, so a leaf resolves to itself.
+      selectDescendantLeaves: db.prepare(
+        `WITH RECURSIVE d(id) AS (
+           SELECT ?
+           UNION
+           SELECT st.child_id FROM segment_tree st JOIN d ON st.parent_id = d.id
+         )
+         SELECT d.id AS id FROM d
+         WHERE NOT EXISTS (SELECT 1 FROM segment_tree c WHERE c.parent_id = d.id)`,
+      ),
+      upsertSegmentSummary: db.prepare(
+        `INSERT INTO segment_summary(segment_id, text, source) VALUES (?, ?, ?)
+         ON CONFLICT(segment_id) DO UPDATE SET text = excluded.text, source = excluded.source`,
+      ),
+      selectSegmentSummary: db.prepare(
+        "SELECT segment_id, text, source FROM segment_summary WHERE segment_id = ?",
+      ),
+      selectSegmentSummariesBySession: db.prepare(
+        `SELECT ss.segment_id AS segment_id, ss.text AS text, ss.source AS source
+           FROM segment_summary ss
+           JOIN segment s ON s.id = ss.segment_id
+          WHERE s.session_id = ?`,
+      ),
+      deleteSegmentRow: db.prepare("DELETE FROM segment WHERE id = ?"),
       insertTranscriptClip: db.prepare(
         `INSERT INTO transcript_clip(id, session_id, t_mono_start, t_mono_end, text)
          VALUES (@id, @sessionId, @tMonoStart, @tMonoEnd, @text)`,
@@ -639,6 +679,94 @@ export class DualStore implements Store {
       tMonoEnd: Number(r.t_mono_end),
       text: r.text,
     }));
+  }
+
+  async putSegmentTree(rows: SegmentTreeInsert[]): Promise<void> {
+    if (rows.length === 0) return;
+    await this.mutex.run(async () => {
+      const tx = this.db.transaction((rs: SegmentTreeInsert[]) => {
+        for (const r of rs) {
+          this.stmts.insertSegmentTreeEdge.run(r.sessionId, r.parentId, r.childId);
+        }
+      });
+      tx(rows);
+    });
+  }
+
+  getSegmentChildren(parentId: string): string[] {
+    return (this.stmts.selectSegmentChildren.all(parentId) as { child_id: string }[]).map(
+      (r) => r.child_id,
+    );
+  }
+
+  getSegmentParent(childId: string): string | undefined {
+    const row = this.stmts.selectSegmentParent.get(childId) as
+      | { parent_id: string }
+      | undefined;
+    return row?.parent_id;
+  }
+
+  getDescendantLeaves(segmentId: string): string[] {
+    return (this.stmts.selectDescendantLeaves.all(segmentId) as { id: string }[]).map(
+      (r) => r.id,
+    );
+  }
+
+  async putSegmentSummaries(rows: SegmentSummaryInsert[]): Promise<void> {
+    if (rows.length === 0) return;
+    await this.mutex.run(async () => {
+      const tx = this.db.transaction((rs: SegmentSummaryInsert[]) => {
+        for (const r of rs) {
+          this.stmts.upsertSegmentSummary.run(r.segmentId, r.text, r.source);
+        }
+      });
+      tx(rows);
+    });
+  }
+
+  getSegmentSummary(segmentId: string): SegmentSummaryRow | undefined {
+    const row = this.stmts.selectSegmentSummary.get(segmentId) as
+      | { segment_id: string; text: string; source: string }
+      | undefined;
+    if (row === undefined) return undefined;
+    return { segmentId: row.segment_id, text: row.text, source: row.source as SummarySource };
+  }
+
+  getSegmentSummariesBySession(sessionId: string): SegmentSummaryRow[] {
+    const rows = this.stmts.selectSegmentSummariesBySession.all(sessionId) as {
+      segment_id: string;
+      text: string;
+      source: string;
+    }[];
+    return rows.map((r) => ({
+      segmentId: r.segment_id,
+      text: r.text,
+      source: r.source as SummarySource,
+    }));
+  }
+
+  async deleteSegments(ids: readonly string[]): Promise<void> {
+    if (ids.length === 0) return;
+    await this.mutex.run(async () => {
+      // Lance first, then SQLite — the delete order rule. The reverse leaves a
+      // vector whose id has no row, which is the orphan case reconcile() cannot
+      // attribute to anything.
+      const list = [...ids];
+      for (const space of this.spaces.values()) {
+        if (kindForView(space.view) !== "segment") continue;
+        await this.lance.deleteByIds(space.namespace, list);
+      }
+      // segment_tree and segment_summary cascade off segment(id); segment_fts
+      // has no foreign key, so it is cleared explicitly or a deleted level keeps
+      // answering searches.
+      const tx = this.db.transaction(() => {
+        for (const sid of list) {
+          this.stmts.deleteSegmentFts.run(sid);
+          this.stmts.deleteSegmentRow.run(sid);
+        }
+      });
+      tx();
+    });
   }
 
   async putSegmentVectors(rows: SegmentVectorInsert[]): Promise<void> {

@@ -36,15 +36,27 @@ export type TextProvider = "ollama" | "onnx";
 export type ImageProvider = "none" | "nomic" | "colsmol";
 export type CaptionProvider = "none" | "ollama";
 export type RerankProvider = "none" | "onnx";
+/**
+ * The model that composes actions into tasks and names each one.
+ *
+ * "none" does NOT disable the hierarchy — the tree is always built, from
+ * structural coherence, and every node gets a templated rollup. A model
+ * upgrades the prose without changing the shape, which is why this is the one
+ * provider whose absence costs no capability.
+ */
+export type SummaryProvider = "none" | "ollama";
 
 export interface ProviderSettingsView {
   ollamaHost: string;
   ollamaModel: string;
   /** The VLM used for captions — distinct from the embedding model. */
   ollamaCaptionModel: string;
+  /** The chat model used to compose and name levels — distinct from both above. */
+  ollamaSummaryModel: string;
   textProvider: TextProvider;
   imageProvider: ImageProvider;
   captionProvider: CaptionProvider;
+  summaryProvider: SummaryProvider;
   rerankProvider: RerankProvider;
   /** "" means managed downloads under the app data dir. */
   localModels: { dir: string };
@@ -152,6 +164,18 @@ export interface FrameHitDTO {
   width: number;
   height: number;
   segmentDigest: string | null;
+  /**
+   * The summary of the LOWEST composed level containing this hit — the answer
+   * to "what was I doing?" when the thing retrieved is a single frame.
+   *
+   * The nearest ancestor, never the root: the root's summary is the whole
+   * session's purpose, which is true of every hit in that recording and so
+   * tells a reader nothing about this one.
+   *
+   * Null for a recording indexed before composing, or one whose tree has no
+   * level above its leaves.
+   */
+  taskSummary: string | null;
   /** deskrag://frame/<blobId> URL, or null when the frame has no keyframe. */
   thumbUrl: string | null;
   highlightCount: number;
@@ -196,6 +220,18 @@ export interface ResultDetailDTO {
     caption: string | null;
     transcript: string | null;
   } | null;
+  /**
+   * The summary of the LOWEST composed level containing this hit — the answer
+   * to "what was I doing?" when the thing retrieved is a single frame.
+   *
+   * The nearest ancestor, never the root: the root's summary is the whole
+   * session's purpose, which is true of every hit in that recording and so
+   * tells a reader nothing about this one.
+   *
+   * Null for a recording indexed before composing, or one whose tree has no
+   * level above its leaves.
+   */
+  taskSummary: string | null;
   ax: UIElementDTO[];
   highlights: HighlightDTO[];
 }
@@ -214,6 +250,22 @@ export interface SessionSummaryDTO {
   hasVideo: boolean;
   /** deskrag://frame/<blobId> of the first keyframe, for the list thumbnail. */
   posterUrl: string | null;
+  /**
+   * What the recording was FOR — the summary of its root segment, the one node
+   * covering the whole session.
+   *
+   * Null for a session captured but not yet indexed, in which case the list
+   * shows what it always did and asserts nothing false.
+   */
+  purpose: string | null;
+  /**
+   * Which path produced `purpose`; null whenever `purpose` is.
+   *
+   * "template" means the tree was composed structurally because no text model
+   * was configured, so the string is a rollup rather than a sentence. Disclosed
+   * rather than smoothed over, the same rule the rail's lane `warning` follows.
+   */
+  purposeSource: "llm" | "template" | null;
 }
 
 export interface SessionVideoDTO {
@@ -370,6 +422,17 @@ export interface TrackLaneDTO {
    * then the renderer paints the label only if it fits untruncated.
    */
   showLabels: boolean;
+  /**
+   * Depth in the compositional hierarchy — 0 for `action`, 1 for `task`, 2 for
+   * `process`, up to the root. `null` for every lane that is not part of the
+   * tree.
+   *
+   * REQUIRED rather than optional, the same rationale as `showLabels` and
+   * `TrackGroup`: the compiler then finds every builder and every fixture, so a
+   * lane cannot silently claim a depth it does not have. The renderer indents
+   * lane titles by it, which is what makes the rail read as an outline.
+   */
+  level: number | null;
   density?: TrackDensityDTO;
   spans?: TrackSpanDTO[];
   marks?: TrackMarkDTO[];
@@ -610,6 +673,24 @@ export interface FlowRouteDTO {
   count: number;
   /** "TextEdit → Google Chrome → github.com/user/repo", from the node labels. */
   label: string;
+  /**
+   * What the route DOES, from the composed level covering its recordings — the
+   * lowest level at which one node covers the majority of a walk.
+   *
+   * Null when no level qualifies, which is the honest answer for a route that
+   * is not one task; the caller falls back to `label`. Never part of the route
+   * KEY: summaries are nondeterministic, so keying on them would change a
+   * route's identity on every re-index.
+   */
+  name: string | null;
+  /**
+   * How many of this route's recordings agreed on `name`.
+   *
+   * Shown rather than smoothed over, the `observations`/`sources` rule: several
+   * recordings sharing a shape can disagree about what they were for, and the
+   * dominant name winning is not the same as unanimity.
+   */
+  nameObservations: number;
   /** For highlighting the route on the canvas. */
   nodeIds: string[];
   edgeIds: string[];
@@ -682,6 +763,11 @@ export interface DeskRagApi {
      * would route screenshots off the device.
      */
     visionModels(): Promise<string[]>;
+    /**
+     * Chat-capable models resident on THIS machine — the ones that can compose
+     * and name levels. Same /api/tags rule and the same reason.
+     */
+    chatModels(): Promise<string[]>;
   };
   system: {
     env(): Promise<EnvInfo>;
@@ -753,6 +839,7 @@ export const IPC = {
   flowsGraph: "flows:graph",
   modelDownloadEvent: "models:download-event",
   ollamaVisionModels: "ollama:vision-models",
+  ollamaChatModels: "ollama:chat-models",
   systemEnv: "system:env",
   systemReset: "system:reset",
 } as const;

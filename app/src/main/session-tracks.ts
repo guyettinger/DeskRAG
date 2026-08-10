@@ -6,19 +6,28 @@
  * lane's arithmetic in the fast ROOT suite (the same arrangement as
  * `graph-view.ts` and `graph-layout.ts`).
  *
- * Fifteen lanes, four shapes. A new signal is a builder here plus a line in
- * `buildSessionTracks` — never a new renderer component.
+ * Four shapes. The composed hierarchy is a FIXED three-level ladder (task,
+ * process, session) rather than a variable-depth recursion, so it contributes
+ * at most four lanes — action plus the three composed ones — never more, and
+ * never fewer once a session has been composed at all. A new signal is a
+ * builder here plus a line in `buildSessionTracks` — never a new renderer
+ * component.
  */
 
 import {
   DEFAULT_BURST_GAP_MS,
   DEFAULT_DWELL_GAP_MS,
+  LEAF_GRANULARITY,
+  LEVEL_GRANULARITY,
+  LEVEL_PREFIX,
   MEANINGFUL_INPUT_KINDS,
+  ROOT_GRANULARITY,
   urlPrefix,
   type AxSnapshotRow,
   type EventRow,
   type FrameRow,
   type SegmentRow,
+  type SummarySource,
 } from "deskrag";
 import type {
   KeyframeMarkerDTO,
@@ -77,6 +86,16 @@ export interface LaneInput {
   audio: readonly AudioLaneInput[];
   /** Utterance-level speech. Empty for a session transcribed without timings. */
   transcriptClips: readonly TranscriptClipInput[];
+  /**
+   * Composed summaries by segment id — the label of every level above 0.
+   *
+   * Empty for a session indexed before composing existed, in which case only
+   * the `action` lane appears and nothing claims otherwise — see
+   * `levelLanes`'s seeding step, gated on the ROOT row rather than on any
+   * segment existing, precisely so this case is not confused with "composed
+   * but produced nothing".
+   */
+  summaries: ReadonlyMap<string, { text: string; source: SummarySource }>;
 }
 
 function secOf(tMono: number, originMono: number): number {
@@ -144,6 +163,7 @@ export function appsLane(input: LaneInput): LaneBody {
     title: "apps",
     shape: "span",
     showLabels: true,
+    level: null,
     spans,
     emptyReason:
       spans.length === 0
@@ -172,6 +192,7 @@ export function webLane(input: LaneInput): LaneBody {
     title: "web",
     shape: "mark",
     showLabels: false,
+    level: null,
     marks,
     emptyReason:
       marks.length === 0
@@ -200,6 +221,7 @@ export function markersLane(input: LaneInput): LaneBody {
     title: "markers",
     shape: "mark",
     showLabels: false,
+    level: null,
     marks,
     emptyReason: marks.length === 0 ? "no bookmarks or environment changes recorded" : null,
     warning: null,
@@ -231,6 +253,7 @@ function rateLane(
       title,
       shape: "density",
       showLabels: false,
+      level: null,
       density: { values, peak, unit },
       emptyReason: secs.length === 0 ? absent : null,
       warning: null,
@@ -292,6 +315,7 @@ export function clicksLane(input: LaneInput): LaneBody {
     title: "clicks",
     shape: "mark",
     showLabels: false,
+    level: null,
     marks,
     emptyReason: marks.length === 0 ? "no clicks recorded" : null,
     warning: null,
@@ -344,6 +368,7 @@ export function idleLane(input: LaneInput): LaneBody {
     title: "idle",
     shape: "span",
     showLabels: false,
+    level: null,
     spans,
     emptyReason: spans.length === 0 ? "no idle gaps — input was continuous throughout" : null,
     warning: null,
@@ -392,34 +417,120 @@ function segmentLabel(s: SegmentRow): string {
   return s.caption ?? s.digest ?? s.boundaryReason ?? "segment";
 }
 
-export function segmentLanes(input: LaneInput): LaneBody[] {
+/**
+ * The ladder is FIXED at three composed levels, so there is no generic
+ * `level N` any more — `levelTitle` cannot be handed a `level:3`.
+ *
+ * Keyed off `LEVEL_GRANULARITY`, the library's own kind→granularity table,
+ * rather than hand-typing "level:1"/"level:2" a second time — two readers of
+ * one mapping is the drift hazard `ax-dump`/`ax-exec` already cost this repo.
+ */
+const LEVEL_NAMES: Record<string, string> = {
+  [LEAF_GRANULARITY]: "action",
+  [LEVEL_GRANULARITY.task]: "task",
+  [LEVEL_GRANULARITY.process]: "process",
+  [LEVEL_GRANULARITY.session]: "session",
+};
+
+/** Display name for a granularity, or null when it is not a hierarchy level. */
+export function levelTitle(granularity: string): string | null {
+  return LEVEL_NAMES[granularity] ?? null;
+}
+
+/**
+ * Sort key: bigger is coarser, so the rail can order top-down.
+ *
+ * The root is always the coarsest whatever depth it landed at, which is why it
+ * gets the sentinel rather than a number parsed from its name.
+ */
+export function levelIndex(granularity: string): number | null {
+  if (granularity === LEAF_GRANULARITY) return 0;
+  if (granularity === ROOT_GRANULARITY) return Number.MAX_SAFE_INTEGER;
+  if (!granularity.startsWith(LEVEL_PREFIX)) return null;
+  const n = Number(granularity.slice(LEVEL_PREFIX.length));
+  return Number.isInteger(n) && n >= 1 ? n : null;
+}
+
+/**
+ * One lane per level, COARSE FIRST.
+ *
+ * Top-down is what makes the nesting legible: each bar visibly contains the
+ * bars beneath it, so the rail reads as an outline. It replaces an alphabetical
+ * sort over granularity names, which put `action` above `task` for no reason
+ * other than the letter a.
+ */
+export function levelLanes(input: LaneInput): LaneBody[] {
   const byGranularity = new Map<string, SegmentRow[]>();
   for (const s of input.segments) {
+    if (levelIndex(s.granularity) === null) continue;
     const list = byGranularity.get(s.granularity) ?? [];
     list.push(s);
     byGranularity.set(s.granularity, list);
   }
-  // Sorted so lane order is stable across reads; Map iteration would otherwise
-  // follow whatever order SQLite happened to return.
+
+  // A recording with no phases still gets a PROCESS lane, empty. The rail's
+  // rule is that absence is the payload: a MISSING lane says this build does
+  // not know about processes, an EMPTY one says this recording had none.
+  //
+  // Gated on the ROOT row, not on any segment existing: `composeLadder` writes
+  // a `session` row on every run where composing executed at all, even a
+  // one-action session, so a root's ABSENCE is the marker for "this recording
+  // predates the compose stage, never reindexed" — the same reasoning
+  // `session_clock`'s absence uses to mark pre-calibration recordings. Seeding
+  // on `byGranularity.size > 0` instead would claim a false cause (a model
+  // that "declined to group" or tasks that "all served one outcome") for a
+  // model that never ran at all.
+  if (byGranularity.has(ROOT_GRANULARITY)) {
+    for (const g of [LEVEL_GRANULARITY.task, LEVEL_GRANULARITY.process]) {
+      if (!byGranularity.has(g)) byGranularity.set(g, []);
+    }
+  }
+
+  // The root's DEPTH is one past the deepest numbered level, so indentation is
+  // monotone. Its sort key is the sentinel; the two are different questions.
+  const numbered = [...byGranularity.keys()]
+    .map((g) => levelIndex(g)!)
+    .filter((n) => n !== Number.MAX_SAFE_INTEGER);
+  const deepest = numbered.length > 0 ? Math.max(...numbered) : 0;
+
   return [...byGranularity.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([granularity, rows]) => ({
-      id: `seg-${granularity}`,
-      title: granularity,
-      shape: "span" as const,
-      showLabels: false,
-      spans: rows
-        .slice()
-        .sort((a, b) => a.tMonoStart - b.tMonoStart)
-        .map((s) => ({
+    .sort(([a], [b]) => levelIndex(b)! - levelIndex(a)!)
+    .map(([granularity, rows]) => {
+      const composed = granularity !== LEAF_GRANULARITY;
+      const level = granularity === ROOT_GRANULARITY ? deepest + 1 : levelIndex(granularity)!;
+      const sorted = rows.slice().sort((a, b) => a.tMonoStart - b.tMonoStart);
+      const sources = composed
+        ? sorted.map((s) => input.summaries.get(s.id)?.source ?? "template")
+        : [];
+      return {
+        id: `seg-${granularity}`,
+        title: levelTitle(granularity) ?? granularity,
+        shape: "span" as const,
+        // A composed summary is a short goal phrase, so `labelFits` usually
+        // passes and the bar can be READ. An action's label is a whole VLM
+        // caption sentence — precisely what `labelFits` exists to withhold.
+        showLabels: composed,
+        level,
+        spans: sorted.map((s) => ({
           startSec: secOf(s.tMonoStart, input.originMono),
           endSec: secOf(s.tMonoEnd, input.originMono),
-          label: segmentLabel(s),
+          label: composed ? (input.summaries.get(s.id)?.text ?? "summary missing") : segmentLabel(s),
           tone: BOUNDARY_TONE[s.boundaryReason ?? "window"] ?? "neutral",
         })),
-      emptyReason: null,
-      warning: null,
-    }));
+        emptyReason:
+          composed && sorted.length === 0
+            ? granularity === LEVEL_GRANULARITY.process
+              ? "no distinct phases in this recording — its tasks all served one outcome"
+              : "no tasks composed — grouping needs at least two actions that no bookmark separates"
+            : null,
+        // `warning`, not `emptyReason`: the lane is full and healthy-looking,
+        // and what is compromised is that no model named any of it.
+        warning:
+          composed && sources.length > 0 && sources.every((s) => s === "template")
+            ? "composed structurally — no text model was configured, so these are rollups rather than summaries"
+            : null,
+      };
+    });
 }
 
 function presenceLane(
@@ -444,6 +555,7 @@ function presenceLane(
     title,
     shape: "span",
     showLabels: false,
+    level: null,
     spans,
     emptyReason: spans.length === 0 ? absent : null,
     warning: null,
@@ -468,6 +580,7 @@ export function transcriptLane(input: LaneInput): LaneBody {
       title: "transcript",
       shape: "span",
       showLabels: false,
+      level: null,
       spans: input.transcriptClips
         .slice()
         .sort((a, b) => a.tMonoStart - b.tMonoStart)
@@ -499,6 +612,15 @@ export function transcriptLane(input: LaneInput): LaneBody {
   };
 }
 
+/**
+ * Which actions got a VLM caption — a PRESENCE strip, deliberately textless.
+ *
+ * It used to carry the caption text, which made it a redundant copy of the
+ * ACTION lane: `presenceLane` filters the finest granularity, so its spans were
+ * that lane's spans and its labels were that lane's labels, drawn a second
+ * time. What survives is the one thing only this lane can say — whether
+ * captioning reached a given action at all.
+ */
 export function captionLane(input: LaneInput): LaneBody {
   return presenceLane(
     input,
@@ -534,6 +656,7 @@ export function axLane(input: LaneInput): LaneBody {
     title: "ax walks",
     shape: "mark",
     showLabels: false,
+    level: null,
     marks,
     emptyReason:
       marks.length === 0
@@ -556,6 +679,7 @@ export function framesLane(input: LaneInput): LaneBody {
     title: "keyframes",
     shape: "thumb",
     showLabels: false,
+    level: null,
     thumbs,
     emptyReason:
       thumbs.length === 0
@@ -625,6 +749,7 @@ export function mouseSpeedLane(input: LaneInput): LaneBody {
     title: "mouse speed",
     shape: "density",
     showLabels: false,
+    level: null,
     density: { values, peak, unit: "px/s" },
     emptyReason: samples.length === 0 ? "no pointer movement recorded" : null,
     warning: null,
@@ -641,6 +766,7 @@ export function mouseXyLane(input: LaneInput): LaneBody {
     title: "mouse x/y",
     shape: "density",
     showLabels: false,
+    level: null,
     density: {
       // Already 0–1 by construction, so these are NOT re-normalized: rescaling
       // would make the traces depend on how far the pointer happened to travel
@@ -665,6 +791,7 @@ export function audioLanes(input: LaneInput): LaneBody[] {
         title: "audio",
         shape: "density",
         showLabels: false,
+        level: null,
         density: { values: new Array(input.buckets).fill(null), peak: 0, unit: "amplitude" },
         emptyReason: "no audio was captured — the Audio signal was off, or every blob is missing",
         warning: null,
@@ -685,6 +812,7 @@ export function audioLanes(input: LaneInput): LaneBody[] {
       title: a.media === "mic" ? "audio (mic)" : `audio (${a.media})`,
       shape: "density" as const,
       showLabels: false,
+      level: null,
       // NOT re-normalized: amplitude is already 0–1 against full scale, and
       // rescaling to the loudest moment would make a whisper look like a shout.
       density: { values, peak, unit: "amplitude" },
@@ -725,7 +853,7 @@ function bandedLanes(input: TrackInput): readonly [TrackGroup, LaneBody | LaneBo
     ["screen", appsLane(input)],
     ["screen", webLane(input)],
     ["screen", axLane(input)],
-    ["segments", segmentLanes(input)],
+    ["segments", levelLanes(input)],
     ["segments", captionLane(input)],
     ["audio", transcriptLane(input)],
     ["audio", audioLanes(input)],

@@ -87,12 +87,12 @@ describe("Tier 2: frame association + image embedding + scoped retrieval", () =>
     // — the ones at 0 and 5000 contain no frame at all.
     const early = segs.find((s) => s.granularity === "action" && s.tMonoStart === 1000)!;
     const late = segs.find((s) => s.granularity === "action" && s.tMonoStart === 6000)!;
-    // task still cuts only at focus_change, so it is unchanged: [0,5000) [5000,8000].
-    const earlyTask = segs.find((s) => s.granularity === "task" && s.tMonoStart === 0)!;
-    const lateTask = segs.find((s) => s.granularity === "task" && s.tMonoStart === 5000)!;
 
-    expect(new Set(store.getFrame(frameA)!.segmentIds)).toEqual(new Set([early.id, earlyTask.id]));
-    expect(new Set(store.getFrame(frameB)!.segmentIds)).toEqual(new Set([late.id, lateTask.id]));
+    // Level 0 only: segmentation no longer produces a second, longer window.
+    // Composed levels are linked later, by ComposeRepresenter, as the union of
+    // their children's frames.
+    expect(new Set(store.getFrame(frameA)!.segmentIds)).toEqual(new Set([early.id]));
+    expect(new Set(store.getFrame(frameB)!.segmentIds)).toEqual(new Set([late.id]));
   });
 
   it("excludes an exact visual match that falls outside the Tier-1 segment scope", async () => {

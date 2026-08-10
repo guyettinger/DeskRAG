@@ -72,6 +72,49 @@ const DEFAULT_WEIGHTS: RetrieverWeights = { frame: 1, region: 0.5, segment: 0.5 
  * `searchSegments` throws otherwise, and caption/transcript spaces don't exist
  * until something has been indexed with those providers.
  */
+/**
+ * Drop a hit that is an ancestor or a descendant of a better-ranked one.
+ *
+ * A parent's span contains its children's, so Tier 1 returns a task AND several
+ * of its actions as separate results — the very redundancy the compositional
+ * hierarchy exists to remove, reproduced one layer up in the result list. A
+ * moment belongs to ONE place in the tree, so the better-ranked hit keeps it.
+ *
+ * `hits` must be best-first. SIBLINGS are untouched: two siblings are two
+ * answers, not one.
+ *
+ * Pure, and takes the tree as a callback, so it is testable without a store.
+ */
+export function collapseAncestors<T extends { segmentId: string }>(
+  hits: readonly T[],
+  childrenOf: (id: string) => string[],
+): T[] {
+  const descendantsOf = (id: string): Set<string> => {
+    const out = new Set<string>();
+    const stack = [...childrenOf(id)];
+    while (stack.length > 0) {
+      const cur = stack.pop()!;
+      if (out.has(cur)) continue;
+      out.add(cur);
+      stack.push(...childrenOf(cur));
+    }
+    return out;
+  };
+
+  const kept: T[] = [];
+  const covered = new Set<string>();
+  for (const hit of hits) {
+    // Already claimed by a better-ranked ANCESTOR.
+    if (covered.has(hit.segmentId)) continue;
+    // Or is itself an ancestor of one — a descendant ranked higher wins, because
+    // it is the more specific answer to the same query.
+    if (kept.some((k) => descendantsOf(hit.segmentId).has(k.segmentId))) continue;
+    kept.push(hit);
+    for (const d of descendantsOf(hit.segmentId)) covered.add(d);
+  }
+  return kept;
+}
+
 export class Retriever {
   private readonly tier1: Tier1Retriever;
   /** Single-vector visual path (cloud providers). Absent on the local path. */
@@ -151,10 +194,26 @@ export class Retriever {
 
   async retrieve(query: Query): Promise<AssembledResult> {
     // Tier 1 — coarse segment scope (text/behavioral views).
-    const t1: SegmentHit[] =
+    const raw: SegmentHit[] =
       query.text || query.behavior ? (await this.tier1.retrieve(query)).segments : [];
+    // A parent's span CONTAINS its children's, so Tier 1 happily returns a task
+    // and three of its own actions as separate results — the redundancy the
+    // hierarchy exists to remove, reproduced in the result list.
+    const t1 = collapseAncestors(raw, (id) => this.store.getSegmentChildren(id));
     const segScore = new Map(t1.map((s) => [s.segmentId, s.score]));
-    const segScope = t1.slice(0, this.segmentScope).map((s) => s.segmentId);
+    // EXPAND TO LEAVES for the frame scope. Frame vectors denormalize
+    // `segment_ids` at represent time, long before composing runs, so a composed
+    // level can never appear in that field: scoping a parent hit directly
+    // matches ZERO frames and returns empty with no error at all — the same
+    // silent shape as the frame<->segment bug. A leaf resolves to itself, so
+    // this path needs no special case.
+    const segScope = [
+      ...new Set(
+        t1
+          .slice(0, this.segmentScope)
+          .flatMap((s) => this.store.getDescendantLeaves(s.segmentId)),
+      ),
+    ];
 
     // Tier 2 — recall frames. On the multivector path the query is embedded ONCE
     // here and reused for highlights: embedding costs a vision forward pass.

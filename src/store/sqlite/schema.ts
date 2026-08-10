@@ -64,6 +64,43 @@ CREATE TABLE IF NOT EXISTS segment_app_caption (
   text        TEXT NOT NULL
 );
 
+-- Parent -> child edges for the compositional segment hierarchy: actions
+-- compose into tasks, tasks into processes, up to one root whose summary is the
+-- session's purpose. Levels themselves are ordinary segment rows, keyed by
+-- granularity ("action" | "level:1" | "level:2" | ... | "session").
+--
+-- A SEPARATE TABLE, not a parent_id column, for the same reason
+-- segment_app_caption is: segment's shape is frozen.
+--
+-- Edges are STORED rather than derived from spans. A parent's span is exactly
+-- its children's union, so interval containment looks sufficient — until a
+-- parent with a single child has an identical span and containment cannot say
+-- which of the two is the parent.
+CREATE TABLE IF NOT EXISTS segment_tree (
+  session_id TEXT NOT NULL REFERENCES session(id) ON DELETE CASCADE,
+  parent_id  TEXT NOT NULL REFERENCES segment(id) ON DELETE CASCADE,
+  child_id   TEXT NOT NULL REFERENCES segment(id) ON DELETE CASCADE,
+  PRIMARY KEY (parent_id, child_id)
+);
+CREATE INDEX IF NOT EXISTS idx_segtree_child   ON segment_tree(child_id);
+CREATE INDEX IF NOT EXISTS idx_segtree_session ON segment_tree(session_id);
+
+-- The composed summary of a level >= 1 segment.
+--
+-- NOT the digest column: digest means templated text over a segment's OWN
+-- events and owns a Tier-1 vector namespace, while a summary is composed from
+-- CHILDREN. Putting both in one column would put two kinds of text in one
+-- similarity space — exactly what namespaceFor exists to prevent.
+--
+-- The source column is disclosure, not bookkeeping. It records which parents got a real
+-- sentence from a model and which got a structural rollup, so a hierarchy
+-- composed without a model cannot masquerade as one composed with it.
+CREATE TABLE IF NOT EXISTS segment_summary (
+  segment_id TEXT PRIMARY KEY REFERENCES segment(id) ON DELETE CASCADE,
+  text       TEXT NOT NULL,
+  source     TEXT NOT NULL          -- 'llm' | 'template'
+);
+
 -- Utterance-level speech, with the timings whisper.cpp's -oj output actually
 -- reports. The segment-level segment.transcript column stays as it is: it is
 -- what the Tier-1 transcript vector view embeds. These rows are the finer

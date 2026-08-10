@@ -32,7 +32,7 @@ export function kindForView(view: string): TableKind {
     case "frame_patches":
       return "frame_patches";
     default:
-      return "segment"; // caption | digest | transcript | behavior
+      return "segment"; // caption | app_caption | digest | summary | transcript | behavior
   }
 }
 

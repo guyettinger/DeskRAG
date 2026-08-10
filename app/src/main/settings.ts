@@ -29,9 +29,13 @@ const DEFAULTS: PersistedSettings = {
     ollamaHost: "http://localhost:11434",
     ollamaModel: "nomic-embed-text",
     ollamaCaptionModel: "qwen3-vl:4b",
+    ollamaSummaryModel: "qwen3:4b",
     textProvider: "ollama",
     imageProvider: "none",
     captionProvider: "none",
+    // "none" still builds the whole hierarchy — structurally, with templated
+    // rollups. A model only upgrades the prose.
+    summaryProvider: "none",
     rerankProvider: "none",
     localModels: { dir: "" },
     // Empty modelPath means "use the managed download" (MODELS.whisper), not
@@ -87,6 +91,7 @@ const PROVIDER_VALUES = {
   textProvider: ["ollama", "onnx"],
   imageProvider: ["none", "nomic", "colsmol"],
   captionProvider: ["none", "ollama"],
+  summaryProvider: ["none", "ollama"],
   rerankProvider: ["none", "onnx"],
 } as const satisfies Partial<Record<keyof ProviderSettingsView, readonly string[]>>;
 

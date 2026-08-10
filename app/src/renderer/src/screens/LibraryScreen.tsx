@@ -124,7 +124,6 @@ export function LibraryScreen({ openAt, onOpened }: Props = {}): React.JSX.Eleme
                   ) : (
                     <span className="frame__noimg">no keyframe</span>
                   )}
-                  {s.hasVideo && <span className="sessioncard__badge mono">VIDEO</span>}
                 </div>
                 {/* The list IDENTIFIES a recording; the stage header SPECIFIES
                     it. So the row carries a coarse duration and a frame count
@@ -133,6 +132,27 @@ export function LibraryScreen({ openAt, onOpened }: Props = {}): React.JSX.Eleme
                     second line in a 300px column. */}
                 <div className="sessioncard__body">
                   <div className="sessioncard__when">{wallClock(s.startedAt)}</div>
+                  {/* What the recording was FOR. Withheld entirely when null —
+                      a session captured but not yet indexed has no root node,
+                      and an empty line would claim one. A structural rollup is
+                      DIMMED and says so on hover, the same disclosure the
+                      rail's lane warning makes: "2 groups · 29.2s" must not
+                      read as a summary somebody wrote. */}
+                  {s.purpose !== null && (
+                    <div
+                      className={`sessioncard__purpose${
+                        s.purposeSource === "template" ? " is-rollup" : ""
+                      }`}
+                      {...(s.purposeSource === "template"
+                        ? {
+                            title:
+                              "Composed structurally — no text model was configured, so this is a rollup rather than a summary.",
+                          }
+                        : {})}
+                    >
+                      {s.purpose}
+                    </div>
+                  )}
                   <div className="sessioncard__meta mono">
                     {durationShort(s.durationMs)} · {s.frameCount} frames
                   </div>

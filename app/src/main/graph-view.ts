@@ -401,7 +401,76 @@ const MAX_ROUTE_HOPS = 4;
  * `nodeIds`/`edgeIds` are the UNION of what its recordings walked — "these five
  * recordings all did this, and here is everywhere they went".
  */
-export function frequentRoutes(graph: Graph): FlowRouteDTO[] {
+/** One stretch a route's recording actually walked. */
+export interface RouteSpan {
+  sessionId: string;
+  tMonoStart: number;
+  tMonoEnd: number;
+}
+
+/** A composed level covering some of a span, and how much of it. */
+export interface CoveringSummary {
+  text: string;
+  /** 1 for a task, 2 for a process, and so on. The root is the largest. */
+  level: number;
+  coveredMs: number;
+}
+
+/**
+ * Name a route from what its recordings actually did.
+ *
+ * The route's KEY is unchanged and must stay that way. Summaries are
+ * NONDETERMINISTIC — a re-index can reword every one of them — so re-keying on
+ * them would change a route's identity on every rebuild. Names change;
+ * identities must not. This is also why the key survived two measured
+ * alternatives (edge-id and node-id sequences, 9 routes all x1 apiece).
+ *
+ * Walk up from level 1 and take the LOWEST level at which a single node covers
+ * the majority of the span, so a route is named at the altitude it actually
+ * occupies rather than a fixed one. Nothing qualifying returns null, and the
+ * caller keeps the label sequence — the honest answer for a route that is not
+ * one task.
+ *
+ * Recordings disagree sometimes. The dominant name wins and its COUNT is
+ * reported; the names are never merged into one sentence, the same rule
+ * `observations`/`sources` follows.
+ */
+export function nameRoute(
+  spans: readonly RouteSpan[],
+  covering: (span: RouteSpan) => CoveringSummary[],
+): { name: string | null; observations: number } {
+  const votes = new Map<string, number>();
+  for (const span of spans) {
+    const total = span.tMonoEnd - span.tMonoStart;
+    if (total <= 0) continue;
+    const best = covering(span)
+      .filter((c) => c.coveredMs * 2 > total)
+      .sort((a, b) => a.level - b.level)[0];
+    if (best === undefined) continue;
+    votes.set(best.text, (votes.get(best.text) ?? 0) + 1);
+  }
+  let name: string | null = null;
+  let observations = 0;
+  for (const [text, n] of votes) {
+    // Strictly greater, so a tie keeps the first-inserted name and the result
+    // is stable across reads rather than following Map iteration order.
+    if (n > observations) {
+      name = text;
+      observations = n;
+    }
+  }
+  return { name, observations };
+}
+
+export function frequentRoutes(
+  graph: Graph,
+  /**
+   * The composed levels covering a stretch of one recording. Injected, so this
+   * module stays a pure projection and keeps its place in the ROOT suite —
+   * `DeskRagService.flows()` is the only thing that reads the store.
+   */
+  covering: (span: RouteSpan) => CoveringSummary[] = () => [],
+): FlowRouteDTO[] {
   const nodeById = new Map(graph.nodes.map((n) => [n.id, n]));
   /** Undefined for a node that describes no state, which names no place. */
   const placeOf = (id: string): string | undefined => {
@@ -427,14 +496,26 @@ export function frequentRoutes(graph: Graph): FlowRouteDTO[] {
     nodeIds: string[];
     edgeIds: string[];
     sessionIds: string[];
+    /** One stretch per recording — what the route's name is derived from. */
+    spans: RouteSpan[];
   }
   const byKey = new Map<string, Group>();
 
   for (const [sessionId, steps] of walked) {
     // A session can walk one edge more than once (a loop), so the order is by
     // the recorded moment — the graph's own edge order would be wrong.
-    const edgeIds = [...steps].sort((a, b) => a.at - b.at).map((s) => s.edgeId);
+    const ordered = [...steps].sort((a, b) => a.at - b.at);
+    const edgeIds = ordered.map((s) => s.edgeId);
     if (edgeIds.length === 0) continue;
+    // The recording's whole walk, end to end: the summaries covering it are
+    // what name the route.
+    const span: RouteSpan = {
+      sessionId,
+      tMonoStart: ordered[0]!.at,
+      tMonoEnd: Math.max(
+        ...ordered.map((s) => edgeById.get(s.edgeId)?.sources?.[0]?.tMonoEnd ?? s.at),
+      ),
+    };
 
     const nodeIds: string[] = [];
     for (const edgeId of edgeIds) {
@@ -455,19 +536,24 @@ export function frequentRoutes(graph: Graph): FlowRouteDTO[] {
     const key = places.join(" → ");
     const existing = byKey.get(key);
     if (existing === undefined) {
-      byKey.set(key, { places, nodeIds, edgeIds, sessionIds: [sessionId] });
+      byKey.set(key, { places, nodeIds, edgeIds, sessionIds: [sessionId], spans: [span] });
       continue;
     }
     // The union, in first-walked order: these recordings share a shape, not a
     // path, so the highlight has to show everywhere they actually went.
     existing.sessionIds.push(sessionId);
+    existing.spans.push(span);
     for (const id of nodeIds) if (!existing.nodeIds.includes(id)) existing.nodeIds.push(id);
     for (const id of edgeIds) if (!existing.edgeIds.includes(id)) existing.edgeIds.push(id);
   }
 
-  const routes: FlowRouteDTO[] = [...byKey].map(([id, g]) => ({
+  const routes: FlowRouteDTO[] = [...byKey].map(([id, g]) => {
+    const named = nameRoute(g.spans, covering);
+    return {
     id,
     count: g.sessionIds.length,
+    name: named.name,
+    nameObservations: named.observations,
     label:
       g.places.length > MAX_ROUTE_HOPS
         ? `${g.places.slice(0, MAX_ROUTE_HOPS).join(" → ")} → …`
@@ -475,7 +561,8 @@ export function frequentRoutes(graph: Graph): FlowRouteDTO[] {
     nodeIds: g.nodeIds,
     edgeIds: g.edgeIds,
     sessionIds: g.sessionIds,
-  }));
+    };
+  });
 
   // Most-walked first, then longest — a route walked five times is the
   // headline, and between two equally-walked routes the longer one says more.

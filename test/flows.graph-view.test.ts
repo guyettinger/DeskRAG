@@ -4,8 +4,7 @@ import {
   frequentRoutes,
   labelNode,
   rankNodes,
-  toGraphDTO,
-} from "../app/src/main/graph-view.js";
+  toGraphDTO, nameRoute } from "../app/src/main/graph-view.js";
 import type { Graph, Predicate, TraceEdge, TraceNode } from "../src/trace/types.js";
 
 // Roles WITHOUT the "AX" prefix — the shape ax-dump actually emits
@@ -514,5 +513,64 @@ describe("frequentRoutes", () => {
   it("is stable across calls, so the list does not reshuffle on a reload", () => {
     const g = chain({ s1: ["e0", "e1"], s2: ["e0"], s3: ["e0", "e1"] });
     expect(frequentRoutes(g).map((r) => r.id)).toEqual(frequentRoutes(g).map((r) => r.id));
+  });
+});
+
+/**
+ * A route's NAME comes from what its recordings actually did; its KEY does not.
+ * Summaries are nondeterministic, so keying on them would change a route's
+ * identity on every re-index.
+ */
+describe("nameRoute", () => {
+  const span = (sessionId: string, a: number, b: number) => ({
+    sessionId,
+    tMonoStart: a,
+    tMonoEnd: b,
+  });
+
+  it("takes the LOWEST level that covers the majority of the route", () => {
+    const covering = () => [
+      { text: "filed the expense report", level: 1, coveredMs: 9000 },
+      { text: "did admin", level: 2, coveredMs: 10000 },
+    ];
+    expect(nameRoute([span("s1", 0, 10000)], covering).name).toBe("filed the expense report");
+  });
+
+  it("rises a level when no lower node covers the majority", () => {
+    const covering = () => [
+      { text: "opened the form", level: 1, coveredMs: 3000 },
+      { text: "did admin", level: 2, coveredMs: 9000 },
+    ];
+    expect(nameRoute([span("s1", 0, 10000)], covering).name).toBe("did admin");
+  });
+
+  it("returns null when nothing covers the majority — not one task", () => {
+    const covering = () => [{ text: "a bit of this", level: 1, coveredMs: 1000 }];
+    const out = nameRoute([span("s1", 0, 10000)], covering);
+    expect(out.name).toBeNull();
+    expect(out.observations).toBe(0);
+  });
+
+  it("reports how many recordings agreed, and never merges disagreeing names", () => {
+    const covering = (s: { sessionId: string }) =>
+      s.sessionId === "s3"
+        ? [{ text: "something else", level: 1, coveredMs: 10000 }]
+        : [{ text: "filed the expense report", level: 1, coveredMs: 10000 }];
+    const out = nameRoute(
+      [span("s1", 0, 10000), span("s2", 0, 10000), span("s3", 0, 10000)],
+      covering,
+    );
+    expect(out.name).toBe("filed the expense report");
+    expect(out.observations).toBe(2);
+  });
+
+  it("returns null for a route with no provenance at all", () => {
+    expect(nameRoute([], () => []).name).toBeNull();
+  });
+
+  it("ignores a zero-length span rather than dividing by it", () => {
+    expect(
+      nameRoute([span("s1", 500, 500)], () => [{ text: "x", level: 1, coveredMs: 1 }]).name,
+    ).toBeNull();
   });
 });
