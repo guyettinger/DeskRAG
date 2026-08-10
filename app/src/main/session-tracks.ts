@@ -519,9 +519,9 @@ export function levelLanes(input: LaneInput): LaneBody[] {
         })),
         emptyReason:
           composed && sorted.length === 0
-            ? granularity === "level:2"
+            ? granularity === LEVEL_GRANULARITY.process
               ? "no distinct phases in this recording — its tasks all served one outcome"
-              : "no tasks composed — the model declined to group these actions"
+              : "no tasks composed — grouping needs at least two actions that no bookmark separates"
             : null,
         // `warning`, not `emptyReason`: the lane is full and healthy-looking,
         // and what is compromised is that no model named any of it.

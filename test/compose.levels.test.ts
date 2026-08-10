@@ -150,6 +150,51 @@ describe("composeLadder", () => {
     expect(root(l).summary).toBe("the whole thing");
   });
 
+  it("a size-1 process block never reaches the model, and does not cost the OTHER block its level:2 node", async () => {
+    // Barriers on leaves 6 and 8 force task3 (leaves 6-7) into its own
+    // process-level BLOCK, isolated from task2 on one side and task4 on the
+    // other. `splitIntoBlocks` cuts on the `barrier` flag unconditionally, and
+    // `liftChild` carries a group's FIRST member's barrier upward — so setting
+    // it on the leaf is enough to isolate the task it becomes, with no
+    // dependence on `structuralRanges`' gap tie-break at either level. Task
+    // level composes normally throughout (chunk of 2), so it still yields six
+    // ordinary `level:1` nodes; only the PROCESS block boundaries move.
+    const kids = leaves(12, (i) => (i === 6 || i === 8 ? { barrier: true } : {}));
+    const compose = async (
+      children: readonly ChildSummary[],
+      kind: LevelKind,
+    ): Promise<ComposeGroup[]> => {
+      if (kind === "session") return [{ start: 0, end: children.length, summary: "s" }];
+      if (kind === "task") return chunk(2)(children, kind);
+      // `process`: one group spanning the whole SLICE `composeOneLevel` handed
+      // it. Each block is composed independently, so this succeeds identically
+      // for the 3-task block and the 2-task block; the 1-task block never
+      // reaches here at all — `composeOneLevel` guards the call on `size > 1`.
+      return [{ start: 0, end: children.length, summary: `phase of ${children.length}` }];
+    };
+    const l = await composeLadder(kids, { compose });
+
+    const tasks = l.nodes.filter((n) => n.granularity === "level:1");
+    expect(tasks).toHaveLength(6);
+
+    // Both other blocks composed — the level was NOT abandoned wholesale for
+    // holding one block the model was never shown.
+    const processes = l.nodes.filter((n) => n.granularity === "level:2");
+    expect(processes).toHaveLength(2);
+    expect(processes.map((n) => n.children.length).sort()).toEqual([2, 3]);
+    expect(processes.every((n) => n.source === "llm")).toBe(true);
+
+    // task3 is the lone task holding leaf 6 — the one process block that never
+    // reached the model. It was adopted upward rather than wrapped in a
+    // template `level:2` node claiming to be a phase.
+    const lonelyTask = tasks.find(
+      (n) => n.children.length === 2 && n.children.some((c) => c.kind === "leaf" && c.index === 6),
+    );
+    expect(lonelyTask).toBeDefined();
+    const adoptedIndex = l.nodes.indexOf(lonelyTask!);
+    expect(root(l).children.some((c) => c.kind === "node" && c.index === adoptedIndex)).toBe(true);
+  });
+
   it("PROCESS IS MODEL-ONLY — no summarizer means no level:2", async () => {
     const l = await composeLadder(leaves(12));
     expect(grans(l)).toContain("level:1");
