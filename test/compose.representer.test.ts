@@ -165,7 +165,7 @@ describe("ComposeRepresenter", () => {
   it("writes at most three composed granularities", async () => {
     const { store, sessionId } = await withSession();
     await seedActions(store, sessionId, 40);
-    await new ComposeRepresenter(store, { summarizer: new FakeSummaryProvider(2) })
+    const r = await new ComposeRepresenter(store, { summarizer: new FakeSummaryProvider(2) })
       .represent(sessionId);
 
     const grans = new Set(
@@ -173,17 +173,29 @@ describe("ComposeRepresenter", () => {
     );
     expect([...grans].sort()).toEqual(["action", "level:1", "level:2", "session"].filter((g) => grans.has(g)).sort());
     expect(grans.has("level:3")).toBe(false);
+    // `levels` counts DISTINCT COMPOSED granularities only — never `action`.
+    // These 40 actions are perfectly contiguous 1s spans with no app data, so
+    // every adjacent gap ties at zero; `splitIntoBlocks` breaks that tie by
+    // always cutting at the lowest index, which leaves a size-1 block in the
+    // level-1 output's frontier of 28. Process is model-only — one
+    // uncomposable block fails the WHOLE level (composeOneLevel's
+    // `if (level.modelOnly) return undefined`) — so level:2 never
+    // materializes here and the tree stops at level:1 + session: 2, not 3.
+    expect(r.levels).toBe(2);
   });
 
   it("writes NO level:2 without a summarizer — Process is model-only", async () => {
     const { store, sessionId } = await withSession();
     await seedActions(store, sessionId, 12);
-    await new ComposeRepresenter(store).represent(sessionId);
+    const r = await new ComposeRepresenter(store).represent(sessionId);
 
     const grans = new Set(store.getSegmentsBySession(sessionId).map((s) => s.granularity));
     expect(grans.has("level:1")).toBe(true);
     expect(grans.has("level:2")).toBe(false);
     expect(grans.has("session")).toBe(true);
+    // Only level:1 and session were written — level:2 is model-only and there
+    // is no summarizer here — so `levels` is 2, not 3.
+    expect(r.levels).toBe(2);
   });
 
   it("writes an edge that SPANS two levels when a node was elided", async () => {
