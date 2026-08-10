@@ -146,10 +146,18 @@ async function composeOneLevel(
     }
 
     if (accepted === undefined) {
-      // A model-only level gets no structural groups at all: returning the
-      // block unchanged means it cannot qualify, so the level is skipped.
-      if (level.modelOnly) return undefined;
-      accepted = structuralRanges(children, block).map((r) => ({
+      // A model-only level does NOT abandon the whole level here. A block of
+      // ONE child was never shown to the model, so it is not a model failure;
+      // and a block the model got wrong must not cost the blocks it got right.
+      // Measured: a 40-action recording split into sixteen size-1 blocks plus
+      // one 24-block, and the early return threw away all twelve phases the
+      // model had just composed. One singleton group per child instead —
+      // elision dissolves every one of them, so no structural Process node is
+      // ever written and the level above adopts those children directly.
+      const ranges = level.modelOnly
+        ? singletonRanges(block)
+        : structuralRanges(children, block);
+      accepted = ranges.map((r) => ({
         range: r,
         summary: rollupText(children, r, levelNumber(level.kind)),
         source: "template" as const,
@@ -163,6 +171,17 @@ async function composeOneLevel(
 /** `rollupText` still keys on a level NUMBER: level 1 tallies, above it composes. */
 function levelNumber(kind: LevelKind): number {
   return kind === "task" ? 1 : 2;
+}
+
+/**
+ * One range per child — what a model-only level falls back to, so that
+ * elision can dissolve them rather than a template node claiming to be a
+ * phase.
+ */
+function singletonRanges(block: Block): Block[] {
+  const out: Block[] = [];
+  for (let i = block.start; i < block.end; i++) out.push({ start: i, end: i + 1 });
+  return out;
 }
 
 /** The root: one call asking what the whole recording was for. */

@@ -173,15 +173,9 @@ describe("ComposeRepresenter", () => {
     );
     expect([...grans].sort()).toEqual(["action", "level:1", "level:2", "session"].filter((g) => grans.has(g)).sort());
     expect(grans.has("level:3")).toBe(false);
-    // `levels` counts DISTINCT COMPOSED granularities only — never `action`.
-    // These 40 actions are perfectly contiguous 1s spans with no app data, so
-    // every adjacent gap ties at zero; `splitIntoBlocks` breaks that tie by
-    // always cutting at the lowest index, which leaves a size-1 block in the
-    // level-1 output's frontier of 28. Process is model-only — one
-    // uncomposable block fails the WHOLE level (composeOneLevel's
-    // `if (level.modelOnly) return undefined`) — so level:2 never
-    // materializes here and the tree stops at level:1 + session: 2, not 3.
-    expect(r.levels).toBe(2);
+    // `levels` counts DISTINCT COMPOSED granularities only — never `action` —
+    // and this tree reaches all three: level:1, level:2, session.
+    expect(r.levels).toBe(3);
   });
 
   it("writes NO level:2 without a summarizer — Process is model-only", async () => {
