@@ -104,7 +104,27 @@ catch drift if the export is ever re-published.
 
 ## Real-weights behaviour
 
-<!-- filled in by Task 4 -->
+`ONNX_SMOKE=1 DESKRAG_MODELS_DIR=… npx vitest run test/onnx.smoke.test.ts -t ColModernVBert`,
+7 passed. Against the same two 2560x1600 fixtures the ColSmol smoke uses:
+
+| query | MaxSim on `login.png` | MaxSim on `terminal.png` |
+| --- | --- | --- |
+| "a login form with a sign in button" | **0.6207** | 0.3988 |
+| "a terminal showing a typescript build error" | 0.4219 | **0.5083** |
+
+Both directions, so the model is not simply scoring one image higher regardless
+of the query — the degenerate case that a single-direction check cannot see.
+Patch count matches `expectedTokenCount` (13 tiles x 64 = 832 at 2560x1600) and
+every argmax box lands inside the frame.
+
+**These numbers say the adapter works, not that this model wins.** They are two
+synthetic fixtures, not the query set, and no candidate has been scored against
+another. That is Tasks 5–7.
+
+Timing, for scale rather than for comparison: 9.2s for the token-count case and
+~18s for a cross-modal case (two images plus a query), on CPU, each including a
+cold ~1GB session load. A like-for-like ms/frame against ColSmol has NOT been
+measured.
 
 ## Bake-off results
 

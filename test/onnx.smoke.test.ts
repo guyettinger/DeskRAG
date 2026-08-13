@@ -10,6 +10,8 @@
  *                             (no tokenizer — it is a vision tower only)
  *   colSmol-256M-dynamic/     model.onnx tokenizer.json tokenizer_config.json
  *                             preprocessor_config.json config.json
+ *   colmodernvbert-250m/      model.onnx tokenizer.json tokenizer_config.json
+ *                             preprocessor_config.json config.json
  *   jina-reranker-v1-turbo-en/model_int8.onnx tokenizer.json tokenizer_config.json
  *
  * The ColSmol entry must be a DYNAMIC export (scripts/export-colsmol.py); the
@@ -24,6 +26,14 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { OnnxTextEmbedding } from "../src/embed/onnx/text.js";
 import { ColSmolMultiVector } from "../src/embed/onnx/colsmol.js";
+import { ColModernVBertMultiVector } from "../src/embed/onnx/colmodernvbert.js";
+import {
+  MV_TOK,
+  buildImagePrompt,
+  buildQueryPrompt,
+  tileMarker,
+} from "../src/embed/onnx/colmodernvbert-prompt.js";
+import { loadTokenizer } from "../src/embed/onnx/tokenizer.js";
 import { OnnxImageEmbedding } from "../src/embed/onnx/image.js";
 import { OnnxCrossEncoderReranker } from "../src/retrieve/rerank/onnx.js";
 import {
@@ -43,6 +53,7 @@ const terminal = (): Uint8Array => new Uint8Array(readFileSync(join(FIXTURES, "t
 const textDir = join(MODELS, "nomic-embed-text-v1.5");
 const visionDir = join(MODELS, "nomic-embed-vision-v1.5");
 const colsmolDir = join(MODELS, "colSmol-256M-dynamic");
+const colmodernDir = join(MODELS, "colmodernvbert-250m");
 const rerankDir = join(MODELS, "jina-reranker-v1-turbo-en");
 
 function cosine(a: Float32Array, b: Float32Array): number {
@@ -171,6 +182,151 @@ d("ColSmolMultiVector (live)", () => {
       // The single most important assertion in the design. If this fails,
       // sharedTextSpace is a lie and text-into-image search is broken — and
       // nothing else in the suite would catch it.
+      const p = provider();
+      const [loginPatches, terminalPatches] = await p.embedImages([login(), terminal()]);
+      const [q] = await p.embedQueries(["a login form with a sign in button"]);
+
+      const onLogin = maxSim(q!, loginPatches!);
+      const onTerminal = maxSim(q!, terminalPatches!);
+      console.log(`  MaxSim login=${onLogin.toFixed(4)} terminal=${onTerminal.toFixed(4)}`);
+      expect(onLogin).toBeGreaterThan(onTerminal);
+    },
+  );
+
+  it(
+    "CROSS-MODAL: the reverse query prefers the other screenshot",
+    { timeout: 900_000 },
+    async () => {
+      // Guards against a degenerate model that simply scores one image higher
+      // regardless of the query.
+      const p = provider();
+      const [loginPatches, terminalPatches] = await p.embedImages([login(), terminal()]);
+      const [q] = await p.embedQueries(["a terminal showing a typescript build error"]);
+
+      const onLogin = maxSim(q!, loginPatches!);
+      const onTerminal = maxSim(q!, terminalPatches!);
+      console.log(`  MaxSim login=${onLogin.toFixed(4)} terminal=${onTerminal.toFixed(4)}`);
+      expect(onTerminal).toBeGreaterThan(onLogin);
+    },
+  );
+
+  it("argmax highlights land inside the frame", { timeout: 600_000 }, async () => {
+    const p = provider();
+    const [patches] = await p.embedImages([login()]);
+    const [q] = await p.embedQueries(["sign in button"]);
+    const geo = computeTileGeometry(2560, 1600);
+
+    for (const qv of q!) {
+      let argmax = -1;
+      let top = -Infinity;
+      for (let i = 0; i < patches!.length; i++) {
+        const s = cosine(qv, patches![i]!);
+        if (s > top) {
+          top = s;
+          argmax = i;
+        }
+      }
+      const box = patchIndexToBox(argmax, geo);
+      expect(box).not.toBeNull();
+      expect(box!.x).toBeGreaterThanOrEqual(0);
+      expect(box!.y).toBeGreaterThanOrEqual(0);
+      expect(box!.x + box!.w).toBeLessThanOrEqual(2560 + 1e-6);
+      expect(box!.y + box!.h).toBeLessThanOrEqual(1600 + 1e-6);
+    }
+  });
+});
+
+d("ColModernVBertMultiVector (live)", () => {
+  const provider = (): ColModernVBertMultiVector =>
+    new ColModernVBertMultiVector({
+      modelPath: join(colmodernDir, "model.onnx"),
+      tokenizerPath: join(colmodernDir, "tokenizer.json"),
+    });
+
+  const tokenizer = () =>
+    loadTokenizer(join(colmodernDir, "tokenizer.json"), join(colmodernDir, "tokenizer_config.json"));
+
+  /**
+   * The prompt string fastembed's colmodernvbert.py builds, reconstructed here
+   * so the pure builder can be compared against the tokenizer's own encoding of
+   * it. This is the check that actually pins the constants in MV_TOK: a wrong id
+   * or a missed BPE merge shifts the sequence while every score stays plausible.
+   */
+  const IMAGE_SEQ_LEN = 64;
+  const fastembedString = (rows: number, cols: number): string => {
+    let split = "";
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        split +=
+          "<fake_token_around_image>" +
+          `<row_${r + 1}_col_${c + 1}>` +
+          "<image>".repeat(IMAGE_SEQ_LEN);
+      }
+      split += "\n";
+    }
+    split +=
+      "\n<fake_token_around_image><global-img>" +
+      "<image>".repeat(IMAGE_SEQ_LEN) +
+      "<fake_token_around_image>";
+    return "<|begin_of_text|>User:<image>Describe the image.<end_of_utterance>\nAssistant:".replace(
+      "<image>",
+      split,
+    );
+  };
+
+  it("measured token ids still match the real tokenizer", { timeout: 120_000 }, async () => {
+    expect(existsSync(join(colmodernDir, "model.onnx"))).toBe(true);
+    const tok = await tokenizer();
+    // Every encode is wrapped by a TemplateProcessing post-processor, so a
+    // single special token comes back as [CLS] x [SEP]. That wrapper IS the
+    // thing most likely to be forgotten, so it is asserted rather than stripped.
+    const enc = (s: string): number[] => tok.encode(s).ids;
+    expect(enc("<image>")).toEqual([MV_TOK.cls, MV_TOK.image, MV_TOK.sep]);
+    expect(enc("<global-img>")).toEqual([MV_TOK.cls, MV_TOK.globalImg, MV_TOK.sep]);
+    expect(enc("<fake_token_around_image>")).toEqual([MV_TOK.cls, MV_TOK.fake, MV_TOK.sep]);
+    expect(enc("<end_of_utterance>")).toEqual([MV_TOK.cls, MV_TOK.endOfUtterance, MV_TOK.sep]);
+    expect(enc("<row_1_col_1>")).toEqual([MV_TOK.cls, MV_TOK.row1col1, MV_TOK.sep]);
+    expect(enc("<row_2_col_1>")).toEqual([MV_TOK.cls, tileMarker(2, 1), MV_TOK.sep]);
+    expect(enc("\n\n")).toEqual([MV_TOK.cls, MV_TOK.doubleNewline, MV_TOK.sep]);
+  });
+
+  it(
+    "buildImagePrompt equals the tokenizer's encoding of fastembed's string",
+    { timeout: 120_000 },
+    async () => {
+      const tok = await tokenizer();
+      for (const [w, h] of [
+        [1280, 800],
+        [2560, 1600],
+        [512, 512],
+      ] as const) {
+        const g = computeTileGeometry(w, h);
+        expect(buildImagePrompt(g)).toEqual(tok.encode(fastembedString(g.rows, g.cols)).ids);
+      }
+    },
+  );
+
+  it("buildQueryPrompt equals fastembed's augmented query", { timeout: 120_000 }, async () => {
+    const tok = await tokenizer();
+    const text = "a terminal showing a build error";
+    // fastembed augments the STRING then encodes, which is why the buffer must
+    // land inside the [CLS] ... [SEP] wrapper rather than after it.
+    expect(buildQueryPrompt(tok.encode(text).ids)).toEqual(
+      tok.encode(text + "<end_of_utterance>".repeat(10)).ids,
+    );
+  });
+
+  it("emits exactly the token count the geometry predicts", { timeout: 600_000 }, async () => {
+    const [patches] = await provider().embedImages([login()]);
+    const geo = computeTileGeometry(2560, 1600);
+    expect(patches!.length).toBe(expectedTokenCount(geo));
+    expect(patches![0]!.length).toBe(128);
+  });
+
+  it(
+    "CROSS-MODAL: a text query scores higher on the matching screenshot",
+    { timeout: 900_000 },
+    async () => {
       const p = provider();
       const [loginPatches, terminalPatches] = await p.embedImages([login(), terminal()]);
       const [q] = await p.embedQueries(["a login form with a sign in button"]);
