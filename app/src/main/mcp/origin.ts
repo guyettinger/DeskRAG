@@ -43,7 +43,40 @@ function selfOrigins(port: number): ReadonlySet<string> {
  * probing for local services should learn nothing about which routes exist —
  * answering 405 to a cross-origin GET would confirm the endpoint is here.
  */
+/**
+ * Hosts this server answers to.
+ *
+ * A port-less form is accepted because a request to the default port may omit
+ * it; anything naming a real domain is refused whatever it resolves to.
+ */
+function selfHosts(port: number): ReadonlySet<string> {
+  return new Set([
+    `127.0.0.1:${port}`,
+    `localhost:${port}`,
+    `[::1]:${port}`,
+    "127.0.0.1",
+    "localhost",
+    "[::1]",
+  ]);
+}
+
 export function guardRequest(input: GuardInput): Guard {
+  const host = input.headers["host"];
+
+  // THE HOST CHECK IS THE ONE THAT CLOSES DNS REBINDING, and the Origin check
+  // below cannot do it. Once evil.example has rebound to 127.0.0.1 the browser
+  // considers the target SAME-ORIGIN and sends no Origin header at all — the
+  // only trace left of where the page came from is `Host: evil.example`.
+  if (host === undefined || Array.isArray(host) || !selfHosts(input.port).has(host)) {
+    return {
+      ok: false,
+      status: 403,
+      reason:
+        "Refused: unexpected Host header. This endpoint answers only to its own " +
+        "loopback address, which is what stops a rebound DNS name from reaching it.",
+    };
+  }
+
   const origin = input.headers["origin"];
 
   if (origin !== undefined) {

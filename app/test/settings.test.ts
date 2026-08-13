@@ -9,7 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { SettingsStore } from "../src/main/settings.js";
+import { DEFAULT_MCP_PORT, SettingsStore } from "../src/main/settings.js";
 
 let dir: string;
 beforeEach(() => {
@@ -175,5 +175,53 @@ describe("apply", () => {
     // >= 2048 keeps ColSmol preprocessing on its downscale path
     expect(v.signals.screen.imageMaxWidth).toBe(2560);
     expect(v.signals.screen.fps).toBe(1); // sibling untouched
+  });
+});
+
+describe("the MCP endpoint's settings", () => {
+  function seedMcp(mcp: Record<string, unknown>): void {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "settings.json"), JSON.stringify({ mcp }), "utf8");
+  }
+
+  it("is on by default, on the fixed port", () => {
+    expect(new SettingsStore(dir).view().mcp).toEqual({ enabled: true, port: DEFAULT_MCP_PORT });
+  });
+
+  it("appears on a settings.json written before it existed", () => {
+    // The same shape as every other addition here: an older file gains the key
+    // with its default rather than reading as "disabled".
+    seed({ textProvider: "ollama" });
+    expect(new SettingsStore(dir).view().mcp.enabled).toBe(true);
+  });
+
+  it("resets a port the OS could never bind", () => {
+    // A stored value the app cannot act on is better replaced than handed to
+    // listen() to fail on every launch — the rule PROVIDER_VALUES follows.
+    for (const port of [0, 80, 1023, 65_536, -1, 1.5, "41777", null]) {
+      seedMcp({ enabled: true, port });
+      expect(new SettingsStore(dir).view().mcp.port, String(port)).toBe(DEFAULT_MCP_PORT);
+    }
+  });
+
+  it("keeps a port that is genuinely bindable", () => {
+    seedMcp({ enabled: false, port: 51_000 });
+    expect(new SettingsStore(dir).view().mcp).toEqual({ enabled: false, port: 51_000 });
+  });
+
+  it("normalizes on write, because a port has no later moment to resolve at", () => {
+    // Unlike the whisper binary, which resolves at spawn time, the listener
+    // binds whatever is stored. So the pane must commit on BLUR — on every
+    // keystroke the first digit typed would snap back to the default.
+    const store = new SettingsStore(dir);
+    expect(store.apply({ mcp: { port: 3 } }).mcp.port).toBe(DEFAULT_MCP_PORT);
+    expect(store.apply({ mcp: { port: 50_000 } }).mcp.port).toBe(50_000);
+    // A patch touching only `enabled` leaves the port alone.
+    expect(store.apply({ mcp: { enabled: false } }).mcp).toEqual({ enabled: false, port: 50_000 });
+  });
+
+  it("persists across reopen", () => {
+    new SettingsStore(dir).apply({ mcp: { enabled: false, port: 50_001 } });
+    expect(new SettingsStore(dir).view().mcp).toEqual({ enabled: false, port: 50_001 });
   });
 });

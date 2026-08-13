@@ -10,6 +10,9 @@ import { existsSync, rmSync } from "node:fs";
 import { DeskRagService } from "./deskrag-service.js";
 import { SettingsStore, dataDir } from "./settings.js";
 import { registerIpc } from "./ipc.js";
+import { McpExperienceServer } from "./mcp/server.js";
+import { ServiceExperienceReader } from "./mcp/reader.js";
+import { IPC } from "@shared/types";
 import { registerScheme, registerProtocol } from "./protocol.js";
 import { ensureToolPath } from "./tool-path.js";
 import { resolveAxBin } from "./sidecar-path.js";
@@ -17,6 +20,7 @@ import { resolveAxBin } from "./sidecar-path.js";
 let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let service: DeskRagService;
+let mcp: McpExperienceServer | undefined;
 let dir: string;
 let quitting = false;
 
@@ -166,7 +170,20 @@ app.whenReady().then(async () => {
   await service.open();
 
   registerProtocol(service);
-  registerIpc(service, settings, () => win, resetApp);
+
+  // The MCP endpoint, after the store is open — every tool reads through the
+  // service, so there is nothing to serve before then. A bind failure is
+  // recorded on the status rather than thrown: an agent endpoint that cannot
+  // listen must not stop the app from opening.
+  mcp = new McpExperienceServer({
+    reader: new ServiceExperienceReader(service),
+    port: settings.view().mcp.port,
+    version: app.getVersion(),
+    onLog: (entry) => win?.webContents.send(IPC.mcpLogEvent, entry),
+  });
+  if (settings.view().mcp.enabled) await mcp.start();
+
+  registerIpc(service, settings, () => win, resetApp, mcp);
   service.onState(() => rebuildTray());
 
   // An unpackaged macOS dev run shows Electron's own dock icon otherwise.
@@ -190,5 +207,8 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", () => {
   quitting = true;
+  // Closing the listener is fire-and-forget: `before-quit` is synchronous, and a
+  // socket the OS is about to reclaim anyway must not delay the quit.
+  void mcp?.stop();
   service?.close();
 });

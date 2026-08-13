@@ -2,10 +2,11 @@ import { describe, expect, it } from "vitest";
 import { MCP_PATH, guardRequest } from "../app/src/main/mcp/origin.js";
 
 const PORT = 41777;
+const HOST = { host: `127.0.0.1:${PORT}` };
 const post = (
   headers: Record<string, string | string[] | undefined> = {},
 ): ReturnType<typeof guardRequest> =>
-  guardRequest({ method: "POST", url: MCP_PATH, headers, port: PORT });
+  guardRequest({ method: "POST", url: MCP_PATH, headers: { ...HOST, ...headers }, port: PORT });
 
 describe("guardRequest — routing", () => {
   it("allows POST to the MCP path with no Origin", () => {
@@ -15,32 +16,87 @@ describe("guardRequest — routing", () => {
   it("405s a GET: there is no server-initiated stream to subscribe to", () => {
     // Stateless transport, so answering GET would imply a stream that does not
     // exist. 405 names the wrong method rather than 404 naming a missing route.
-    const r = guardRequest({ method: "GET", url: MCP_PATH, headers: {}, port: PORT });
+    const r = guardRequest({ method: "GET", url: MCP_PATH, headers: HOST, port: PORT });
     expect(r.ok).toBe(false);
     expect(r).toMatchObject({ status: 405 });
   });
 
   it("405s a DELETE — session teardown is meaningless without sessions", () => {
-    const r = guardRequest({ method: "DELETE", url: MCP_PATH, headers: {}, port: PORT });
+    const r = guardRequest({ method: "DELETE", url: MCP_PATH, headers: HOST, port: PORT });
     expect(r).toMatchObject({ ok: false, status: 405 });
   });
 
   it("404s any other path", () => {
-    const r = guardRequest({ method: "POST", url: "/", headers: {}, port: PORT });
+    const r = guardRequest({ method: "POST", url: "/", headers: HOST, port: PORT });
     expect(r).toMatchObject({ ok: false, status: 404 });
   });
 
   it("ignores a query string on the MCP path", () => {
-    expect(guardRequest({ method: "POST", url: `${MCP_PATH}?x=1`, headers: {}, port: PORT })).toEqual(
-      { ok: true },
-    );
+    expect(
+      guardRequest({ method: "POST", url: `${MCP_PATH}?x=1`, headers: HOST, port: PORT }),
+    ).toEqual({ ok: true });
   });
 
   it("treats a missing url as not found rather than throwing", () => {
     // node's IncomingMessage types `url` as optional; a guard that threw here
     // would fail the request with a 500 and no explanation.
-    const r = guardRequest({ method: "POST", headers: {}, port: PORT });
+    const r = guardRequest({ method: "POST", headers: HOST, port: PORT });
     expect(r).toMatchObject({ ok: false, status: 404 });
+  });
+});
+
+describe("guardRequest — the Host check", () => {
+  // THE HOST CHECK IS THE ONE THAT ACTUALLY CLOSES DNS REBINDING. Once
+  // evil.example has rebound to 127.0.0.1 the browser considers the target
+  // same-origin and sends NO Origin header at all — the request looks perfectly
+  // innocent to the Origin check, and the only trace of where the page came
+  // from is the Host header it still carries.
+  it("rejects a rebound domain even though it sends no Origin", () => {
+    const r = guardRequest({
+      method: "POST",
+      url: MCP_PATH,
+      headers: { host: "evil.example" },
+      port: PORT,
+    });
+    expect(r).toMatchObject({ ok: false, status: 403 });
+    expect(r.ok === false && r.reason).toMatch(/host/i);
+  });
+
+  it("rejects a missing Host header", () => {
+    expect(guardRequest({ method: "POST", url: MCP_PATH, headers: {}, port: PORT })).toMatchObject({
+      ok: false,
+      status: 403,
+    });
+  });
+
+  it("rejects the right host on the wrong port", () => {
+    expect(post({ host: "127.0.0.1:9999" })).toMatchObject({ ok: false, status: 403 });
+  });
+
+  it("accepts every spelling of loopback, with or without the port", () => {
+    for (const host of [
+      `127.0.0.1:${PORT}`,
+      `localhost:${PORT}`,
+      `[::1]:${PORT}`,
+      "127.0.0.1",
+      "localhost",
+    ]) {
+      expect(post({ host }), host).toEqual({ ok: true });
+    }
+  });
+
+  it("rejects a duplicated Host header", () => {
+    expect(post({ host: ["127.0.0.1:41777", "evil.example"] })).toMatchObject({
+      ok: false,
+      status: 403,
+    });
+  });
+
+  it("is checked before everything else", () => {
+    // A rebound page must learn nothing at all — not the route, not the method.
+    expect(
+      guardRequest({ method: "GET", url: "/", headers: { host: "evil.example" }, port: PORT }),
+    ).toMatchObject({ ok: false, status: 403 });
   });
 });
 
@@ -97,7 +153,7 @@ describe("guardRequest — the DNS-rebinding gate", () => {
     const r = guardRequest({
       method: "GET",
       url: MCP_PATH,
-      headers: { origin: "https://evil.example" },
+      headers: { ...HOST, origin: "https://evil.example" },
       port: PORT,
     });
     expect(r).toMatchObject({ ok: false, status: 403 });

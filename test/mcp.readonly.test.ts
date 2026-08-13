@@ -67,9 +67,11 @@ describe("the MCP surface cannot reach the executor", () => {
   });
 
   it("spawns nothing", () => {
+    // Deliberately NOT a bare `exec(`: a regex `.exec()` is ordinary code, and a
+    // guard that fires on one would be read as a false positive and loosened.
     for (const file of mcpFiles()) {
       expect(read(file), `${file} must not spawn`).not.toMatch(
-        /child_process|execFile|\bspawn\(|\bexec\(/,
+        /child_process|execFile|execSync|\bspawn\(|\bspawnSync\(/,
       );
     }
   });
@@ -78,6 +80,10 @@ describe("the MCP surface cannot reach the executor", () => {
     // `DeskRagService` owns recording and deletion as well as reading, so the
     // reader holding one is only safe if it calls the read half. Named methods,
     // because the danger is a specific call rather than a word.
+    // `close` is deliberately absent: it is the HTTP server's and the SDK
+    // transport's method name too, so guarding it by name would fire on
+    // `server.ts` shutting its own socket down. Closing the STORE is prevented
+    // by type instead — `ServiceReads` does not declare it, see below.
     const forbidden = [
       "startRecording",
       "stopRecording",
@@ -85,7 +91,6 @@ describe("the MCP surface cannot reach the executor", () => {
       "reindexTraces",
       "reindexSearch",
       "deleteSession",
-      "close",
     ];
     for (const file of mcpFiles()) {
       const src = read(file);
@@ -112,13 +117,25 @@ describe("the MCP surface cannot reach the executor", () => {
   });
 });
 
-describe("the reader's interface is the read-only contract", () => {
-  it("declares no method that could record, delete or act", () => {
+describe("the reader's interfaces are the read-only contract", () => {
+  it("ExperienceReader declares no method that could record, delete or act", () => {
     const src = read("reader.ts");
     const iface = /export interface ExperienceReader \{([\s\S]*?)\n\}/.exec(src)?.[1];
     expect(iface, "ExperienceReader interface not found").toBeDefined();
     // The interface is what `tools.ts` is written against, so widening it is the
     // first step any acting tool would have to take.
     expect(iface!).not.toMatch(/record\(|delete|remove|start|stop|arm|execute|write|put|set/i);
+  });
+
+  it("ServiceReads names only the read half of the service", () => {
+    // This is the guarantee that replaces guarding `close` by name: the reader
+    // holds this port rather than DeskRagService itself, so it could not close
+    // the store, stop a recording or delete a session even if a tool asked.
+    const src = read("reader.ts");
+    const iface = /export interface ServiceReads \{([\s\S]*?)\n\}/.exec(src)?.[1];
+    expect(iface, "ServiceReads interface not found").toBeDefined();
+    expect(iface!).not.toMatch(
+      /\bclose\b|\bdelete|\bremove|startRecording|stopRecording|reindex|\bopen\(/i,
+    );
   });
 });
