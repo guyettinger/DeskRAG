@@ -86,6 +86,25 @@ async function spaces() {
  * the property the whole measurement rests on, so it is computed here rather
  * than left for a person to notice 500 times.
  */
+/**
+ * Evidence that must never leave the store, and the reason is specific rather
+ * than precautionary: a window TITLE is user screen content, and a Terminal
+ * titles itself with the running command line. One recording here carried
+ * `claude mcp add … --header Authorization: Bearer <token>` as a window title,
+ * the rarest-term rule picked it as ideal evidence, and it landed in a
+ * committed fixture. Anything derived from a recording can carry a credential,
+ * so the term is DROPPED rather than masked — a title holding a token is not
+ * usable evidence either way.
+ */
+const SECRET_PATTERNS = [
+  /bearer\s+\S+/i,
+  /\b(api[-_ ]?key|secret|password|passwd|credential)\b/i,
+  /\b[A-Fa-f0-9]{20,}\b/,
+  /\b(sk|pk|ghp|gho|github_pat|xox[baprs])[-_][A-Za-z0-9]{10,}/,
+  /\baccess[-_ ]?token\b/i,
+];
+const looksSecret = (term) => SECRET_PATTERNS.some((re) => re.test(term));
+
 /** Latest at-or-before, the rule every environment fact in this repo resolves by. */
 function latestAtOrBefore(sorted, tMono) {
   let out;
@@ -129,6 +148,7 @@ async function propose() {
       const url = u?.data?.url?.trim();
       if (url && url.length >= 8 && !url.startsWith("about:")) terms.add(url);
 
+      for (const t of [...terms]) if (looksSecret(t)) terms.delete(t);
       if (terms.size === 0) continue;
       frames.push({ frame, sessionId: s.id, terms });
       for (const t of terms) df.set(t, (df.get(t) ?? 0) + 1);
@@ -179,6 +199,18 @@ async function propose() {
     seen.add(key);
     return true;
   });
+  // The visual-example arm falls straight out of the same computation: a
+  // relevant set of size >= 2 IS two frames of one UI state, which is exactly
+  // what Task 5 Step 4 asks a human to find by hand. One pair per set, and the
+  // query frame is excluded from its own results at scoring time.
+  const visualQueries = deduped
+    .filter((q) => q.frameIds.length >= 2)
+    .map((q) => ({
+      queryFrameId: q.frameIds[0],
+      expectFrameId: q.frameIds[1],
+      sessionId: q.sessionId,
+      _evidence: q._evidence,
+    }));
   store.close();
 
   writeFileSync(
@@ -191,11 +223,13 @@ async function propose() {
           "then strip the _ fields and save as imagelane-queries.json. `frameIds` is " +
           "the set of ACCEPTABLE answers; a hit on any of them counts.",
         queries: deduped,
+        visualQueries,
       },
       null,
       2,
     ),
   );
+  console.log(`  ${visualQueries.length} visual pairs (two frames of one state)`);
   const sessions = new Set(deduped.map((q) => q.sessionId)).size;
   console.log(
     `proposed ${deduped.length} queries (<=${MAX_RELEVANT} relevant frames each) across ${sessions} sessions`,
@@ -219,15 +253,25 @@ async function extractFrames(outDir) {
   const blobs = new BlobStore(join(DATA_DIR, "blobs"));
   mkdirSync(outDir, { recursive: true });
 
+  // EVERY frame of the relevant set is rendered, not just the first: the review
+  // question is "would any of these be a correct answer", which cannot be judged
+  // from one thumbnail.
   const rows = [];
+  const written = new Set();
   for (const [i, q] of draft.queries.entries()) {
-    const frame = store.getFrame(q.frameId);
-    const blob = frame?.blobId ? store.getBlob(frame.blobId) : undefined;
-    if (!blob) continue;
-    const bytes = await blobs.read(blob);
-    const name = `${String(i).padStart(3, "0")}-${q.frameId}.jpg`;
-    writeFileSync(join(outDir, name), bytes);
-    rows.push({ ...q, file: name, index: i });
+    const files = [];
+    for (const frameId of q.frameIds ?? [q.frameId]) {
+      const frame = store.getFrame(frameId);
+      const blob = frame?.blobId ? store.getBlob(frame.blobId) : undefined;
+      if (!blob) continue;
+      const name = `${frameId}.jpg`;
+      if (!written.has(name)) {
+        writeFileSync(join(outDir, name), await blobs.read(blob));
+        written.add(name);
+      }
+      files.push(name);
+    }
+    if (files.length > 0) rows.push({ ...q, files, index: i });
   }
   store.close();
 
@@ -237,19 +281,25 @@ async function extractFrames(outDir) {
     `<!doctype html><meta charset=utf8><title>image-lane query review</title>
 <style>
  body{font:13px/1.5 -apple-system,sans-serif;background:#12151a;color:#e6e9ef;margin:0;padding:24px}
- h1{font-size:20px} .card{display:grid;grid-template-columns:420px 1fr;gap:16px;
-   border:1px solid #2a2f38;border-radius:10px;padding:12px;margin:12px 0;background:#171b21}
- img{width:100%;border-radius:6px;border:1px solid #2a2f38}
+ h1{font-size:20px} h1 small{color:#98a2b3;font-weight:400;font-size:13px;display:block;margin-top:6px}
+ .card{border:1px solid #2a2f38;border-radius:10px;padding:12px;margin:12px 0;background:#171b21}
+ .shots{display:flex;gap:8px;overflow-x:auto;margin-top:10px}
+ img{height:200px;border-radius:6px;border:1px solid #2a2f38}
  code{background:#0e1116;padding:1px 5px;border-radius:4px;font-size:11px}
- .q{font-size:15px;margin:0 0 8px} .meta{color:#98a2b3;font-size:11px}
+ .q{font-size:15px;margin:0 0 6px} .meta{color:#98a2b3;font-size:11px;margin:2px 0}
 </style>
-<h1>${rows.length} proposed queries — rewrite, delete the ambiguous, keep the mix honest</h1>
+<h1>${rows.length} proposed queries
+<small>Rewrite each text as you would actually type it. Delete any whose answer is
+ambiguous — if a frame outside its row would also be correct, it is not
+known-answer. Keep the mix of frame kinds honest: all-text-heavy frames flatter
+late interaction by construction. Then strip the _ fields and save as
+test/fixtures/imagelane-queries.json.</small></h1>
 ${rows
   .map(
-    (r) => `<div class=card><img src="${r.file}" loading=lazy>
-<div><p class=q>${esc(r.text)}</p>
+    (r) => `<div class=card><p class=q>${esc(r.text)}</p>
 <p class=meta>evidence: ${esc((r._evidence ?? []).join(" · "))}</p>
-<p class=meta>index ${r.index} · frame <code>${esc(r.frameId)}</code> · session <code>${esc(r.sessionId)}</code> · t_mono ${r._tMono}</p></div></div>`,
+<p class=meta>index ${r.index} · ${r.files.length} acceptable frame(s) · session <code>${esc(r.sessionId)}</code> · t_mono ${r._tMono}</p>
+<div class=shots>${r.files.map((f) => `<img src="${f}" loading=lazy title="${esc(f)}">`).join("")}</div></div>`,
   )
   .join("\n")}`,
   );
