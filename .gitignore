@@ -41,3 +41,6 @@ app/dist-app/
 # Generated from real recordings — carries user screen content (window titles
 # have been seen to contain bearer tokens). Never committed.
 test/fixtures/imagelane-queries.draft.json
+
+# Obsidian
+/docs/.obsidian/

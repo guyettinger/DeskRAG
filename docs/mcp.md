@@ -194,7 +194,7 @@ show the call succeeding; the tool's own text explains which of the two index
 states applies. Both are fixed from Settings → Maintenance.
 
 **No flows** — the trace graph carries no provenance until it has been rebuilt;
-press **Rebuild trace graph**.
+press **Rebuild trace graph** in Settings → Maintenance.
 
 To exercise the whole surface against your real store, from the repo root:
 

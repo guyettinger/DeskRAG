@@ -65,8 +65,8 @@ graph stale and prompt a rebuild. The Flows screen already surfaces the symptom:
 `observations` and the number of recording links legitimately disagree, and the
 drawer says so rather than showing a quietly short list.
 
-Today the workaround is **Rebuild trace graph** in the Library, which discards the
-graph and re-lifts every remaining recording.
+Today the workaround is **Settings → Rebuild trace graph**, which discards the graph
+and re-lifts every remaining recording.
 
 ### Region proposals are effectively AX-only where AX is available
 

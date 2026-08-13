@@ -37,15 +37,18 @@ Every session you've captured, with the index put on the timeline. Keyframes bec
 player **chapter cues** — so the scrubber is divided at exactly the frames that were
 indexed — and thumbnail images on scrub.
 
-Below the frame is the **track rail**: fifteen lanes of what was actually captured —
-input rates, focus spans, segments, keyframes, accessibility snapshots, regions, and
-an audio envelope — sharing **one time axis** with the scrubber above it, so a lane
-and the playhead always mean the same instant. The rail scrolls and yields space to
-the frame before the page does, so how many lanes are visible follows the window. In a density lane, a gap is not a
-zero: recorded silence is a flat line, while a stretch with no audio at all reads as
-no coverage, which is how a dead microphone stays distinguishable from a quiet room.
-A lane can also carry a warning where the data is present but unusable — keystrokes
-recorded without a keyboard layout look healthy and were dropped at lift.
+Below the frame is the **track rail**: a lane per signal actually captured — input
+rates, focus spans, the composed hierarchy (session · process · task · action),
+keyframes, accessibility snapshots, and an audio envelope — gathered into collapsible
+bands and sharing **one time axis** with the scrubber above it, so a lane and the
+playhead always mean the same instant. Drag its grip to trade rail height against the
+frame; the rail yields space to the frame before the page does.
+
+In a density lane a gap is not a zero: recorded silence is a flat line, while a
+stretch with no audio at all reads as no coverage, which is how a dead microphone
+stays distinguishable from a quiet room. A lane can also carry a warning where the
+data is present but unusable — keystrokes recorded without a keyboard layout look
+healthy and were dropped at lift.
 
 Sessions delete with a confirm, which removes the rows and then the blobs.
 
@@ -103,7 +106,8 @@ path through the graph, keyed by the states it passed through: record the same t
 five times and it is one row reading `×5`, not five rows. It is deliberately **not** an
 enumeration of paths through the graph — a merged graph composes routes nobody ever
 walked, and presenting those as your common flows would be a fabrication. So a graph
-with no provenance shows no flows at all, and says why.
+with no provenance shows no flows at all, and says why — a graph built before
+provenance was captured needs **Settings → Rebuild trace graph** once.
 
 Selecting a flow frames it on the canvas and dims everything else. Wires are weighted
 by how many recordings walked them, so a worn path looks worn. Clicking a wire opens
@@ -116,50 +120,51 @@ one opens the Library at exactly that moment. `observations` and the number of l
 legitimately disagree — a recording you deleted leaves the count it contributed — and
 the drawer says so rather than showing a quietly short list.
 
-**Rebuild search index** in Settings re-links keyframes to segments, rebuilds every
-digest, and rewrites the text index, for every recording already on disk. What a
-recording is *findable by* is decided by the code that indexed it, so anything
-recorded before the digest carried window titles, typed text and clicked labels
-stays unfindable by any of them until this runs — and a recording indexed with no
-image provider has no frame↔segment links at all, which makes text search return
-nothing for it. It never re-segments, so segment ids and the captions and
-transcripts attached to them survive. Nothing is re-recorded and no video,
-keyframe, caption or transcript is touched.
-
-**Rebuild trace graph** in the Library discards the graph and re-lifts every
-recording, oldest first — needed after a change to how identity is derived, since a
-stored node keeps the shape it was written with, **and required once for a graph built
-before provenance was captured**, which otherwise has no flows and no recording links.
-It has to be a whole rebuild rather than a re-lift of one session: a graph *accretes*,
-so folding a session into a graph that already contains it would count it twice and
-inflate the very evidence used to weight a route. Nothing is re-recorded — lifting
-re-reads the accessibility snapshots and the event stream already on disk, so no video
-or keyframe is touched.
-
 Nodes that cannot be told apart are marked, because it explains why a graph looks
 redundant: an identity of only `app` is satisfied by every state in that application,
 and a node with no predicates at all is vacuously true of any desktop.
 
-**This screen reads and never acts.** The trace graph is also an executable IR — the
-library's `src/replay/` resolves it against a live accessibility tree and posts real
-CGEvents — but none of that is wired to the app. There is no plan, no arming, and no
-observation of the desktop, which is why DeskRAGApp never starts `ax-exec` at all.
+**This screen reads and never acts.** The library can also execute this graph, but
+none of that is wired to the app — DeskRAGApp never starts a process capable of
+clicking. See [ROADMAP.md](../ROADMAP.md).
 
 ![Flows screen](../docs/images/flows.png)
 
 ### Settings
 
-Four groups: **Models** (text embeddings, image model, captions, Tier-4 rerank, model
-directory), **Ollama** (host, embedding model, caption model), **Transcription**
-(whisper.cpp binary + model), and **Capture defaults** (frame rate, keyframe max
-width, audio device, chunk seconds). Two image models are offered — Nomic Vision
-(fast, adds labelled region highlights) and ColSmol (late interaction, seconds per
-frame); picking ColSmol warns if your keyframe width is under 2048, where its
-preprocessor upscales and match quality degrades with no visible error.
+**Models** (text embeddings, image model, captions, Tier-4 rerank, model directory),
+**Ollama** (host, embedding model, caption model), **Transcription** (whisper.cpp
+binary + model), **Capture defaults** (frame rate, keyframe max width, audio device,
+chunk seconds), and **Maintenance**.
+
+Three image models are offered: Nomic Vision (fast, adds labelled region highlights)
+and the two late-interaction ones, ColSmol and ColModernVBERT (seconds per frame,
+patch-granular matching). Picking either late-interaction model warns if your
+keyframe width is under 2048, where its preprocessor upscales and match quality
+degrades with no visible error.
 
 ![Settings screen](../docs/images/settings.png)
 
-A fifth group, **Agent access (MCP)**, serves your recorded experience to an
+**Maintenance** holds the two rebuilds, and neither re-records anything.
+
+**Rebuild search index** re-links keyframes to segments, rebuilds every digest, and
+rewrites the text index for every recording on disk. What a recording is *findable
+by* is decided by the code that indexed it, so anything recorded before the digest
+carried window titles, typed text and clicked labels stays unfindable by them until
+this runs — and a recording indexed with no image provider has no frame↔segment links
+at all, which makes text search return nothing for it. It never re-segments, so
+segment ids and the captions and transcripts attached to them survive.
+
+**Rebuild trace graph** discards the graph and re-lifts every recording, oldest
+first — needed after a change to how identity is derived, since a stored node keeps
+the shape it was written with, and required once for a graph built before provenance
+was captured. It has to be a whole rebuild rather than a re-lift of one session: a
+graph *accretes*, so folding in a session it already contains would count it twice
+and inflate the very evidence used to weight a route. Lifting re-reads the
+accessibility snapshots and the event stream already on disk; no video or keyframe is
+touched.
+
+A further group, **Agent access (MCP)**, serves your recorded experience to an
 external agent over a loopback HTTP endpoint (`127.0.0.1:41777` by default) and
 carries a ready-made `claude mcp add` command. It is read-only — a test asserts
 nothing on that surface can record, delete, re-index, or reach the executor — and
@@ -197,10 +202,13 @@ disables exactly one feature instead of breaking startup. Stopping a recording
 auto-runs segment → represent, with the frame/caption/region and transcript stages
 included only when their model is configured.
 
-Five stages run **regardless of configuration**, because they need no model and
+These stages run **regardless of configuration**, because they need no model and
 search does not work without them: segmenting, linking keyframes to segments,
-region proposal, the digest and behavioral vector, and the text index. The
-provider-gated stages only ever add to what those produce.
+linking accessibility walks to frames, region proposal, the digest and behavioral
+vector, composing the hierarchy, the text index, and the trace graph. The
+provider-gated stages only ever add to what those produce — a summarizer, for
+instance, gives the composed levels real prose instead of a templated rollup, but
+the tree is built either way.
 
 ## Setup (dev)
 

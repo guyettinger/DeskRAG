@@ -147,7 +147,8 @@ npm run probe:mcp            # exercise the MCP endpoint against the real store
   `test/brand.assets.test.ts` byte-compares committed output against a fresh render
   and fails on hand edits.
 - **`gen:shots`** builds the app, then drives it with Playwright's Electron driver to
-  capture the five screens plus the detail view. It opens the real app data dir, so
+  capture the five screens plus the detail view and the MCP pane — seven PNGs. It
+  opens the real app data dir, so
   **quit any running dev instance first**; screens with no indexed data capture as
   empty states with a warning rather than failing. Rail buttons are targeted by
   **label, not index** — inserting a screen renumbers every one below it, and an
@@ -158,7 +159,7 @@ npm run probe:mcp            # exercise the MCP endpoint against the real store
     `captionProvider: "none"` the Detail view reads "no caption" and the Library
     chapter title falls back to a timecode; with `imageProvider: "none"` no region
     rows are written, so Search's highlight badge is 0 and never renders. **Look at
-    the six PNGs after a run** — the script cannot tell a thin store from a rich one.
+    the PNGs after a run** — the script cannot tell a thin store from a rich one.
   - The Search shot uses a **fixed demo query**, so it needs recorded content that
     actually matches it; otherwise it captures "No matches".
   - **Naming ids regenerates only those**: `node scripts/shots.mjs mcp-pane`. Every

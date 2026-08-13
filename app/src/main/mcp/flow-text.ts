@@ -97,7 +97,7 @@ export function renderFlowList(flows: FlowsDTO): string {
     return (
       "No recorded routes. A route is a path a recording actually walked, so " +
       "this is empty when the trace graph carries no provenance — press " +
-      "`Rebuild trace graph` in the app (Library → Recordings) and try again."
+      "`Rebuild trace graph` in the app (Settings → Maintenance) and try again."
     );
   }
   return flows.routes

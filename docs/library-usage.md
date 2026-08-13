@@ -7,8 +7,8 @@ The pipeline composes explicit stages. Retrieval is a single call over the capst
 import {
   DualStore, BlobStore,
   CaptureSession, KeyframeBudget,
-  Segmenter, Representer, FrameRepresenter,
-  associateFrames, indexSegmentText,
+  Segmenter, Representer, FrameRepresenter, RegionRepresenter, ComposeRepresenter,
+  StoredAxProvider, associateFrames, associateFrameAx, indexSegmentText,
   Retriever, TextViewSearcher, BehaviorViewSearcher, LexicalSegmentSearcher,
   FakeEmbeddingProvider, BehaviorFeatureExtractor,
 } from "deskrag";
@@ -31,12 +31,22 @@ await session.stop();
 // --- represent ------------------------------------------------------------
 const embed = new FakeEmbeddingProvider();            // swap for OllamaTextEmbedding / OnnxTextEmbedding
 await new Segmenter(store).segment(sessionId);
-// ALWAYS run this, even with no image provider: a text query recalls frames by
-// segment membership, so without these links search returns nothing at all.
-await associateFrames(store, sessionId);
+// The stages that need NO model. Skipping any of them is a silent hole:
+// a text query recalls frames purely by segment membership, and the digest
+// names what was clicked from the region labels written below.
+await associateFrames(store, sessionId);              // frame ↔ segment links
+await associateFrameAx(store, sessionId);             // AX walk → the frame it describes
+await new RegionRepresenter(store, { axProvider: new StoredAxProvider(store).provide })
+  .represent(sessionId);                              // proposal only, without a cropper
 await new Representer(store, { digestEmbedder: embed, behavior: new BehaviorFeatureExtractor() }).represent(sessionId);
+
+// Optional, provider-gated — these only ever add to the above.
 await new FrameRepresenter(store, { imageEmbedder: embed, blobStore: blobs }).represent(sessionId);
-// Last, so it sees whatever text the provider-gated stages above produced.
+
+// Actions → tasks → phases → a named session. Always on: without a summarizer
+// the tree is still built, with templated rollups instead of prose.
+await new ComposeRepresenter(store, { summaryEmbedder: embed }).represent(sessionId);
+// Last, so it sees whatever text every stage above actually produced.
 indexSegmentText(store, sessionId);
 
 // --- recall ---------------------------------------------------------------
@@ -57,6 +67,9 @@ for (const frame of result.frames) {
 The same session can be lifted into an executable graph instead of recalled. `trace/`
 and `replay/` are **leaves** — they never import `store/`, so the world reaches them
 through injected callbacks, and the caller binds those to whatever it has.
+
+> The `replay/` half is **library-only**: DeskRAGApp lifts and reads the graph but
+> never executes it, and never spawns `ax-exec`. See [ROADMAP.md](../ROADMAP.md).
 
 ```ts
 import { liftTrace, mergeTrace, executeRun, AxExecSidecar } from "deskrag";

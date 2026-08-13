@@ -150,7 +150,7 @@ const searchTool: ToolDef = {
           `No moments returned, though ${result.segmentsMatchedButNoFrames} segment(s) matched ` +
             "the query. Those segments have no frames linked to them, which is an index " +
             "defect rather than an empty result — re-index the library in DeskRAG " +
-            "(Library → Rebuild search index).",
+            "(Settings → Rebuild search index).",
         );
       }
       return text("No matches.");
@@ -302,7 +302,7 @@ const outlineTool: ToolDef = {
 const NO_GRAPH =
   "No trace graph has been built on this machine, so there are no recorded flows. " +
   "A graph is lifted from recordings when they are indexed; press `Rebuild trace graph` " +
-  "in DeskRAG (Library → Recordings) to build one from what has already been captured.";
+  "in DeskRAG (Settings → Maintenance) to build one from what has already been captured.";
 
 const listFlowsTool: ToolDef = {
   name: "list_flows",
