@@ -159,6 +159,17 @@ preprocessor upscales and match quality degrades with no visible error.
 
 ![Settings screen](../docs/images/settings.png)
 
+A fifth group, **Agent access (MCP)**, serves your recorded experience to an
+external agent over a loopback HTTP endpoint (`127.0.0.1:41777` by default) and
+carries a ready-made `claude mcp add` command. It is read-only — a test asserts
+nothing on that surface can record, delete, re-index, or reach the executor — and
+the pane shows every question an agent has asked, live. That log is the gate:
+the endpoint has no password by design, so the pane states plainly that any local
+program can read the index and that recorded typing is included in what it
+returns. See **[docs/mcp.md](../docs/mcp.md)**.
+
+![Agent access pane, listening, with the activity log](../docs/images/mcp-pane.png)
+
 Closing the window hides the app to a menu-bar tray — **recording keeps running**,
 and the tray menu can start/stop it. Only Quit closes the store.
 

@@ -12,10 +12,14 @@
 
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { request as httpRequest } from "node:http";
 import { launchApp, gotoScreen, ROOT } from "../.claude/skills/run-app/scripts/launch.mjs";
 
-const OUT = process.env.MCP_PROBE_OUT ?? join(ROOT, "docs", "images", "mcp-pane.png");
+// NOT docs/images: that directory is owned by `npm run gen:shots`, which
+// downscales to a fixed width. A probe writing there would quietly replace the
+// documented asset with a differently-sized one.
+const OUT = process.env.MCP_PROBE_OUT ?? join(tmpdir(), "mcp-probe.png");
 
 /** One JSON-RPC call. Raw node client so Host can be forged for the guard checks. */
 function rpc(url, body, headers = {}) {
@@ -80,6 +84,11 @@ const textOf = (r) =>
     .join("\n");
 
 const head = (s, n = 14) => s.split("\n").slice(0, n).join("\n");
+
+// Swallow EPIPE: piping this script's output to `head` closes stdout early,
+// which otherwise kills the process before the `finally` below — leaving an
+// Electron instance holding both the port and the data dir.
+process.stdout.on("error", () => {});
 
 const { app, page } = await launchApp();
 try {

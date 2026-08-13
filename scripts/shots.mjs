@@ -57,6 +57,15 @@ const HEIGHT = 800;
 const SETTLE_MS = 8000;
 
 /**
+ * Optional id filter: `node scripts/shots.mjs mcp-pane settings`.
+ *
+ * Every shot is taken from the LIVE data dir, so a full run rewrites all of them
+ * whenever the recordings change — which buries a one-image update in a diff
+ * nobody asked for. Naming ids regenerates only those.
+ */
+const ONLY = new Set(process.argv.slice(2));
+
+/**
  * One capture per screen. `nav` is the rail button's LABEL, never its index:
  * inserting Replay between Library and Search shifted every index below it, so
  * the "search" shot silently drove the Replay screen and waited 8s for a
@@ -127,7 +136,60 @@ const SHOTS = [
     query: "stop the recording",
   },
   { id: "settings", nav: "Settings", settle: ".card" },
+  {
+    // Settings again, scrolled: the MCP pane is the fifth card down, so the
+    // `settings` shot above cannot show it and app/README.md needs it by name.
+    id: "mcp-pane",
+    nav: "Settings",
+    // `.mcp-log` rather than `.card`: it is the last thing in the pane to
+    // render, so waiting on it means the whole card is there.
+    settle: ".mcp-log",
+    scrollTo: "Agent access",
+    // The pane's whole point is the activity log, and a freshly launched app has
+    // an empty one — a screenshot of "Nothing yet." documents the opposite of
+    // what the feature is for. So the shot asks the endpoint a couple of real
+    // questions first, the same way the Search shot runs a real query.
+    mcpWarmup: ["list_recordings", "list_flows"],
+  },
 ];
+
+/**
+ * Call a few MCP tools so the activity log has something in it.
+ *
+ * Read-only, like every tool it names. The URL is read from the pane rather than
+ * assumed, so this follows the port wherever settings put it — and if the
+ * endpoint failed to bind there is nothing to read and the shot proceeds without
+ * it, which is the honest capture of that state.
+ */
+async function warmUpMcp(page, tools) {
+  const url = await page.evaluate(() => {
+    const cmd = [...document.querySelectorAll(".card .mono")]
+      .map((e) => e.textContent.trim())
+      .find((t) => t.startsWith("claude mcp add"));
+    return cmd ? cmd.split(" ").pop() : null;
+  });
+  if (!url) {
+    console.warn("  ! mcp-pane: endpoint is not listening — capturing the log as-is");
+    return;
+  }
+  let id = 0;
+  const post = (body) =>
+    fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify(body),
+    });
+  for (const name of tools) {
+    await post({
+      jsonrpc: "2.0",
+      id: ++id,
+      method: "initialize",
+      params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "gen:shots", version: "0" } },
+    });
+    await post({ jsonrpc: "2.0", id: ++id, method: "tools/call", params: { name, arguments: {} } });
+  }
+  await page.waitForTimeout(300);
+}
 
 async function capture(page, id) {
   const png = await page.screenshot({ type: "png" });
@@ -184,6 +246,7 @@ async function main() {
 
   try {
     for (const shot of SHOTS) {
+      if (ONLY.size > 0 && !ONLY.has(shot.id)) continue;
       console.log(`→ ${shot.id}`);
       // Exact match: "Record" is a substring of nothing here, but `hasText` is
       // a substring test and a future "Recordings" would quietly match both.
@@ -214,6 +277,20 @@ async function main() {
           .first()
           .click({ timeout: SETTLE_MS })
           .catch(() => console.warn(`  ! ${shot.id}: nothing to select (${shot.pick}) — capturing as-is`));
+      }
+
+      if (shot.mcpWarmup) await warmUpMcp(page, shot.mcpWarmup);
+
+      // Bring a card below the fold into view, by its HEADING rather than by a
+      // pixel offset — the cards above it change height whenever a setting is
+      // added, and an offset would silently drift off the subject.
+      if (shot.scrollTo) {
+        await page.evaluate((heading) => {
+          [...document.querySelectorAll(".card")]
+            .find((c) => (c.querySelector("h2")?.textContent ?? "").includes(heading))
+            ?.scrollIntoView({ block: "center" });
+        }, shot.scrollTo);
+        await page.waitForTimeout(400);
       }
 
       // Let images decode and the Lottie/spinner state settle. The Library video

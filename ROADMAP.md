@@ -111,6 +111,26 @@ for exactly what each run exercised). These parts have **only ever run against
 Treat every other executor figure in the docs as a **capture-time or dry-run**
 measurement.
 
+### The MCP surface stops short in three known places
+
+The endpoint ([docs/mcp.md](./docs/mcp.md)) ships with six read-only tools. Three
+things were deliberately left out of the first version:
+
+- **No image-by-example query.** `SearchInput.imageBytes` exists and works, but an
+  agent rarely has a screenshot to hand and the path needs an image provider
+  configured.
+- **Keyframes are inline base64, not MCP resources.** A `resource_link` would let a
+  client fetch only the images it wants — cleaner than a 275 kB block in a tool
+  result — but client support is uneven today.
+- **Streamable HTTP only.** A client that speaks stdio and not HTTP cannot connect;
+  a thin stdio bridge would fix it and has not been written.
+
+And one constraint that follows from hosting it in the app rather than as a
+standalone binary: **DeskRAGApp must be running.** It owns the store and the
+providers, and a second owner would have to duplicate provider construction and
+open SQLite and LanceDB behind the app's back. The app may be closed to the tray,
+but not quit.
+
 ## Standing constraints (not bugs, and not scheduled to change)
 
 - **macOS only.** Capture depends on avfoundation, the Swift AX sidecars, and

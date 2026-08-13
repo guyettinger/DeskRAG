@@ -30,6 +30,13 @@ The graph is also an executable IR — `src/replay/` turns it into a plan and po
 CGEvents — but **that executor is not wired to the app**: nothing in DeskRAGApp observes or
 acts on the live desktop, and it never starts a process capable of clicking.
 
+Your memory is also readable by an agent. DeskRAG serves it over **[MCP](./docs/mcp.md)**,
+so a coding assistant can ask what you actually did — search your moments, read what a
+session was for, see how you carried out a task before and what varied between attempts —
+instead of guessing. It is read-only and loopback-only, and *read-only* is enforced by a
+test rather than promised: nothing on that surface can record, delete, re-index, or reach
+the executor.
+
 **Every model runs on your machine.** There is no cloud provider, no API key, and no
 network call to anything but a daemon on localhost — the privacy claim is structural,
 not a matter of how you configured it. TypeScript throughout, strict types, pluggable
@@ -90,6 +97,7 @@ npm install && npm run typecheck && npm test
 | [Architecture](./docs/architecture.md) | the pipeline, the dual-store seam, vector namespacing, repo layout |
 | [Setup](./docs/setup.md) | requirements, install, optional tools, macOS permissions, maintainer scripts |
 | [Providers](./docs/providers.md) | what runs where, weight pinning, why every provider is local |
+| [Agent access (MCP)](./docs/mcp.md) | the six read-only tools, how to connect, and the security posture |
 | [Library usage](./docs/library-usage.md) | the API shape, end to end |
 | [DeskRAGApp](./app/README.md) | the Electron desktop client |
 | [Roadmap](./ROADMAP.md) | what isn't built yet, and where a shipped part stops short |
