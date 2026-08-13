@@ -89,7 +89,7 @@ export function audioDeviceFor(device: string | undefined): string {
  */
 const PROVIDER_VALUES = {
   textProvider: ["ollama", "onnx"],
-  imageProvider: ["none", "nomic", "colsmol"],
+  imageProvider: ["none", "nomic", "colsmol", "colmodernvbert"],
   captionProvider: ["none", "ollama"],
   summaryProvider: ["none", "ollama"],
   rerankProvider: ["none", "onnx"],

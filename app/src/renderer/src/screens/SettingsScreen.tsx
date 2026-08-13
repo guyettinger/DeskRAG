@@ -21,11 +21,14 @@ interface Props {
  * options, so the screen is four groups of local configuration rather than a
  * local/cloud choice.
  *
- * The one non-obvious rule it enforces is ColSmol's capture width: below 2048 on
- * the long edge its preprocessor UPSCALES, sharp's magnification path diverges
- * from the reference implementation, and ~1% of patch vectors drift below cosine
- * 0.90 — silently, with scores still looking sane. That is why picking ColSmol
- * surfaces a width warning rather than trusting the default.
+ * The one non-obvious rule it enforces is the LATE-INTERACTION capture width:
+ * below 2048 on the long edge the Idefics3 preprocessor UPSCALES, sharp's
+ * magnification path diverges from the reference implementation, and ~1% of
+ * patch vectors drift below cosine 0.90 — silently, with scores still looking
+ * sane. That is why picking one of those models surfaces a width warning rather
+ * than trusting the default. It applies to ColSmol and ColModernVBERT alike:
+ * they share the tiler verbatim, because their preprocessor configs agree on
+ * every field it reads.
  */
 export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
   const [s, setS] = useState<SettingsView | null>(null);
@@ -159,7 +162,14 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
   };
 
   const p = s.providers;
-  const narrowForColSmol = p.imageProvider === "colsmol" && s.signals.screen.imageMaxWidth < 2048;
+  // BOTH late-interaction providers share ColSmol's Idefics3 tiler verbatim —
+  // ColModernVBERT's preprocessor_config.json matches it on every field the
+  // tiler reads — so the >=2048 width rule and the AX-labels rule apply to each
+  // identically. Keying these banners on "colsmol" alone would silently drop
+  // both warnings the moment the other one is picked.
+  const lateInteraction = p.imageProvider === "colsmol" || p.imageProvider === "colmodernvbert";
+  const imageModelName = p.imageProvider === "colmodernvbert" ? "ColModernVBERT" : "ColSmol";
+  const narrowForTiling = lateInteraction && s.signals.screen.imageMaxWidth < 2048;
 
   return (
     <div className="page">
@@ -221,10 +231,10 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
           <div>
             <label>Image model</label>
             <div className="desc">
-              {p.imageProvider === "colsmol"
-                ? "Slower (seconds per frame), and highlights come from matched patches"
+              {lateInteraction
+                ? "Slower (seconds per frame), answers TEXT queries too, and highlights come from matched patches"
                 : p.imageProvider === "nomic"
-                  ? "Fast, and adds labelled region highlights you can search by UI role"
+                  ? "Fast, and adds labelled region highlights you can search by UI role — but answers search-by-image only, never a typed query"
                   : "For search-by-image + region highlights"}
             </div>
           </div>
@@ -235,14 +245,15 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
             <option value="none">None (text + behavior only)</option>
             <option value="nomic">Nomic Vision (recommended)</option>
             <option value="colsmol">ColSmol (late interaction)</option>
+            <option value="colmodernvbert">ColModernVBERT (late interaction)</option>
           </select>
         </div>
 
-        {narrowForColSmol && (
+        {narrowForTiling && (
           <div className="banner">
-            <span className="led" /> ColSmol needs keyframes at 2048px or wider — below that its
-            preprocessor upscales and match quality degrades without any visible error. Yours is{" "}
-            {s.signals.screen.imageMaxWidth}px.
+            <span className="led" /> {imageModelName} needs keyframes at 2048px or wider — below
+            that its preprocessor upscales and match quality degrades without any visible error.
+            Yours is {s.signals.screen.imageMaxWidth}px.
             <button
               className="btn"
               style={{ marginLeft: 12 }}
@@ -253,7 +264,7 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
           </div>
         )}
 
-        {p.imageProvider === "colsmol" && !s.signals.ax.enabled && (
+        {lateInteraction && !s.signals.ax.enabled && (
           <div className="banner">
             <span className="led" /> Turn on accessibility capture for exact-text search — the image
             model reads layout, not text, so AX labels are what match a typed phrase.

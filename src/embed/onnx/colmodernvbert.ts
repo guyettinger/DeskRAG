@@ -27,6 +27,7 @@
  * upscales and patch vectors drift with scores still looking sane.
  */
 
+import { readFile } from "node:fs/promises";
 import type { MultiVectorProvider } from "../types.js";
 import { l2Normalize } from "./pooling.js";
 import {
@@ -43,6 +44,45 @@ import {
 } from "./colmodernvbert-prompt.js";
 import { OnnxRuntime, makeTensor, type OnnxSession } from "./runtime.js";
 import { defaultConfigPath, loadTokenizer } from "./tokenizer.js";
+
+/**
+ * Read tiling parameters from the model's own config files.
+ *
+ * NOT `colsmol.ts`'s function, and the difference is one field: ColSmol nests
+ * `pixel_shuffle_factor` under `text_config`, ColModernVBERT puts it at the TOP
+ * level. Reusing ColSmol's reader here falls through to DEFAULT_TILE_CONFIG —
+ * which is also 4, so it would be correct BY LUCK and would silently stop being
+ * correct the moment either export changed its geometry. Both spellings are
+ * accepted so one reader cannot disagree with the other about a shared config.
+ */
+export async function readTileConfig(
+  preprocessorPath: string,
+  configPath: string,
+): Promise<TileConfig> {
+  const [preRaw, cfgRaw] = await Promise.all([
+    readFile(preprocessorPath, "utf8"),
+    readFile(configPath, "utf8"),
+  ]);
+  const pre = JSON.parse(preRaw) as {
+    size?: { longest_edge?: number };
+    max_image_size?: { longest_edge?: number };
+  };
+  const cfg = JSON.parse(cfgRaw) as {
+    vision_config?: { patch_size?: number };
+    pixel_shuffle_factor?: number;
+    text_config?: { pixel_shuffle_factor?: number };
+  };
+  return {
+    maxEdge: pre.size?.longest_edge ?? DEFAULT_TILE_CONFIG.maxEdge,
+    tileSize: pre.max_image_size?.longest_edge ?? DEFAULT_TILE_CONFIG.tileSize,
+    patchSize: cfg.vision_config?.patch_size ?? DEFAULT_TILE_CONFIG.patchSize,
+    shuffleFactor:
+      cfg.pixel_shuffle_factor ??
+      cfg.text_config?.pixel_shuffle_factor ??
+      DEFAULT_TILE_CONFIG.shuffleFactor,
+    globalTile: true,
+  };
+}
 
 export interface ColModernVBertOptions {
   modelPath: string;

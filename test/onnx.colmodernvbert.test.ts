@@ -1,5 +1,11 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { ColModernVBertMultiVector } from "../src/embed/onnx/colmodernvbert.js";
+import {
+  ColModernVBertMultiVector,
+  readTileConfig,
+} from "../src/embed/onnx/colmodernvbert.js";
 import { computeTileGeometry, expectedTokenCount } from "../src/embed/onnx/geometry.js";
 import { MV_TOK, QUERY_BUFFER_TOKENS } from "../src/embed/onnx/colmodernvbert-prompt.js";
 import type { OnnxSession, OnnxTensor } from "../src/embed/onnx/runtime.js";
@@ -158,6 +164,82 @@ describe("ColModernVBertMultiVector", () => {
   });
 
   it("returns [] for empty input without touching the session", async () => {
+    const seen: Record<string, OnnxTensor>[] = [];
+    const p = new ColModernVBertMultiVector(opts(stubSession(seen)));
+    expect(await p.embedImages([])).toEqual([]);
+    expect(await p.embedQueries([])).toEqual([]);
+    expect(seen.length).toBe(0);
+  });
+});
+
+describe("readTileConfig", () => {
+  const write = (pre: unknown, cfg: unknown): [string, string] => {
+    const dir = mkdtempSync(join(tmpdir(), "cmv-cfg-"));
+    const a = join(dir, "preprocessor_config.json");
+    const b = join(dir, "config.json");
+    writeFileSync(a, JSON.stringify(pre));
+    writeFileSync(b, JSON.stringify(cfg));
+    return [a, b];
+  };
+
+  it("reads pixel_shuffle_factor from the TOP level, where this model puts it", async () => {
+    // The whole reason this function is not ColSmol's: ColSmol nests the field
+    // under text_config, ColModernVBERT does not. Reusing ColSmol's reader falls
+    // through to the default — which is also 4, so it would be right by luck and
+    // wrong the moment either export changes.
+    const [pre, cfg] = write(
+      { size: { longest_edge: 2048 }, max_image_size: { longest_edge: 512 } },
+      { vision_config: { patch_size: 16 }, pixel_shuffle_factor: 3 },
+    );
+    expect(await readTileConfig(pre, cfg)).toEqual({
+      maxEdge: 2048,
+      tileSize: 512,
+      patchSize: 16,
+      shuffleFactor: 3,
+      globalTile: true,
+    });
+  });
+
+  it("still accepts the nested spelling", async () => {
+    const [pre, cfg] = write(
+      { size: { longest_edge: 1024 }, max_image_size: { longest_edge: 256 } },
+      { vision_config: { patch_size: 8 }, text_config: { pixel_shuffle_factor: 2 } },
+    );
+    const c = await readTileConfig(pre, cfg);
+    expect(c.shuffleFactor).toBe(2);
+    expect(c.maxEdge).toBe(1024);
+    expect(c.tileSize).toBe(256);
+    expect(c.patchSize).toBe(8);
+  });
+
+  it("falls back to the defaults field by field", async () => {
+    const [pre, cfg] = write({}, {});
+    expect(await readTileConfig(pre, cfg)).toEqual({
+      maxEdge: 2048,
+      tileSize: 512,
+      patchSize: 16,
+      shuffleFactor: 4,
+      globalTile: true,
+    });
+  });
+
+  it("matches the real ColModernVBERT geometry: 13 tiles for a 1280x800 frame", async () => {
+    const [pre, cfg] = write(
+      {
+        image_processor_type: "Idefics3ImageProcessor",
+        size: { longest_edge: 2048 },
+        max_image_size: { longest_edge: 512 },
+      },
+      { vision_config: { image_size: 512, patch_size: 16 }, pixel_shuffle_factor: 4 },
+    );
+    const g = computeTileGeometry(1280, 800, await readTileConfig(pre, cfg));
+    expect(g.cols * g.rows + (g.hasGlobalTile ? 1 : 0)).toBe(13);
+    expect(g.tokensPerTile).toBe(64);
+  });
+});
+
+describe("ColModernVBertMultiVector — empty input", () => {
+  it("touches nothing", async () => {
     const seen: Record<string, OnnxTensor>[] = [];
     const p = new ColModernVBertMultiVector(opts(stubSession(seen)));
     expect(await p.embedImages([])).toEqual([]);
