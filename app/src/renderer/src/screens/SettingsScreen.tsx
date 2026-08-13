@@ -11,6 +11,7 @@ import type {
   TextProvider,
 } from "@shared/types";
 import { api } from "../api.js";
+import { McpPane } from "./McpPane.js";
 
 interface Props {
   onEnv: (e: EnvInfo) => void;
@@ -79,6 +80,11 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
     const next = await api.settings.set({ providers: p });
     setS(next);
     refreshEnv();
+  };
+
+  const patchMcp = async (patch: Partial<SettingsView["mcp"]>): Promise<void> => {
+    setS(await api.settings.set({ mcp: patch }));
+    flash();
   };
 
   const patchSignals = async (
@@ -541,6 +547,8 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
           />
         </div>
       </div>
+
+      <McpPane mcp={s.mcp} onPatch={patchMcp} />
 
       <div className="card">
         <h2>Maintenance</h2>

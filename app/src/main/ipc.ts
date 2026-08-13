@@ -13,6 +13,7 @@ import {
 } from "@shared/types";
 import type { DeskRagService } from "./deskrag-service.js";
 import type { SettingsStore } from "./settings.js";
+import type { McpExperienceServer } from "./mcp/server.js";
 import { checkAll, request, openSettings } from "./permissions.js";
 import { envInfo } from "./env.js";
 
@@ -21,6 +22,7 @@ export function registerIpc(
   settings: SettingsStore,
   getWindow: () => BrowserWindow | null,
   resetApp: () => Promise<void>,
+  mcp: McpExperienceServer,
 ): void {
   const send = (channel: string, payload: unknown): void => {
     getWindow()?.webContents.send(channel, payload);
@@ -30,7 +32,14 @@ export function registerIpc(
   service.onModelDownload((p) => send(IPC.modelDownloadEvent, p));
 
   ipcMain.handle(IPC.settingsGet, () => settings.view());
-  ipcMain.handle(IPC.settingsSet, (_e, patch: SettingsPatch) => settings.apply(patch));
+  ipcMain.handle(IPC.settingsSet, async (_e, patch: SettingsPatch) => {
+    const view = settings.apply(patch);
+    // Only when the MCP half of the patch is present — this fires on every
+    // keystroke in every Settings field, and `applySettings` is a no-op unless
+    // something it cares about actually changed.
+    if (patch.mcp) await mcp.applySettings(view.mcp.enabled, view.mcp.port);
+    return view;
+  });
   ipcMain.handle(IPC.settingsCapabilities, () => service.capabilities());
 
   ipcMain.handle(IPC.permissionsCheck, () => checkAll());
@@ -57,6 +66,17 @@ export function registerIpc(
    * the app can reach it, which is what keeps `ax-exec` unspawned.
    */
   ipcMain.handle(IPC.flowsGraph, () => service.flows());
+
+  /**
+   * The MCP endpoint, reported to the window that hosts its settings.
+   *
+   * Read-only in this direction too: there is no channel that invokes a tool.
+   * The renderer watches what agents have asked — the activity log is the gate
+   * on an endpoint that carries no token — and can start, stop or move the
+   * listener only through the settings above.
+   */
+  ipcMain.handle(IPC.mcpStatus, () => mcp.status(settings.view().mcp.enabled));
+  ipcMain.handle(IPC.mcpLog, () => mcp.entries());
 
   /**
    * Vision-capable models resident on this machine. Sourced from Ollama's

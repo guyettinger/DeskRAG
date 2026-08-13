@@ -14,6 +14,7 @@ import type {
   SettingsView,
   SettingsPatch,
   SignalConfig,
+  McpSettings,
   ProviderSettingsView,
 } from "@shared/types";
 import { DEFAULT_AUDIO_INPUT } from "deskrag";
@@ -22,7 +23,17 @@ import { DEFAULT_WHISPER_BIN, resolveWhisperBinary } from "./whisper.js";
 interface PersistedSettings {
   providers: ProviderSettingsView;
   signals: SignalConfig;
+  mcp: McpSettings;
 }
+
+/**
+ * The MCP endpoint's default port.
+ *
+ * Nothing well-known sits here, and it is fixed rather than searched for: the
+ * URL goes into an agent's config by hand, so a port that moves on its own
+ * breaks a connection the user already made.
+ */
+export const DEFAULT_MCP_PORT = 41777;
 
 const DEFAULTS: PersistedSettings = {
   providers: {
@@ -55,7 +66,22 @@ const DEFAULTS: PersistedSettings = {
     audio: { enabled: true, device: DEFAULT_AUDIO_INPUT, chunkSeconds: 10 },
     ax: { enabled: false },
   },
+  mcp: { enabled: true, port: DEFAULT_MCP_PORT },
 };
+
+/**
+ * A persisted port, or the default.
+ *
+ * Ports below 1024 need root and would fail to bind; anything outside the 16-bit
+ * range is not a port at all. Both reset rather than being carried forward, the
+ * same rule `PROVIDER_VALUES` follows: a stored value the app cannot act on is
+ * better replaced than handed to `listen()` to fail on every launch.
+ */
+export function mcpPortFor(port: number | undefined): number {
+  if (typeof port !== "number" || !Number.isInteger(port)) return DEFAULT_MCP_PORT;
+  if (port < 1024 || port > 65535) return DEFAULT_MCP_PORT;
+  return port;
+}
 
 /**
  * The audio device DEFAULTS used to carry. It is an index into a table that is
@@ -150,6 +176,11 @@ export class SettingsStore {
           },
           ax: { ...DEFAULTS.signals.ax, ...raw.signals?.ax },
         },
+        mcp: {
+          ...DEFAULTS.mcp,
+          ...raw.mcp,
+          port: mcpPortFor(raw.mcp?.port),
+        },
       };
     } catch {
       return structuredClone(DEFAULTS);
@@ -161,7 +192,11 @@ export class SettingsStore {
   }
 
   view(): SettingsView {
-    return { providers: this.settings.providers, signals: this.settings.signals };
+    return {
+      providers: this.settings.providers,
+      signals: this.settings.signals,
+      mcp: this.settings.mcp,
+    };
   }
 
   apply(patch: SettingsPatch): SettingsView {
@@ -193,6 +228,17 @@ export class SettingsStore {
         activeWin: { ...s.activeWin, ...p.activeWin },
         audio: { ...s.audio, ...p.audio },
         ax: { ...s.ax, ...p.ax },
+      };
+    }
+    if (patch.mcp) {
+      // Normalized here, unlike the whisper path: a port has no "resolve at
+      // spawn time" moment to defer to — the listener binds whatever is stored.
+      // So the pane must commit the port on BLUR rather than on every keystroke,
+      // or the first digit typed would snap back to the default mid-edit.
+      this.settings.mcp = {
+        ...this.settings.mcp,
+        ...patch.mcp,
+        port: mcpPortFor(patch.mcp.port ?? this.settings.mcp.port),
       };
     }
     this.persist();

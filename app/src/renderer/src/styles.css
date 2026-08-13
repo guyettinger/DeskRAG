@@ -2579,3 +2579,31 @@ select {
   font-size: var(--t-micro); padding: 1px var(--s1); border-radius: 999px;
   background: rgb(88 213 163 / 0.18); color: var(--ok);
 }
+
+/* The MCP activity log. It is the GATE on an endpoint that carries no token —
+   seeing what was asked is what stands in for controlling who may ask — so it
+   is a scrolling record rather than a last-call indicator. Newest first: the
+   question just asked is the one being checked. */
+.mcp-log {
+  display: flex; flex-direction: column; gap: var(--s0);
+  max-height: 220px; overflow-y: auto;
+  font-size: var(--t-meta);
+}
+.mcp-log__row {
+  display: grid;
+  grid-template-columns: auto auto auto minmax(0, 1fr) auto;
+  align-items: center; gap: var(--s2);
+  padding: var(--s1) 0;
+  border-bottom: 1px solid var(--hairline-soft);
+}
+.mcp-log__row:last-child { border-bottom: none; }
+.mcp-log__when { color: var(--muted); }
+.mcp-log__tool { font-weight: 600; white-space: nowrap; }
+/* The arguments are the interesting half and the only variable-width column, so
+   they take the slack — and they truncate here rather than wrapping the row,
+   because this list is scanned rather than read. The full line is in the title. */
+.mcp-log__args {
+  color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mcp-log__ms { color: var(--muted); white-space: nowrap; }

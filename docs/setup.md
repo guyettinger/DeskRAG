@@ -140,6 +140,7 @@ the four natives into an empty directory and loading each one; `esbuild` and
 npm run gen:brand            # regenerate assets/ + app/build/ icons from scripts/brand/geometry.ts
 npm run gen:shots            # regenerate docs/images/*.png from the built app
 npm run smoke:onnx-electron  # the ONNX allocator crash vitest structurally cannot reach
+npm run probe:mcp            # exercise the MCP endpoint against the real store
 ```
 
 - **`assets/` and `app/build/` are generated, never hand-edited.** A drift guard in
@@ -160,6 +161,16 @@ npm run smoke:onnx-electron  # the ONNX allocator crash vitest structurally cann
     the six PNGs after a run** — the script cannot tell a thin store from a rich one.
   - The Search shot uses a **fixed demo query**, so it needs recorded content that
     actually matches it; otherwise it captures "No matches".
+  - **Naming ids regenerates only those**: `node scripts/shots.mjs mcp-pane`. Every
+    shot comes from the live data dir, so a full run rewrites all of them whenever
+    the recordings change, burying a one-image update in a diff nobody asked for.
+- **`probe:mcp`** drives the built app and calls all six MCP tools over a real
+  socket, plus the three guard checks (cross-origin 403, rebound `Host` 403,
+  GET 405). It is the **only** place those tools meet a real store — the app-side
+  integration test runs against a fake reader, and vitest has no renderer. Like
+  `replay-probe.mjs` it is read-only: every tool it calls is a read. It needs the
+  port free, so quit any running instance first — a stray one holding 41777 makes
+  the endpoint report a bind failure rather than serving.
 - **`smoke:onnx-electron`** is the only thing that reproduces the ONNX allocator
   crashes — they need Chromium's allocator *and* a second run, and vitest gives
   neither. Any change to ORT session options, tile counts, or model exports wants

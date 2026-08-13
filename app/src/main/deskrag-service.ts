@@ -38,6 +38,7 @@ import {
   AppCaptionRepresenter,
   ComposeRepresenter,
   ROOT_GRANULARITY,
+  LEAF_GRANULARITY,
   OllamaSummaryProvider,
   RegionRepresenter,
   TranscriptRepresenter,
@@ -75,6 +76,7 @@ import {
 import { OnnxHost } from "./onnx-host.js";
 import { spawnOnnxWorker } from "./onnx-spawn.js";
 import { TRACK_BUCKETS } from "@shared/types";
+import type { SegmentRow, SegmentSummaryRow } from "deskrag";
 import type {
   Capabilities,
   FlowsDTO,
@@ -189,7 +191,14 @@ export class DeskRagService {
   private stateListeners = new Set<(s: RecordingStatus) => void>();
   private indexingListeners = new Set<(p: IndexingProgress) => void>();
   private modelListeners = new Set<(p: ModelDownloadProgress) => void>();
-  /** Region highlights from the most recent search, for detail() to reuse. */
+  /**
+   * Region highlights from the most recent search, for detail() to reuse.
+   *
+   * This is RENDERER state: it belongs to the window's current result list. Only
+   * `search()` writes it, and `searchDetached()` exists so a second reader — the
+   * MCP endpoint — can run a query without wiping the highlights out from under
+   * whatever the user has open.
+   */
   private lastHighlights = new Map<string, HighlightDTO[]>();
   /**
    * Timeline rails, keyed by session id. A FINISHED session is immutable, so
@@ -874,7 +883,27 @@ export class DeskRagService {
     });
   }
 
+  /**
+   * The renderer's search: identical to `searchDetached`, plus it commits the
+   * highlights `detail()` serves back to the window.
+   */
   async search(input: SearchInput): Promise<SearchResultDTO> {
+    const { result, highlights } = await this.searchDetached(input);
+    this.lastHighlights = highlights;
+    return result;
+  }
+
+  /**
+   * A search that touches no shared state, for callers that are not the window.
+   *
+   * The highlights come back in hand rather than being stashed, because there is
+   * more than one reader now: a query arriving over MCP used to clear
+   * `lastHighlights` and repopulate it from its OWN results, so an agent
+   * searching in the background silently changed what the user was looking at.
+   */
+  async searchDetached(
+    input: SearchInput,
+  ): Promise<{ result: SearchResultDTO; highlights: Map<string, HighlightDTO[]> }> {
     const prov = await this.buildProviders();
     if (input.imageBytes) {
       if (!prov.imageEmbedder && !prov.patchEmbedder) {
@@ -912,7 +941,7 @@ export class DeskRagService {
       ...(input.imageBytes ? { image: input.imageBytes } : {}),
     });
 
-    this.lastHighlights.clear();
+    const highlightsByFrame = new Map<string, HighlightDTO[]>();
     // Hits span sessions, and each session's lane origin is its video's first
     // frame. One list pass and one blob read per DISTINCT session, memoized —
     // resolving per hit would rescan the session list for every result.
@@ -935,7 +964,7 @@ export class DeskRagService {
         label: h.label,
         matchedBy: h.matchedBy,
       }));
-      this.lastHighlights.set(fr.frameId, highlights);
+      highlightsByFrame.set(fr.frameId, highlights);
       return {
         frameId: fr.frameId,
         score: fr.score,
@@ -956,18 +985,21 @@ export class DeskRagService {
     });
 
     return {
-      frames: hits,
-      // Only meaningful when the miss is total: some vectors exist, just not in
-      // a space this provider can read.
-      ...(hits.length === 0 && hasAnyTextSpace && !hasCurrentTextSpace
-        ? { indexedUnderDifferentProvider: true }
-        : {}),
-      // Segments matched but carried no frames: an index defect with a specific
-      // remedy, not an empty result. Checked after the provider case above,
-      // which is the more fundamental explanation when both could apply.
-      ...(hits.length === 0 && hasCurrentTextSpace && segments.length > 0
-        ? { segmentsMatchedButNoFrames: segments.length }
-        : {}),
+      result: {
+        frames: hits,
+        // Only meaningful when the miss is total: some vectors exist, just not in
+        // a space this provider can read.
+        ...(hits.length === 0 && hasAnyTextSpace && !hasCurrentTextSpace
+          ? { indexedUnderDifferentProvider: true }
+          : {}),
+        // Segments matched but carried no frames: an index defect with a specific
+        // remedy, not an empty result. Checked after the provider case above,
+        // which is the more fundamental explanation when both could apply.
+        ...(hits.length === 0 && hasCurrentTextSpace && segments.length > 0
+          ? { segmentsMatchedButNoFrames: segments.length }
+          : {}),
+      },
+      highlights: highlightsByFrame,
     };
   }
 
@@ -986,6 +1018,19 @@ export class DeskRagService {
   }
 
   detail(frameId: string): ResultDetailDTO | null {
+    return this.detailWith(frameId, this.lastHighlights.get(frameId) ?? []);
+  }
+
+  /**
+   * `detail()` for a caller that is not the window.
+   *
+   * Highlights are QUERY-relative — they are the regions that matched, and
+   * `matchedBy` says how — so they are passed in rather than read from
+   * `lastHighlights`. Reading that map here would answer an MCP request with
+   * whatever the user's last search happened to highlight, which is not an
+   * answer to the question that was asked.
+   */
+  detailWith(frameId: string, highlights: HighlightDTO[]): ResultDetailDTO | null {
     const frame = this.store.getFrame(frameId);
     if (!frame) return null;
     const session = this.store.getSession(frame.sessionId);
@@ -1029,7 +1074,7 @@ export class DeskRagService {
           }
         : null,
       ax,
-      highlights: this.lastHighlights.get(frameId) ?? [],
+      highlights,
     };
   }
 
@@ -1348,6 +1393,41 @@ export class DeskRagService {
    */
   frameBlobId(frameId: string): string | undefined {
     return this.store.getFrame(frameId)?.blobId ?? undefined;
+  }
+
+  /**
+   * Everything needed to render one recording's composed hierarchy, in one read.
+   *
+   * The store stays private — this returns rows, not a handle — and the shaping
+   * happens in the caller, which is what keeps `buildOutline` pure and in the
+   * root suite. `null` means no such recording, which is a different answer from
+   * a recording that was never composed.
+   */
+  sessionComposition(sessionId: string): {
+    segments: SegmentRow[];
+    summaries: SegmentSummaryRow[];
+    children: [string, string[]][];
+    laneOrigin: number;
+  } | null {
+    const session = this.store.listSessions().find((s) => s.id === sessionId);
+    if (session === undefined) return null;
+    const segments = this.store.getSegmentsBySession(sessionId);
+    // Edges are STORED, never derived from spans: a parent's span is exactly its
+    // children's union, so containment cannot say which of two identical spans
+    // is the parent.
+    const children: [string, string[]][] = [];
+    for (const s of segments) {
+      if (s.granularity === LEAF_GRANULARITY) continue;
+      const kids = this.store.getSegmentChildren(s.id);
+      if (kids.length > 0) children.push([s.id, kids]);
+    }
+    const blob = session.videoBlobId ? this.store.getBlob(session.videoBlobId) : undefined;
+    return {
+      segments,
+      summaries: this.store.getSegmentSummariesBySession(sessionId),
+      children,
+      laneOrigin: laneOriginOf(blob ?? null),
+    };
   }
 
   /**

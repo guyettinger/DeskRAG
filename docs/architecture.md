@@ -154,6 +154,8 @@ text/raw first then the vector, and slot into reconciliation and a Tier-1
 
 - [Setup and requirements](./setup.md)
 - [Providers](./providers.md) — what runs where, and why every one is local
+- [Agent access (MCP)](./mcp.md) — the read-only surface an external agent reads
+  this index through
 - [Library usage](./library-usage.md)
 - [DeskRAGApp](../app/README.md) — the desktop client
 - [Roadmap and known gaps](../ROADMAP.md) — what isn't built, and where a shipped
