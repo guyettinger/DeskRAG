@@ -20,10 +20,10 @@
  * ColModernVBERT is the UPSTREAM export, not a re-export: Qdrant's ONNX
  * (Qdrant/colmodernvbert, MIT) already builds input_ids from the actual patch
  * count, so it takes any tile count and needs no re-trace. That is the whole
- * reason scripts/export-colsmol.py has no counterpart here. It is downloaded by
- * hand today — no provider is wired to it yet; it exists to be measured.
+ * reason scripts/export-colsmol.py has no counterpart here. It is a selectable
+ * `imageProvider` like any other — `ColModernVBertMultiVector` reads these files
+ * through `models.ensure`, so it downloads on first use rather than by hand.
  *
-
  * Whisper is the one entry that is NOT ONNX: it is a GGML file consumed by an
  * external whisper.cpp binary. It lives here anyway so speech-to-text works out
  * of the box — the previous "bring your own model path" default meant

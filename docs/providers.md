@@ -11,6 +11,7 @@ regression, not a feature to add.**
 | Text embedding | ONNX (in-process) | `nomic-embed-text-v1.5` (int8) |
 | Image, single-vector | ONNX (in-process) | `nomic-embed-vision-v1.5` (int8) — writes region rows, so Tier 3 + AX-label FTS highlights work |
 | Image, late interaction | ONNX (in-process) | `colSmol-256M-dynamic` — patches *are* the regions, so highlights fall out of the MaxSim argmax instead |
+| Image, late interaction | ONNX (in-process) | `colmodernvbert-250m` — the same tiling and the same ≥2048px rule, on a ModernVBERT backbone |
 | Behavioral vector | builtin | `input-dynamics-v1`, 12-dim |
 | VLM caption | Ollama (daemon) | any vision model you've pulled, e.g. `qwen3-vl:4b` |
 | Transcription (STT) | whisper.cpp (subprocess) | `ggml-base.en-q5_1.bin`, downloaded like any other weight |
@@ -40,12 +41,16 @@ says so in the progress label; it does not cost you the session.
 
 ## The two image paths are mutually exclusive
 
-They index different vector spaces, and `Retriever` rejects both at once.
+Single-vector and late-interaction index different vector spaces, and `Retriever`
+rejects both at once — pick one, or neither.
 
 - **Nomic Vision** is the cheaper default (~70ms/frame) and the one that gives you
   region highlights searchable by UI role.
-- **ColSmol** is seconds per frame and needs keyframes captured at ≥2048px, but
-  matches at patch granularity.
+- **ColSmol** and **ColModernVBERT** are the late-interaction pair: seconds per
+  frame, and they need keyframes captured at ≥2048px, but they match at patch
+  granularity. They share a tiler and a preprocessing geometry, so the width rule
+  and the Settings warning apply to both identically; they differ in backbone,
+  tokenizer, and ONNX signature.
 
 ## Fakes, and what stays out of the barrel
 

@@ -6,7 +6,7 @@
 
 <p align="center"><strong>Local-first, multimodal desktop session memory.</strong></p>
 
-DeskRAG captures what happens on your desktop — screen video, desktop + mic audio,
+DeskRAG captures what happens on your desktop — screen video, microphone audio,
 mouse/keyboard input, active window, and the OS accessibility tree — into a searchable
 "experience memory," then lets you recall past moments by:
 
@@ -19,28 +19,25 @@ on the desktop we read real UI structure from the **accessibility tree**, giving
 labeled region proposals — grounded bounding boxes and roles that video systems must
 infer.
 
-Recordings don't stay a pile of video. Each one is lifted into a **trace graph** — states
+A recording also composes into a hierarchy — actions into tasks, tasks into phases,
+phases into one named session — so you can read what a recording was *for* before
+opening it.
+
+Recordings don't stay a pile of video. Each is lifted into a **trace graph** — states
 verified against the accessibility tree, edges of the actions you actually performed —
-and the **Flows** screen is where you read it: the routes you take repeatedly, weighted by
-how often you took them, with one click from any state back to the recording and the exact
-moment it happened. Recording a task twice is what reveals it as a flow at all, so what
-shows up is what you did rather than what a model inferred.
+and the **Flows** screen reads it back: the routes you take repeatedly, weighted by how
+often you took them, one click from any state to the moment it happened. Recording a task
+twice is what reveals it as a flow, so what shows up is what you did rather than what a
+model inferred.
 
-The graph is also an executable IR — `src/replay/` turns it into a plan and posts real
-CGEvents — but **that executor is not wired to the app**: nothing in DeskRAGApp observes or
-acts on the live desktop, and it never starts a process capable of clicking.
+An agent can read your memory too. DeskRAG serves it over **[MCP](./docs/mcp.md)**, so a
+coding assistant can ask what you actually did instead of guessing. The surface is
+read-only and loopback-only, and *read-only* is enforced by a test rather than promised.
 
-Your memory is also readable by an agent. DeskRAG serves it over **[MCP](./docs/mcp.md)**,
-so a coding assistant can ask what you actually did — search your moments, read what a
-session was for, see how you carried out a task before and what varied between attempts —
-instead of guessing. It is read-only and loopback-only, and *read-only* is enforced by a
-test rather than promised: nothing on that surface can record, delete, re-index, or reach
-the executor.
-
-**Every model runs on your machine.** There is no cloud provider, no API key, and no
-network call to anything but a daemon on localhost — the privacy claim is structural,
-not a matter of how you configured it. TypeScript throughout, strict types, pluggable
-local providers (Ollama, in-process ONNX, whisper.cpp).
+**Every model runs on your machine.** No cloud provider, no API key, no network call to
+anything but a daemon on localhost — the privacy claim is structural, not a matter of how
+you configured it. TypeScript throughout, strict types, pluggable local providers (Ollama,
+in-process ONNX, whisper.cpp).
 
 ## DeskRAGApp
 
@@ -63,6 +60,9 @@ permissions, and how it's wired.
 
 ## Quick start
 
+**macOS and Node ≥ 20.** Capture depends on avfoundation, the Swift accessibility
+sidecar, and CGEvent; no other platform is stubbed.
+
 Two prerequisites, and DeskRAG refuses to record without either: **ffmpeg 5.1+**
 is the capture pipeline, and **`swiftc`** builds the `ax-dump` sidecar that reads
 the device timebase.
@@ -75,7 +75,7 @@ xcode-select --install   # swiftc, for the sidecar
 ```bash
 npm install         # the library (root) — Node-ABI native modules for the test suite
 npm run app:install # the app (own node_modules) — postinstall builds better-sqlite3 for Electron
-npm run build:ax    # the ax-dump / ax-exec sidecars — required to record at all
+npm run build:ax    # the Swift sidecars — ax-dump is required to record at all
 npm run app:dev     # build the library, then launch the app
 ```
 
