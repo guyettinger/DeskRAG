@@ -9,6 +9,7 @@ import {
   IPC,
   type DeskRagApi,
   type IndexingProgress,
+  type McpLogEntryDTO,
   type ModelDownloadProgress,
   type PermissionKind,
   type RecordingStatus,
@@ -54,6 +55,11 @@ const api: DeskRagApi = {
   },
   flows: {
     graph: () => ipcRenderer.invoke(IPC.flowsGraph),
+  },
+  mcp: {
+    status: () => ipcRenderer.invoke(IPC.mcpStatus),
+    log: () => ipcRenderer.invoke(IPC.mcpLog),
+    onLog: (cb: (entry: McpLogEntryDTO) => void) => subscribe(IPC.mcpLogEvent, cb),
   },
   models: {
     onDownload: (cb: (p: ModelDownloadProgress) => void) =>

@@ -63,9 +63,23 @@ export interface ProviderSettingsView {
   whisper: { binaryPath: string; modelPath: string };
 }
 
+/**
+ * The MCP server's own settings.
+ *
+ * `port` is fixed rather than auto-assigned on purpose: the user pastes a URL
+ * into an agent's config once, and a server that quietly moved to a free port
+ * would present as broken with nothing on screen to say why. A bind failure is
+ * reported instead — see `McpStatusDTO.error`.
+ */
+export interface McpSettings {
+  enabled: boolean;
+  port: number;
+}
+
 export interface SettingsView {
   providers: ProviderSettingsView;
   signals: SignalConfig;
+  mcp: McpSettings;
 }
 
 export interface SettingsPatch {
@@ -76,6 +90,7 @@ export interface SettingsPatch {
     }
   >;
   signals?: DeepPartial<SignalConfig>;
+  mcp?: Partial<McpSettings>;
 }
 
 export type DeepPartial<T> = {
@@ -769,6 +784,21 @@ export interface DeskRagApi {
      */
     chatModels(): Promise<string[]>;
   };
+  /**
+   * The MCP endpoint external agents read the experience index through.
+   *
+   * READ ONLY on both sides: these three calls report what the server is doing
+   * and what has been asked of it. There is no tool-invocation channel here —
+   * the renderer is a spectator, and the server itself can reach neither
+   * `src/replay/` nor `ax-exec` (`test/mcp.readonly.test.ts`).
+   */
+  mcp: {
+    status(): Promise<McpStatusDTO>;
+    /** The whole ring buffer, newest last. For the pane's first paint. */
+    log(): Promise<McpLogEntryDTO[]>;
+    /** One entry per tool call, as it completes. */
+    onLog(cb: (entry: McpLogEntryDTO) => void): () => void;
+  };
   system: {
     env(): Promise<EnvInfo>;
     /**
@@ -815,6 +845,46 @@ export interface ReindexSearchResultDTO {
   segments: number;
 }
 
+/**
+ * What the MCP endpoint is actually doing right now.
+ *
+ * `listening` is not `enabled`: a server switched on that failed to bind is
+ * enabled and not listening, and that is the state a reader most needs to see.
+ */
+export interface McpStatusDTO {
+  enabled: boolean;
+  port: number;
+  listening: boolean;
+  /** The bind failure, verbatim. Null while listening or while switched off. */
+  error: string | null;
+  /** `http://127.0.0.1:<port>/mcp` — null unless listening. */
+  url: string | null;
+  /** Ready to paste into a terminal. Null unless listening. */
+  connectCommand: string | null;
+}
+
+/**
+ * One tool call, for the activity log.
+ *
+ * The log is the user-facing gate on this endpoint — it carries no token, so
+ * seeing what was asked is what stands in for controlling who may ask. It lives
+ * in memory and resets when the app quits: a permanent, growing record of what
+ * an agent read from your screen history is itself a second copy of sensitive
+ * material, and nothing here needs it to survive a restart.
+ */
+export interface McpLogEntryDTO {
+  id: string;
+  /** Wall clock, epoch ms. */
+  at: number;
+  tool: string;
+  /** The arguments, flattened to one short line. */
+  args: string;
+  /** What went back, summarized — never the full payload. */
+  result: string;
+  ms: number;
+  ok: boolean;
+}
+
 /** IPC channel names — one place so main + preload can't drift. */
 export const IPC = {
   settingsGet: "settings:get",
@@ -837,6 +907,9 @@ export const IPC = {
   sessionsReindexSearch: "sessions:reindex-search",
   sessionsTracks: "sessions:tracks",
   flowsGraph: "flows:graph",
+  mcpStatus: "mcp:status",
+  mcpLog: "mcp:log",
+  mcpLogEvent: "mcp:log-event",
   modelDownloadEvent: "models:download-event",
   ollamaVisionModels: "ollama:vision-models",
   ollamaChatModels: "ollama:chat-models",
