@@ -28,12 +28,22 @@ export interface SignalConfig {
 /** Where text embeddings come from. Ollama needs a daemon; onnx runs in-process. */
 export type TextProvider = "ollama" | "onnx";
 /**
- * The two local visual paths, mutually exclusive because they index different
- * vector spaces — the library's Retriever rejects both at once.
- *   nomic   — single-vector; writes region rows, so Tier 3 + AX-label FTS work
- *   colsmol — late interaction; patches ARE the regions, so no Tier 3
+ * The local visual paths, mutually exclusive because they index different
+ * vector spaces — the library's Retriever rejects two at once.
+ *   nomic           — single-vector; writes region rows, so Tier 3 + AX-label
+ *                     FTS work. Its space is NOT shared with text, so a text
+ *                     query never reaches a nomic frame vector at all: it
+ *                     answers visual-example queries only.
+ *   colsmol         — late interaction; patches ARE the regions, so no Tier 3
+ *   colmodernvbert  — late interaction, same shape as colsmol and the same
+ *                     Idefics3 tiling; a ModernBERT/SigLIP2 pair rather than
+ *                     SmolLM2, and the upstream export rather than a re-export
+ *
+ * Both late-interaction options serve TEXT as well as image queries, because one
+ * model embeds both into one space. That capability difference — not speed — is
+ * what separates them from nomic.
  */
-export type ImageProvider = "none" | "nomic" | "colsmol";
+export type ImageProvider = "none" | "nomic" | "colsmol" | "colmodernvbert";
 export type CaptionProvider = "none" | "ollama";
 export type RerankProvider = "none" | "onnx";
 /**

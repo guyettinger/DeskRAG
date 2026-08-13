@@ -17,6 +17,13 @@
  * the result is published to guyettinger/colSmol-256M-dynamic-onnx so users
  * download it like any other model rather than building it locally.
  *
+ * ColModernVBERT is the UPSTREAM export, not a re-export: Qdrant's ONNX
+ * (Qdrant/colmodernvbert, MIT) already builds input_ids from the actual patch
+ * count, so it takes any tile count and needs no re-trace. That is the whole
+ * reason scripts/export-colsmol.py has no counterpart here. It is downloaded by
+ * hand today — no provider is wired to it yet; it exists to be measured.
+ *
+
  * Whisper is the one entry that is NOT ONNX: it is a GGML file consumed by an
  * external whisper.cpp binary. It lives here anyway so speech-to-text works out
  * of the box — the previous "bring your own model path" default meant
@@ -150,6 +157,44 @@ export const MODELS = {
         path: "config.json",
         sha256: "e68e589bbc081d258f585d32ff90d41f0eededdddd5d5d38f006d80ff7de0c0d",
         bytes: 7268,
+      },
+    ],
+  },
+  colmodernvbert: {
+    id: "colmodernvbert-250m",
+    source: "download",
+    repo: "Qdrant/colmodernvbert",
+    revision: "6d54b9924e54e7c0061173d134dec496b15b3842",
+    files: [
+      {
+        path: "model.onnx",
+        sha256: "b795e84e70ca6fc549f59c22a5d87e785bd741ce73a74bacfaf0caa967b546ab",
+        bytes: 1012467143,
+      },
+      {
+        path: "tokenizer.json",
+        sha256: "948b2ac5b46b1890f2fa4c43f41add4a6c04432e9cf529d788d1d7b10a3dea00",
+        bytes: 3591055,
+      },
+      {
+        path: "tokenizer_config.json",
+        sha256: "28ee34309f2fad3bc30514f6a15f743f612fa814d3d4d9ddcc3c79e810f29c79",
+        bytes: 28427,
+      },
+      {
+        path: "preprocessor_config.json",
+        sha256: "2b2cad11a008b42c73c451398858fcbb6eb5e75b2ad5a55536b8994ea8711731",
+        bytes: 492,
+      },
+      {
+        path: "config.json",
+        sha256: "1b9d0e70c4a6786ff2bedfba4ebdd0e67037ebf4067e792771826c88fb76a453",
+        bytes: 902,
+      },
+      {
+        path: "processor_config.json",
+        sha256: "0401bd1f5d81d93daf50349e3796b2866296c71544a1922ae50dc3028f20b0a5",
+        bytes: 74,
       },
     ],
   },

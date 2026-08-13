@@ -337,6 +337,26 @@ export class DeskRagService {
           join(dir, "config.json"),
         ),
       });
+    } else if (p.imageProvider === "colmodernvbert") {
+      const mod = await this.loadOnnx<typeof import("deskrag/embed/onnx/colmodernvbert")>(
+        "deskrag/embed/onnx/colmodernvbert",
+      );
+      if (!mod) {
+        throw new Error("Local image search is unavailable: onnxruntime-node failed to load.");
+      }
+      const dir = await this.models.ensure(MODELS.colmodernvbert);
+      patchEmbedder = new mod.ColModernVBertMultiVector({
+        modelPath: join(dir, "model.onnx"),
+        tokenizerPath: join(dir, "tokenizer.json"),
+        session: this.onnx.session(join(dir, "model.onnx")),
+        // Its OWN reader, not ColSmol's: this config puts pixel_shuffle_factor
+        // at the top level rather than under text_config, so the shared reader
+        // would fall through to the default and be right only by coincidence.
+        tileConfig: await mod.readTileConfig(
+          join(dir, "preprocessor_config.json"),
+          join(dir, "config.json"),
+        ),
+      });
     }
 
     // --- captioner ------------------------------------------------------------
