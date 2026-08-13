@@ -37,3 +37,7 @@ app/dist-app/
 # Claude Code local state. `.claude/skills/` IS committed — it is project tooling.
 .claude/settings.local.json
 .claude/worktrees/
+
+# Generated from real recordings — carries user screen content (window titles
+# have been seen to contain bearer tokens). Never committed.
+test/fixtures/imagelane-queries.draft.json
