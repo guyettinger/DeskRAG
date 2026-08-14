@@ -266,7 +266,7 @@ export class Retriever {
       if (!frame) continue;
       const patches = await this.tier2mv!.highlightsForFrame(
         f.frameId,
-        queryVectors.vectors,
+        queryVectors,
         frame.width,
         frame.height,
       );

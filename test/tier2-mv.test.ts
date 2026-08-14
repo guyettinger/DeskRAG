@@ -9,7 +9,12 @@ import { Tier2MultiVectorRetriever } from "../src/retrieve/tier2-mv.js";
 import { TextViewSearcher } from "../src/retrieve/searchers.js";
 import { FakeEmbeddingProvider, FakeMultiVectorProvider } from "../src/embed/fake.js";
 import { namespaceFor } from "../src/embed/types.js";
-import { computeTileGeometry } from "../src/embed/onnx/geometry.js";
+import {
+  cellToBox,
+  computeTileGeometry,
+  gridTokenCount,
+  patchIndexToCell,
+} from "../src/embed/onnx/geometry.js";
 
 const mv = new FakeMultiVectorProvider(16, 4);
 const NS = namespaceFor("frame_patches", mv);
@@ -114,81 +119,206 @@ it("the fake provider marks one content vector and pads the rest", async () => {
 });
 
 describe("MaxSim highlights", () => {
-  const geo = computeTileGeometry(1280, 800);
+  const W = 1280;
+  const H = 800;
+  const geo = computeTileGeometry(W, H);
+  const DIM = 16;
 
-  it("derives one highlight per distinct argmax patch", async () => {
-    const [patches] = await mv.embedImages([Uint8Array.from([1, 2, 3])]);
-    const [q] = await mv.embedQueries(["x"]);
-    const hl = t2().highlightsFrom("f1", q!.vectors, patches!, 1280, 800);
-    expect(hl.length).toBeGreaterThan(0);
-    expect(hl.length).toBeLessThanOrEqual(q!.vectors.length);
+  /** A unit vector pointing along `axis`, so similarity is exactly controllable. */
+  const axis = (a: number, scale = 1): Float32Array => {
+    const v = new Float32Array(DIM);
+    v[a] = scale;
+    return v;
+  };
+  /** A patch set where every grid patch is filler except the named indices. */
+  const patchSet = (special: Map<number, Float32Array>): Float32Array[] => {
+    const out: Float32Array[] = [];
+    for (let i = 0; i < gridTokenCount(geo) + geo.tokensPerTile; i++) {
+      out.push(special.get(i) ?? axis(15, 0.01));
+    }
+    return out;
+  };
+  const cellIndex = (col: number, row: number): number => {
+    for (let i = 0; i < gridTokenCount(geo); i++) {
+      const c = patchIndexToCell(i, geo);
+      if (c && c.col === col && c.row === row) return i;
+    }
+    throw new Error(`no patch at ${col},${row}`);
+  };
+  const r = (opts: { relativeFloor?: number; minScore?: number; maxHighlights?: number }) =>
+    new Tier2MultiVectorRetriever(store, mv, opts);
+
+  it("ignores a non-content vector, however well it matches", () => {
+    // THE REPORTED BUG: [CLS] scored 0.992 against a patch of blank space and
+    // was drawn first. Vector 1 here is that vector; only vector 0 is content.
+    const patches = patchSet(
+      new Map([
+        [cellIndex(0, 0), axis(0)],
+        [cellIndex(20, 20), axis(1)],
+      ]),
+    );
+    const hl = r({ relativeFloor: 0.5 }).highlightsFrom(
+      "f1",
+      { vectors: [axis(0), axis(1)], contentIndices: [0] },
+      patches,
+      W,
+      H,
+    );
+    expect(hl.length).toBe(1);
+    const expected = cellToBox({ col: 0, row: 0 }, geo);
+    expect(hl[0]!.bbox.x).toBeCloseTo(expected.x, 9);
+    expect(hl[0]!.bbox.y).toBeCloseTo(expected.y, 9);
+    expect(hl[0]!.bbox.w).toBeCloseTo(expected.w, 9);
+    expect(hl[0]!.bbox.h).toBeCloseTo(expected.h, 9);
+  });
+
+  it("merges adjacent patches into ONE box spanning them", () => {
+    const patches = patchSet(
+      new Map([
+        [cellIndex(3, 4), axis(0)],
+        [cellIndex(4, 4), axis(0)],
+      ]),
+    );
+    const hl = r({ relativeFloor: 0.5 }).highlightsFrom(
+      "f1",
+      { vectors: [axis(0)], contentIndices: [0] },
+      patches,
+      W,
+      H,
+    );
+    expect(hl.length).toBe(1);
+    const left = cellToBox({ col: 3, row: 4 }, geo);
+    const right = cellToBox({ col: 4, row: 4 }, geo);
+    expect(hl[0]!.bbox.x).toBeCloseTo(left.x, 6);
+    expect(hl[0]!.bbox.w).toBeCloseTo(right.x + right.w - left.x, 6);
+    expect(hl[0]!.bbox.h).toBeCloseTo(left.h, 6);
+  });
+
+  it("keeps separated patches as separate boxes", () => {
+    const patches = patchSet(
+      new Map([
+        [cellIndex(2, 2), axis(0)],
+        [cellIndex(20, 15), axis(0)],
+      ]),
+    );
+    const hl = r({ relativeFloor: 0.5 }).highlightsFrom(
+      "f1",
+      { vectors: [axis(0)], contentIndices: [0] },
+      patches,
+      W,
+      H,
+    );
+    expect(hl.length).toBe(2);
+  });
+
+  it("cuts a patch below the relative floor", () => {
+    const patches = patchSet(
+      new Map([
+        [cellIndex(1, 1), axis(0)],
+        [cellIndex(10, 10), axis(0, 0.5)],
+      ]),
+    );
+    const q = { vectors: [axis(0)], contentIndices: [0] };
+    const boxes = (relativeFloor: number) =>
+      r({ relativeFloor }).highlightsFrom("f1", q, patches, W, H).length;
+    expect(boxes(0.4)).toBe(2); // 0.5 of the top survives a 0.4 floor
+    expect(boxes(0.8)).toBe(1); // and not a 0.8 one
+  });
+
+  it("draws nothing when the best patch is below the absolute floor", () => {
+    const patches = patchSet(new Map([[cellIndex(1, 1), axis(0, 0.2)]]));
+    const hl = r({ minScore: 0.5 }).highlightsFrom(
+      "f1",
+      { vectors: [axis(0)], contentIndices: [0] },
+      patches,
+      W,
+      H,
+    );
+    expect(hl).toEqual([]);
+  });
+
+  it("never highlights the global tile, and does not let it cost a slot", () => {
+    const patches = patchSet(
+      new Map([
+        [gridTokenCount(geo), axis(0)],
+        [cellIndex(5, 5), axis(0, 0.9)],
+      ]),
+    );
+    const hl = r({ relativeFloor: 0.5, maxHighlights: 1 }).highlightsFrom(
+      "f1",
+      { vectors: [axis(0)], contentIndices: [0] },
+      patches,
+      W,
+      H,
+    );
+    expect(hl.length).toBe(1);
+    // closeTo, not toEqual: a merged bbox recomputes its height as
+    // max(y + h) - y, which differs from cellToBox's h in the last bit.
+    const expected = cellToBox({ col: 5, row: 5 }, geo);
+    expect(hl[0]!.bbox.x).toBeCloseTo(expected.x, 9);
+    expect(hl[0]!.bbox.y).toBeCloseTo(expected.y, 9);
+    expect(hl[0]!.bbox.w).toBeCloseTo(expected.w, 9);
+    expect(hl[0]!.bbox.h).toBeCloseTo(expected.h, 9);
+  });
+
+  it("caps at maxHighlights, keeping the strongest boxes", () => {
+    const patches = patchSet(
+      new Map([
+        [cellIndex(1, 1), axis(0, 1.0)],
+        [cellIndex(10, 1), axis(0, 0.9)],
+        [cellIndex(20, 1), axis(0, 0.8)],
+      ]),
+    );
+    const hl = r({ relativeFloor: 0.5, maxHighlights: 2 }).highlightsFrom(
+      "f1",
+      { vectors: [axis(0)], contentIndices: [0] },
+      patches,
+      W,
+      H,
+    );
+    expect(hl.length).toBe(2);
+    expect(hl[0]!.strength).toBeCloseTo(1, 6);
+    expect(hl[1]!.strength!).toBeLessThan(1);
+  });
+
+  it("returns [] when the query has no content vectors", () => {
+    const patches = patchSet(new Map([[cellIndex(1, 1), axis(0)]]));
+    expect(
+      t2().highlightsFrom("f1", { vectors: [axis(0)], contentIndices: [] }, patches, W, H),
+    ).toEqual([]);
+  });
+
+  it("keeps every box inside the frame and carries the synthetic shape", () => {
+    const patches = patchSet(new Map([[cellIndex(31, 23), axis(0)]]));
+    const hl = t2().highlightsFrom(
+      "f1",
+      { vectors: [axis(0)], contentIndices: [0] },
+      patches,
+      W,
+      H,
+    );
+    expect(hl.length).toBe(1);
     for (const h of hl) {
       expect(h.frameId).toBe("f1");
       expect(h.matchedBy).toEqual(["ann"]);
       expect(h.regionId).toMatch(/^f1#p\d+$/);
       expect(h.role).toBeNull();
-      expect(h.bbox.x + h.bbox.w).toBeLessThanOrEqual(1280 + 1e-9);
-      expect(h.bbox.y + h.bbox.h).toBeLessThanOrEqual(800 + 1e-9);
+      expect(h.label).toBeNull();
+      expect(h.strength).toBeCloseTo(1, 6);
+      expect(h.bbox.x + h.bbox.w).toBeLessThanOrEqual(W + 1e-9);
+      expect(h.bbox.y + h.bbox.h).toBeLessThanOrEqual(H + 1e-9);
     }
-  });
-
-  it("scores the strongest box on the frame at strength 1", async () => {
-    const [patches] = await mv.embedImages([Uint8Array.from([1, 2, 3])]);
-    const [q] = await mv.embedQueries(["x"]);
-    // Still `.vectors` here: highlightsFrom takes the QueryEmbedding in Task 5.
-    const hl = t2().highlightsFrom("f1", q!.vectors, patches!, 1280, 800);
-    expect(hl.length).toBeGreaterThan(0);
-    expect(hl[0]!.strength).toBeCloseTo(1, 6);
-    for (const h of hl) {
-      expect(h.strength).not.toBeNull();
-      expect(h.strength!).toBeLessThanOrEqual(1 + 1e-9);
-    }
-  });
-
-  it("dedupes when several query vectors hit the same patch", async () => {
-    const [patches] = await mv.embedImages([Uint8Array.from([1, 2, 3])]);
-    const q = [patches![0]!, patches![0]!, patches![0]!];
-    expect(t2().highlightsFrom("f1", q, patches!, 1280, 800).length).toBe(1);
-  });
-
-  it("caps at maxHighlights", async () => {
-    const r = new Tier2MultiVectorRetriever(store, mv, { maxHighlights: 1 });
-    const [patches] = await mv.embedImages([Uint8Array.from([1, 2, 3])]);
-    const [q] = await mv.embedQueries(["x"]);
-    expect(r.highlightsFrom("f1", q!.vectors, patches!, 1280, 800).length).toBeLessThanOrEqual(1);
-  });
-
-  it("drops a whole-frame (global-tile) match rather than outlining everything", () => {
-    // Every grid patch points one way, the global tile's patch another, and the
-    // query matches only the latter — so the argmax is unambiguously global.
-    const globalIdx = geo.cols * geo.rows * geo.tokensPerTile;
-    const grid = () => {
-      const v = new Float32Array(16);
-      v[0] = 1;
-      return v;
-    };
-    const global = new Float32Array(16);
-    global[1] = 1;
-    const patches = [...Array.from({ length: globalIdx }, grid), global];
-
-    expect(t2().highlightsFrom("f1", [global], patches, 1280, 800)).toEqual([]);
-    // Sanity: a query matching a GRID patch still yields a highlight, so the
-    // assertion above is about the global tile, not about highlights being off.
-    expect(t2().highlightsFrom("f1", [grid()], patches, 1280, 800).length).toBe(1);
   });
 
   it("reads stored patches when given a frame id", async () => {
     await seedFrames();
-    const r = t2();
     const [q] = await mv.embedQueries(["x"]);
-    const hl = await r.highlightsForFrame("f1", q!.vectors, 1280, 800);
-    expect(hl.length).toBeGreaterThan(0);
+    expect((await t2().highlightsForFrame("f1", q!, 1280, 800)).length).toBeGreaterThanOrEqual(0);
   });
 
   it("returns [] for a frame with no stored patches", async () => {
-    const r = t2();
     const [q] = await mv.embedQueries(["x"]);
-    expect(await r.highlightsForFrame("nope", q!.vectors, 1280, 800)).toEqual([]);
+    expect(await t2().highlightsForFrame("nope", q!, 1280, 800)).toEqual([]);
   });
 });
 
