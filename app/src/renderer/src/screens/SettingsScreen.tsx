@@ -42,7 +42,8 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
   const [chatModels, setChatModels] = useState<string[]>([]);
   const [download, setDownload] = useState<ModelDownloadProgress | null>(null);
   const [reindexing, setReindexing] = useState(false);
-  const [searchReindexing, setSearchReindexing] = useState(false);
+  const [reindexingAll, setReindexingAll] = useState(false);
+  const [reindexAllConfirming, setReindexAllConfirming] = useState(false);
   const [reindexed, setReindexed] = useState<string | null>(null);
   const [reindexError, setReindexError] = useState<string | null>(null);
   const [resetConfirming, setResetConfirming] = useState(false);
@@ -123,29 +124,33 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
   };
 
   /**
-   * Re-runs the search-side stages over every recording. Distinct from the
-   * trace rebuild above: what a recording is FINDABLE by is decided by the code
-   * that indexed it, so a recording made before the digest carried window
-   * titles, typed text and clicked labels stays unfindable by any of them until
-   * this runs. It also writes the frame↔segment links that text-only search
-   * recalls frames through — without an image provider configured, older
-   * recordings have none and return no results at all.
+   * DESTRUCTIVE, and confirmed before it runs. Discards everything the pipeline
+   * derived for every recording and indexes it all again from raw capture.
+   *
+   * Needed because what a recording IS is decided by the code that indexed it: a
+   * recording made before the digest carried window titles, typed text and
+   * clicked labels stays unfindable by any of them, and one indexed with no image
+   * provider has no frame↔segment links, so text search returns nothing for it at
+   * all. Raw capture survives — video, audio, keyframes, events and AX walks are
+   * never touched — but a recording is rebuilt with the providers configured NOW,
+   * which is what the confirm exists to say.
    */
-  const reindexSearch = async (): Promise<void> => {
-    setSearchReindexing(true);
+  const reindexAll = async (): Promise<void> => {
+    setReindexingAll(true);
     setReindexError(null);
     setReindexed(null);
     try {
-      const r = await api.sessions.reindexSearch();
+      const r = await api.sessions.reindexAll();
       setReindexed(
         r.sessions === 0
           ? "Nothing to re-index — no recordings yet."
-          : `Re-indexed ${r.sessions} recording${r.sessions === 1 ? "" : "s"}: ${r.segments} segments.`,
+          : `Re-indexed ${r.sessions} recording${r.sessions === 1 ? "" : "s"}: ${r.segments} actions.`,
       );
+      setReindexAllConfirming(false);
     } catch (e) {
       setReindexError(String(e));
     } finally {
-      setSearchReindexing(false);
+      setReindexingAll(false);
     }
   };
 
@@ -555,21 +560,25 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
         <p className="sub">Housekeeping for what has been recorded and downloaded on this machine.</p>
         <div className="form-row">
           <div>
-            <label>Search index</label>
+            <label>Re-index library</label>
             <div className="desc">
-              Re-links keyframes to segments, rebuilds every digest, and rewrites the text index,
-              for every recording already on disk. Nothing is re-recorded and no video, keyframe,
-              caption or transcript is touched. Needed for anything recorded before the digest
-              carried window titles, typed text and clicked labels — and required for text search
-              to return anything at all from a recording indexed with no image provider.
+              Discards everything indexing derived — segments, regions, captions, transcripts,
+              summaries, the search index — and builds it again from the raw capture, which is
+              never touched. Needed for anything recorded before the digest carried window
+              titles, typed text and clicked labels, and for text search to return anything from
+              a recording indexed with no image provider. Asks first: it rebuilds with the
+              providers set now, and runs the models.
             </div>
           </div>
           <button
             className="btn ghost"
-            onClick={() => void reindexSearch()}
-            disabled={searchReindexing || reindexing}
+            onClick={() => {
+              setReindexError(null);
+              setReindexAllConfirming(true);
+            }}
+            disabled={reindexingAll || reindexing}
           >
-            {searchReindexing ? "Re-indexing…" : "Rebuild search index"}
+            {reindexingAll ? "Re-indexing…" : "Re-index library"}
           </button>
         </div>
 
@@ -585,7 +594,7 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
           <button
             className="btn ghost"
             onClick={() => void reindex()}
-            disabled={reindexing || searchReindexing}
+            disabled={reindexing || reindexingAll}
           >
             {reindexing ? "Rebuilding…" : "Rebuild trace graph"}
           </button>
@@ -625,6 +634,63 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
           </button>
         </div>
       </div>
+
+      {/*
+        A re-index is destructive of everything DERIVED, and the two lines below
+        are the part a row of prose cannot carry: what comes back depends on what
+        is configured right now. Re-indexing with no captioner discards every
+        caption for good — the pixels are still on disk, but only a run with a
+        captioner will turn them back into text. No typed word to confirm, unlike
+        Reset: nothing recorded is lost, and everything here is recomputable by a
+        later run that has the provider.
+      */}
+      {reindexAllConfirming && (
+        <div
+          className="overlay"
+          onClick={() => !reindexingAll && setReindexAllConfirming(false)}
+        >
+          <div className="confirm" onClick={(e) => e.stopPropagation()}>
+            <h3>Re-index every recording?</h3>
+            <p className="confirm__warn">
+              Everything indexing derived is discarded and rebuilt: segments, regions, captions,
+              transcripts, the composed hierarchy, the search index and every vector. Recordings
+              themselves are untouched — video, audio, keyframes, events and accessibility
+              snapshots all stay.
+            </p>
+            <p className="desc">
+              Each recording is rebuilt with the providers configured now.
+              {p.captionProvider === "none" && " Captions will NOT come back: no captioner is set."}
+              {env && !env.whisperConfigured &&
+                " Transcripts will NOT come back: whisper.cpp was not found."}
+              {p.imageProvider === "none" &&
+                " Region crops stay unembedded: no image provider is set."}
+            </p>
+
+            {reindexError && (
+              <div className="banner">
+                <span className="led" /> {reindexError}
+              </div>
+            )}
+
+            <div className="confirm__actions">
+              <button
+                className="btn ghost"
+                onClick={() => setReindexAllConfirming(false)}
+                disabled={reindexingAll}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn danger"
+                disabled={reindexingAll}
+                onClick={() => void reindexAll()}
+              >
+                {reindexingAll ? "Re-indexing…" : "Re-index library"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {resetConfirming && (
         <div

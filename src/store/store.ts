@@ -278,6 +278,15 @@ export class DualStore implements Store {
         "SELECT id FROM region WHERE session_id = ?",
       ),
       deleteSession: db.prepare("DELETE FROM session WHERE id = ?"),
+      // The two halves of a per-session purge. Deleting the segments cascades
+      // segment_app_caption, segment_tree, segment_summary, frame_segment AND
+      // region, which all declare `REFERENCES segment(id) ON DELETE CASCADE`.
+      // transcript_clip does NOT — its foreign key is to session — so it has to
+      // be named separately or a re-index would double every utterance.
+      deleteSegmentsBySession: db.prepare("DELETE FROM segment WHERE session_id = ?"),
+      deleteTranscriptClipsBySession: db.prepare(
+        "DELETE FROM transcript_clip WHERE session_id = ?",
+      ),
       endSession: db.prepare("UPDATE session SET ended_at = ? WHERE id = ?"),
       selectSession: db.prepare("SELECT * FROM session WHERE id = ?"),
       // Each count is its own correlated scalar subquery: a multi-table JOIN
@@ -1161,38 +1170,56 @@ export class DualStore implements Store {
 
   // --- delete (gather ids -> Lance -> SQLite) --------------------------------
 
+  /**
+   * The first half of the delete order rule, shared by both deletes below:
+   * gather the session's ids from SQLite, then clear every vector keyed by one.
+   *
+   * Lance goes FIRST. A vector whose SQLite row is gone is an orphan, which
+   * `reconcile()` can find and prune; a SQLite row whose vector is gone is
+   * detectable and re-embeddable. Deleting SQLite first would leave vectors
+   * nothing can ever identify.
+   */
+  private async clearVectorsForSession(sessionId: string): Promise<{
+    segIds: string[];
+    frameIds: string[];
+    regionIds: string[];
+  }> {
+    const segIds = (
+      this.stmts.selectSegmentIdsBySession.all(sessionId) as { id: string }[]
+    ).map((r) => r.id);
+    const frameIds = (
+      this.stmts.selectFrameIdsBySession.all(sessionId) as { id: string }[]
+    ).map((r) => r.id);
+    const regionIds = (
+      this.stmts.selectRegionIdsBySession.all(sessionId) as { id: string }[]
+    ).map((r) => r.id);
+
+    // By entity kind per namespace. Exhaustive on purpose: a ternary chain here
+    // silently sent any new kind to regionIds, which for frame_patches meant its
+    // rows were never deleted.
+    const idsForKind = (kind: ReturnType<typeof kindForView>): string[] => {
+      switch (kind) {
+        case "segment":
+          return segIds;
+        case "frame":
+        case "frame_patches": // keyed by frame id, like frame_image
+          return frameIds;
+        case "region":
+          return regionIds;
+      }
+    };
+    for (const space of this.spaces.values()) {
+      await this.lance.deleteByIds(
+        space.namespace,
+        idsForKind(kindForView(space.view)),
+      );
+    }
+    return { segIds, frameIds, regionIds };
+  }
+
   async deleteSession(sessionId: string): Promise<void> {
     await this.mutex.run(async () => {
-      const segIds = (
-        this.stmts.selectSegmentIdsBySession.all(sessionId) as { id: string }[]
-      ).map((r) => r.id);
-      const frameIds = (
-        this.stmts.selectFrameIdsBySession.all(sessionId) as { id: string }[]
-      ).map((r) => r.id);
-      const regionIds = (
-        this.stmts.selectRegionIdsBySession.all(sessionId) as { id: string }[]
-      ).map((r) => r.id);
-
-      // Lance first (delete order rule), by entity kind per namespace.
-      // Exhaustive on purpose: a ternary chain here silently sent any new kind
-      // to regionIds, which for frame_patches meant its rows were never deleted.
-      const idsForKind = (kind: ReturnType<typeof kindForView>): string[] => {
-        switch (kind) {
-          case "segment":
-            return segIds;
-          case "frame":
-          case "frame_patches": // keyed by frame id, like frame_image
-            return frameIds;
-          case "region":
-            return regionIds;
-        }
-      };
-      for (const space of this.spaces.values()) {
-        await this.lance.deleteByIds(
-          space.namespace,
-          idsForKind(kindForView(space.view)),
-        );
-      }
+      const { segIds, regionIds } = await this.clearVectorsForSession(sessionId);
 
       // Then SQLite. CASCADE clears event/blob/segment/frame/region/frame_segment;
       // the standalone FTS tables have no foreign key, so clear them explicitly
@@ -1201,6 +1228,51 @@ export class DualStore implements Store {
         for (const rid of regionIds) this.stmts.deleteRegionFts.run(rid);
         for (const sid of segIds) this.stmts.deleteSegmentFts.run(sid);
         this.stmts.deleteSession.run(sessionId);
+      });
+      tx();
+    });
+  }
+
+  /**
+   * Discard everything the indexing pipeline derived for one recording, keeping
+   * every row capture wrote. This is what makes "re-index" mean re-index.
+   *
+   * The rebuild used to be a text-side SUBSET of the record path, hand-written a
+   * second time — and it went stale: composing was added to one list and not the
+   * other, so a rebuilt lexical index carried no summary at all. Re-running the
+   * whole pipeline instead is only possible because everything below is a pure
+   * function of the captured rows: segments come from events, regions from the
+   * AX tree and events, captions and transcripts from blobs still on disk.
+   *
+   * It also has to be a purge rather than a second pass. `putRegions` inserts
+   * with a fresh `ulid()` per region and adds to Lance without deleting, so a
+   * re-run APPENDS a whole second set of regions and vectors — and those
+   * duplicate vectors still have SQLite rows, so they are not orphans and
+   * `reconcile()` can never prune them. The same shape as the
+   * `putSegmentVectors` double-write (8 vectors for 4 segments).
+   *
+   * Deliberately NOT touched:
+   * - `frame`, `event`, `blob`, `ax_snapshot`, `session_clock` — captured, and
+   *   unrecoverable. See `CAPTURED_TABLES`.
+   * - `ax_snapshot.frame_id` — derived, but `associateFrameAx` re-points every
+   *   walk on each run rather than filling in blanks, so it corrects itself.
+   * - the `trace_*` tables — derived, but LIBRARY-scoped. A graph accretes across
+   *   recordings, so it is discarded and replayed whole by `rebuildGraph`, never
+   *   per session. See `DERIVED_LIBRARY_TABLES`.
+   */
+  async purgeDerived(sessionId: string): Promise<void> {
+    await this.mutex.run(async () => {
+      const { segIds, regionIds } = await this.clearVectorsForSession(sessionId);
+
+      const tx = this.db.transaction(() => {
+        // Neither FTS table has a foreign key, so nothing cascades them.
+        for (const rid of regionIds) this.stmts.deleteRegionFts.run(rid);
+        for (const sid of segIds) this.stmts.deleteSegmentFts.run(sid);
+        // Cascades segment_app_caption, segment_tree, segment_summary,
+        // frame_segment and region.
+        this.stmts.deleteSegmentsBySession.run(sessionId);
+        // Keyed on session, not segment — no cascade reaches it.
+        this.stmts.deleteTranscriptClipsBySession.run(sessionId);
       });
       tx();
     });

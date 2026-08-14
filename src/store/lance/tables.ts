@@ -376,8 +376,21 @@ export class LanceStore implements VectorSide {
     return toVectorList(row.patches);
   }
 
+  /**
+   * Delete rows by id. A namespace with NO TABLE is a no-op, not an error.
+   *
+   * A space can be registered in SQLite while its table has never existed —
+   * `registerVectorSpace` writes the row, and on a real store the two had drifted
+   * apart: 12 registered spaces against 11 directories in `lance/`. Deleting from
+   * a table that is not there has already achieved what it was asked to do, so
+   * throwing serves nobody: it took down a whole library re-index, and it takes
+   * `deleteSession` down the same way, since both walk EVERY registered space
+   * rather than only the ones a session happens to have vectors in.
+   */
   async deleteByIds(namespace: string, ids: string[]): Promise<void> {
     if (ids.length === 0) return;
+    const name = tableNameFor(namespace);
+    if (!(await this.conn.tableNames()).includes(name)) return;
     const tbl = await this.open(namespace);
     await tbl.delete(idInClause("id", ids));
   }

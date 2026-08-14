@@ -760,13 +760,12 @@ export interface DeskRagApi {
      */
     reindex(): Promise<ReindexResultDTO>;
     /**
-     * Re-run the SEARCH-side stages (frame links, digest + behavior, lexical
-     * index) over every recording, in place. Separate from `reindex`, which
-     * rebuilds the trace graph: this one deliberately does not re-segment, so
-     * segment ids — and the captions and transcripts attached to them — survive.
-     * Progress arrives on the same indexing channel.
+     * DESTRUCTIVE. Discard everything the pipeline derived for every recording
+     * and index it all again from raw capture. Progress arrives on the same
+     * indexing channel. See `ReindexAllResultDTO` for what survives and what
+     * does not.
      */
-    reindexSearch(): Promise<ReindexSearchResultDTO>;
+    reindexAll(): Promise<ReindexAllResultDTO>;
     /** Every recorded signal, bucketed onto the session's own time axis. */
     tracks(sessionId: string): Promise<SessionTracksDTO | null>;
   };
@@ -843,14 +842,21 @@ export interface ReindexResultDTO {
 }
 
 /**
- * The outcome of re-running the search-side stages over the whole library.
+ * The outcome of re-indexing the whole library.
  *
- * Unlike a graph rebuild this is per-session and in place: it re-links frames to
- * segments, rewrites and re-embeds each digest, and rebuilds the lexical index.
- * It never re-segments, so segment ids — and every caption and transcript hung
- * off them — survive.
+ * This is a real re-index, not a patch-up: every recording has everything the
+ * pipeline derived from it discarded — segments, regions, captions, transcripts,
+ * summaries, the lexical index and every vector — and then rebuilt from raw
+ * capture, which is never touched.
+ *
+ * The cost the caller has to disclose: a recording is rebuilt with the providers
+ * configured NOW. Re-indexing with no captioner discards every caption for good;
+ * with no whisper binary, every transcript. Both are recomputable from blobs
+ * still on disk, but only by a run that has the provider.
+ *
+ * `segments` counts leaf actions, not the composed levels above them.
  */
-export interface ReindexSearchResultDTO {
+export interface ReindexAllResultDTO {
   sessions: number;
   segments: number;
 }
@@ -914,7 +920,7 @@ export const IPC = {
   sessionsDetail: "sessions:detail",
   sessionsRemove: "sessions:remove",
   sessionsReindex: "sessions:reindex",
-  sessionsReindexSearch: "sessions:reindex-search",
+  sessionsReindexAll: "sessions:reindex-all",
   sessionsTracks: "sessions:tracks",
   flowsGraph: "flows:graph",
   mcpStatus: "mcp:status",
