@@ -132,7 +132,7 @@ describe("ColSmolMultiVector", () => {
     const seen: Record<string, OnnxTensor>[] = [];
     const p = new ColSmolMultiVector(opts(stubSession(seen)));
     const [q] = await p.embedQueries(["abc"]);
-    expect(q!.length).toBe(3 + QUERY_BUFFER_TOKENS);
+    expect(q!.vectors.length).toBe(3 + QUERY_BUFFER_TOKENS);
     const f = seen[0]!;
     expect(f.pixel_values!.dims).toEqual([1, 1, 3, SIDE, SIDE]); // one dummy tile
     const ids = Array.from(f.input_ids!.data as BigInt64Array).map(Number);
@@ -142,7 +142,14 @@ describe("ColSmolMultiVector", () => {
   it("keeps every query position, buffer tokens included", async () => {
     const p = new ColSmolMultiVector(opts(stubSession([])));
     const [q] = await p.embedQueries(["a longer query"]);
-    expect(q!.length).toBe("a longer query".length + QUERY_BUFFER_TOKENS);
+    expect(q!.vectors.length).toBe("a longer query".length + QUERY_BUFFER_TOKENS);
+  });
+
+  it("reports the query's own token positions, which start at 0", async () => {
+    const p = new ColSmolMultiVector(opts(stubSession([])));
+    const [q] = await p.embedQueries(["abc"]);
+    expect(q!.contentIndices[0]).toBe(0);
+    expect(q!.contentIndices.length).toBe(q!.vectors.length - QUERY_BUFFER_TOKENS);
   });
 
   it("returns [] for empty input without touching the session", async () => {

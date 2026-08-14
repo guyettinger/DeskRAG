@@ -15,7 +15,7 @@
  * Barrel-safe: the provider is injected, so no native module loads here.
  */
 
-import type { MultiVectorProvider } from "../embed/types.js";
+import type { MultiVectorProvider, QueryEmbedding } from "../embed/types.js";
 import { namespaceFor } from "../embed/types.js";
 import { computeTileGeometry, patchIndexToBox } from "../embed/onnx/geometry.js";
 import type { Store } from "../store/types.js";
@@ -49,14 +49,17 @@ export class Tier2MultiVectorRetriever {
    * Query vectors for either modality, or null when the query carries neither.
    * Call ONCE per retrieval: this is the expensive step.
    */
-  async embedQuery(q: Query): Promise<Float32Array[] | null> {
+  async embedQuery(q: Query): Promise<QueryEmbedding | null> {
     if (q.image) {
       const [v] = await this.provider.embedImages([q.image]);
-      return v && v.length > 0 ? v : null;
+      if (!v || v.length === 0) return null;
+      // An image query's vectors ARE patches of the query image, so all of them
+      // carry content — there is no prompt padding on this branch.
+      return { vectors: v, contentIndices: v.map((_, i) => i) };
     }
     if (q.text && q.text.length > 0) {
-      const [v] = await this.provider.embedQueries([q.text]);
-      return v && v.length > 0 ? v : null;
+      const [e] = await this.provider.embedQueries([q.text]);
+      return e && e.vectors.length > 0 ? e : null;
     }
     return null;
   }

@@ -29,6 +29,7 @@ import { ColSmolMultiVector } from "../src/embed/onnx/colsmol.js";
 import { ColModernVBertMultiVector } from "../src/embed/onnx/colmodernvbert.js";
 import {
   MV_TOK,
+  QUERY_BUFFER_TOKENS,
   buildImagePrompt,
   buildQueryPrompt,
   tileMarker,
@@ -186,8 +187,8 @@ d("ColSmolMultiVector (live)", () => {
       const [loginPatches, terminalPatches] = await p.embedImages([login(), terminal()]);
       const [q] = await p.embedQueries(["a login form with a sign in button"]);
 
-      const onLogin = maxSim(q!, loginPatches!);
-      const onTerminal = maxSim(q!, terminalPatches!);
+      const onLogin = maxSim(q!.vectors, loginPatches!);
+      const onTerminal = maxSim(q!.vectors, terminalPatches!);
       console.log(`  MaxSim login=${onLogin.toFixed(4)} terminal=${onTerminal.toFixed(4)}`);
       expect(onLogin).toBeGreaterThan(onTerminal);
     },
@@ -203,8 +204,8 @@ d("ColSmolMultiVector (live)", () => {
       const [loginPatches, terminalPatches] = await p.embedImages([login(), terminal()]);
       const [q] = await p.embedQueries(["a terminal showing a typescript build error"]);
 
-      const onLogin = maxSim(q!, loginPatches!);
-      const onTerminal = maxSim(q!, terminalPatches!);
+      const onLogin = maxSim(q!.vectors, loginPatches!);
+      const onTerminal = maxSim(q!.vectors, terminalPatches!);
       console.log(`  MaxSim login=${onLogin.toFixed(4)} terminal=${onTerminal.toFixed(4)}`);
       expect(onTerminal).toBeGreaterThan(onLogin);
     },
@@ -216,7 +217,7 @@ d("ColSmolMultiVector (live)", () => {
     const [q] = await p.embedQueries(["sign in button"]);
     const geo = computeTileGeometry(2560, 1600);
 
-    for (const qv of q!) {
+    for (const qv of q!.vectors) {
       let argmax = -1;
       let top = -Infinity;
       for (let i = 0; i < patches!.length; i++) {
@@ -331,8 +332,8 @@ d("ColModernVBertMultiVector (live)", () => {
       const [loginPatches, terminalPatches] = await p.embedImages([login(), terminal()]);
       const [q] = await p.embedQueries(["a login form with a sign in button"]);
 
-      const onLogin = maxSim(q!, loginPatches!);
-      const onTerminal = maxSim(q!, terminalPatches!);
+      const onLogin = maxSim(q!.vectors, loginPatches!);
+      const onTerminal = maxSim(q!.vectors, terminalPatches!);
       console.log(`  MaxSim login=${onLogin.toFixed(4)} terminal=${onTerminal.toFixed(4)}`);
       expect(onLogin).toBeGreaterThan(onTerminal);
     },
@@ -348,10 +349,24 @@ d("ColModernVBertMultiVector (live)", () => {
       const [loginPatches, terminalPatches] = await p.embedImages([login(), terminal()]);
       const [q] = await p.embedQueries(["a terminal showing a typescript build error"]);
 
-      const onLogin = maxSim(q!, loginPatches!);
-      const onTerminal = maxSim(q!, terminalPatches!);
+      const onLogin = maxSim(q!.vectors, loginPatches!);
+      const onTerminal = maxSim(q!.vectors, terminalPatches!);
       console.log(`  MaxSim login=${onLogin.toFixed(4)} terminal=${onTerminal.toFixed(4)}`);
       expect(onTerminal).toBeGreaterThan(onLogin);
+    },
+  );
+
+  it(
+    "names the query's own token positions, inside the wrapper",
+    { timeout: 600_000 },
+    async () => {
+      const p = provider();
+      const [q] = await p.embedQueries(["sign in button"]);
+      // [CLS] + tokens + 10 buffer + [SEP]: content is everything between the
+      // wrapper and the buffer run, and never the first or last position.
+      expect(q!.contentIndices.length).toBe(q!.vectors.length - QUERY_BUFFER_TOKENS - 2);
+      expect(q!.contentIndices[0]).toBe(1);
+      expect(q!.contentIndices.at(-1)).toBe(q!.vectors.length - QUERY_BUFFER_TOKENS - 2);
     },
   );
 
@@ -361,7 +376,7 @@ d("ColModernVBertMultiVector (live)", () => {
     const [q] = await p.embedQueries(["sign in button"]);
     const geo = computeTileGeometry(2560, 1600);
 
-    for (const qv of q!) {
+    for (const qv of q!.vectors) {
       let argmax = -1;
       let top = -Infinity;
       for (let i = 0; i < patches!.length; i++) {

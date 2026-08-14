@@ -76,7 +76,7 @@ describe("Tier2MultiVectorRetriever", () => {
     await seedFrames();
     const r = t2();
     const v = await r.embedQuery({ image: Uint8Array.from([9, 9, 9]) });
-    expect((await r.retrieveFramesUnscoped(v!))[0]!.frameId).toBe("f2");
+    expect((await r.retrieveFramesUnscoped(v!.vectors))[0]!.frameId).toBe("f2");
   });
 
   it("serves a TEXT query — the single-vector tier cannot", async () => {
@@ -84,7 +84,7 @@ describe("Tier2MultiVectorRetriever", () => {
     const r = t2();
     const v = await r.embedQuery({ text: "anything" });
     expect(v).not.toBeNull();
-    expect((await r.retrieveFramesUnscoped(v!)).length).toBe(2);
+    expect((await r.retrieveFramesUnscoped(v!.vectors)).length).toBe(2);
   });
 
   it("returns null query vectors when the query has neither text nor image", async () => {
@@ -96,15 +96,21 @@ describe("Tier2MultiVectorRetriever", () => {
     await seedFrames();
     const r = t2();
     const v = await r.embedQuery({ image: Uint8Array.from([9, 9, 9]) });
-    expect((await r.retrieveFrames(v!, ["segA"])).map((h) => h.frameId)).toEqual(["f1"]);
+    expect((await r.retrieveFrames(v!.vectors, ["segA"])).map((h) => h.frameId)).toEqual(["f1"]);
   });
 
   it("returns [] for an empty scope rather than widening", async () => {
     await seedFrames();
     const r = t2();
     const v = await r.embedQuery({ image: Uint8Array.from([1]) });
-    expect(await r.retrieveFrames(v!, [])).toEqual([]);
+    expect(await r.retrieveFrames(v!.vectors, [])).toEqual([]);
   });
+});
+
+it("the fake provider marks one content vector and pads the rest", async () => {
+  const [q] = await mv.embedQueries(["x"]);
+  expect(q!.vectors.length).toBe(4);
+  expect(q!.contentIndices).toEqual([0]);
 });
 
 describe("MaxSim highlights", () => {
@@ -113,9 +119,9 @@ describe("MaxSim highlights", () => {
   it("derives one highlight per distinct argmax patch", async () => {
     const [patches] = await mv.embedImages([Uint8Array.from([1, 2, 3])]);
     const [q] = await mv.embedQueries(["x"]);
-    const hl = t2().highlightsFrom("f1", q!, patches!, 1280, 800);
+    const hl = t2().highlightsFrom("f1", q!.vectors, patches!, 1280, 800);
     expect(hl.length).toBeGreaterThan(0);
-    expect(hl.length).toBeLessThanOrEqual(q!.length);
+    expect(hl.length).toBeLessThanOrEqual(q!.vectors.length);
     for (const h of hl) {
       expect(h.frameId).toBe("f1");
       expect(h.matchedBy).toEqual(["ann"]);
@@ -136,7 +142,7 @@ describe("MaxSim highlights", () => {
     const r = new Tier2MultiVectorRetriever(store, mv, { maxHighlights: 1 });
     const [patches] = await mv.embedImages([Uint8Array.from([1, 2, 3])]);
     const [q] = await mv.embedQueries(["x"]);
-    expect(r.highlightsFrom("f1", q!, patches!, 1280, 800).length).toBeLessThanOrEqual(1);
+    expect(r.highlightsFrom("f1", q!.vectors, patches!, 1280, 800).length).toBeLessThanOrEqual(1);
   });
 
   it("drops a whole-frame (global-tile) match rather than outlining everything", () => {
@@ -162,14 +168,14 @@ describe("MaxSim highlights", () => {
     await seedFrames();
     const r = t2();
     const [q] = await mv.embedQueries(["x"]);
-    const hl = await r.highlightsForFrame("f1", q!, 1280, 800);
+    const hl = await r.highlightsForFrame("f1", q!.vectors, 1280, 800);
     expect(hl.length).toBeGreaterThan(0);
   });
 
   it("returns [] for a frame with no stored patches", async () => {
     const r = t2();
     const [q] = await mv.embedQueries(["x"]);
-    expect(await r.highlightsForFrame("nope", q!, 1280, 800)).toEqual([]);
+    expect(await r.highlightsForFrame("nope", q!.vectors, 1280, 800)).toEqual([]);
   });
 });
 

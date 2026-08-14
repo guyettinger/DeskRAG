@@ -17,7 +17,11 @@
  * comparable despite RRF scores and ANN distances living on different scales.
  */
 
-import type { ImageEmbeddingProvider, MultiVectorProvider } from "../embed/types.js";
+import type {
+  ImageEmbeddingProvider,
+  MultiVectorProvider,
+  QueryEmbedding,
+} from "../embed/types.js";
 import type { FrameRow, Store } from "../store/types.js";
 import { Tier1Retriever } from "./retriever.js";
 import { Tier2Retriever } from "./tier2.js";
@@ -253,7 +257,7 @@ export class Retriever {
 
   private async attachPatchHighlights(
     frames: FrameResult[],
-    queryVectors: Float32Array[],
+    queryVectors: QueryEmbedding,
   ): Promise<FrameResult[]> {
     const out = [...frames];
     for (let i = 0; i < Math.min(this.highlightTopN, out.length); i++) {
@@ -262,7 +266,7 @@ export class Retriever {
       if (!frame) continue;
       const patches = await this.tier2mv!.highlightsForFrame(
         f.frameId,
-        queryVectors,
+        queryVectors.vectors,
         frame.width,
         frame.height,
       );
@@ -294,13 +298,13 @@ export class Retriever {
   private async recallFrames(
     query: Query,
     segScope: string[],
-    queryVectors: Float32Array[] | null,
+    queryVectors: QueryEmbedding | null,
   ): Promise<FrameHit[]> {
     // Multivector: serves TEXT as well as image, since one model embeds both.
     if (this.tier2mv && queryVectors) {
       return segScope.length > 0
-        ? this.tier2mv.retrieveFrames(queryVectors, segScope)
-        : this.tier2mv.retrieveFramesUnscoped(queryVectors);
+        ? this.tier2mv.retrieveFrames(queryVectors.vectors, segScope)
+        : this.tier2mv.retrieveFramesUnscoped(queryVectors.vectors);
     }
     if (this.tier2 && query.image) {
       return segScope.length > 0

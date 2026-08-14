@@ -144,13 +144,21 @@ describe("ColModernVBertMultiVector", () => {
     const seen: Record<string, OnnxTensor>[] = [];
     const p = new ColModernVBertMultiVector(opts(stubSession(seen)));
     const [q] = await p.embedQueries(["abc"]);
-    expect(q!.length).toBe(3 + QUERY_BUFFER_TOKENS + 2);
+    expect(q!.vectors.length).toBe(3 + QUERY_BUFFER_TOKENS + 2);
     const ids = Array.from(seen[0]!.input_ids!.data as BigInt64Array).map(Number);
     expect(ids[0]).toBe(MV_TOK.cls);
     expect(ids[ids.length - 1]).toBe(MV_TOK.sep);
     expect(ids.slice(-1 - QUERY_BUFFER_TOKENS, -1).every((t) => t === MV_TOK.endOfUtterance)).toBe(
       true,
     );
+  });
+
+  it("reports which query vectors are the user's own words", async () => {
+    const p = new ColModernVBertMultiVector(opts(stubSession([])));
+    const [q] = await p.embedQueries(["abc"]);
+    // The stub tokenizer yields one id per character; they sit after [CLS].
+    expect(q!.contentIndices).toEqual([1, 2, 3]);
+    expect(q!.contentIndices.length).toBeLessThan(q!.vectors.length);
   });
 
   it("feeds exactly one dummy tile for a query", async () => {

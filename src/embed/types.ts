@@ -88,12 +88,30 @@ export interface ImageEmbeddingProvider extends NamespacedProvider {
  * same space, emitting MANY vectors each. `dimensions` is the PER-VECTOR width
  * (e.g. 128), not the total, so `namespaceFor` stays meaningful.
  */
+/**
+ * One embedded query: every vector, plus which of them came from the user's
+ * own words.
+ *
+ * SCORING uses `vectors` whole — the buffer/padding slots are the learned
+ * expansion slots late interaction relies on, and dropping them would change
+ * retrieval. HIGHLIGHTING uses only `contentIndices`, because a padding or
+ * wrapper vector's best-matching patch answers nothing the user asked.
+ *
+ * INDICES rather than a count or a range: content is not a prefix for every
+ * prompt (ColModernVBERT puts [CLS] first), and contiguity is true of both
+ * adapters today without being a property to depend on.
+ */
+export interface QueryEmbedding {
+  vectors: Float32Array[];
+  contentIndices: number[];
+}
+
 export interface MultiVectorProvider extends NamespacedProvider {
   readonly multiVector: true;
   /** Per image: N vectors of `dimensions` each. */
   embedImages(images: Uint8Array[]): Promise<Float32Array[][]>;
-  /** Per query: M vectors of `dimensions` each. */
-  embedQueries(texts: string[]): Promise<Float32Array[][]>;
+  /** Per query: M vectors of `dimensions` each, with the content ones named. */
+  embedQueries(texts: string[]): Promise<QueryEmbedding[]>;
 }
 
 export interface CaptionProvider {

@@ -14,6 +14,7 @@ import type {
   EmbeddingProvider,
   ImageEmbeddingProvider,
   MultiVectorProvider,
+  QueryEmbedding,
 } from "./types.js";
 
 /** xmur3 string hasher -> seed for a small PRNG. */
@@ -135,8 +136,15 @@ export class FakeMultiVectorProvider implements MultiVectorProvider {
     return images.map((bytes) => this.setFor(`img:${bytesKey(bytes)}`));
   }
 
-  async embedQueries(texts: string[]): Promise<Float32Array[][]> {
-    return texts.map((t) => this.setFor(`txt:${t}`));
+  async embedQueries(texts: string[]): Promise<QueryEmbedding[]> {
+    return texts.map((t) => ({
+      vectors: this.setFor(`txt:${t}`),
+      // The fake builds no prompt, so it declares the smallest honest shape: the
+      // FIRST vector stands for the query's words and the rest for padding. A
+      // fake whose every vector was content is what let the highlight bug ship
+      // — every highlight test agreed with the code because both assumed it.
+      contentIndices: [0],
+    }));
   }
 }
 
