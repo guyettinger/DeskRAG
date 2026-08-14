@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_TILE_CONFIG,
+  cellToBox,
   computeTileGeometry,
   expectedTokenCount,
+  gridTokenCount,
   patchIndexToBox,
+  patchIndexToCell,
 } from "../src/embed/onnx/geometry.js";
 
 /**
@@ -137,5 +140,47 @@ describe("patchIndexToBox", () => {
     const g3 = computeTileGeometry(1280, 800, { ...DEFAULT_TILE_CONFIG, patchSize: 8 });
     expect(g3.tokensPerTile).toBe(256);
     expect(g3.tokenGrid).toBe(16);
+  });
+});
+
+describe("token-grid cells", () => {
+  // 1920x1080 -> 2048x1536 -> 4x3 tiles of 8x8 tokens = a 32x24 cell grid.
+  const g = computeTileGeometry(1920, 1080);
+
+  it("counts only grid tokens, excluding the global tile", () => {
+    expect(gridTokenCount(g)).toBe(4 * 3 * 64);
+    // The global tile is the difference between the two counts.
+    expect(expectedTokenCount(g)).toBe(gridTokenCount(g) + 64);
+  });
+
+  it("maps the first and last grid tokens to the corners of the cell grid", () => {
+    expect(patchIndexToCell(0, g)).toEqual({ col: 0, row: 0 });
+    expect(patchIndexToCell(gridTokenCount(g) - 1, g)).toEqual({ col: 31, row: 23 });
+  });
+
+  it("advances one cell per token within a tile and one tile per 64 tokens", () => {
+    expect(patchIndexToCell(1, g)).toEqual({ col: 1, row: 0 });
+    expect(patchIndexToCell(8, g)).toEqual({ col: 0, row: 1 });
+    // Tile 1 is the second tile of the top row: its first token is at col 8.
+    expect(patchIndexToCell(64, g)).toEqual({ col: 8, row: 0 });
+    // Tile 4 is the first tile of the second tile-row: row 8.
+    expect(patchIndexToCell(4 * 64, g)).toEqual({ col: 0, row: 8 });
+  });
+
+  it("returns null for a global-tile token and for an out-of-range index", () => {
+    expect(patchIndexToCell(gridTokenCount(g), g)).toBeNull();
+    expect(patchIndexToCell(-1, g)).toBeNull();
+    expect(patchIndexToCell(10_000, g)).toBeNull();
+    expect(patchIndexToCell(1.5, g)).toBeNull();
+  });
+
+  it("agrees with patchIndexToBox for every grid token", () => {
+    for (let i = 0; i < gridTokenCount(g); i++) {
+      expect(cellToBox(patchIndexToCell(i, g)!, g)).toEqual(patchIndexToBox(i, g));
+    }
+  });
+
+  it("still maps a global-tile token to the whole frame", () => {
+    expect(patchIndexToBox(gridTokenCount(g), g)).toEqual({ x: 0, y: 0, w: 1920, h: 1080 });
   });
 });

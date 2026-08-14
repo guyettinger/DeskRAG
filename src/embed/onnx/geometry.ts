@@ -114,6 +114,54 @@ export function expectedTokenCount(g: TileGeometry): number {
   return (g.cols * g.rows + (g.hasGlobalTile ? 1 : 0)) * g.tokensPerTile;
 }
 
+/** A cell in the whole-frame token grid: `cols * tokenGrid` by `rows * tokenGrid`. */
+export interface TileCell {
+  col: number;
+  row: number;
+}
+
+/** Image tokens belonging to the tile GRID — i.e. excluding the global tile. */
+export function gridTokenCount(g: TileGeometry): number {
+  return g.cols * g.rows * g.tokensPerTile;
+}
+
+/**
+ * The token-grid cell an image token occupies, or null when it has no cell:
+ * a global-tile token (it covers the whole frame) or an out-of-range index.
+ *
+ * Callers that need to tell those two apart range-check first, as
+ * `patchIndexToBox` does.
+ */
+export function patchIndexToCell(index: number, g: TileGeometry): TileCell | null {
+  if (!Number.isInteger(index) || index < 0 || index >= expectedTokenCount(g)) return null;
+  const tileIndex = Math.floor(index / g.tokensPerTile);
+  if (g.hasGlobalTile && tileIndex === g.cols * g.rows) return null;
+  const within = index % g.tokensPerTile;
+  return {
+    col: (tileIndex % g.cols) * g.tokenGrid + (within % g.tokenGrid),
+    row: Math.floor(tileIndex / g.cols) * g.tokenGrid + Math.floor(within / g.tokenGrid),
+  };
+}
+
+/**
+ * Frame-space box for one cell.
+ *
+ * Every tile is a full tileSize square (the image was resized, not padded), so
+ * the cell size is uniform. Scaled space -> source space with SEPARATE factors:
+ * the resize to a whole number of tiles does not preserve aspect ratio.
+ */
+export function cellToBox(cell: TileCell, g: TileGeometry): Box {
+  const size = g.tileSize / g.tokenGrid;
+  const x = cell.col * size * g.scaleX;
+  const y = cell.row * size * g.scaleY;
+  return {
+    x,
+    y,
+    w: Math.max(0, Math.min(size * g.scaleX, g.srcWidth - x)),
+    h: Math.max(0, Math.min(size * g.scaleY, g.srcHeight - y)),
+  };
+}
+
 /**
  * Frame-space bbox for one image token, or null if the index is out of range.
  * A global-tile token maps to the whole frame.
@@ -122,32 +170,8 @@ export function patchIndexToBox(index: number, g: TileGeometry): Box | null {
   if (!Number.isInteger(index) || index < 0 || index >= expectedTokenCount(g)) {
     return null;
   }
-
-  const tileIndex = Math.floor(index / g.tokensPerTile);
-  const gridTiles = g.cols * g.rows;
-  if (g.hasGlobalTile && tileIndex === gridTiles) {
-    return { x: 0, y: 0, w: g.srcWidth, h: g.srcHeight };
-  }
-
-  const within = index % g.tokensPerTile;
-  const tileCol = tileIndex % g.cols;
-  const tileRow = Math.floor(tileIndex / g.cols);
-
-  // Every tile is a full tileSize square (the image was resized, not padded), so
-  // the cell size is uniform.
-  const cell = g.tileSize / g.tokenGrid;
-  const gx = within % g.tokenGrid;
-  const gy = Math.floor(within / g.tokenGrid);
-
-  // Scaled space -> source space, with separate factors: the resize to a whole
-  // number of tiles does not preserve aspect ratio.
-  const x = (tileCol * g.tileSize + gx * cell) * g.scaleX;
-  const y = (tileRow * g.tileSize + gy * cell) * g.scaleY;
-
-  return {
-    x,
-    y,
-    w: Math.max(0, Math.min(cell * g.scaleX, g.srcWidth - x)),
-    h: Math.max(0, Math.min(cell * g.scaleY, g.srcHeight - y)),
-  };
+  const cell = patchIndexToCell(index, g);
+  // In range and cell-less means the global tile, which covers everything.
+  if (!cell) return { x: 0, y: 0, w: g.srcWidth, h: g.srcHeight };
+  return cellToBox(cell, g);
 }
