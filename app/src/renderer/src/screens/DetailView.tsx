@@ -111,7 +111,20 @@ export function DetailView({ frameId, onClose, onOpenRecording }: Props): React.
               />
               {locatable &&
                 detail.highlights.map((h) => (
-                  <div key={h.regionId} className="bbox" style={boxStyle(h.bbox, detail.width, detail.height)}>
+                  <div
+                    key={h.regionId}
+                    // A LABELLED region says "this control matched, and here is
+                    // its name"; a synthetic patch box says only "the model
+                    // attended here, this strongly". Different claims, drawn at
+                    // different weights.
+                    className={`bbox${h.label === null ? " bbox--patch" : ""}`}
+                    style={
+                      {
+                        ...boxStyle(h.bbox, detail.width, detail.height),
+                        ...(h.strength !== null ? { "--strength": h.strength } : {}),
+                      } as React.CSSProperties
+                    }
+                  >
                     {h.label && <span className="bbox__label">{h.label}</span>}
                   </div>
                 ))}

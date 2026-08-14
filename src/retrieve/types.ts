@@ -89,6 +89,17 @@ export interface RegionHit {
   label: string | null;
   /** How this region matched: image ANN, AX-label FTS, or both. */
   matchedBy: ("ann" | "fts")[];
+  /**
+   * Confidence WITHIN this frame's highlight set: 1 is the strongest box on the
+   * frame, and the renderer scales the box's weight by it.
+   *
+   * NULL means there is no similarity behind this hit, which is every Tier-3
+   * region hit — ANN and FTS alike. A region hit's claim is its LABEL and it
+   * draws solid either way; normalizing an ANN distance into a confidence would
+   * invent a number that tier does not compute. Only synthetic patch highlights
+   * carry one.
+   */
+  strength: number | null;
   /** ANN distance when matched by image (absent for FTS-only hits). */
   distance?: number;
   /**

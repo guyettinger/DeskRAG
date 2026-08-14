@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { downloadLabel, transcribeFailure } from "../src/main/deskrag-service.js";
+import { downloadLabel } from "../src/main/deskrag-service.js";
+// Moved with the stages it belongs to: `index-run.ts` owns the pipeline, and it
+// deliberately imports no electron, so this half needs no stub.
+import { transcribeFailure } from "../src/main/index-run.js";
 import { ModelFilesMissingError } from "../src/main/model-store.js";
 
 /**

@@ -27,27 +27,14 @@ import {
   SwiftDisplaySource,
   SwiftKeymapSource,
   KeymapProducer,
-  Segmenter,
-  Representer,
-  associateFrames,
-  associateFrameAx,
-  indexSegmentText,
   LexicalSegmentSearcher,
-  FrameRepresenter,
-  CaptionRepresenter,
-  AppCaptionRepresenter,
-  ComposeRepresenter,
   ROOT_GRANULARITY,
   LEAF_GRANULARITY,
   OllamaSummaryProvider,
-  RegionRepresenter,
-  TranscriptRepresenter,
-  StoredAxProvider,
   WhisperCppTranscription,
   Retriever,
   TextViewSearcher,
   BehaviorViewSearcher,
-  FramePatchRepresenter,
   OllamaCaptionProvider,
   nestAxElements,
   wavPeaks,
@@ -65,14 +52,11 @@ import {
 import type { SettingsStore } from "./settings.js";
 import { MODELS } from "./models.js";
 import { libUrl } from "./lib-resolve.js";
-import { DEFAULT_GRAPH_ID, indexTrace, rebuildGraph } from "./trace-index.js";
-import { digestContextFor } from "./digest-context.js";
+import { DEFAULT_GRAPH_ID, rebuildGraph } from "./trace-index.js";
+import { planStages, reindexPlan, type StageFacts } from "./index-plan.js";
+import { runStages, type Providers, type StageWorld } from "./index-run.js";
 import { frequentRoutes, toGraphDTO } from "./graph-view.js";
-import {
-  ModelFilesMissingError,
-  ModelStore,
-  type ModelDownloadProgress,
-} from "./model-store.js";
+import { ModelStore, type ModelDownloadProgress } from "./model-store.js";
 import { OnnxHost } from "./onnx-host.js";
 import { spawnOnnxWorker } from "./onnx-spawn.js";
 import { TRACK_BUCKETS } from "@shared/types";
@@ -106,26 +90,6 @@ import {
 } from "./session-tracks.js";
 import { peakCountFor, type AudioBlobPeaks } from "./track-buckets.js";
 
-interface Providers {
-  textEmbedder: EmbeddingProvider;
-  behavior: BehaviorFeatureExtractor;
-  /**
-   * Single-vector visual path — frame + region embeddings, and therefore the
-   * Tier-3 region ANN + AX-label FTS highlights. Mutually exclusive with
-   * patchEmbedder: the library's Retriever rejects both at once.
-   */
-  imageEmbedder: ImageEmbeddingProvider | null;
-  /** Late-interaction visual path. Mutually exclusive with imageEmbedder. */
-  patchEmbedder: MultiVectorProvider | null;
-  captioner: LibCaptionProvider | null;
-  /**
-   * Composes actions into named levels. Null does NOT disable the hierarchy —
-   * the tree is always built, structurally, and every node gets a templated
-   * rollup. This only upgrades the prose.
-   */
-  summarizer: LibSummaryProvider | null;
-  reranker: Reranker | null;
-}
 
 /**
  * Capabilities as a pure function so it is testable without Electron.
@@ -142,24 +106,6 @@ export function capabilitiesFor(p: ProviderSettingsView): Capabilities {
     rerank: p.rerankProvider !== "none",
     // No transcript member, deliberately — see Capabilities in shared/types.ts.
   };
-}
-
-/**
- * Why transcription was skipped, in one line a user can act on.
- *
- * A "Model directory" is the case worth naming: setting it disables managed
- * downloads by design (see model-store.ts), so the whisper GGML has to be put
- * there by hand. Reaching around the override to download anyway would break
- * the one promise that setting makes.
- */
-export function transcribeFailure(err: unknown): string {
-  if (err instanceof ModelFilesMissingError) {
-    return (
-      `the model directory has no ${MODELS.whisper.files[0]!.path} — add it there, ` +
-      `or clear the Model directory setting to use the managed download`
-    );
-  }
-  return err instanceof Error ? err.message : String(err);
 }
 
 /** "downloading model 23/57MB" — MB because a byte count means nothing here. */
@@ -602,219 +548,71 @@ export class DeskRagService {
     return this.state;
   }
 
-  /** segment -> represent, gated on configured providers, with progress. */
+  /**
+   * Run the indexing pipeline over one recording.
+   *
+   * The ordering does not live here — it lives in `INDEX_STAGES`, and the stage
+   * bodies live in `STAGE_RUNNERS`. This method's whole job is to turn the
+   * service's state into `StageFacts` + a `StageWorld` and to say how progress
+   * is counted, which for a single recording is by stage.
+   */
   private async index(sessionId: string): Promise<void> {
-    const prov = await this.buildProviders();
-    const hasAudio = this.store
-      .getBlobsBySession(sessionId)
-      .some((b) => b.media === "mic" || b.media === "desktop_audio");
+    const world = this.stageWorld(sessionId, await this.buildProviders());
+    const plan = planStages(world.facts);
+    const total = plan.length;
 
-    type Stage = { name: string; run: () => Promise<unknown> };
-    const stages: Stage[] = [
-      { name: "Segmenting", run: () => new Segmenter(this.store).segment(sessionId) },
-      // ALWAYS on, and it has to be: text-only retrieval recalls frames purely
-      // by segment membership, so without these links a default install (no
-      // image provider) returns nothing for every query. It used to happen only
-      // inside the image stages, which are gated on a provider that defaults to
-      // "none" — measured on a real store, 2 of 4 recordings had zero links.
-      // Pure SQLite over what Segmenting just wrote; no model involved.
-      { name: "Linking frames", run: () => associateFrames(this.store, sessionId) },
-      // AX walks post-date the pixels they describe by the capture latency, so
-      // the frame that TRIGGERED a walk is not the frame it shows. Capture
-      // writes no frame_id and this assigns one by content time. It MUST run
-      // before Regions, which reads it through StoredAxProvider.
-      { name: "Linking AX", run: () => associateFrameAx(this.store, sessionId) },
-      // Regions run BEFORE the digest, and under every image configuration
-      // including none. Proposal is geometry + the AX tree; only the crops need
-      // a model. Two things downstream read what this writes: the digest names
-      // what was clicked from these labels, and `Anchor.visual` in the trace
-      // graph is built from these rows — gating the whole stage on
-      // `imageEmbedder` once meant the late-interaction (patch) path wrote no
-      // region rows at all and silently cost the executor its middle anchor rung.
-      {
-        name: prov.imageEmbedder ? "Regions" : "Regions (proposal only)",
-        run: async () => {
-          const cropper = prov.imageEmbedder ? await this.loadCropper() : undefined;
-          return new RegionRepresenter(this.store, {
-            // Without a cropper there is nothing to embed, so drop back to
-            // proposal rather than skipping the stage.
-            ...(prov.imageEmbedder && cropper
-              ? { imageEmbedder: prov.imageEmbedder, blobStore: this.blobs, cropper }
-              : {}),
-            axProvider: new StoredAxProvider(this.store).provide,
-          }).represent(sessionId);
+    try {
+      await runStages(plan, world, {
+        begin: (_id, label, i, n) => {
+          // Named so a weight download that starts INSIDE this stage can rewrite
+          // the label. Whisper's model is fetched lazily by Transcribing, and
+          // 57MB of silence is indistinguishable from a hung stage.
+          this.downloading = { stage: label, done: i, total: n };
+          this.emitIndexing({ stage: label, done: i, total: n });
         },
-      },
-      {
-        name: "Digest + behavior",
-        run: () =>
-          new Representer(this.store, {
-            digestEmbedder: prov.textEmbedder,
-            behavior: prov.behavior,
-            // Typed text and clicked labels — resolved against the session's own
-            // keymap and the regions the stage above just wrote. Absent either,
-            // the digest degrades to tallies rather than guessing.
-            digestContext: digestContextFor(this.store, sessionId),
-          }).represent(sessionId),
-      },
-    ];
-
-    if (prov.imageEmbedder) {
-      stages.push({
-        name: "Frame embeddings",
-        run: () =>
-          new FrameRepresenter(this.store, {
-            imageEmbedder: prov.imageEmbedder!,
-            blobStore: this.blobs,
-          }).represent(sessionId),
+        update: (label, done, n) => this.emitIndexing({ stage: label, done, total: n }),
       });
-    }
-    if (prov.patchEmbedder) {
-      // The multivector path replaces BOTH the frame and region image stages:
-      // patches are the regions. It is also by far the slowest stage (seconds
-      // per frame), so it reports per-frame progress.
-      stages.push({
-        name: "Frame patches",
-        run: () =>
-          new FramePatchRepresenter(this.store, {
-            patchEmbedder: prov.patchEmbedder!,
-            blobStore: this.blobs,
-            onProgress: (done, total) =>
-              this.emitIndexing({ stage: `Frame patches ${done}/${total}`, done, total }),
-          }).represent(sessionId),
-      });
-    }
-    if (prov.captioner) {
-      stages.push({
-        name: "Captions",
-        run: () =>
-          new CaptionRepresenter(this.store, {
-            captioner: prov.captioner!,
-            captionEmbedder: prov.textEmbedder,
-            blobStore: this.blobs,
-          }).represent(sessionId),
-      });
-      stages.push({
-        name: "App captions",
-        // Needs a cropper too (sharp), unlike the whole-frame caption stage —
-        // skip entirely rather than write nothing useful when it's unavailable.
-        run: async () => {
-          const cropper = await this.loadCropper();
-          if (!cropper) return;
-          await new AppCaptionRepresenter(this.store, {
-            captioner: prov.captioner!,
-            captionEmbedder: prov.textEmbedder,
-            blobStore: this.blobs,
-            cropper,
-          }).represent(sessionId);
-        },
-      });
-    }
-    // Probed, not "configured": the model downloads itself, so the only thing
-    // that can still be missing is the whisper.cpp binary — and skipping here is
-    // what keeps a machine without it from fetching 57MB it cannot use.
-    if (hasAudio && whisperAvailable(this.settings.view().providers.whisper.binaryPath)) {
-      const at = stages.length; // this stage's own index, for the failure report
-      stages.push({
-        name: "Transcribing",
-        // The ONLY stage that is allowed to fail without failing the run, and it
-        // has to be: transcription is on by default now, so a download, a
-        // checksum, or a binary that vanished between the probe and here would
-        // otherwise abort indexing — and Trace, which runs AFTER this, would be
-        // lost with it. A session with no transcript is still a session; a
-        // session with no trace graph is a session the executor cannot use.
-        run: async () => {
-          try {
-            await new TranscriptRepresenter(this.store, {
-              transcriber: await this.buildTranscriber(),
-              transcriptEmbedder: prov.textEmbedder,
-              blobStore: this.blobs,
-            }).represent(sessionId);
-          } catch (err) {
-            console.error("[deskrag] transcription failed:", err);
-            this.emitIndexing({
-              stage: `Transcribing skipped — ${transcribeFailure(err)}`,
-              done: at,
-              total: stages.length,
-            });
-          }
-        },
-      });
-    }
-
-    // Compose the hierarchy: actions -> tasks -> processes -> one root whose
-    // summary is the session's purpose. AFTER Digest/Captions/Transcribing,
-    // because it reads their text; BEFORE "Search index", so summaries reach the
-    // lexical lane. Always on — the structural path needs no provider, and
-    // composing can never fail the run.
-    stages.push({
-      name: "Composing",
-      run: async () => {
-        const r = await new ComposeRepresenter(this.store, {
-          ...(prov.summarizer ? { summarizer: prov.summarizer } : {}),
-          summaryEmbedder: prov.textEmbedder,
-        }).represent(sessionId);
-        if (r.nodes === 0) return;
-        // Say WHICH path produced the tree: a structurally-composed hierarchy
-        // must not read as a summarized one.
-        const how = r.llmNodes === 0 ? "structural" : `${r.llmNodes} summarized`;
-        return { stage: `Composing — ${r.levels} levels, ${r.nodes} nodes (${how})` };
-      },
-    });
-
-    // After every text-writing stage, because it reads what they wrote: digest,
-    // caption, app_caption, transcript and the composed summaries are produced
-    // by five stages under five different provider configurations, and one
-    // reader at the end sees whatever actually landed. Needs no provider, so it
-    // always runs — on a default install this lane is the only route from a
-    // query to an exact term.
-    stages.push({
-      name: "Search index",
-      run: async () => indexSegmentText(this.store, sessionId),
-    });
-
-    // Last: the trace graph. It runs after Regions because `regionsAt` reads what
-    // that stage wrote, and after Segmenting because boundaries define the nodes.
-    stages.push({
-      name: "Trace",
-      run: async () => {
-        const r = await indexTrace(this.store, sessionId);
-        if (r === undefined) return;
-        // The stage name is the only surface a trace has until the executor
-        // exists, so it carries the counts rather than a bare "Trace". The
-        // missing-keymap case is the one a user has to be told about: it means
-        // every keystroke was discarded, and nothing else would say so.
-        const summary = r.missingKeymap
-          ? `Trace — ${r.actions} actions (no keyboard layout: typed text not captured)`
-          : `Trace — ${r.actions} actions, graph ${r.nodes}/${r.edges}` +
-            (r.variables > 0 ? `, ${r.variables} variables` : "");
-        // Trace is always the last stage, so its index is stages.length - 1.
-        // (`total` below is declared after this closure; referencing it here
-        // would work only by virtue of when the closure runs.)
-        this.emitIndexing({ stage: summary, done: stages.length - 1, total: stages.length });
-        if (r.missingKeymap) {
-          console.warn(
-            "[deskrag] no keymap captured for this session — typed text was not lifted",
-          );
-        }
-      },
-    });
-
-    const total = stages.length;
-    for (let i = 0; i < stages.length; i++) {
-      const s = stages[i]!;
-      // Named so a weight download that starts INSIDE this stage can rewrite the
-      // label. Whisper's model is fetched lazily by Transcribing, and 57MB of
-      // silence is indistinguishable from a hung stage.
-      this.downloading = { stage: s.name, done: i, total };
-      this.emitIndexing({ stage: s.name, done: i, total });
-      try {
-        await s.run();
-      } finally {
-        this.downloading = undefined;
-      }
+    } finally {
+      // In a finally because a stage that throws leaves this set, and the next
+      // weight download — which can start from a SEARCH — would then label
+      // itself with the stage that failed.
+      this.downloading = undefined;
     }
     this.emitIndexing({ stage: "Done", done: total, total });
+  }
+
+  /**
+   * Everything the stages need from the service, gathered once per run.
+   *
+   * `hasAudio` is a fact about the RECORDING and `whisper` a fact about the
+   * MACHINE — probed rather than configured, because the model downloads itself
+   * and only the binary can still be missing. Both are here rather than in
+   * `capabilities()` for that reason: neither is a setting.
+   *
+   * `providers` is passed in rather than built here because a re-index calls
+   * this once per recording, and `buildProviders` resolves weights and opens
+   * inference sessions — doing that thirteen times over a library would be
+   * thirteen ONNX sessions for one run.
+   */
+  private stageWorld(sessionId: string, providers: Providers): StageWorld {
+    const facts: StageFacts = {
+      imageEmbedder: providers.imageEmbedder !== null,
+      patchEmbedder: providers.patchEmbedder !== null,
+      captioner: providers.captioner !== null,
+      hasAudio: this.store
+        .getBlobsBySession(sessionId)
+        .some((b) => b.media === "mic" || b.media === "desktop_audio"),
+      whisper: whisperAvailable(this.settings.view().providers.whisper.binaryPath),
+    };
+    return {
+      sessionId,
+      facts,
+      providers,
+      store: this.store,
+      blobs: this.blobs,
+      loadCropper: () => this.loadCropper(),
+      buildTranscriber: () => this.buildTranscriber(),
+    };
   }
 
   private async loadCropper(): Promise<import("deskrag").RegionCropper | null> {
@@ -963,6 +761,7 @@ export class DeskRagService {
         role: h.role,
         label: h.label,
         matchedBy: h.matchedBy,
+        strength: h.strength,
       }));
       highlightsByFrame.set(fr.frameId, highlights);
       return {
@@ -1260,6 +1059,114 @@ export class DeskRagService {
   }
 
   /**
+   * Re-index the whole library: discard everything derived, then run the full
+   * pipeline again over every recording.
+   *
+   * NOT a subset of the record path, which is the point. It used to be one — the
+   * text-side stages, hand-written a second time — and it went stale: composing
+   * was added to the record path and not to this one, so a rebuild produced an
+   * FTS index missing every summary and an existing recording could never gain a
+   * hierarchy at all. Both paths now select from `INDEX_STAGES`, so there is no
+   * second list to keep in step.
+   *
+   * Re-segmenting is now safe, and it was not before. The old worry was that new
+   * segment ids would orphan every caption, app_caption and transcript attached
+   * to the old ones — true, and the reason `Segmenter` was excluded. `purgeDerived`
+   * removes those rows first and the stages rewrite them, so nothing is left
+   * pointing at an id that no longer exists.
+   *
+   * WHAT THIS COSTS, and why the UI confirms first: a recording is rebuilt with
+   * the providers configured NOW. Re-indexing with no captioner permanently
+   * discards every caption; with no whisper binary, every transcript. Both are
+   * recomputable from blobs still on disk, but only by a run that has the
+   * provider. It also runs the model stages, so a library takes minutes to hours
+   * where the old text-only rebuild took seconds.
+   *
+   * The trace graph is rebuilt ONCE at the end rather than per recording: a graph
+   * accretes, so re-lifting one session into a graph that still contains it
+   * double-counts its observations and corrupts the counts `edgeCost` uses.
+   *
+   * Refused while recording: the session in flight is still writing the events
+   * these stages read.
+   */
+  async reindexAll(): Promise<{ sessions: number; segments: number }> {
+    if (this.state.state !== "idle") {
+      throw new Error("Stop the current recording before re-indexing.");
+    }
+    // Oldest first — the order `rebuildGraph` replays in, so the rebuilt graph
+    // accretes the same way the incremental path produced it.
+    const sessions = [...this.store.listSessions()].sort((a, b) => a.startedAt - b.startedAt);
+    const n = sessions.length;
+    // One step per recording plus the graph rebuild that finishes the run.
+    const total = n + 1;
+    this.emitIndexing({ stage: "Re-indexing", done: 0, total });
+    try {
+      const providers = await this.buildProviders();
+      for (let i = 0; i < n; i++) {
+        const id = sessions[i]!.id;
+        const world = this.stageWorld(id, providers);
+        const { perSession } = reindexPlan(world.facts);
+        const at = (label: string): string => `Recording ${i + 1}/${n} — ${label}`;
+
+        // Purge FIRST. Every stage below appends rather than replaces —
+        // `putRegions` inserts with a fresh ulid and adds to Lance without
+        // deleting — so a second pass over live rows would double them, and a
+        // duplicate vector that still has a SQLite row is not an orphan, so
+        // `reconcile()` could never prune it.
+        await this.store.purgeDerived(id);
+
+        await runStages(perSession, world, {
+          begin: (_id, label) => {
+            // Same field the record path sets, so a weight download inside a
+            // stage rewrites this label instead of stalling silently. The old
+            // rebuild never set it — and never ran transcription either.
+            this.downloading = { stage: at(label), done: i, total };
+            this.emitIndexing({ stage: at(label), done: i, total });
+          },
+          update: (label) => this.emitIndexing({ stage: at(label), done: i, total }),
+        });
+      }
+      this.downloading = undefined;
+
+      // The library-scoped finisher. `reindexPlan` puts `trace` here rather than
+      // in the loop; running it is not optional, or a re-index would leave the
+      // graph describing segments that no longer exist.
+      this.emitIndexing({ stage: "Rebuilding trace graph", done: n, total });
+      await rebuildGraph(this.store);
+
+      // A finished session is immutable, which is what the rail's memo assumes —
+      // and a re-index is the one thing that makes it false. The highlights go
+      // for a related reason: they name REGION ids from the last search, and
+      // `putRegions` mints fresh ulids, so every one of them now points at a row
+      // that no longer exists.
+      this.trackCache.clear();
+      this.lastHighlights.clear();
+
+      const segments = sessions.reduce(
+        (sum, x) =>
+          sum +
+          this.store
+            .getSegmentsBySession(x.id)
+            .filter((g) => g.granularity === LEAF_GRANULARITY).length,
+        0,
+      );
+      this.emitIndexing({
+        stage:
+          n === 0
+            ? "Nothing to re-index — no recordings yet"
+            : `Re-indexed ${n} recording${n === 1 ? "" : "s"}, ${segments} actions`,
+        done: total,
+        total,
+      });
+      return { sessions: n, segments };
+    } catch (err) {
+      this.downloading = undefined;
+      this.emitIndexing({ stage: "Re-index failed — see logs", done: 0, total });
+      throw err;
+    }
+  }
+
+  /**
    * Re-lift every recording into a fresh trace graph.
    *
    * Lifting reads `ax_snapshot` and the event stream, both already on disk, so
@@ -1272,75 +1179,6 @@ export class DeskRagService {
    * a lift would read, so it would be lifted half-formed and then merged again
    * when it stops.
    */
-  /**
-   * Re-run the search-side stages over every existing recording.
-   *
-   * Needed because the searchable text a recording carries is decided by the
-   * code that indexed it, and existing installs were indexed by code that wrote
-   * a tally-only digest, no lexical index, and — without an image provider — no
-   * frame↔segment links at all, which made text search return nothing.
-   *
-   * Three stages, in the order the indexing path runs them, and DELIBERATELY NOT
-   * `Segmenter`: re-segmenting would mint new segment ids and orphan every
-   * caption, app_caption and transcript already attached to the old ones.
-   * Everything here either rewrites a row in place or replaces a vector by id.
-   *
-   * Refused while recording, for the same reason a graph rebuild is: the session
-   * in flight is still writing the events these stages read.
-   */
-  async reindexSearch(): Promise<{ sessions: number; segments: number }> {
-    if (this.state.state !== "idle") {
-      throw new Error("Stop the current recording before re-indexing.");
-    }
-    const prov = await this.buildProviders();
-    const sessions = this.store.listSessions();
-    let segments = 0;
-    this.emitIndexing({ stage: "Re-indexing search", done: 0, total: sessions.length });
-    try {
-      for (let i = 0; i < sessions.length; i++) {
-        const id = sessions[i]!.id;
-        this.emitIndexing({
-          stage: `Re-indexing recordings ${i + 1}/${sessions.length}`,
-          done: i,
-          total: sessions.length,
-        });
-        await associateFrames(this.store, id);
-        await associateFrameAx(this.store, id);
-        const r = await new Representer(this.store, {
-          digestEmbedder: prov.textEmbedder,
-          behavior: prov.behavior,
-          digestContext: digestContextFor(this.store, id),
-        }).represent(id);
-        segments += r.segmentCount;
-        // Compose BEFORE the lexical index, the same ordering the record path
-        // uses: summaries are a segment_fts view, and re-indexing without this
-        // would silently drop every one of them. It is also what lets an
-        // existing recording gain a hierarchy at all.
-        await new ComposeRepresenter(this.store, {
-          ...(prov.summarizer ? { summarizer: prov.summarizer } : {}),
-          summaryEmbedder: prov.textEmbedder,
-        }).represent(id);
-        indexSegmentText(this.store, id);
-      }
-      this.emitIndexing({
-        stage:
-          sessions.length === 0
-            ? "Nothing to re-index — no recordings yet"
-            : `Re-indexed ${sessions.length} recording${sessions.length === 1 ? "" : "s"}, ${segments} segments`,
-        done: sessions.length,
-        total: sessions.length,
-      });
-      return { sessions: sessions.length, segments };
-    } catch (err) {
-      this.emitIndexing({
-        stage: "Re-index failed — see logs",
-        done: 0,
-        total: sessions.length,
-      });
-      throw err;
-    }
-  }
-
   async reindexTraces(): Promise<ReindexResultDTO> {
     if (this.state.state !== "idle") {
       throw new Error("Stop the current recording before rebuilding the graph.");

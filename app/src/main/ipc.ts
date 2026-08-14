@@ -57,7 +57,7 @@ export function registerIpc(
   ipcMain.handle(IPC.sessionsDetail, (_e, sessionId: string) => service.sessionDetail(sessionId));
   ipcMain.handle(IPC.sessionsRemove, (_e, sessionId: string) => service.removeSession(sessionId));
   ipcMain.handle(IPC.sessionsReindex, () => service.reindexTraces());
-  ipcMain.handle(IPC.sessionsReindexSearch, () => service.reindexSearch());
+  ipcMain.handle(IPC.sessionsReindexAll, () => service.reindexAll());
   ipcMain.handle(IPC.sessionsTracks, (_e, sessionId: string) => service.sessionTracks(sessionId));
 
   /**

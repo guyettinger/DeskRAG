@@ -28,7 +28,7 @@
  */
 
 import { readFile } from "node:fs/promises";
-import type { MultiVectorProvider } from "../types.js";
+import type { MultiVectorProvider, QueryEmbedding } from "../types.js";
 import { l2Normalize } from "./pooling.js";
 import {
   DEFAULT_TILE_CONFIG,
@@ -41,6 +41,7 @@ import {
   buildImagePrompt,
   buildQueryPrompt,
   imageTokenPositions,
+  queryContentPositions,
 } from "./colmodernvbert-prompt.js";
 import { OnnxRuntime, makeTensor, type OnnxSession } from "./runtime.js";
 import { defaultConfigPath, loadTokenizer } from "./tokenizer.js";
@@ -221,7 +222,7 @@ export class ColModernVBertMultiVector implements MultiVectorProvider {
     return results;
   }
 
-  async embedQueries(texts: string[]): Promise<Float32Array[][]> {
+  async embedQueries(texts: string[]): Promise<QueryEmbedding[]> {
     if (texts.length === 0) return [];
     const tokenize = await this.tokenizer();
     const side = this.tileConfig.tileSize;
@@ -232,12 +233,17 @@ export class ColModernVBertMultiVector implements MultiVectorProvider {
     // instead pads to seq_length, ~1.4GB of zeros for a 30-token query.
     const dummy = new Float32Array(3 * side * side);
 
-    const results: Float32Array[][] = [];
+    const results: QueryEmbedding[] = [];
     for (const text of texts) {
-      const ids = buildQueryPrompt(tokenize(text).ids);
+      const queryIds = tokenize(text).ids;
+      const ids = buildQueryPrompt(queryIds);
       // Every query position is kept, buffer tokens included: those are the
-      // learned expansion slots late interaction relies on.
-      results.push(await this.runAndSelect(ids, dummy, 1, null));
+      // learned expansion slots late interaction relies on. WHICH of them are
+      // the user's words is reported separately, for highlighting.
+      results.push({
+        vectors: await this.runAndSelect(ids, dummy, 1, null),
+        contentIndices: queryContentPositions(queryIds),
+      });
     }
     return results;
   }

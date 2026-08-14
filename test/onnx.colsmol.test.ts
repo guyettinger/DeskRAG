@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { ColSmolMultiVector } from "../src/embed/onnx/colsmol.js";
 import { computeTileGeometry, expectedTokenCount } from "../src/embed/onnx/geometry.js";
-import { QUERY_BUFFER_TOKENS, TOK } from "../src/embed/onnx/colsmol-prompt.js";
+import {
+  QUERY_BUFFER_TOKENS,
+  TOK,
+  buildQueryPrompt,
+  queryContentPositions,
+} from "../src/embed/onnx/colsmol-prompt.js";
 import type { OnnxSession, OnnxTensor } from "../src/embed/onnx/runtime.js";
 
 const D = 128;
@@ -127,7 +132,7 @@ describe("ColSmolMultiVector", () => {
     const seen: Record<string, OnnxTensor>[] = [];
     const p = new ColSmolMultiVector(opts(stubSession(seen)));
     const [q] = await p.embedQueries(["abc"]);
-    expect(q!.length).toBe(3 + QUERY_BUFFER_TOKENS);
+    expect(q!.vectors.length).toBe(3 + QUERY_BUFFER_TOKENS);
     const f = seen[0]!;
     expect(f.pixel_values!.dims).toEqual([1, 1, 3, SIDE, SIDE]); // one dummy tile
     const ids = Array.from(f.input_ids!.data as BigInt64Array).map(Number);
@@ -137,7 +142,14 @@ describe("ColSmolMultiVector", () => {
   it("keeps every query position, buffer tokens included", async () => {
     const p = new ColSmolMultiVector(opts(stubSession([])));
     const [q] = await p.embedQueries(["a longer query"]);
-    expect(q!.length).toBe("a longer query".length + QUERY_BUFFER_TOKENS);
+    expect(q!.vectors.length).toBe("a longer query".length + QUERY_BUFFER_TOKENS);
+  });
+
+  it("reports the query's own token positions, which start at 0", async () => {
+    const p = new ColSmolMultiVector(opts(stubSession([])));
+    const [q] = await p.embedQueries(["abc"]);
+    expect(q!.contentIndices[0]).toBe(0);
+    expect(q!.contentIndices.length).toBe(q!.vectors.length - QUERY_BUFFER_TOKENS);
   });
 
   it("returns [] for empty input without touching the session", async () => {
@@ -146,5 +158,28 @@ describe("ColSmolMultiVector", () => {
     expect(await p.embedImages([])).toEqual([]);
     expect(await p.embedQueries([])).toEqual([]);
     expect(seen.length).toBe(0);
+  });
+});
+
+describe("queryContentPositions (colsmol)", () => {
+  it("names the query's own tokens, which start at position 0 — there is no wrapper", () => {
+    const queryIds = [111, 222, 333];
+    const ids = buildQueryPrompt(queryIds);
+    const positions = queryContentPositions(queryIds);
+    expect(positions).toEqual([0, 1, 2]);
+    expect(positions.map((p) => ids[p])).toEqual(queryIds);
+    expect(ids.length).toBe(queryIds.length + QUERY_BUFFER_TOKENS);
+  });
+
+  it("excludes every buffer token", () => {
+    const ids = buildQueryPrompt([111, 222]);
+    const positions = new Set(queryContentPositions([111, 222]));
+    for (let i = 0; i < ids.length; i++) {
+      expect(positions.has(i)).toBe(ids[i] !== TOK.endOfUtterance);
+    }
+  });
+
+  it("returns nothing for an empty query", () => {
+    expect(queryContentPositions([])).toEqual([]);
   });
 });

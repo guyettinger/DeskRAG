@@ -343,6 +343,67 @@ CREATE TABLE IF NOT EXISTS session_clock (
 );
 `;
 
+/**
+ * What a re-index must NOT touch: rows produced by capture, from which
+ * everything else is recomputed. Losing one is unrecoverable — a video, an event
+ * stream and an AX walk cannot be re-recorded.
+ *
+ * `frame` is here despite being written mid-pipeline in spirit: ffmpeg's
+ * keyframes, their capture times and their pHashes all come from the recording
+ * itself. What the pipeline adds to a frame lives elsewhere (`frame_segment`,
+ * the Lance vectors, and `ax_snapshot.frame_id`, which `associateFrameAx`
+ * re-points idempotently on every run).
+ */
+export const CAPTURED_TABLES = [
+  "session",
+  "session_clock",
+  "event",
+  "blob",
+  "frame",
+  "frame_ax",
+  "ax_snapshot",
+  "ax_snapshot_boundary",
+  "vector_space",
+] as const;
+
+/**
+ * What `purgeDerived(sessionId)` discards and a re-index rebuilds. Everything
+ * here is a function of the captured rows above plus whichever providers are
+ * configured at the time.
+ */
+export const DERIVED_SESSION_TABLES = [
+  "segment",
+  "segment_app_caption",
+  "segment_tree",
+  "segment_summary",
+  "segment_fts",
+  "transcript_clip",
+  "frame_segment",
+  "region",
+  "region_fts",
+] as const;
+
+/**
+ * Derived, but LIBRARY-scoped rather than per-session, and therefore NOT
+ * purged per recording.
+ *
+ * A trace graph accretes across recordings: `mergeTrace` folds each session into
+ * what is already there, so re-lifting one session into a graph that still
+ * contains it double-counts its `observations` and corrupts exactly the counts
+ * `edgeCost` uses to choose a path. The only correct rebuild discards the whole
+ * graph and replays every session in order — `rebuildGraph`, whose `putGraph` is
+ * delete-then-insert. Classified here so the guard below still forces a decision
+ * about them.
+ */
+export const DERIVED_LIBRARY_TABLES = [
+  "trace_graph",
+  "trace_node",
+  "trace_edge",
+  "trace_node_source",
+  "trace_edge_source",
+  "trace_slot",
+] as const;
+
 /** Pragmas applied on every connection open. WAL = single-writer + concurrent reads. */
 export const PRAGMA_SQL = /* sql */ `
 PRAGMA journal_mode = WAL;

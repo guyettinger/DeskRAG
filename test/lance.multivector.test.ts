@@ -166,4 +166,26 @@ describe("multivector table", () => {
     expect(got![0]!.length).toBe(D);
     expect(await store.getFramePatches(NS, "nope")).toBeNull();
   });
+
+  it("reads back the stored VALUES, not the float16 bit patterns", async () => {
+    // The shape assertions above passed for a year against vectors that were
+    // uint16 BIT PATTERNS read as integers: patch[0] came back as 11569 where
+    // 0.0811 was stored. Nothing downstream errored — highlight boxes simply
+    // landed on arbitrary parts of the frame. Assert the CONTENT.
+    const stored = [vec(0), vec(5)];
+    await store.addPatches(NS, [
+      { id: "vals", session_id: "s", segment_ids: ["x"], patches: stored },
+    ]);
+    const got = await store.getFramePatches(NS, "vals");
+
+    for (const [i, v] of got!.entries()) {
+      // float16 has ~3 decimal digits, so compare loosely — but a bit pattern
+      // is off by four orders of magnitude, not by a rounding step.
+      for (let d = 0; d < D; d++) {
+        expect(v[d]!).toBeCloseTo(stored[i]![d]!, 3);
+      }
+      const norm = Math.sqrt(Array.from(v).reduce((s, x) => s + x * x, 0));
+      expect(norm).toBeCloseTo(1, 2);
+    }
+  });
 });

@@ -108,6 +108,19 @@ describe("Tier 3: region proposal + embedding + scoped highlights", () => {
     expect(await tier3.retrieveRegions({ text: "Save" }, ["other-frame"])).toEqual([]);
   });
 
+  it("reports no strength: a region hit's claim is its label, not a confidence", async () => {
+    const { frameId } = await setup();
+    const tier3 = new Tier3Retriever(store, fake);
+
+    const byLabel = await tier3.retrieveRegions({ text: "Save" }, [frameId]);
+    const byImage = await tier3.retrieveRegions({ image: Uint8Array.from([1, 1, 1, 1]) }, [frameId]);
+    expect(byLabel.length).toBeGreaterThan(0);
+    expect(byImage.length).toBeGreaterThan(0);
+    // ANN as well as FTS: normalizing a distance into a confidence would invent
+    // a number this tier does not compute, and both draw solid regardless.
+    for (const h of [...byLabel, ...byImage]) expect(h.strength).toBeNull();
+  });
+
   it("image ANN is pre-filtered to the frame scope; empty scope returns nothing", async () => {
     const { frameId } = await setup();
     const tier3 = new Tier3Retriever(store, fake);

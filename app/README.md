@@ -147,13 +147,20 @@ degrades with no visible error.
 
 **Maintenance** holds the two rebuilds, and neither re-records anything.
 
-**Rebuild search index** re-links keyframes to segments, rebuilds every digest, and
-rewrites the text index for every recording on disk. What a recording is *findable
-by* is decided by the code that indexed it, so anything recorded before the digest
-carried window titles, typed text and clicked labels stays unfindable by them until
-this runs — and a recording indexed with no image provider has no frame↔segment links
-at all, which makes text search return nothing for it. It never re-segments, so
-segment ids and the captions and transcripts attached to them survive.
+**Re-index library** discards everything indexing derived from every recording —
+segments, regions, captions, transcripts, the composed hierarchy, the search index
+and every vector — and builds it all again from the raw capture, which is never
+touched. What a recording is *findable by* is decided by the code that indexed it,
+so anything recorded before the digest carried window titles, typed text and clicked
+labels stays unfindable by them until this runs — and a recording indexed with no
+image provider has no frame↔segment links at all, which makes text search return
+nothing for it.
+
+It asks first, because it rebuilds with the providers configured *now*. Re-index
+with no captioner and every caption is gone for good; with no whisper binary, every
+transcript. The pixels and the audio are still on disk, so a later run that has the
+provider can produce them again — but this run will not. It also runs the model
+stages over the whole library, so it takes minutes to hours rather than seconds.
 
 **Rebuild trace graph** discards the graph and re-lifts every recording, oldest
 first — needed after a change to how identity is derived, since a stored node keeps
