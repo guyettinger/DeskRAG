@@ -187,6 +187,16 @@ export interface VectorSide {
  * Arrow hands nested lists back as Vector-like objects, not plain arrays, and the
  * exact shape depends on how the column was read. Normalize defensively to
  * Float32Array rows so callers never depend on Arrow's internals.
+ *
+ * NEVER call `.toArray()` on the INNER vector. These patches are stored as
+ * **float16** (see the schema below), and Arrow's `Vector.toArray()` for a
+ * Float16 column returns the raw **uint16 BIT PATTERNS** — 11569 where 0.0811
+ * was written. Nothing errors: the row count is right, the vector length is
+ * right, and every downstream cosine is a plausible-looking number, so the only
+ * symptom is that patch highlight boxes land on arbitrary parts of the frame.
+ * That shipped, and the round-trip test that "covered" this asserted only
+ * `length`. ITERATING the vector decodes properly, which is what
+ * `Float32Array.from` does with an iterable.
  */
 function toVectorList(value: unknown): Float32Array[] | null {
   if (value == null) return null;
@@ -199,8 +209,9 @@ function toVectorList(value: unknown): Float32Array[] | null {
   return outer.map((row) => {
     if (row instanceof Float32Array) return row;
     if (Array.isArray(row)) return Float32Array.from(row as number[]);
-    const inner = (row as { toArray?: () => ArrayLike<number> }).toArray?.();
-    return Float32Array.from(inner ?? []);
+    // Iterate — see above. An Arrow Vector is iterable and yields decoded
+    // numbers; its own toArray() would hand back the undecoded buffer.
+    return Float32Array.from(row as Iterable<number>);
   });
 }
 
