@@ -1,7 +1,18 @@
 # Patch highlight fidelity — what a yellow box on a search result is allowed to claim
 
 **Date:** 2026-08-14
-**Status:** proposed
+**Status:** shipped
+
+> **What driving the app added to this spec.** Everything below was designed
+> against patch vectors read OFFLINE, straight from Lance. The app reads them
+> through `DualStore.getFramePatches`, and that reader ran Arrow's
+> `Vector.toArray()` on a **float16** column, which returns the raw uint16 bit
+> patterns — 11569 where 0.0811 was written. So in the running app the boxes
+> were not merely noisy, they were computed from garbage: measured on the
+> reported frame, the app's chosen cells ranked **421–748 of 768** under a
+> correctly decoded embedding. Nothing errored, and the round-trip test that
+> covered that reader asserted only `length`. Both defects were real and both
+> are fixed; neither would have been found by the other's method. See §9.
 **Touches:** `src/embed/types.ts`, `src/embed/onnx/{geometry,colsmol,colsmol-prompt,colmodernvbert,colmodernvbert-prompt}.ts`,
 `src/retrieve/{tier2-mv,assemble,types}.ts`, `app/src/shared/types.ts`,
 `app/src/main/deskrag-service.ts`, `app/src/renderer/src/screens/DetailView.tsx`,
@@ -275,3 +286,27 @@ provider whose query vectors are all content, which is exactly why the bug survi
 - **ColSmol is unmeasured.** Every number here comes from ColModernVBERT, the configured
   provider on the machine where this was reported. The interface change covers both
   adapters; the floor may not.
+
+## 9. What shipped, and what verification changed
+
+Eight tasks landed as planned (`docs/superpowers/plans/2026-08-14-patch-highlight-fidelity.md`).
+Two things differ from the design above, both discovered by driving the real app:
+
+- **A second root cause, fixed here too.** `toVectorList` in `store/lance/tables.ts`
+  decoded float16 patch vectors by calling Arrow's `Vector.toArray()`, which hands
+  back the undecoded uint16 buffer. Iterating the vector decodes it. This was never
+  a retrieval defect — `searchFramePatches` does its MaxSim inside Lance — but every
+  highlight box the app has ever drawn on the late-interaction path came from bit
+  patterns. The regression test now asserts the VALUES and the unit norm, where the
+  old one asserted only the length.
+- **`RegionHit.strength` is `null` for every Tier-3 region hit**, ANN included, not
+  only for FTS hits as §3 first said. A region's claim is its label and it draws
+  solid either way; normalizing an ANN distance would invent a confidence that tier
+  does not compute.
+
+**Confirmed in the running app (2026-08-14), on the reported frame**: the three
+brightest boxes are the `mcp` tab title, the `mcp` sidebar entry and `probe:mcp`
+inside the shell command, with strengths matching the offline probe to three
+decimals (1.00 / 0.94 / 0.88) and the two remaining noise boxes faded. Checked in
+the DEFAULT configuration too (`imageProvider: "none"`): a labelled AX region still
+renders solid with its label and carries no strength.
