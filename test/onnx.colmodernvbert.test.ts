@@ -7,7 +7,12 @@ import {
   readTileConfig,
 } from "../src/embed/onnx/colmodernvbert.js";
 import { computeTileGeometry, expectedTokenCount } from "../src/embed/onnx/geometry.js";
-import { MV_TOK, QUERY_BUFFER_TOKENS } from "../src/embed/onnx/colmodernvbert-prompt.js";
+import {
+  MV_TOK,
+  QUERY_BUFFER_TOKENS,
+  buildQueryPrompt,
+  queryContentPositions,
+} from "../src/embed/onnx/colmodernvbert-prompt.js";
 import type { OnnxSession, OnnxTensor } from "../src/embed/onnx/runtime.js";
 
 const D = 128;
@@ -245,5 +250,33 @@ describe("ColModernVBertMultiVector — empty input", () => {
     expect(await p.embedImages([])).toEqual([]);
     expect(await p.embedQueries([])).toEqual([]);
     expect(seen.length).toBe(0);
+  });
+});
+
+describe("queryContentPositions (colmodernvbert)", () => {
+  it("names exactly the positions holding the query's own tokens", () => {
+    const queryIds = [111, 222, 333];
+    const ids = buildQueryPrompt(queryIds);
+    const positions = queryContentPositions(queryIds);
+    expect(positions).toEqual([1, 2, 3]); // after [CLS]
+    expect(positions.map((p) => ids[p])).toEqual(queryIds);
+  });
+
+  it("excludes the wrapper and every buffer token", () => {
+    const ids = buildQueryPrompt([111, 222]);
+    const positions = new Set(queryContentPositions([111, 222]));
+    for (let i = 0; i < ids.length; i++) {
+      const special =
+        ids[i] === MV_TOK.cls || ids[i] === MV_TOK.sep || ids[i] === MV_TOK.endOfUtterance;
+      expect(positions.has(i)).toBe(!special);
+    }
+  });
+
+  it("strips a wrapper the tokenizer already added, like buildQueryPrompt does", () => {
+    expect(queryContentPositions([MV_TOK.cls, 111, 222, MV_TOK.sep])).toEqual([1, 2]);
+  });
+
+  it("returns nothing for an empty query", () => {
+    expect(queryContentPositions([])).toEqual([]);
   });
 });

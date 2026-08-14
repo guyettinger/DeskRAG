@@ -87,6 +87,21 @@ export function buildQueryPrompt(queryTokenIds: number[]): number[] {
 }
 
 /**
+ * Positions in `buildQueryPrompt(queryTokenIds)` that hold the user's OWN words.
+ *
+ * This tokenizer's prompt has NO [CLS]/[SEP] wrapper — the query's tokens start
+ * at 0 and the buffer run is appended after them. Same contract as the
+ * ColModernVBERT module's function of this name; the layouts differ, which is
+ * exactly why each module states its own.
+ *
+ * Scoring uses every vector, buffer slots included. Highlighting uses only
+ * these: a buffer vector's best-matching patch answers nothing the user typed.
+ */
+export function queryContentPositions(queryTokenIds: number[]): number[] {
+  return Array.from({ length: queryTokenIds.length }, (_, i) => i);
+}
+
+/**
  * Sequence positions holding an image token, in order.
  *
  * The model emits one vector per sequence position, most of which are text. The

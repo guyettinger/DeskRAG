@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { ColSmolMultiVector } from "../src/embed/onnx/colsmol.js";
 import { computeTileGeometry, expectedTokenCount } from "../src/embed/onnx/geometry.js";
-import { QUERY_BUFFER_TOKENS, TOK } from "../src/embed/onnx/colsmol-prompt.js";
+import {
+  QUERY_BUFFER_TOKENS,
+  TOK,
+  buildQueryPrompt,
+  queryContentPositions,
+} from "../src/embed/onnx/colsmol-prompt.js";
 import type { OnnxSession, OnnxTensor } from "../src/embed/onnx/runtime.js";
 
 const D = 128;
@@ -146,5 +151,28 @@ describe("ColSmolMultiVector", () => {
     expect(await p.embedImages([])).toEqual([]);
     expect(await p.embedQueries([])).toEqual([]);
     expect(seen.length).toBe(0);
+  });
+});
+
+describe("queryContentPositions (colsmol)", () => {
+  it("names the query's own tokens, which start at position 0 — there is no wrapper", () => {
+    const queryIds = [111, 222, 333];
+    const ids = buildQueryPrompt(queryIds);
+    const positions = queryContentPositions(queryIds);
+    expect(positions).toEqual([0, 1, 2]);
+    expect(positions.map((p) => ids[p])).toEqual(queryIds);
+    expect(ids.length).toBe(queryIds.length + QUERY_BUFFER_TOKENS);
+  });
+
+  it("excludes every buffer token", () => {
+    const ids = buildQueryPrompt([111, 222]);
+    const positions = new Set(queryContentPositions([111, 222]));
+    for (let i = 0; i < ids.length; i++) {
+      expect(positions.has(i)).toBe(ids[i] !== TOK.endOfUtterance);
+    }
+  });
+
+  it("returns nothing for an empty query", () => {
+    expect(queryContentPositions([])).toEqual([]);
   });
 });

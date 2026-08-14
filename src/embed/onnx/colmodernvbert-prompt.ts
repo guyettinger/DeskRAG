@@ -140,6 +140,26 @@ export function buildQueryPrompt(queryTokenIds: number[]): number[] {
 }
 
 /**
+ * Positions in `buildQueryPrompt(queryTokenIds)` that hold the user's OWN words.
+ *
+ * Derived from the layout rather than by filtering ids, so a query that happens
+ * to contain a special id is still reported honestly: content is everything
+ * between the [CLS] and the buffer run, which is exactly what buildQueryPrompt
+ * puts there.
+ *
+ * Scoring uses every vector — the buffer slots are the learned expansion slots
+ * late interaction relies on. HIGHLIGHTING uses only these, because a buffer or
+ * wrapper vector's best-matching patch is not an answer to anything the user
+ * typed. Measured: for "probe mcp", 12 of 15 vectors are wrapper or buffer, and
+ * [CLS] alone scored 0.992 against a patch of blank document space.
+ */
+export function queryContentPositions(queryTokenIds: number[]): number[] {
+  const n = stripWrapper(queryTokenIds).length;
+  // Position 0 is the [CLS] buildQueryPrompt prepends.
+  return Array.from({ length: n }, (_, i) => i + 1);
+}
+
+/**
  * Sequence positions holding an image token, in order.
  *
  * The model emits one vector per sequence position, most of which are text. The
