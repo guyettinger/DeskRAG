@@ -194,8 +194,10 @@ strength: number | null;
 ```
 
 Required, nullable — the `showLabels` pattern, so the compiler finds every builder and
-every fixture, and `null` stays a meaning rather than a default. FTS region hits are
-`null`; ANN region hits and patch highlights carry a number.
+every fixture, and `null` stays a meaning rather than a default. **Every Tier-3 region
+hit is `null`**, ANN and FTS alike: a region hit's claim is its label, it renders solid
+either way, and normalizing ANN distances into a confidence would invent a number that
+tier does not compute. Only patch highlights carry one.
 
 `DetailView` renders them differently, because they claim different things:
 
