@@ -41,12 +41,31 @@ export interface Tier2MultiVectorOptions {
 /**
  * Keep a patch scoring at least this fraction of the frame's best.
  *
- * PROVISIONAL — measured 2026-08-14 on ONE real ColModernVBERT frame: at 0.80
- * the query "probe mcp" boxes the `mcp` tab title, `probe:mcp` inside a shell
- * command and the `mcp` sidebar entry — the three obvious answers — plus two
- * boxes on blank space. At 0.90 it keeps two correct boxes and LOSES a real
- * answer. Re-calibrate across several frames and applications with
- * `npm run probe:highlight`.
+ * MEASURED 2026-08-14 by `npm run probe:highlight` over 10 known-answer queries
+ * on 6 real frames across 6 applications (Obsidian, Calculator, TextEdit,
+ * Terminal, WebStorm, Chrome — `scripts/highlight-cases.json`), ColModernVBERT:
+ *
+ *   floor  boxes  on-answer  queries answered
+ *   0.60      76         17   9/10
+ *   0.70      68         15   8/10
+ *   0.75      61         13   8/10
+ *   0.80      51         11   8/10     <- the knee
+ *   0.85      41         10   7/10
+ *   0.90      28          8   5/10
+ *
+ * 0.80 answers as many queries as 0.70 while drawing 25% fewer boxes; 0.85
+ * costs a query and 0.90 costs half of them. On the reported frame it boxes the
+ * `mcp` tab title, `probe:mcp` inside the shell command and the `mcp` sidebar
+ * entry — the three obvious answers — plus two on blank space.
+ *
+ * DISCLOSED, because it is what these numbers say: only about a fifth of the
+ * boxes fall inside the hand-drawn answer at ANY floor (22% at 0.80, 29% at
+ * 0.90). A patch map attends broadly, and a floor cannot make it precise — what
+ * this constant buys is fewer, merged, ranked boxes, not a tight one.
+ *
+ * NOT measured: ColSmol (its table in the test library has zero rows, so
+ * measuring it needs a full re-index) and image queries, whose 832 content
+ * vectors are a different regime entirely.
  */
 const DEFAULT_RELATIVE_FLOOR = 0.8;
 

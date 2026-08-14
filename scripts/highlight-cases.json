@@ -1,0 +1,62 @@
+[
+  {
+    "frameId": "01KZZ3KJTR6YQ7EYX2H7ZADS77",
+    "query": "probe mcp",
+    "answer": { "x": 800, "y": 405, "w": 190, "h": 45 },
+    "note": "Obsidian — the reported case; answer is `npm run probe:mcp` in the shell block"
+  },
+  {
+    "frameId": "01KZZ3KJTR6YQ7EYX2H7ZADS77",
+    "query": "the macOS dock",
+    "answer": { "x": 0, "y": 1000, "w": 1920, "h": 80 },
+    "note": "Obsidian — a query about screen furniture rather than page content"
+  },
+  {
+    "frameId": "01KZHBFHRJH6R658CGZM66KNP4",
+    "query": "calculator keypad",
+    "answer": { "x": 140, "y": 215, "w": 230, "h": 395 },
+    "note": "Calculator — a small window against a busy desktop"
+  },
+  {
+    "frameId": "01KZHBFHRJH6R658CGZM66KNP4",
+    "query": "the red stop recording button",
+    "answer": { "x": 950, "y": 395, "w": 100, "h": 100 },
+    "note": "Calculator frame — one distinctive control in DeskRAG's own window"
+  },
+  {
+    "frameId": "01KZHBG1CABWS9WMS8QS3NJHVF",
+    "query": "text formatting toolbar",
+    "answer": { "x": 185, "y": 75, "w": 580, "h": 45 },
+    "note": "TextEdit — a wide, short target"
+  },
+  {
+    "frameId": "01KZMV47PTX3EGRYEF9GSPYGK7",
+    "query": "a json configuration block",
+    "answer": { "x": 425, "y": 750, "w": 655, "h": 230 },
+    "note": "Terminal over Chrome — text content, not a control"
+  },
+  {
+    "frameId": "01KZMV47PTX3EGRYEF9GSPYGK7",
+    "query": "terminal window",
+    "answer": { "x": 0, "y": 110, "w": 590, "h": 370 },
+    "note": "Terminal over Chrome — a whole window as the target"
+  },
+  {
+    "frameId": "01KZZ3KWKKE34HEW3H7625WH0S",
+    "query": "the project file tree",
+    "answer": { "x": 0, "y": 110, "w": 375, "h": 250 },
+    "note": "WebStorm — a panel among panels of similar colour"
+  },
+  {
+    "frameId": "01KZZ3KWKKE34HEW3H7625WH0S",
+    "query": "npm scripts in package json",
+    "answer": { "x": 390, "y": 120, "w": 1005, "h": 232 },
+    "note": "WebStorm — code text"
+  },
+  {
+    "frameId": "01KZMTTVX4C1CDTPVTD8YGE3AZ",
+    "query": "a purple Add to Obsidian button",
+    "answer": { "x": 388, "y": 440, "w": 162, "h": 44 },
+    "note": "Google Chrome — a coloured button on a web page"
+  }
+]
