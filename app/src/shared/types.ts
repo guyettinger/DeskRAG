@@ -169,6 +169,12 @@ export interface HighlightDTO {
   role: string | null;
   label: string | null;
   matchedBy: string[];
+  /**
+   * Confidence within this frame's highlight set (1 = strongest), or null when
+   * there is no similarity behind the hit — every labelled AX region is null
+   * and draws solid. See RegionHit.strength in the library.
+   */
+  strength: number | null;
 }
 
 export interface FrameHitDTO {

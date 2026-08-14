@@ -849,6 +849,17 @@ a:focus-visible {
   border-radius: 2px;
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
 }
+/* A synthetic patch box is a WEAKER claim than a labelled region: the model
+   attended to this cell, this strongly — there is no control here it can name.
+   Washed and faded by strength rather than outlined solid, so a reader can tell
+   evidence from identification at a glance. `--strength` is set inline by
+   DetailView; the fallback keeps a box visible if it is ever absent. */
+.bbox--patch {
+  border-width: 1px;
+  border-color: color-mix(in srgb, var(--amber) 70%, transparent);
+  background: color-mix(in srgb, var(--amber) 16%, transparent);
+  opacity: calc(0.45 + 0.55 * var(--strength, 1));
+}
 /* AX selection, deliberately not amber: amber means "this matched your search",
    blue means "this is the element you picked in the tree". They coexist. */
 .bbox--ax {

@@ -127,6 +127,7 @@ export class Tier2MultiVectorRetriever {
       if (prev === undefined || top > prev) best.set(argmax, top);
     }
 
+    const topSim = Math.max(...best.values());
     return [...best.entries()]
       .sort((a, b) => b[1] - a[1])
       .slice(0, this.maxHighlights)
@@ -146,6 +147,7 @@ export class Tier2MultiVectorRetriever {
             label: null,
             matchedBy: ["ann"] as ("ann" | "fts")[],
             distance: 1 - sim,
+            strength: sim / topSim,
           } satisfies RegionHit,
         ];
       });

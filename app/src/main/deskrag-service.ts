@@ -761,6 +761,7 @@ export class DeskRagService {
         role: h.role,
         label: h.label,
         matchedBy: h.matchedBy,
+        strength: h.strength,
       }));
       highlightsByFrame.set(fr.frameId, highlights);
       return {

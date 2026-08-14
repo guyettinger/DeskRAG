@@ -132,6 +132,19 @@ describe("MaxSim highlights", () => {
     }
   });
 
+  it("scores the strongest box on the frame at strength 1", async () => {
+    const [patches] = await mv.embedImages([Uint8Array.from([1, 2, 3])]);
+    const [q] = await mv.embedQueries(["x"]);
+    // Still `.vectors` here: highlightsFrom takes the QueryEmbedding in Task 5.
+    const hl = t2().highlightsFrom("f1", q!.vectors, patches!, 1280, 800);
+    expect(hl.length).toBeGreaterThan(0);
+    expect(hl[0]!.strength).toBeCloseTo(1, 6);
+    for (const h of hl) {
+      expect(h.strength).not.toBeNull();
+      expect(h.strength!).toBeLessThanOrEqual(1 + 1e-9);
+    }
+  });
+
   it("dedupes when several query vectors hit the same patch", async () => {
     const [patches] = await mv.embedImages([Uint8Array.from([1, 2, 3])]);
     const q = [patches![0]!, patches![0]!, patches![0]!];
