@@ -139,10 +139,60 @@ export interface RetrieverWeights {
   segment: number;
 }
 
+/**
+ * One ranked list that contained this hit, and where in it.
+ *
+ * `key` is a `View` for a dense lane, `"lexical"` for the Tier-1 inverted index,
+ * or `"region_label"` for Tier 3's AX-label FTS. Deliberately a plain string
+ * rather than a union of `View`: two of the three belong to no vector space, and
+ * widening `View` to hold them is exactly what `SegmentHit.lexicalRank` already
+ * declined to do.
+ */
+export interface EvidenceLane {
+  key: string;
+  /**
+   * 1-based rank in that list. DENSE for `region_label`, since Tier 3 ranks by
+   * role+label rather than by row — two frames showing the same control are
+   * equally good answers.
+   */
+  rank: number;
+  /** Matching regions on this frame. `region_label` only. */
+  count?: number;
+}
+
+/**
+ * WHY a frame was retrieved — the three terms actually summed into `score`, plus
+ * the ranked lists behind them.
+ *
+ * This exists because `score` cannot answer the question. Every component is
+ * max-normalized across the CURRENT candidate set, so the best hit of every
+ * query scores at the weight ceiling regardless of how good it is; the number is
+ * a within-list ordering and nothing more. What distinguishes a strong hit from
+ * a weak one is agreement — several independent lanes ranking it highly — and
+ * that was computed on every query and then discarded.
+ */
+export interface FrameEvidence {
+  /** The three normalized terms, each 0..1, in the order the weights apply. */
+  frame: number;
+  region: number;
+  segment: number;
+  /** Best rank first. Empty is meaningful — see `FrameResult.evidence`. */
+  lanes: EvidenceLane[];
+}
+
 /** A recalled frame with its score breakdown and highlights. */
 export interface FrameResult {
   frameId: string;
   score: number;
+  /**
+   * The evidence behind `score`. REQUIRED so the compiler finds every builder.
+   *
+   * `lanes` may legitimately be empty: the frame scope is expanded to LEAVES
+   * (`getDescendantLeaves`) before recall, so a frame pulled in under a composed
+   * parent hit has no Tier-1 list of its own to be ranked in. That is "recalled
+   * with its segment", not missing data.
+   */
+  evidence: FrameEvidence;
   /** The frame's best containing segment (highest Tier-1 score). */
   segmentId?: string;
   /** Tier-2 ANN distance for a visual query (absent for non-visual recall). */

@@ -29,14 +29,31 @@ there is nothing to reconnect after DeskRAG restarts. DeskRAGApp must be running
 ranked moments.
 
 ```
-3 moment(s), best first.
+3 moment(s), best first. Ranking is RELATIVE to this result set: there is no
+absolute confidence, and the best match of any query always comes first however
+weak it is. "Matched in" names the ranked lists each moment appeared in —
+agreement across several is what makes a match strong.
 
-1. 2026-08-09 19:45:25 · 0:24.0 into recording 01KZM0X89RAJXRF42EK2VAGCKQ · score 1.000
+1. 2026-08-09 19:45:25 · 0:24.0 into recording 01KZM0X89RAJXRF42EK2VAGCKQ
    Task: start desk rag recorder
+   On screen: The DeskRAG Recorder is recording, timer at 00:00:24.403.
    What happened: Electron — DeskRAG. clicked "Start recording". 1 click.
+   Matched in: what happened, exact words, on-screen label
    1 matching region(s) on screen
    frameId: 01KZM0Y10BHJ4R8SX6PSVRKB1X  — pass to get_moment for the screenshot
 ```
+
+**There is deliberately no score in that output.** The retriever computes one,
+but every term of it is max-normalized across the current result set, so the
+best hit of *any* query lands at the ceiling — literally `1.000` on a default
+install — however good or bad the match is, and two queries' scores are not
+comparable. An agent handed that number reports "100% confidence" to a user. The
+lanes are what the number could never say: a moment three independent lists rank
+highly is trustworthy, one scraping in on `exact words` alone is a stretch.
+
+When every hit scores identically — frames sharing a segment with no region
+match are equal on every signal there is — the preamble drops "best first" and
+says the order is arbitrary instead.
 
 An empty result is never just an empty list: if your vectors were indexed under a
 different embedding provider, or segments matched but carry no frames, the tool

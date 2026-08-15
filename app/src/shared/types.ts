@@ -198,6 +198,18 @@ export interface FrameHitDTO {
   height: number;
   segmentDigest: string | null;
   /**
+   * The VLM caption for this hit's segment, so a result can be named by the ONE
+   * label rule (`keyframeLabel`: caption -> digest -> timecode) that every other
+   * surface already uses.
+   *
+   * Its absence is why the search card was the only place in the app that
+   * labelled a keyframe by the templated digest, and printed "no digest" over a
+   * frame the rail was happily captioning.
+   */
+  segmentCaption: string | null;
+  /** What was said during this hit's segment. Null without a transcriber. */
+  segmentTranscript: string | null;
+  /**
    * The summary of the LOWEST composed level containing this hit — the answer
    * to "what was I doing?" when the thing retrieved is a single frame.
    *
@@ -209,6 +221,33 @@ export interface FrameHitDTO {
    * level above its leaves.
    */
   taskSummary: string | null;
+  /**
+   * The focused application at this frame's `t_mono`, resolved latest-at-or-before
+   * from the session's own `focus_change` events, with the stable palette slot
+   * `appTone` assigns it — so one app is one colour on the rail, in Flows and
+   * here. Null when the session recorded no focus changes.
+   */
+  app: string | null;
+  appTone: TrackTone | null;
+  /**
+   * The recording's own axis length in LANE seconds, so a hit can be placed on
+   * it. 0 when unknown, which withholds the locator rather than dividing by it.
+   */
+  sessionSpanSec: number;
+  /**
+   * WHY this frame was retrieved, mirroring the library's `FrameEvidence`.
+   *
+   * `score` cannot answer that: every term is max-normalized across the current
+   * result set, so the top hit of every query sits at the weight ceiling — 1.000
+   * on a default install — however good or bad the match. Agreement across
+   * independent lanes is the signal, so the lanes are what the UI shows.
+   */
+  evidence: {
+    frame: number;
+    region: number;
+    segment: number;
+    lanes: { key: string; rank: number; count?: number }[];
+  };
   /** deskrag://frame/<blobId> URL, or null when the frame has no keyframe. */
   thumbUrl: string | null;
   highlightCount: number;
@@ -244,7 +283,10 @@ export interface ResultDetailDTO {
   /** As `FrameHitDTO.offsetSec` — LANE seconds, for the jump into the Library. */
   offsetSec: number;
   wallClock: number;
-  score?: number;
+  // No `score`. There was one, `detailWith` never set it, and the row that read
+  // it therefore never rendered. It would have been the wrong number anyway:
+  // the score is relative to a result LIST, and this view is opened from the
+  // Library too, where there is no list and no query.
   session: { id: string; startedAt: number };
   segment: {
     id: string;

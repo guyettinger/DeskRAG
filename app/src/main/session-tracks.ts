@@ -117,6 +117,43 @@ export function laneOriginOf(video: { tMonoStart: number } | null | undefined): 
 }
 
 /**
+ * How LONG that axis is, in lane seconds — the video's own span when there is
+ * one, the session's wall-clock duration otherwise.
+ *
+ * The companion to `laneOriginOf`, and here for the same reason: the rail
+ * computed it inline and a search hit needs the identical number to place
+ * itself on the identical axis. The video span is preferred because the axis IS
+ * the video's timeline wherever one exists.
+ */
+export function laneTotalSec(
+  video: { tMonoStart: number; tMonoEnd: number } | null | undefined,
+  durationMs: number,
+): number {
+  return video ? (video.tMonoEnd - video.tMonoStart) / 1000 : durationMs / 1000;
+}
+
+/**
+ * Which application was focused, over time — the `focus_change` stream reduced
+ * to a timeline, resolvable latest-at-or-before like every other environment
+ * fact.
+ *
+ * Extracted from `appsLane` so "what app was this" has ONE definition: the rail
+ * draws it as a lane, a search hit needs it as a single value, and two readers
+ * of one event stream is the drift hazard that already bit `ax-dump`/`ax-exec`.
+ *
+ * The entries are `{ tMono, value }` rather than `{ tMono, app }` on purpose:
+ * that is `Timeline<string>` from `trace-index.ts`, so the existing generic
+ * `latestAt` resolves one without this module having to import anything (it
+ * stays dependency-free, which is what keeps it root-testable) and without a
+ * third hand-written at-or-before scan.
+ */
+export function appTimeline(events: readonly EventRow[]): { tMono: number; value: string }[] {
+  return events
+    .filter((e) => e.kind === "focus_change")
+    .map((e) => ({ tMono: e.tMono, value: String(asRecord(e.data).app ?? "unknown") }));
+}
+
+/**
  * A `t_mono` stamp as LANE seconds — the axis the track rail is drawn in, and
  * the axis every cross-screen jump is expressed in.
  *
@@ -146,10 +183,10 @@ export function appTone(name: string): TrackTone {
 // --- attention ---------------------------------------------------------------
 
 export function appsLane(input: LaneInput): LaneBody {
-  const changes = input.events.filter((e) => e.kind === "focus_change");
+  const changes = appTimeline(input.events);
   const spans: TrackSpanDTO[] = [];
   for (let i = 0; i < changes.length; i++) {
-    const label = String(asRecord(changes[i]!.data).app ?? "unknown");
+    const label = changes[i]!.value;
     const startSec = secOf(changes[i]!.tMono, input.originMono);
     const next = changes[i + 1];
     // The last span runs to the end of the axis: focus does not end, the

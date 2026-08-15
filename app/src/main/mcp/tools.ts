@@ -12,6 +12,7 @@
  */
 
 import type { FrameHitDTO, ResultDetailDTO, SessionSummaryDTO } from "@shared/types";
+import { laneText, scoresAreTied } from "@shared/evidence";
 import type { ExperienceReader } from "./reader.js";
 import { renderOutline, stamp } from "./outline.js";
 import { findRoute, renderFlow, renderFlowList } from "./flow-text.js";
@@ -100,15 +101,60 @@ function bytes(n: number): string {
 
 // --- search ----------------------------------------------------------------
 
+/**
+ * NO SCORE. It used to print `score N.NNN`, and that number is not a confidence:
+ * every term of it is max-normalized across the current result set, so the best
+ * hit of any query lands at the ceiling — literally `1.000` on a default install
+ * — however good or bad the match is, and it is not comparable between queries.
+ * An agent handed it will report "100% confidence" to a user, which is the exact
+ * failure this server exists to avoid (see the empty-result branches below,
+ * which exist for the same reason).
+ *
+ * What replaces it is what the number could never say: WHICH ranked lists the
+ * moment appeared in. Agreement across several independent lanes is the only
+ * signal of strength here, and an agent can reason about that.
+ */
 function hitLines(h: FrameHitDTO, rank: number): string {
   const out = [
-    `${rank}. ${iso(h.wallClock)} · ${stamp(h.offsetSec)} into recording ${h.sessionId} · score ${h.score.toFixed(3)}`,
+    `${rank}. ${iso(h.wallClock)} · ${stamp(h.offsetSec)} into recording ${h.sessionId}`,
   ];
   if (h.taskSummary !== null) out.push(`   Task: ${h.taskSummary}`);
+  if (h.segmentCaption !== null) out.push(`   On screen: ${h.segmentCaption}`);
   if (h.segmentDigest !== null) out.push(`   What happened: ${h.segmentDigest}`);
+  if (h.segmentTranscript !== null) out.push(`   Said: ${h.segmentTranscript}`);
+  out.push(
+    h.evidence.lanes.length > 0
+      ? `   Matched in: ${h.evidence.lanes.map(laneText).join(", ")}`
+      : // Not a gap: the frame scope expands to leaves, so a frame pulled in
+        // under a composed parent hit appeared in no list of its own.
+        "   Matched in: no list of its own — recalled with its segment",
+  );
+  // Distinct from the `on-screen label` lane above, which counts only the AX
+  // labels that MATCHED: this counts every region get_moment will outline,
+  // including unlabelled patch highlights.
   if (h.highlightCount > 0) out.push(`   ${h.highlightCount} matching region(s) on screen`);
   out.push(`   frameId: ${h.frameId}  — pass to get_moment for the screenshot`);
   return out.join("\n");
+}
+
+/**
+ * What "best first" is worth, stated once per response rather than implied by a
+ * number on every hit. An agent that is not told the ranking is relative will
+ * present the top result as authoritative.
+ */
+function rankingNote(hits: readonly FrameHitDTO[]): string {
+  if (scoresAreTied(hits)) {
+    return (
+      `${hits.length} moment(s). These all matched EQUALLY — no signal separates them, ` +
+      "so the order below is arbitrary and does not rank them."
+    );
+  }
+  return (
+    `${hits.length} moment(s), best first. Ranking is RELATIVE to this result set: ` +
+    "there is no absolute confidence, and the best match of any query always comes " +
+    "first however weak it is. \"Matched in\" names the ranked lists each moment " +
+    "appeared in — agreement across several is what makes a match strong."
+  );
 }
 
 const searchTool: ToolDef = {
@@ -157,7 +203,7 @@ const searchTool: ToolDef = {
     }
 
     return text(
-      `${hits.length} moment(s), best first.\n\n${hits.map((h, i) => hitLines(h, i + 1)).join("\n\n")}`,
+      `${rankingNote(hits)}\n\n${hits.map((h, i) => hitLines(h, i + 1)).join("\n\n")}`,
     );
   },
 };

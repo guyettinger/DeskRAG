@@ -26,6 +26,7 @@ import { Tier3Retriever } from "./tier3.js";
 import type { Reranker, RerankCandidate } from "./rerank/types.js";
 import type {
   AssembledResult,
+  EvidenceLane,
   FrameHit,
   FrameResult,
   LexicalSearcher,
@@ -115,6 +116,40 @@ export function collapseAncestors<T extends { segmentId: string }>(
   return kept;
 }
 
+/**
+ * The ranked lists a frame appeared in, best rank first.
+ *
+ * Three sources, and they are deliberately flattened into one list because a
+ * reader asking "why is this here" does not care which tier produced the
+ * evidence — only that several independent lists agreed. Tier 1's dense views
+ * carry a `View`; its inverted index is `"lexical"`, kept out of `PerViewHit`
+ * for the same reason `SegmentHit.lexicalRank` is; Tier 3's AX-label FTS is
+ * `"region_label"` and is the ONLY per-frame lane, every other one being a
+ * property of the frame's segment.
+ *
+ * An absent `hit` yields `[]` rather than a placeholder: the frame scope is
+ * expanded to leaves, so a frame recalled under a composed parent genuinely
+ * appeared in no list of its own.
+ */
+function lanesFor(hit: SegmentHit | undefined, regions: readonly RegionHit[]): EvidenceLane[] {
+  const lanes: EvidenceLane[] = [];
+  for (const pv of hit?.perView ?? []) lanes.push({ key: pv.view, rank: pv.rank });
+  if (hit?.lexicalRank !== undefined) lanes.push({ key: "lexical", rank: hit.lexicalRank });
+
+  // The BEST rank among this frame's label matches, with how many there were.
+  // Ranks are dense, so several regions sharing one is normal and is not a tie
+  // to be broken — it means the frame shows several equally-matching controls.
+  const fts = regions.filter((r) => r.ftsRank !== undefined);
+  if (fts.length > 0) {
+    lanes.push({
+      key: "region_label",
+      rank: Math.min(...fts.map((r) => r.ftsRank!)),
+      count: fts.length,
+    });
+  }
+  return lanes.sort((a, b) => a.rank - b.rank || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+}
+
 export class Retriever {
   private readonly tier1: Tier1Retriever;
   private readonly tier3: Tier3Retriever;
@@ -177,7 +212,10 @@ export class Retriever {
     // and three of its own actions as separate results — the redundancy the
     // hierarchy exists to remove, reproduced in the result list.
     const t1 = collapseAncestors(raw, (id) => this.store.getSegmentChildren(id));
-    const segScore = new Map(t1.map((s) => [s.segmentId, s.score]));
+    // The HITS, not just their scores: `perView` and `lexicalRank` are the only
+    // record of WHICH lanes ranked a segment, and the assembled result has to
+    // carry that forward — a score alone cannot say why a frame is here.
+    const segHits = new Map(t1.map((s) => [s.segmentId, s]));
     // EXPAND TO LEAVES for the frame scope. Frame vectors denormalize
     // `segment_ids` at represent time, long before composing runs, so a composed
     // level can never appear in that field: scoping a parent hit directly
@@ -212,7 +250,7 @@ export class Retriever {
       (regionsByFrame.get(r.frameId) ?? regionsByFrame.set(r.frameId, []).get(r.frameId)!).push(r);
     }
 
-    let frames = this.assemble(frameHits, regionsByFrame, segScore);
+    let frames = this.assemble(frameHits, regionsByFrame, segHits);
 
     // Tier 4 — optional LLM rerank of the top frames for fuzzy NL queries.
     // Skipped for fast visual queries (no query text).
@@ -293,7 +331,7 @@ export class Retriever {
   private assemble(
     frameHits: FrameHit[],
     regionsByFrame: Map<string, RegionHit[]>,
-    segScore: Map<string, number>,
+    segHits: Map<string, SegmentHit>,
   ): FrameResult[] {
     // Frame distances are turned into scores by rank position within the
     // candidate set, NOT by a fixed 1/(1+d) transform.
@@ -337,14 +375,15 @@ export class Retriever {
       // Padding to K makes the measure monotone: another match never hurts.
       const regionScore = regionScores.reduce((s, v) => s + v, 0) / this.regionTopK;
       const frameScore = frameScoreOf(fh.distance);
-      const best = this.bestSegment(fh, segScore);
+      const best = this.bestSegment(fh, segHits);
       return {
         fh,
         regions,
         frameScore,
         regionScore,
-        segmentScore: best ? (segScore.get(best) ?? 0) : 0,
+        segmentScore: best ? (segHits.get(best)?.score ?? 0) : 0,
         segmentId: best,
+        lanes: lanesFor(best ? segHits.get(best) : undefined, regions),
       };
     });
 
@@ -359,6 +398,16 @@ export class Retriever {
         w.frame * (r.frameScore / maxFrame) +
         w.region * (r.regionScore / maxRegion) +
         w.segment * (r.segmentScore / maxSegment),
+      // The SAME normalized terms the score is summed from, kept rather than
+      // discarded. Multiply by the weights and add, and you have `score` back —
+      // which is the point: the breakdown explains the number instead of
+      // restating it.
+      evidence: {
+        frame: r.frameScore / maxFrame,
+        region: r.regionScore / maxRegion,
+        segment: r.segmentScore / maxSegment,
+        lanes: r.lanes,
+      },
       highlights: r.regions,
       ...(r.segmentId !== undefined ? { segmentId: r.segmentId } : {}),
       ...(Number.isNaN(r.fh.distance) ? {} : { frameDistance: r.fh.distance }),
@@ -386,14 +435,14 @@ export class Retriever {
    * the no-signal case) break toward the MOST SPECIFIC (shortest) segment — the
    * action, not the enclosing task — since that's the better label/rerank context.
    */
-  private bestSegment(fh: FrameHit, segScore: Map<string, number>): string | undefined {
+  private bestSegment(fh: FrameHit, segHits: Map<string, SegmentHit>): string | undefined {
     const ids = fh.frame?.segmentIds ?? [];
     if (ids.length === 0) return undefined;
     let best: string | undefined;
     let bestScore = -Infinity;
     let bestDuration = Infinity;
     for (const id of ids) {
-      const s = segScore.get(id) ?? 0;
+      const s = segHits.get(id)?.score ?? 0;
       const seg = this.store.getSegment(id);
       const duration = seg ? seg.tMonoEnd - seg.tMonoStart : Infinity;
       if (s > bestScore || (s === bestScore && duration < bestDuration)) {
