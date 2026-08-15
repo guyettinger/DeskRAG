@@ -18,23 +18,30 @@ const childScript = join(here, "..", "scripts", "crash-child.ts");
  * Lance add, then prove reconciliation recovers the missing vector from the
  * relational content SQLite retained. Real child process, real SQLite (WAL),
  * real LanceDB.
+ *
+ * The subject is a SEGMENT vector now rather than a region one — regions stopped
+ * carrying vectors with the single-vector image lane. The invariant is the same
+ * and so is the shape of the failure: a committed row whose source text is still
+ * on disk and whose vector never landed.
  */
 describe("dual-store crash recovery", () => {
   let dir: string;
   const provider = new FakeEmbeddingProvider({ id: "fake", model: "m", dimensions: 4 });
-  const namespace = namespaceFor("region_image", provider);
+  const namespace = namespaceFor("digest", provider);
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "erag-crash-"));
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  it("recovers a region whose vector never landed", async () => {
+  it("recovers a segment whose vector never landed", async () => {
     const sqlitePath = join(dir, "meta.sqlite");
     const lanceDir = join(dir, "lance");
     const payload = {
-      sessionId: ulid(), segId: ulid(), frameId: ulid(), regionId: ulid(),
-      namespace, label: "Save As", role: "dialog",
+      sessionId: ulid(),
+      segId: ulid(),
+      namespace,
+      digest: "clicked dialog Save As",
     };
 
     // 1. Run the child that commits SQLite then dies during the Lance add.
@@ -46,38 +53,37 @@ describe("dual-store crash recovery", () => {
     // Exit code 1 == our kill-on-add. Anything else means the gap wasn't hit.
     expect(res.status, `child stderr: ${res.stderr}`).toBe(1);
 
-    // 2. Reopen with a real Lance layer. The region row exists; its vector doesn't.
+    // 2. Reopen with a real Lance layer. The segment row exists; its vector doesn't.
     const store = await DualStore.open(sqlitePath, lanceDir);
     try {
       const before = await store.reconcile();
       expect(before.orphansPruned).toBe(0);
-      expect(before.missing.map((m) => m.id)).toEqual([payload.regionId]);
+      expect(before.missing.map((m) => m.id)).toEqual([payload.segId]);
       const miss = before.missing[0]!;
-      expect(miss.entity).toBe("region");
+      expect(miss.entity).toBe("segment");
       // The retained relational content is what makes re-embedding possible.
-      expect(miss.region?.label).toBe("Save As");
-      expect(miss.region?.role).toBe("dialog");
+      expect(miss.segment?.digest).toBe(payload.digest);
 
-      // A query for the region's vector finds NOTHING yet (no vector present).
+      // A query for the segment's vector finds NOTHING yet (no vector present).
       const q = Float32Array.from([1, 0, 0, 0]);
-      expect(await store.searchRegions(namespace, q, 5, { frameIds: [payload.frameId] })).toHaveLength(0);
+      expect(await store.searchSegments(namespace, q, 5)).toHaveLength(0);
 
       // 3. Reconcile + re-embed from retained content (deterministic fake).
       const reembed = async (missing: MissingVector[]) => {
         const out: { namespace: string; id: string; vector: Float32Array }[] = [];
         for (const m of missing) {
-          const text = `${m.region?.role ?? ""} ${m.region?.label ?? ""}`;
-          const [vec] = await provider.embed([text]);
+          const [vec] = await provider.embed([m.segment?.digest ?? ""]);
           out.push({ namespace: m.namespace, id: m.id, vector: vec! });
         }
         return out;
       };
       const after = await store.reconcileAndReembed(reembed);
-      expect(after.missing.map((m) => m.id)).toEqual([payload.regionId]);
+      expect(after.missing.map((m) => m.id)).toEqual([payload.segId]);
 
-      // 4. The vector is now present and the region is retrievable.
-      const hits = await store.searchRegions(namespace, q, 5, { frameIds: [payload.frameId] });
-      expect(hits.map((h) => h.id)).toContain(payload.regionId);
+      // 4. The vector is now present and the segment is retrievable.
+      const [expected] = await provider.embed([payload.digest]);
+      const hits = await store.searchSegments(namespace, expected!, 5);
+      expect(hits.map((h) => h.id)).toContain(payload.segId);
 
       // 5. And a second reconcile finds nothing missing (idempotent recovery).
       const clean = await store.reconcile();

@@ -136,8 +136,6 @@ export interface FrameInsert {
   /** Denormalized onto the Lance frame-vector row for Tier-2 scoping. Set lazily
    *  at/after segmentation; may be empty at capture time. */
   segmentIds: string[];
-  /** Optional whole-frame image vector to co-write. */
-  vector?: VectorInsert;
 }
 
 export interface RegionInsert {
@@ -153,16 +151,6 @@ export interface RegionInsert {
   role?: string;
   label?: string;
   priority: number;
-  /**
-   * The region image vector, co-written after the SQLite commit.
-   *
-   * Optional, because proposal and embedding are separable: a region's geometry
-   * and AX label are useful on their own (they are what `Anchor.visual` needs),
-   * while only the crop needs an image model. A row without a vector is the same
-   * state a crash between the commit and the Lance add leaves behind, and
-   * `reconcile()` reports it as missing so it can be embedded later.
-   */
-  vector?: VectorInsert;
 }
 
 /** A vector destined for one namespaced Lance table. */
@@ -227,16 +215,6 @@ export interface SegmentVectorInsert {
   vector: Float32Array;
 }
 
-/** A whole-frame image vector for an EXISTING frame; Lance-only add, with the
- *  denormalized segment_ids baked in for Tier-2 scoping. */
-export interface FrameVectorInsert {
-  frameId: string;
-  sessionId: string;
-  segmentIds: string[];
-  namespace: string;
-  vector: Float32Array;
-}
-
 // --- registry -----------------------------------------------------------------
 
 /** A frame's late-interaction patch set. Many vectors, one row. */
@@ -279,15 +257,20 @@ export interface RegionScope {
 
 // --- reconciliation -----------------------------------------------------------
 
-/** A SQLite row that has no vector in its namespace's Lance table. */
+/**
+ * A SQLite row that has no vector in its namespace's Lance table.
+ *
+ * SEGMENT-ONLY since the single-vector image lane was removed. `frame_patches`
+ * is regenerated wholesale rather than row-by-row, so it never reports missing;
+ * `entity` is kept as a field rather than dropped because it is what tells a
+ * re-embed callback what `id` refers to.
+ */
 export interface MissingVector {
   namespace: string;
   view: View;
-  entity: "segment" | "frame" | "region";
+  entity: "segment";
   id: string;
-  /** Retained relational content for re-embedding, by entity. */
-  region?: RegionRow;
-  frame?: FrameRow;
+  /** Retained relational content for re-embedding. */
   segment?: SegmentRow;
 }
 
@@ -485,17 +468,15 @@ export interface Store {
    */
   replaceSegmentVectors(rows: SegmentVectorInsert[]): Promise<void>;
 
-  // enrich existing frames (Tier-2 represent/): association first (SQLite frame_segment),
-  // then the frame_image vector (Lance) with segment_ids denormalized.
+  // enrich existing frames (Tier-2 represent/): association first (SQLite
+  // frame_segment), then the patch set (Lance) with segment_ids denormalized.
 
   /**
    * Associate a frame with the segments covering it. Segments are detected after
    * capture, so this is set lazily at represent time — it must land before the
-   * frame vector, which denormalizes these ids for scoped ANN.
+   * patch set, which denormalizes these ids for scoped ANN.
    */
   associateFrameSegments(frameId: string, segmentIds: string[]): Promise<void>;
-  /** Add whole-frame image vectors, carrying the denormalized `segment_ids` scope. */
-  putFrameVectors(rows: FrameVectorInsert[]): Promise<void>;
   /** Late-interaction patch sets (frame_patches view). Replaces any existing row. */
   putFramePatches(rows: FramePatchInsert[]): Promise<void>;
 
@@ -597,13 +578,6 @@ export interface Store {
   phashPrefilter(phash: bigint, maxHamming: number): string[];
   /** Tier 1: ANN over one segment view. **Throws on an unregistered namespace.** */
   searchSegments(namespace: string, vector: Float32Array, k: number): Promise<SearchHit[]>;
-  /** Tier 2: frame ANN, exactly pre-filtered to `scope` (LanceDB pre-filters by default). */
-  searchFrames(
-    namespace: string,
-    vector: Float32Array,
-    k: number,
-    scope?: FrameScope,
-  ): Promise<SearchHit[]>;
   /** MaxSim search over a frame_patches space; `query` is one vector per token. */
   searchFramePatches(
     namespace: string,
@@ -613,13 +587,6 @@ export interface Store {
   ): Promise<SearchHit[]>;
   /** A frame's stored patch set, for highlights without re-running the model. */
   getFramePatches(namespace: string, frameId: string): Promise<Float32Array[] | null>;
-  /** Tier 3: region ANN, scoped to the frames Tier 2 returned. */
-  searchRegions(
-    namespace: string,
-    vector: Float32Array,
-    k: number,
-    scope: RegionScope,
-  ): Promise<SearchHit[]>;
   /**
    * Tier 3's text half: FTS5 over stored AX role/label, so regions are
    * searchable by UI role. Best first (bm25); `scope.frameIds` PRE-filters, the

@@ -67,7 +67,8 @@ export function makeTensor(
  * single huge allocation, and each one alone still crashes the app:
  *
  *   enableCpuMemArena  ORT's BFCArena grows by requesting one huge block
- *                      (observed: 2GiB for ColSmol at 13 tiles). Crashes in
+ *                      (observed: 2GiB for a late-interaction model at 13
+ *                      tiles). Crashes in
  *                      `BFCArena::Extend`, on the FIRST run.
  *   enableMemPattern   ORT's pattern planner records the activation layout on
  *                      the first run and from the SECOND run onward
@@ -81,7 +82,8 @@ export function makeTensor(
  * surfaced by utilityProcess as `exit code=5`). Plain Node's malloc allows it,
  * so `npm test` and any bare-node script pass either way; only the app dies.
  *
- * Measured under the Electron binary, real ColSmol weights, a real 2560x1440
+ * Measured under the Electron binary, real late-interaction weights (ColSmol at
+ * the time; `npm run smoke:onnx-electron` now runs ColModernVBERT), a real 2560x1440
  * keyframe (13 tiles), three consecutive runs: 16.3/16.3/16.5s, RSS flat at
  * 1.30GB. Disabling the pattern planner costs no measurable throughput; the
  * arena costs some, and is still the right trade for not crashing.

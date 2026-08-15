@@ -35,5 +35,9 @@ export function envInfo(service: DeskRagService): EnvInfo {
     // An empty binaryPath is not one either — it resolves to "whisper-cli".
     whisperConfigured: whisperAvailable(settings.providers.whisper.binaryPath),
     dataDir: service.dataDir,
+    // Set once, at load, when a removed image provider was rewritten. Its
+    // consequence — an index in a vector space nothing can query — is the thing
+    // worth saying, and nothing else in the UI would say it.
+    migratedImageProvider: service.settingsStore.migratedImageProvider,
   };
 }

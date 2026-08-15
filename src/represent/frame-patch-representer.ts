@@ -1,12 +1,13 @@
 /**
  * Writes the `frame_patches` view: one late-interaction patch set per keyframe.
  *
- * The multi-vector counterpart to FrameRepresenter. Segment association is set
+ * The ONLY frame-embedding stage, since the single-vector image lane was
+ * removed. Segment association is set
  * lazily here, at represent time, because segments are detected after capture —
  * the denormalized segment_ids column is what lets Tier 2 pre-filter its scope
  * without a cross-engine round-trip mid-search.
  *
- * Unlike FrameRepresenter this embeds and writes ONE FRAME AT A TIME rather than
+ * It embeds and writes ONE FRAME AT A TIME rather than
  * batching. Two reasons: a patch set is ~832 vectors, so accumulating a whole
  * session would hold hundreds of MB; and the embedder costs seconds per frame,
  * so a crash mid-pass should cost one frame, not the session.

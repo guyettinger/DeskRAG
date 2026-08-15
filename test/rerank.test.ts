@@ -7,15 +7,13 @@ import { DualStore } from "../src/store/store.js";
 import { BlobStore } from "../src/store/blob-store.js";
 import { Segmenter } from "../src/segment/segmenter.js";
 import { Representer } from "../src/represent/representer.js";
-import { FrameRepresenter } from "../src/represent/frame-representer.js";
+import { FramePatchRepresenter } from "../src/represent/frame-patch-representer.js";
 import { RegionRepresenter } from "../src/represent/regions/region-representer.js";
 import { FrameIngestor, type SampledFrame } from "../src/capture/frame-ingest.js";
 import { KeyframeBudget } from "../src/capture/keyframe-budget.js";
-import { FakeEmbeddingProvider } from "../src/embed/fake.js";
+import { FakeEmbeddingProvider, FakeMultiVectorProvider } from "../src/embed/fake.js";
 import { Retriever } from "../src/retrieve/assemble.js";
 import { FakeReranker } from "../src/retrieve/rerank/fake.js";
-import type { RegionCropper } from "../src/represent/regions/cropper.js";
-import type { Box } from "../src/represent/regions/geometry.js";
 import type { EventInsert } from "../src/store/types.js";
 
 describe("FakeReranker", () => {
@@ -31,11 +29,6 @@ describe("FakeReranker", () => {
   });
 });
 
-const cropper: RegionCropper = {
-  async crop(_i, _w, _h, b: Box) {
-    return Uint8Array.from([Math.round(b.x) & 255, Math.round(b.y) & 255, Math.round(b.w) & 255, Math.round(b.h) & 255]);
-  },
-};
 function grad(reverse = false): Uint8Array {
   const g = new Uint8Array(72);
   for (let y = 0; y < 8; y++)
@@ -53,6 +46,7 @@ describe("Retriever Tier-4 rerank", () => {
   let store: DualStore;
   let blobs: BlobStore;
   const fake = new FakeEmbeddingProvider({ id: "fake", model: "m", dimensions: 8 });
+  const mv = new FakeMultiVectorProvider(16, 4, { frameWidth: 100, frameHeight: 100 });
 
   beforeEach(async () => {
     dir = mkdtempSync(join(tmpdir(), "erag-rr-"));
@@ -86,8 +80,8 @@ describe("Retriever Tier-4 rerank", () => {
 
     await new Segmenter(store).segment(sessionId);
     await new Representer(store, { digestEmbedder: fake }).represent(sessionId);
-    await new FrameRepresenter(store, { imageEmbedder: fake, blobStore: blobs }).represent(sessionId);
-    await new RegionRepresenter(store, { imageEmbedder: fake, blobStore: blobs, cropper }).represent(sessionId);
+    await new FramePatchRepresenter(store, { patchEmbedder: mv, blobStore: blobs }).represent(sessionId);
+    await new RegionRepresenter(store, {}).represent(sessionId);
     // Each frame is a scene_change boundary, so the action span holding frame A
     // starts at t=1000. Its digest is READ rather than hardcoded: the rerank
     // query has to overlap whatever that segment actually says, and what a
@@ -102,13 +96,13 @@ describe("Retriever Tier-4 rerank", () => {
     const { frameA, frameB, earlyDigest } = await setup();
     // No Tier-1 searchers -> unscoped visual recall; imgB is the exact match for
     // frame B, so the base assembled order is [B, A] whatever the text says.
-    const base = await new Retriever(store, { searchers: [], imageEmbedder: fake })
+    const base = await new Retriever(store, { searchers: [], patchEmbedder: mv })
       .retrieve({ image: imgB, text: earlyDigest });
     expect(base.frames[0]!.frameId).toBe(frameB);
 
     // With a reranker + a query whose words overlap frame A's digest, Tier 4
     // promotes A above the higher-scored B.
-    const reranked = await new Retriever(store, { searchers: [], imageEmbedder: fake }, {
+    const reranked = await new Retriever(store, { searchers: [], patchEmbedder: mv }, {
       reranker: new FakeReranker(),
     }).retrieve({ image: imgB, text: earlyDigest });
     expect(reranked.frames[0]!.frameId).toBe(frameA);
@@ -117,7 +111,7 @@ describe("Retriever Tier-4 rerank", () => {
 
   it("does not rerank a pure visual query (no query text)", async () => {
     const { frameB } = await setup();
-    const res = await new Retriever(store, { searchers: [], imageEmbedder: fake }, {
+    const res = await new Retriever(store, { searchers: [], patchEmbedder: mv }, {
       reranker: new FakeReranker(),
     }).retrieve({ image: imgB });
     expect(res.frames[0]!.frameId).toBe(frameB); // rerank skipped -> base order

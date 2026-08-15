@@ -1,7 +1,11 @@
 /**
- * sharp-backed preprocessing for ColSmol: resize, split into tiles, normalize.
+ sharp-backed Idefics3 preprocessing: resize, split into tiles, normalize.
  *
- * Loads sharp, so it lives apart from colsmol.ts and is imported lazily — the
+ * Named for the PROCESSOR, not for a model: it is the geometry every
+ * Idefics3-derived late-interaction export declares, and ColModernVBERT is the
+ * one that uses it here.
+ *
+ * Loads sharp, so it lives apart from the adapter and is imported lazily — the
  * adapter can be unit-tested without a native module.
  *
  * Mirrors Idefics3ImageProcessor as MEASURED, not as documented:
@@ -61,7 +65,7 @@ export async function tileImageWithSharp(
   const srcWidth = meta.width ?? 0;
   const srcHeight = meta.height ?? 0;
   if (srcWidth === 0 || srcHeight === 0) {
-    throw new Error("ColSmol tiler: image has no dimensions");
+    throw new Error("Idefics3 tiler: image has no dimensions");
   }
 
   const g = computeTileGeometry(srcWidth, srcHeight, cfg);

@@ -3,7 +3,7 @@
  * aligned outputs from one process:
  *   - stdout (pipe:1): downscaled grayscale rawvideo → FrameChunker → dHash,
  *   - fd 3   (pipe:3): MJPEG full frames        → JpegStreamSplitter → the
- *                       stored keyframe image (frame_image view + region crops),
+ *                       stored keyframe image (the frame_patches view + caption crops),
  *   - fd 4   (pipe:4): mkvtimestamp_v2          → TimestampLineSplitter → the
  *                       frame's CAPTURE TIME, which is what it is stamped with.
  * ffmpeg does the JPEG encoding, so no in-Node image codec is needed.
@@ -160,7 +160,7 @@ export interface FfmpegScreenOptions {
    */
   width?: number;
   height?: number;
-  /** Persist a full JPEG keyframe image per frame (frame_image + region crops). */
+  /** Persist a full JPEG keyframe image per frame (frame_patches + caption crops). */
   storeImages?: boolean;
   /** Max width of the stored JPEG (aspect preserved); height auto (even). */
   imageMaxWidth?: number;

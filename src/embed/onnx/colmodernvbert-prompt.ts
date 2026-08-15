@@ -1,12 +1,14 @@
 /**
  * ColModernVBERT prompt construction.
  *
- * Same shape as colsmol-prompt.ts and for the same reason — a ColPali-family
- * model embeds patches as placeholder tokens inside a templated sequence, and a
- * differently-shaped prompt yields vectors that are plausible but wrong, with
- * similarity scores staying in a believable range. The TOKEN IDS differ because
- * this is a ModernBERT tokenizer, not SmolLM2's, so they are measured with
- * scripts/dump-colmodernvbert-tokens.mjs rather than shared with that module.
+ A ColPali-family model embeds patches as placeholder tokens inside a templated
+ * sequence, and a differently-shaped prompt yields vectors that are plausible but
+ * wrong, with similarity scores staying in a believable range. Every token id
+ * below is MEASURED, with scripts/dump-colmodernvbert-tokens.mjs.
+ *
+ * The comparisons to ColSmol below are history, not a live dependency: that
+ * adapter is gone, and the three traps it did NOT have are exactly what makes
+ * this module its own file rather than a shared one.
  *
  * Template, from Qdrant's ONNX wrapper (fastembed colmodernvbert.py):
  *   "<|begin_of_text|>User:" + <image-block> + "Describe the image."
@@ -31,9 +33,8 @@
  *      byte-level BPE text — ten tokens, not one — so the prefix cannot be
  *      carried over from ColSmol's single `imStart`.
  *   3. The last grid row's "\n" and the global block's leading "\n" are ADJACENT
- *      in the string, so BPE merges them into ONE token (535), exactly the trap
- *      colsmol-prompt.ts records as `doubleNewline`. Emitting 187 twice would
- *      make an 885-token sequence where the real one is 884.
+ *      in the string, so BPE merges them into ONE token (535). Emitting 187
+ *      twice would make an 885-token sequence where the real one is 884.
  *
  * Pure and weight-free, so it is exhaustively testable. The real-weights smoke
  * test re-encodes fastembed's string and compares it to `buildImagePrompt`
@@ -130,7 +131,7 @@ export function buildImagePrompt(g: TileGeometry): number[] {
 /**
  * Query `input_ids`: the tokenized query then a fixed run of <end_of_utterance>
  * buffer tokens, all inside the [CLS] … [SEP] wrapper. There is no chat-template
- * prefix on this branch — measured, and the same on ColSmol.
+ * prefix on this branch — measured.
  */
 export function buildQueryPrompt(queryTokenIds: number[]): number[] {
   const ids = [MV_TOK.cls, ...stripWrapper(queryTokenIds)];

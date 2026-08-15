@@ -54,29 +54,20 @@ mkdirSync(OUT, { recursive: true });
 const db = new Database(join(DATA, "app.db"), { readonly: true });
 const settings = JSON.parse(readFileSync(join(DATA, "settings.json"), "utf8"));
 const which = settings.providers.imageProvider;
-if (which !== "colsmol" && which !== "colmodernvbert") {
-  console.error(`imageProvider is "${which}" — this probe needs a late-interaction provider`);
+if (which !== "colmodernvbert") {
+  console.error(`imageProvider is "${which}" — this probe needs the image provider set`);
   process.exit(1);
 }
 
 const modelDir = join(
   settings.providers.localModels?.dir || join(DATA, "models"),
-  which === "colsmol" ? "colSmol-256M-dynamic" : "colmodernvbert-250m",
+  "colmodernvbert-250m",
 );
-const provider = await (async () => {
-  if (which === "colsmol") {
-    const { ColSmolMultiVector } = await import("../dist/embed/onnx/colsmol.js");
-    return new ColSmolMultiVector({
-      modelPath: join(modelDir, "model.onnx"),
-      tokenizerPath: join(modelDir, "tokenizer.json"),
-    });
-  }
-  const { ColModernVBertMultiVector } = await import("../dist/embed/onnx/colmodernvbert.js");
-  return new ColModernVBertMultiVector({
-    modelPath: join(modelDir, "model.onnx"),
-    tokenizerPath: join(modelDir, "tokenizer.json"),
-  });
-})();
+const { ColModernVBertMultiVector } = await import("../dist/embed/onnx/colmodernvbert.js");
+const provider = new ColModernVBertMultiVector({
+  modelPath: join(modelDir, "model.onnx"),
+  tokenizerPath: join(modelDir, "tokenizer.json"),
+});
 
 const tableName = `frame_patches__${provider.id}__${provider.model}__${provider.dimensions}`;
 const table = await (await lancedb.connect(join(DATA, "lance"))).openTable(tableName);

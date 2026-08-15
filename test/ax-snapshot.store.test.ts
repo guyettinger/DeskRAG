@@ -12,7 +12,7 @@ let store: DualStore;
 let sessionId: string;
 
 const provider = new FakeEmbeddingProvider({ id: "fake", model: "m", dimensions: 4 });
-const ns = namespaceFor("region_image", provider);
+const ns = namespaceFor("digest", provider);
 
 const els = (role: string): UIElement[] => [{ role, x: 0, y: 0, w: 10, h: 10 }];
 
@@ -22,7 +22,7 @@ beforeEach(async () => {
   sessionId = ulid();
   await store.putSession({ id: sessionId, startedAt: Date.now(), epochMono: 0 });
   await store.registerVectorSpace({
-    namespace: ns, view: "region_image", providerId: provider.id,
+    namespace: ns, view: "digest", providerId: provider.id,
     model: provider.model, dimensions: provider.dimensions, sharedTextSpace: false,
   });
 });

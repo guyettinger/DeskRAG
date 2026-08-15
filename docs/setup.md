@@ -157,8 +157,9 @@ npm run probe:mcp            # exercise the MCP endpoint against the real store
     with no warning at all.** The warning only covers an empty *screen*; a screen
     that renders fine with data missing is captured as a clean ✓. With
     `captionProvider: "none"` the Detail view reads "no caption" and the Library
-    chapter title falls back to a timecode; with `imageProvider: "none"` no region
-    rows are written, so Search's highlight badge is 0 and never renders. **Look at
+    chapter title falls back to a timecode; with `imageProvider: "none"` there are
+    no patch highlights, so Search's badge counts only AX-label region hits
+    (region ROWS are always written — the Regions stage is ungated). **Look at
     the PNGs after a run** — the script cannot tell a thin store from a rich one.
   - The Search shot uses a **fixed demo query**, so it needs recorded content that
     actually matches it; otherwise it captures "No matches".

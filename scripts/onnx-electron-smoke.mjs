@@ -1,5 +1,5 @@
 /**
- * Runs ColSmol REPEATEDLY under the Electron binary's allocator — the one
+ * Runs ColModernVBERT REPEATEDLY under the Electron binary's allocator — the one
  * failure mode no vitest test can reach.
  *
  * WHY THIS EXISTS: the ONNX crashes this project has hit twice both need two
@@ -46,7 +46,7 @@ const DEFAULT_MODELS = join(
   "Library/Application Support/deskrag-app/DeskRAG/models",
 );
 const MODELS = process.env.DESKRAG_MODELS_DIR || DEFAULT_MODELS;
-const COLSMOL = join(MODELS, "colSmol-256M-dynamic");
+const MODEL_DIR = join(MODELS, "colmodernvbert-250m");
 const FIXTURE = join(ROOT, "test/fixtures/login.png");
 const ELECTRON = join(ROOT, "app/node_modules/.bin/electron");
 
@@ -60,24 +60,26 @@ const RUNS = Math.max(2, Number(process.argv[2] ?? 3) || 3);
 if (process.parentPort) {
   const gb = (b) => (b / 2 ** 30).toFixed(2);
   const D = "file://" + join(ROOT, "dist/embed/onnx");
-  const { ColSmolMultiVector, readTileConfig } = await import(`${D}/colsmol.js`);
+  const { ColModernVBertMultiVector, readTileConfig } = await import(
+    `${D}/colmodernvbert.js`
+  );
   const { computeTileGeometry } = await import(`${D}/geometry.js`);
 
   const cfg = await readTileConfig(
-    join(COLSMOL, "preprocessor_config.json"),
-    join(COLSMOL, "config.json"),
+    join(MODEL_DIR, "preprocessor_config.json"),
+    join(MODEL_DIR, "config.json"),
   );
 
   // No injected session: this must exercise the REAL SESSION_OPTIONS, since
   // those flags are the thing under test.
-  const emb = new ColSmolMultiVector({
-    modelPath: join(COLSMOL, "model.onnx"),
-    tokenizerPath: join(COLSMOL, "tokenizer.json"),
+  const emb = new ColModernVBertMultiVector({
+    modelPath: join(MODEL_DIR, "model.onnx"),
+    tokenizerPath: join(MODEL_DIR, "tokenizer.json"),
     tileConfig: cfg,
   });
 
   const bytes = readFileSync(FIXTURE);
-  const { tileImageWithSharp } = await import(`${D}/colsmol-tiler.js`);
+  const { tileImageWithSharp } = await import(`${D}/idefics3-tiler.js`);
   const tiled = await tileImageWithSharp(bytes, cfg);
   const geo = computeTileGeometry(tiled.width, tiled.height, cfg);
   const tiles = geo.cols * geo.rows + (geo.hasGlobalTile ? 1 : 0);
@@ -151,7 +153,7 @@ if (process.versions.electron) {
             `both enableCpuMemArena and enableMemPattern must be false.`,
         );
       } else {
-        console.log(`\nPASS: ${RUNS} consecutive ColSmol runs under Electron.`);
+        console.log(`\nPASS: ${RUNS} consecutive ColModernVBERT runs under Electron.`);
       }
       app.exit(code === 0 ? 0 : 1);
     });
@@ -167,15 +169,17 @@ if (process.versions.electron) {
   };
 
   if (!existsSync(ELECTRON)) skip("app/node_modules missing — run `npm run app:install`");
-  if (!existsSync(join(COLSMOL, "model.onnx"))) {
-    skip(`no ColSmol weights at ${COLSMOL} — record once in the app, or set DESKRAG_MODELS_DIR`);
+  if (!existsSync(join(MODEL_DIR, "model.onnx"))) {
+    skip(
+      `no ColModernVBERT weights at ${MODEL_DIR} — record once in the app, or set DESKRAG_MODELS_DIR`,
+    );
   }
-  if (!existsSync(join(ROOT, "dist/embed/onnx/colsmol.js"))) {
+  if (!existsSync(join(ROOT, "dist/embed/onnx/colmodernvbert.js"))) {
     console.error("[smoke] dist/ is missing — run `npm run build` first.");
     process.exit(1);
   }
 
-  console.log(`[smoke] models: ${COLSMOL}`);
+  console.log(`[smoke] models: ${MODEL_DIR}`);
   console.log(`[smoke] ${RUNS} runs under Electron (run 2 is the one that matters)`);
   const res = spawnSync(ELECTRON, [SELF, String(RUNS)], { stdio: "inherit" });
   process.exit(res.status ?? 1);

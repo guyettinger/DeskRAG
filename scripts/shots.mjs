@@ -86,7 +86,7 @@ const SHOTS = [
     ready: ".player, .empty",
     // The detail view is captured from the Library, not from Search, on purpose.
     // DetailView draws detail.highlights unconditionally, and a search hit carries
-    // them — under ColSmol those are patch-argmax boxes, which scatter across the
+    // them — on the late-interaction path those are patch-map boxes, which scatter across the
     // frame as small yellow rectangles with no labels and read as noise. Opened
     // from the Library there is no query, so highlights is empty and the AX
     // locator (below) is the only thing drawn.

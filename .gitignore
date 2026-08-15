@@ -3,6 +3,9 @@ dist/
 out/
 *.log
 
+# probe output (overlays + PNGs from scripts/*-probe.mjs) — regenerate, never commit
+.probe/
+
 # local scratch data stores
 *.sqlite
 *.sqlite-shm

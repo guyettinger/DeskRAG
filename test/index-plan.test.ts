@@ -20,14 +20,13 @@ import {
  */
 
 const NOTHING: StageFacts = {
-  imageEmbedder: false,
   patchEmbedder: false,
   captioner: false,
   hasAudio: false,
   whisper: false,
 };
 
-/** Every combination of the five facts — 32 of them. */
+/** Every combination of the four facts — 16 of them. */
 const allFacts = (): StageFacts[] => {
   const keys = Object.keys(NOTHING) as (keyof StageFacts)[];
   const out: StageFacts[] = [];
@@ -61,17 +60,19 @@ describe("planStages", () => {
     ]);
   });
 
-  it("puts frame embeddings after the digest, not before it", () => {
-    const plan = planStages({ ...NOTHING, imageEmbedder: true });
-    expect(plan).toContain("frameEmbeddings");
-    expect(plan.indexOf("frameEmbeddings")).toBeGreaterThan(plan.indexOf("digest"));
+  it("puts frame patches after the digest, not before it", () => {
+    const plan = planStages({ ...NOTHING, patchEmbedder: true });
+    expect(plan).toContain("framePatches");
+    expect(plan.indexOf("framePatches")).toBeGreaterThan(plan.indexOf("digest"));
   });
 
-  /** The multivector path replaces both image stages; it is not additive. */
-  it("selects frame patches for a patch embedder and frame embeddings for an image one", () => {
+  /** The ONLY image stage: patches are the regions, so there is no second one. */
+  it("has exactly one image stage, gated on the patch embedder", () => {
     expect(planStages({ ...NOTHING, patchEmbedder: true })).toContain("framePatches");
-    expect(planStages({ ...NOTHING, patchEmbedder: true })).not.toContain("frameEmbeddings");
-    expect(planStages({ ...NOTHING, imageEmbedder: true })).not.toContain("framePatches");
+    expect(planStages(NOTHING)).not.toContain("framePatches");
+    expect(INDEX_STAGES.filter((s) => s.gate({ ...NOTHING, patchEmbedder: true })).length).toBe(
+      INDEX_STAGES.filter((s) => s.gate(NOTHING)).length + 1,
+    );
   });
 
   it("adds both caption stages from the one captioner gate", () => {
@@ -186,15 +187,15 @@ describe("INDEX_STAGES", () => {
   });
 
   /**
-   * Region proposal is geometry plus the AX tree; only the crops need a model.
-   * Saying so in the label is what stops a proposal-only pass reading as a full
-   * one — gating the whole stage on an image embedder once cost the executor its
-   * middle anchor rung silently.
+   * Region proposal is geometry plus the AX tree and needs NO model — nothing
+   * crops or embeds a region. So the label no longer branches, and the stage
+   * runs under every configuration: gating it on an image embedder once cost the
+   * executor its middle anchor rung silently.
    */
-  it("says when regions are proposal-only", () => {
+  it("runs regions unconditionally, with one label", () => {
     const regions = INDEX_STAGES.find((s) => s.id === "regions")!;
-    expect(regions.label(NOTHING)).toBe("Regions (proposal only)");
-    expect(regions.label({ ...NOTHING, imageEmbedder: true })).toBe("Regions");
+    expect(regions.label(NOTHING)).toBe("Regions");
+    for (const f of allFacts()) expect(regions.gate(f)).toBe(true);
   });
 
   /**

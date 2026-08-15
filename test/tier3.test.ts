@@ -10,32 +10,13 @@ import { FrameIngestor, type SampledFrame } from "../src/capture/frame-ingest.js
 import { KeyframeBudget } from "../src/capture/keyframe-budget.js";
 import { RegionRepresenter } from "../src/represent/regions/region-representer.js";
 import { Tier3Retriever } from "../src/retrieve/tier3.js";
-import { FakeEmbeddingProvider } from "../src/embed/fake.js";
-import type { Box } from "../src/represent/regions/geometry.js";
-import type { RegionCropper } from "../src/represent/regions/cropper.js";
 import type { EventInsert } from "../src/store/types.js";
 import type { UIElement } from "../src/embed/types.js";
 
-// Deterministic cropper: crop bytes uniquely identify the box, so the fake
-// embedder maps each region to a stable vector and a query crop can match.
-const cropper: RegionCropper = {
-  async crop(_img, _fw, _fh, b: Box) {
-    return Uint8Array.from([
-      Math.round(b.x) & 255, Math.round(b.y) & 255,
-      Math.round(b.w) & 255, Math.round(b.h) & 255,
-    ]);
-  },
-};
-const cropBytesFor = (b: Box) =>
-  Uint8Array.from([Math.round(b.x) & 255, Math.round(b.y) & 255, Math.round(b.w) & 255, Math.round(b.h) & 255]);
-
-const saveBox: Box = { x: 480, y: 480, w: 60, h: 24 };
-
-describe("Tier 3: region proposal + embedding + scoped highlights", () => {
+describe("Tier 3: region proposal + scoped AX-label highlights", () => {
   let dir: string;
   let store: DualStore;
   let blobs: BlobStore;
-  const fake = new FakeEmbeddingProvider({ id: "fake", model: "m", dimensions: 8 });
 
   beforeEach(async () => {
     dir = mkdtempSync(join(tmpdir(), "erag-t3-"));
@@ -77,17 +58,13 @@ describe("Tier 3: region proposal + embedding + scoped highlights", () => {
 
     // Synthetic AX source: one labeled Save button.
     const axEl: UIElement = { role: "button", label: "Save", x: 480, y: 480, w: 60, h: 24 };
-    const rep = new RegionRepresenter(store, {
-      imageEmbedder: fake, blobStore: blobs, cropper,
-      axProvider: () => [axEl],
-    });
+    const rep = new RegionRepresenter(store, { axProvider: () => [axEl] });
     const result = await rep.represent(sessionId);
     return { sessionId, frameId: kf.frameId!, result };
   }
 
-  it("proposes and persists regions (AX + hotspot + grid) with the region_image vector", async () => {
+  it("proposes and persists regions (AX + hotspot + grid)", async () => {
     const { result } = await setup();
-    expect(result.namespace).toBe("region_image:fake:m:8");
     // 1 AX (Save) + 1 hotspot (click cluster) + up to 12 grid, budget-capped at 14.
     expect(result.regionCount).toBeGreaterThanOrEqual(3);
     expect(result.regionCount).toBeLessThanOrEqual(14);
@@ -95,7 +72,7 @@ describe("Tier 3: region proposal + embedding + scoped highlights", () => {
 
   it("finds a region by AX label via FTS, scoped to the frame, as a highlight", async () => {
     const { frameId } = await setup();
-    const tier3 = new Tier3Retriever(store, fake);
+    const tier3 = new Tier3Retriever(store);
 
     const hits = await tier3.retrieveRegions({ text: "Save" }, [frameId]);
     const save = hits.find((h) => h.label === "Save")!;
@@ -110,65 +87,36 @@ describe("Tier 3: region proposal + embedding + scoped highlights", () => {
 
   it("reports no strength: a region hit's claim is its label, not a confidence", async () => {
     const { frameId } = await setup();
-    const tier3 = new Tier3Retriever(store, fake);
-
-    const byLabel = await tier3.retrieveRegions({ text: "Save" }, [frameId]);
-    const byImage = await tier3.retrieveRegions({ image: Uint8Array.from([1, 1, 1, 1]) }, [frameId]);
+    const byLabel = await new Tier3Retriever(store).retrieveRegions({ text: "Save" }, [frameId]);
     expect(byLabel.length).toBeGreaterThan(0);
-    expect(byImage.length).toBeGreaterThan(0);
-    // ANN as well as FTS: normalizing a distance into a confidence would invent
-    // a number this tier does not compute, and both draw solid regardless.
-    for (const h of [...byLabel, ...byImage]) expect(h.strength).toBeNull();
-  });
-
-  it("image ANN is pre-filtered to the frame scope; empty scope returns nothing", async () => {
-    const { frameId } = await setup();
-    const tier3 = new Tier3Retriever(store, fake);
-
-    const hits = await tier3.retrieveRegions({ image: Uint8Array.from([1, 1, 1, 1]) }, [frameId]);
-    expect(hits.length).toBeGreaterThan(0);
-    expect(hits.every((h) => h.frameId === frameId)).toBe(true);
-    expect(hits.every((h) => h.matchedBy.includes("ann"))).toBe(true);
-
-    expect(await tier3.retrieveRegions({ image: Uint8Array.from([1, 1, 1, 1]) }, [])).toEqual([]);
-  });
-
-  it("a region matched by BOTH image and label reports matchedBy ann+fts", async () => {
-    const { frameId } = await setup();
-    const tier3 = new Tier3Retriever(store, fake);
-
-    // Query with the Save region's exact crop bytes AND its label.
-    const hits = await tier3.retrieveRegions(
-      { image: cropBytesFor(saveBox), text: "Save" },
-      [frameId],
-    );
-    expect(hits[0]!.label).toBe("Save"); // exact image match -> distance 0 -> first
-    expect(hits[0]!.distance).toBeCloseTo(0, 5);
-    expect(hits[0]!.matchedBy.sort()).toEqual(["ann", "fts"]);
+    // Normalizing a rank into a confidence would invent a number this tier does
+    // not compute, and the box draws solid regardless.
+    for (const h of byLabel) expect(h.strength).toBeNull();
   });
 
   /**
-   * The AX-label half needs no model, so it must survive the configuration that
-   * has none — which is the DEFAULT one. Skipping the tier there left 1,153
-   * labelled regions in a real library unreachable from the search box, and left
-   * text queries with no per-frame signal of any kind.
+   * This tier needs NO MODEL AT ALL, which is what makes it work on the DEFAULT
+   * configuration. Skipping it there left 1,153 labelled regions in a real
+   * library unreachable from the search box, and left text queries with no
+   * per-frame signal of any kind. An image query has nothing here — the patches
+   * ARE the regions on that path — and must return [] rather than throw.
    */
-  it("runs FTS-only with NO image embedder, the default configuration", async () => {
+  it("is FTS-only: a text query answers, an image query returns nothing", async () => {
     const { frameId } = await setup();
-    const tier3 = new Tier3Retriever(store, undefined);
-    expect(tier3.namespace).toBeUndefined();
+    const tier3 = new Tier3Retriever(store);
 
     const hits = await tier3.retrieveRegions({ text: "Save" }, [frameId]);
     expect(hits.find((h) => h.label === "Save")).toBeDefined();
     expect(hits.every((h) => h.matchedBy.includes("fts"))).toBe(true);
+    expect(hits.every((h) => h.distance === undefined)).toBe(true);
 
-    // An image query has nothing to search without an embedder — and must not throw.
     expect(await tier3.retrieveRegions({ image: Uint8Array.from([1, 1, 1]) }, [frameId])).toEqual([]);
+    expect(await tier3.retrieveRegions({ text: "Save" }, [])).toEqual([]);
   });
 
   it("carries the FTS rank, so frames can be ranked by HOW WELL a label matched", async () => {
     const { frameId } = await setup();
-    const hits = await new Tier3Retriever(store, undefined).retrieveRegions(
+    const hits = await new Tier3Retriever(store).retrieveRegions(
       { text: "Save" },
       [frameId],
     );

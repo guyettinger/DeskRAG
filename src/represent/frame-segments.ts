@@ -2,7 +2,7 @@
  * Frame↔segment association — the lazy denormalization the store's scoped ANN
  * depends on, and the ONLY thing text-only retrieval needs from a frame.
  *
- * This used to live inside FrameRepresenter and FramePatchRepresenter, both of
+ * This used to live inside the image representers, both of
  * which only run when an image provider is configured. The default is none, so
  * on a default install no frame was ever linked to a segment — and
  * `Retriever.recallFrames`'s non-visual branch, which recalls frames purely by

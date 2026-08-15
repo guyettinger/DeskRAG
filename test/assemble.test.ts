@@ -8,24 +8,17 @@ import { BlobStore } from "../src/store/blob-store.js";
 import { Segmenter } from "../src/segment/segmenter.js";
 import { Representer } from "../src/represent/representer.js";
 import { associateFrames } from "../src/represent/frame-segments.js";
-import { FrameRepresenter } from "../src/represent/frame-representer.js";
+import { FramePatchRepresenter } from "../src/represent/frame-patch-representer.js";
 import { RegionRepresenter } from "../src/represent/regions/region-representer.js";
 import { FrameIngestor, type SampledFrame } from "../src/capture/frame-ingest.js";
 import { KeyframeBudget } from "../src/capture/keyframe-budget.js";
-import { FakeEmbeddingProvider } from "../src/embed/fake.js";
+import { FakeEmbeddingProvider, FakeMultiVectorProvider } from "../src/embed/fake.js";
 import { BehaviorFeatureExtractor } from "../src/represent/behavior.js";
 import { Retriever, collapseAncestors } from "../src/retrieve/assemble.js";
 import { TextViewSearcher, BehaviorViewSearcher } from "../src/retrieve/searchers.js";
-import type { RegionCropper } from "../src/represent/regions/cropper.js";
-import type { Box } from "../src/represent/regions/geometry.js";
 import type { EventInsert } from "../src/store/types.js";
 import type { UIElement } from "../src/embed/types.js";
 
-const cropper: RegionCropper = {
-  async crop(_i, _w, _h, b: Box) {
-    return Uint8Array.from([Math.round(b.x) & 255, Math.round(b.y) & 255, Math.round(b.w) & 255, Math.round(b.h) & 255]);
-  },
-};
 const imgA = Uint8Array.from([1, 2, 3, 4]);
 const imgB = Uint8Array.from([9, 8, 7, 6]);
 
@@ -45,6 +38,7 @@ describe("Retriever (assembly capstone)", () => {
   let store: DualStore;
   let blobs: BlobStore;
   const fake = new FakeEmbeddingProvider({ id: "fake", model: "m", dimensions: 8 });
+  const mv = new FakeMultiVectorProvider(16, 4);
   const behavior = new BehaviorFeatureExtractor();
 
   beforeEach(async () => {
@@ -82,11 +76,12 @@ describe("Retriever (assembly capstone)", () => {
 
     await new Segmenter(store).segment(sessionId);
     await new Representer(store, { digestEmbedder: fake, behavior }).represent(sessionId);
-    await new FrameRepresenter(store, { imageEmbedder: fake, blobStore: blobs }).represent(sessionId);
-    const axEl: UIElement = { role: "button", label: "Save", x: 480, y: 480, w: 60, h: 24 };
-    await new RegionRepresenter(store, {
-      imageEmbedder: fake, blobStore: blobs, cropper, axProvider: () => [axEl],
+    await new FramePatchRepresenter(store, {
+      patchEmbedder: mv,
+      blobStore: blobs,
     }).represent(sessionId);
+    const axEl: UIElement = { role: "button", label: "Save", x: 480, y: 480, w: 60, h: 24 };
+    await new RegionRepresenter(store, { axProvider: () => [axEl] }).represent(sessionId);
 
     // Frame B is a scene_change boundary, so the action span holding it STARTS
     // at t=6000. Boundaries here are [0 start, 1000 scene, 5000 focus,
@@ -98,7 +93,7 @@ describe("Retriever (assembly capstone)", () => {
   function retriever() {
     return new Retriever(store, {
       searchers: [new TextViewSearcher(fake, "digest"), new BehaviorViewSearcher(behavior)],
-      imageEmbedder: fake,
+      patchEmbedder: mv,
     });
   }
 
@@ -108,7 +103,10 @@ describe("Retriever (assembly capstone)", () => {
 
     expect(res.segments.map((s) => s.segmentId)).toContain(late.id);
     expect(res.frames[0]!.frameId).toBe(frameB);
-    expect(res.frames[0]!.frameDistance).toBeCloseTo(0, 5);
+    // MaxSim distance is a NEGATED similarity summed over query vectors, so an
+    // exact match is the most NEGATIVE number here, not zero — which is why
+    // `assemble` ranks frames by position rather than through 1/(1+d).
+    expect(res.frames[0]!.frameDistance!).toBeLessThan(0);
     expect(res.frames[0]!.segmentId).toBe(late.id);
     expect(res.frames[0]!.highlights.length).toBeGreaterThan(0);
     // scores are sorted descending
@@ -122,30 +120,34 @@ describe("Retriever (assembly capstone)", () => {
 
     expect(res.segments).toEqual([]); // Tier 1 not engaged without text/behavior
     expect(res.frames[0]!.frameId).toBe(frameB);
-    expect(res.frames[0]!.frameDistance).toBeCloseTo(0, 5);
+    // Best MaxSim = most negative; every other frame must score worse.
+    for (const f of res.frames.slice(1)) {
+      expect(res.frames[0]!.frameDistance!).toBeLessThan(f.frameDistance!);
+    }
     expect(res.frames[0]!.highlights.length).toBeGreaterThan(0);
   });
 
-  it("text-only query: returns ranked segments and their frames, no visual highlights", async () => {
+  it("text-only query with NO visual path: frames come from segment membership", async () => {
     const { frameA, frameB, late } = await setup();
-    const res = await retriever().retrieve({ text: late.digest! });
+    // No patchEmbedder — so no frame ANN, no distance, and no patch highlights.
+    const res = await new Retriever(store, {
+      searchers: [new TextViewSearcher(fake, "digest"), new BehaviorViewSearcher(behavior)],
+    }).retrieve({ text: late.digest! });
 
     expect(res.segments[0]!.segmentId).toBe(late.id);
     const ids = res.frames.map((f) => f.frameId);
     expect(ids).toContain(frameB);
     expect(ids).toContain(frameA);
-    // no image query -> no ANN distance and no highlights
     expect(res.frames.every((f) => f.frameDistance === undefined)).toBe(true);
-    expect(res.frames.every((f) => f.highlights.length === 0)).toBe(true);
     // the frame in the top-scoring segment sorts first
     expect(res.frames[0]!.frameId).toBe(frameB);
   });
 
   /**
-   * The DEFAULT app configuration: no image provider at all. Every other case
-   * here builds the Retriever with one and runs FrameRepresenter, which is
-   * exactly why this shipped broken — frame↔segment links were written only by
-   * the image stages, so text-only recall (which finds frames purely by segment
+   * The DEFAULT app configuration: no image provider at all. Cases above build
+   * the Retriever with one and run FramePatchRepresenter, which is exactly why
+   * this shipped broken — frame↔segment links were written only by the image
+   * stages, so text-only recall (which finds frames purely by segment
    * membership) returned nothing over a fully indexed library.
    */
   it("text-only, NO image provider: frames are still recalled via segment membership", async () => {
@@ -169,7 +171,7 @@ describe("Retriever (assembly capstone)", () => {
     await ing.ingest(frame(1000, grad(false), imgA));
     const b = await ing.ingest(frame(6000, grad(true), imgB));
 
-    // Exactly the always-on stages, in order — no FrameRepresenter, no regions.
+    // Exactly the always-on stages, in order — no patch stage, no regions.
     await new Segmenter(store).segment(sessionId);
     await associateFrames(store, sessionId);
     await new Representer(store, { digestEmbedder: fake, behavior }).represent(sessionId);
@@ -178,7 +180,7 @@ describe("Retriever (assembly capstone)", () => {
       .getSegmentsBySession(sessionId)
       .find((s) => s.granularity === "action" && s.tMonoStart === 6000)!;
 
-    // Neither imageEmbedder nor patchEmbedder — the default install.
+    // No patchEmbedder — the default install.
     const res = await new Retriever(store, {
       searchers: [new TextViewSearcher(fake, "digest"), new BehaviorViewSearcher(behavior)],
     }).retrieve({ text: late.digest! });
@@ -246,7 +248,9 @@ describe("Retriever (assembly capstone)", () => {
 
   it("ties are ordered by time, deterministically — never by Map insertion order", async () => {
     const { frameA, frameB, late } = await setup();
-    const res = await retriever().retrieve({ text: late.digest! });
+    const res = await new Retriever(store, {
+      searchers: [new TextViewSearcher(fake, "digest"), new BehaviorViewSearcher(behavior)],
+    }).retrieve({ text: late.digest! });
     const tied = res.frames.filter(
       (f, _i, all) => all.filter((g) => g.score === f.score).length > 1,
     );

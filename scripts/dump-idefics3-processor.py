@@ -1,5 +1,7 @@
 """
-Dump exactly what ColIdefics3Processor produces for a DeskRAG-shaped frame.
+Dump exactly what the reference Idefics3 processor produces for a DeskRAG-shaped
+frame. This is what generated the MEASURED table in test/onnx.geometry.test.ts,
+and the ability to regenerate it is what keeps that table honest.
 
 This is ground truth for the TypeScript adapter. The prompt is not decorative:
 ColPali-family models embed image patches as placeholder tokens inside a
@@ -8,7 +10,7 @@ that are plausible but wrong — scores stay in a believable range while retriev
 quietly degrades. Replicating this byte-for-byte is the only safe path.
 
 Usage:
-    python scripts/dump-colsmol-processor.py [--width 1280] [--height 800]
+    python scripts/dump-idefics3-processor.py [--width 1280] [--height 800]
 """
 
 from __future__ import annotations
@@ -19,27 +21,31 @@ import json
 import torch
 from PIL import Image
 
-from colpali_engine.models import ColIdefics3Processor
+from colpali_engine.models import ColModernVBertProcessor
 
-IMAGE_TOKEN_ID = 49190
+# ColModernVBERT's <image> placeholder. ColSmol's was 49190; the processors share
+# the Idefics3 IMAGE GEOMETRY (2048 / 512 / patch 16 / shuffle 4 -> 64 tokens per
+# tile) but not the tokenizer, so this id is model-specific.
+IMAGE_TOKEN_ID = 50283
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", default="vidore/colSmol-256M")
+    ap.add_argument("--model", default="ModernVBERT/colmodernvbert")
+    ap.add_argument("--image-token-id", type=int, default=IMAGE_TOKEN_ID)
     ap.add_argument("--width", type=int, default=1280)
     ap.add_argument("--height", type=int, default=800)
     ap.add_argument("--query", default="a login form")
     args = ap.parse_args()
 
-    proc = ColIdefics3Processor.from_pretrained(args.model)
+    proc = ColModernVBertProcessor.from_pretrained(args.model)
 
     # A non-uniform image: an all-flat one can be treated as padding.
     img = Image.effect_mandelbrot((args.width, args.height), (-3, -2.5, 2, 2.5), 20).convert("RGB")
 
     batch = proc.process_images([img])
     ids = batch["input_ids"][0]
-    n_img = int((ids == IMAGE_TOKEN_ID).sum())
+    n_img = int((ids == args.image_token_id).sum())
 
     print("=== IMAGE BRANCH ===")
     print("keys           :", sorted(batch.keys()))

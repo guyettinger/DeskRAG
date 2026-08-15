@@ -4,7 +4,7 @@
  * ffmpeg's `mpdecimate`; this applies the KeyframeBudget's rate limit, hashes
  * the frame (dHash) for the Tier-0 coarse visual index, and writes a frame row.
  * Frames are stored relational-only here: segment_ids are attached later (lazy,
- * at/after segmentation) and the frame_image vector is a later represent/ view.
+ * at/after segmentation) and the frame_patches vectors are a later represent/ view.
  *
  * A frame source (e.g. the ffmpeg screen producer) feeds SampledFrames in; the
  * source owns decoding to grayscale and, if desired, writing the keyframe image
@@ -28,7 +28,7 @@ export interface SampledFrame {
   grayH: number;
   /** Pre-existing keyframe image blob id (if the source already stored one). */
   blobId?: string;
-  /** Encoded full keyframe image to persist (for the frame_image view / Tier 2). */
+  /** Encoded full keyframe image to persist (for Tier 2 and the app_caption crop). */
   image?: { bytes: Uint8Array; codec?: string };
 }
 

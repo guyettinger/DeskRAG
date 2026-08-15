@@ -8,23 +8,22 @@
  *   inputs : input_ids, attention_mask, pixel_values
  *   output : embeddings  [batch, seq, 128]
  *
- * Differs from colsmol.ts in exactly two places, and shares everything else:
+ THE ONLY IMAGE PROVIDER. It replaced a menu of four (none / nomic single-vector
+ * / ColSmol / this), and the two model adapters that lost the bake-off are gone
+ * along with the whole single-vector image lane they were the only members of.
  *
- *   1. THREE inputs, not four — this export has no `pixel_attention_mask`,
- *      because Qdrant's wrapper builds input_ids from the actual patch count
- *      instead of masking a padded batch. That is also why it needs no re-trace
- *      at a fixed tile count, unlike the stock ColSmol export.
- *   2. A different tokenizer, hence a different prompt module — including a
- *      [CLS] … [SEP] wrapper ColSmol's does not have. See
- *      colmodernvbert-prompt.ts; the query path is where that matters most.
+ * Its ONNX contract is THREE inputs, not the four the stock ColSmol export took:
+ * there is no `pixel_attention_mask`, because Qdrant's wrapper builds input_ids
+ * from the actual patch count instead of masking a padded batch. That is also
+ * why it needs no re-trace at a fixed tile count.
  *
- * The TILER AND GEOMETRY ARE SHARED VERBATIM with ColSmol, which is a fact about
- * the models rather than a convenience: ColModernVBERT's preprocessor_config.json
- * matches ColSmol's on every field TileConfig reads (Idefics3ImageProcessor,
- * longest_edge 2048, tiles of 512, patch 16, pixel_shuffle 4, mean/std 0.5,
- * global tile last, 64 tokens per tile). So the >= 2048px capture rule in
- * colsmol-tiler.ts applies here IDENTICALLY — below it, the preprocessor
- * upscales and patch vectors drift with scores still looking sane.
+ * The TILER AND GEOMETRY are Idefics3's, shared with anything else built on that
+ * processor: `preprocessor_config.json` declares longest_edge 2048, tiles of
+ * 512, patch 16, pixel_shuffle 4, mean/std 0.5, global tile last, 64 tokens per
+ * tile. So the >= 2048px capture rule in idefics3-tiler.ts applies here — below
+ * it, the preprocessor upscales and patch vectors drift with scores still
+ * looking sane. `readTileConfig` below is what states that geometry, and
+ * `tileConfig` is what carries it to the highlighter.
  */
 
 import { readFile } from "node:fs/promises";
@@ -49,12 +48,16 @@ import { defaultConfigPath, loadTokenizer } from "./tokenizer.js";
 /**
  * Read tiling parameters from the model's own config files.
  *
- * NOT `colsmol.ts`'s function, and the difference is one field: ColSmol nests
- * `pixel_shuffle_factor` under `text_config`, ColModernVBERT puts it at the TOP
- * level. Reusing ColSmol's reader here falls through to DEFAULT_TILE_CONFIG —
- * which is also 4, so it would be correct BY LUCK and would silently stop being
- * correct the moment either export changed its geometry. Both spellings are
- * accepted so one reader cannot disagree with the other about a shared config.
+ The result is not only used to tile: it is this provider's `tileConfig`, which
+ * the highlighter reads to map a patch index back to a frame box. So a wrong
+ * value here puts every highlight on the wrong part of the frame while every
+ * score stays plausible.
+ *
+ * BOTH SPELLINGS of `pixel_shuffle_factor` are accepted — top level (this
+ * export) and under `text_config` (ColSmol's, which this replaced). A reader
+ * that knew only one falls through to DEFAULT_TILE_CONFIG, which is ALSO 4: it
+ * would be correct by luck, and would silently stop being correct the moment an
+ * export changed its geometry.
  */
 export async function readTileConfig(
   preprocessorPath: string,
@@ -151,7 +154,7 @@ export class ColModernVBertMultiVector implements MultiVectorProvider {
 
   private async tile(image: Uint8Array): Promise<TiledImage> {
     if (this.injectedTiler) return this.injectedTiler(image, this.tileConfig);
-    const { tileImageWithSharp } = await import(/* @vite-ignore */ "./colsmol-tiler.js");
+    const { tileImageWithSharp } = await import(/* @vite-ignore */ "./idefics3-tiler.js");
     return tileImageWithSharp(image, this.tileConfig);
   }
 

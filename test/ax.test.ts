@@ -225,14 +225,11 @@ describe("AX end-to-end: capture -> represent -> Tier 3", () => {
 
     await new Segmenter(store).segment(sessionId);
     const result = await new RegionRepresenter(store, {
-      imageEmbedder: fake,
-      blobStore: blobs,
-      cropper,
       axProvider: new StoredAxProvider(store).provide,
     }).represent(sessionId);
     expect(result.regionCount).toBeGreaterThan(0);
 
-    const hits = await new Tier3Retriever(store, fake).retrieveRegions({ text: "Save" }, [kf.frameId!]);
+    const hits = await new Tier3Retriever(store).retrieveRegions({ text: "Save" }, [kf.frameId!]);
     const save = hits.find((h) => h.label === "Save")!;
     expect(save).toBeDefined();
     expect(save.bbox).toEqual({ x: 100, y: 100, w: 80, h: 30 });

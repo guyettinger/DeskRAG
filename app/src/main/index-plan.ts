@@ -27,7 +27,6 @@ export type StageId =
   | "linkAx"
   | "regions"
   | "digest"
-  | "frameEmbeddings"
   | "framePatches"
   | "captions"
   | "appCaptions"
@@ -46,7 +45,6 @@ export type StageId =
  * model downloads itself and only the binary can still be missing.
  */
 export interface StageFacts {
-  imageEmbedder: boolean;
   patchEmbedder: boolean;
   captioner: boolean;
   hasAudio: boolean;
@@ -114,15 +112,15 @@ export const INDEX_STAGES: readonly StageSpec[] = [
     reindex: "per-session",
   },
   {
-    // Regions run BEFORE the digest, and under every image configuration
-    // including none. Proposal is geometry + the AX tree; only the crops need a
-    // model. Two things downstream read what this writes: the digest names what
-    // was clicked from these labels, and `Anchor.visual` in the trace graph is
-    // built from these rows — gating the whole stage on `imageEmbedder` once
-    // meant the late-interaction (patch) path wrote no region rows at all and
+    // Regions run BEFORE the digest, and under every configuration. Proposal is
+    // geometry + the AX tree and needs no model at all — nothing crops or embeds
+    // a region any more. Two things downstream read what this writes: the digest
+    // names what was clicked from these labels, and `Anchor.visual` in the trace
+    // graph is built from these rows. Gating the whole stage on an image
+    // embedder once meant the patch path wrote no region rows at all and
     // silently cost the executor its middle anchor rung.
     id: "regions",
-    label: (f) => (f.imageEmbedder ? "Regions" : "Regions (proposal only)"),
+    label: () => "Regions",
     needs: ["segment", "linkAx"],
     gate: always,
     reindex: "per-session",
@@ -135,16 +133,9 @@ export const INDEX_STAGES: readonly StageSpec[] = [
     reindex: "per-session",
   },
   {
-    id: "frameEmbeddings",
-    label: () => "Frame embeddings",
-    needs: ["segment"],
-    gate: (f) => f.imageEmbedder,
-    reindex: "per-session",
-  },
-  {
-    // The multivector path replaces BOTH the frame and region image stages:
-    // patches are the regions. It is also by far the slowest stage (seconds per
-    // frame), so it reports per-frame progress.
+    // The ONLY image stage: patches are the regions, so there is no separate
+    // frame or region embedding pass. It is by far the slowest stage (seconds
+    // per frame), so it reports per-frame progress.
     id: "framePatches",
     label: () => "Frame patches",
     needs: ["segment"],

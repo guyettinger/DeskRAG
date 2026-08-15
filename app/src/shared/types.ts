@@ -28,22 +28,24 @@ export interface SignalConfig {
 /** Where text embeddings come from. Ollama needs a daemon; onnx runs in-process. */
 export type TextProvider = "ollama" | "onnx";
 /**
- * The local visual paths, mutually exclusive because they index different
- * vector spaces — the library's Retriever rejects two at once.
- *   nomic           — single-vector; writes region rows, so Tier 3 + AX-label
- *                     FTS work. Its space is NOT shared with text, so a text
- *                     query never reaches a nomic frame vector at all: it
- *                     answers visual-example queries only.
- *   colsmol         — late interaction; patches ARE the regions, so no Tier 3
- *   colmodernvbert  — late interaction, same shape as colsmol and the same
- *                     Idefics3 tiling; a ModernBERT/SigLIP2 pair rather than
- *                     SmolLM2, and the upstream export rather than a re-export
+ * The visual path: ColModernVBERT, or nothing.
  *
- * Both late-interaction options serve TEXT as well as image queries, because one
- * model embeds both into one space. That capability difference — not speed — is
- * what separates them from nomic.
+ * It was a menu of four — `nomic` (single-vector) and `colsmol` alongside this —
+ * and the bake-off that produced that menu is over. Keeping the losers cost two
+ * model adapters, a 953MB download entry, an export toolchain, a whole
+ * single-vector retrieval lane, and a settings control asking the user to make a
+ * decision that had already been made. All of it is gone; a persisted `"nomic"`
+ * or `"colsmol"` MIGRATES here (see `PROVIDER_MIGRATIONS`) and needs a re-index.
+ *
+ * `colmodernvbert` is late interaction, so ONE model embeds both images and text
+ * into ONE space — which is what lets a TEXT query reach frames directly, and
+ * what nomic could never do. Its patches ARE the regions, so Tier 3 stays
+ * AX-label FTS only on this path, exactly as it already was.
+ *
+ * `none` is the DEFAULT and stays on the menu: it is the whole of what
+ * optionality buys once there is one model worth running.
  */
-export type ImageProvider = "none" | "nomic" | "colsmol" | "colmodernvbert";
+export type ImageProvider = "none" | "colmodernvbert";
 export type CaptionProvider = "none" | "ollama";
 export type RerankProvider = "none" | "onnx";
 /**
@@ -504,6 +506,16 @@ export interface EnvInfo {
   axSidecarAvailable: boolean;
   whisperConfigured: boolean;
   dataDir: string;
+  /**
+   * The image provider this install had selected before it was removed, when
+   * settings were migrated on open — `"nomic"` or `"colsmol"`, else null.
+   *
+   * Surfaced because the migration is silent otherwise and its consequence is
+   * not: the frames indexed under that model live in a vector space nothing can
+   * query, and their tables have been dropped. The user is TOLD a re-index is
+   * needed; nothing starts one for them.
+   */
+  migratedImageProvider: string | null;
 }
 
 // --- permissions -------------------------------------------------------------

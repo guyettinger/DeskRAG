@@ -10,7 +10,8 @@ import {
 } from "../src/embed/onnx/geometry.js";
 
 /**
- * Ground truth measured from ColIdefics3Processor (scripts/dump-colsmol-processor.py):
+ * Ground truth measured from the reference Idefics3 processor
+ * (scripts/dump-idefics3-processor.py):
  *
  *   1280x800  -> 13 tiles, 832 image tokens   (4x3 grid + global)
  *   1920x1080 -> 13 tiles, 832
@@ -20,6 +21,19 @@ import {
  *   3840x2160 -> 13 tiles, 832
  *    512x512  -> 17 tiles, 1088          (4x4 grid + global)
  *   1280x1024 -> 17 tiles, 1088
+ *
+ * TAKEN FROM ColIdefics3Processor AND STILL VALID FOR ColModernVBertProcessor,
+ * checked rather than assumed. The two `preprocessor_config.json` files are
+ * byte-identical apart from `processor_class` — same `Idefics3ImageProcessor`,
+ * same 2048 / 512, same mean/std/rescale/resample — and both `config.json`s
+ * declare patch 16 and shuffle 4 (ColModernVBERT at the top level, ColSmol under
+ * `text_config`, which is why `readTileConfig` accepts both spellings). Every
+ * input this table depends on is therefore the same.
+ *
+ * And it is confirmed against the REAL export, not only against its config:
+ * `npm run smoke:onnx-electron` embeds a 2560x1600 fixture through
+ * ColModernVBERT and reports `4x3 + global = 13 tiles`, `vectors=832`, matching
+ * row 3; `npm run probe:patchgeom` gets 832 for 1920x1080 and 1728x1117.
  */
 const MEASURED: Array<[number, number, number]> = [
   [1280, 800, 13],
@@ -33,7 +47,7 @@ const MEASURED: Array<[number, number, number]> = [
 ];
 
 describe("computeTileGeometry", () => {
-  it("derives 64 tokens per tile in an 8x8 grid from the ColSmol config", () => {
+  it("derives 64 tokens per tile in an 8x8 grid from the Idefics3 config", () => {
     const g = computeTileGeometry(1280, 800);
     expect(g.tokensPerTile).toBe(64);
     expect(g.tokenGrid).toBe(8);

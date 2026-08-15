@@ -35,6 +35,7 @@
     "probe:latency": "node scripts/capture-latency-probe.mjs",
     "probe:mcp": "npm run app:build && node scripts/mcp-probe.mjs",
     "probe:highlight": "node scripts/highlight-probe.mjs",
+    "probe:patchgeom": "node scripts/patch-geometry-probe.mjs",
     "gen:brand": "tsx scripts/brand/index.ts",
     "gen:shots": "npm run app:build && node scripts/shots.mjs",
     "app:install": "npm --prefix app install",

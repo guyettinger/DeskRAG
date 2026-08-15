@@ -15,7 +15,12 @@ import {
   type VectorSide,
 } from "./lance/tables.js";
 import { Mutex } from "./mutex.js";
-import type { UIElement } from "../embed/types.js";
+import {
+  RETIRED_MODELS,
+  RETIRED_VIEWS,
+  VIEWS,
+  type UIElement,
+} from "../embed/types.js";
 import type {
   BlobInsert,
   BlobRow,
@@ -25,7 +30,6 @@ import type {
   FramePatchInsert,
   FrameRow,
   FrameScope,
-  FrameVectorInsert,
   MissingVector,
   ReconcileResult,
   Reembedder,
@@ -108,7 +112,14 @@ export class DualStore implements Store {
   ): Promise<DualStore> {
     const db = openDb(sqlitePath);
     const lance = vectorSide ?? (await LanceStore.open(lanceDir));
-    return new DualStore(db, lance);
+    const store = new DualStore(db, lance);
+    // A store carried over from an older build can hold spaces nothing can
+    // write or query any more. Dropping them here rather than on demand is what
+    // keeps every later walk over `this.spaces` — reconcile, deleteSession,
+    // purgeDerived — from having to know about them. The caller logs it;
+    // `store/` prints nothing.
+    store.retiredSpacesPurged = await store.purgeRetiredSpaces();
+    return store;
   }
 
   private prepare() {
@@ -319,6 +330,7 @@ export class DualStore implements Store {
          VALUES (@namespace, @view, @providerId, @model, @dimensions, @sharedTextSpace, @createdAt)`,
       ),
       selectAllSpaces: db.prepare("SELECT * FROM vector_space"),
+      deleteVectorSpace: db.prepare("DELETE FROM vector_space WHERE namespace = ?"),
       // reconciliation
       selectAllRegionIds: db.prepare("SELECT id FROM region"),
       selectAllFrameIds: db.prepare("SELECT id FROM frame"),
@@ -439,8 +451,60 @@ export class DualStore implements Store {
     });
   }
 
+  /**
+   * Namespaces dropped by {@link purgeRetiredSpaces} during `open()`. Empty on
+   * every store that was not carried over from a build with the removed
+   * providers. Reported rather than logged — see `open()`.
+   */
+  retiredSpacesPurged: string[] = [];
+
   listVectorSpaces(): VectorSpaceInsert[] {
     return [...this.spaces.values()];
+  }
+
+  /**
+   * Drop a namespace entirely: its Lance table, then its `vector_space` row.
+   *
+   * Lance FIRST, which is the reverse of every other write here and is correct
+   * for a delete for the same reason the delete order is: losing the row while
+   * the table survives leaves an unreachable table nothing can ever name, where
+   * losing the table while the row survives is the ordinary "registered but not
+   * materialized" state the store already tolerates.
+   *
+   * NOT UNDOABLE. Callers are `purgeRetiredSpaces` and the migration path.
+   */
+  async dropVectorSpace(namespace: string): Promise<void> {
+    await this.mutex.run(async () => {
+      await this.lance.dropSpace(namespace);
+      this.stmts.deleteVectorSpace.run(namespace);
+      this.spaces.delete(namespace);
+    });
+  }
+
+  /**
+   * Drop every registered space that no build can write to any more, and report
+   * what went. Run ONCE on open.
+   *
+   * Two families, and the second is why a view check alone is not enough:
+   *   - a RETIRED view (`frame_image`, `region_image`) — the single-vector image
+   *     lane, which no longer exists in `VIEWS`;
+   *   - a live view under a RETIRED MODEL (`colsmol-256m`), whose view is
+   *     `frame_patches` and therefore passes any view check while its vectors
+   *     are in a space nothing can query.
+   *
+   * Left behind, deliberately: a namespace whose model is simply not configured
+   * right now. That is a user choice and its vectors are still comparable the
+   * moment the model is selected again — unlike these, which nothing can produce.
+   */
+  async purgeRetiredSpaces(): Promise<string[]> {
+    const dead = [...this.spaces.values()].filter(
+      (s) =>
+        !(VIEWS as readonly string[]).includes(s.view) ||
+        RETIRED_VIEWS.includes(s.view) ||
+        RETIRED_MODELS.includes(s.model),
+    );
+    for (const s of dead) await this.dropVectorSpace(s.namespace);
+    return dead.map((s) => s.namespace);
   }
 
   private requireSpace(namespace: string): VectorSpaceInsert {
@@ -565,19 +629,8 @@ export class DualStore implements Store {
         }
       });
       tx(rows);
-      // 2. Lance second (whole-frame image vector), with denormalized segment_ids.
-      for (const r of rows) {
-        if (!r.vector) continue;
-        this.requireSpace(r.vector.namespace);
-        await this.lance.add(r.vector.namespace, [
-          {
-            id: r.id,
-            session_id: r.sessionId,
-            segment_ids: r.segmentIds,
-            vector: Array.from(r.vector.vector),
-          },
-        ]);
-      }
+      // No Lance write: a frame's only vectors are its late-interaction patch
+      // set, written separately by putFramePatches.
     });
   }
 
@@ -605,24 +658,9 @@ export class DualStore implements Store {
         }
       });
       tx(rows); // committed — relational truth persisted
-
-      // 2. Lance second, into the namespaced table. On failure the region rows
-      //    survive without vectors and reconciliation re-embeds them later.
-      const byNs = new Map<string, VecRow[]>();
-      for (const r of rows) {
-        if (r.vector === undefined) continue; // proposed but not embedded
-        this.requireSpace(r.vector.namespace);
-        const list = byNs.get(r.vector.namespace) ?? [];
-        list.push({
-          id: r.id,
-          frame_id: r.frameId,
-          segment_id: r.segmentId,
-          session_id: r.sessionId,
-          vector: Array.from(r.vector.vector),
-        });
-        byNs.set(r.vector.namespace, list);
-      }
-      for (const [ns, list] of byNs) await this.lance.add(ns, list);
+      // No Lance write: a region carries geometry and an AX role/label, which is
+      // what `region_fts`, `Anchor.visual` and the digest read. Region CROPS were
+      // the single-vector image lane and went with it.
     });
   }
 
@@ -981,27 +1019,6 @@ export class DualStore implements Store {
     };
   }
 
-  async putFrameVectors(rows: FrameVectorInsert[]): Promise<void> {
-    if (rows.length === 0) return;
-    await this.mutex.run(async () => {
-      // Frame rows already exist; this is a Lance-only add with denormalized
-      // segment_ids so Tier-2 can pre-filter frames by segment scope.
-      const byNs = new Map<string, VecRow[]>();
-      for (const r of rows) {
-        this.requireSpace(r.namespace);
-        const list = byNs.get(r.namespace) ?? [];
-        list.push({
-          id: r.frameId,
-          session_id: r.sessionId,
-          segment_ids: r.segmentIds,
-          vector: Array.from(r.vector),
-        });
-        byNs.set(r.namespace, list);
-      }
-      for (const [ns, list] of byNs) await this.lance.add(ns, list);
-    });
-  }
-
   /**
    * Late-interaction patch sets. Association (SQLite) commits FIRST, then the
    * Lance add — a crash between leaves a detectable gap, never an orphan vector.
@@ -1201,11 +1218,8 @@ export class DualStore implements Store {
       switch (kind) {
         case "segment":
           return segIds;
-        case "frame":
-        case "frame_patches": // keyed by frame id, like frame_image
+        case "frame_patches": // keyed by FRAME id, not segment
           return frameIds;
-        case "region":
-          return regionIds;
       }
     };
     for (const space of this.spaces.values()) {
@@ -1301,16 +1315,6 @@ export class DualStore implements Store {
     return this.lance.searchSegment(namespace, vector, k);
   }
 
-  async searchFrames(
-    namespace: string,
-    vector: Float32Array,
-    k: number,
-    scope?: FrameScope,
-  ): Promise<SearchHit[]> {
-    this.requireSpace(namespace);
-    return this.lance.searchFrame(namespace, vector, k, scope);
-  }
-
   async searchFramePatches(
     namespace: string,
     query: Float32Array[],
@@ -1327,16 +1331,6 @@ export class DualStore implements Store {
   ): Promise<Float32Array[] | null> {
     this.requireSpace(namespace);
     return this.lance.getFramePatches(namespace, frameId);
-  }
-
-  async searchRegions(
-    namespace: string,
-    vector: Float32Array,
-    k: number,
-    scope: RegionScope,
-  ): Promise<SearchHit[]> {
-    this.requireSpace(namespace);
-    return this.lance.searchRegion(namespace, vector, k, scope.frameIds);
   }
 
   /**
@@ -1439,17 +1433,6 @@ export class DualStore implements Store {
         // treating this as a segment space would find no matching segment row
         // and delete every patch row in the table.
         expected = new Set();
-      } else if (kind === "region") {
-        // Every region row is re-embeddable from its frame blob + bbox, whether
-        // it lost its vector to a crash or was written by a proposal-only pass.
-        expected = allRegionIds;
-      } else if (kind === "frame") {
-        // Only frames with a stored image (blob) can have a frame_image vector.
-        // An imageless frame legitimately has none, so it is NOT "missing"; a
-        // frame WITH a blob but no vector is genuinely re-embeddable from the blob.
-        expected = new Set(
-          (this.stmts.selectFrameIdsWithBlob.all() as { id: string }[]).map((r) => r.id),
-        );
       } else {
         // segment view: expect a vector where the source text column is present.
         const stmt =
@@ -1471,11 +1454,9 @@ export class DualStore implements Store {
       // For segment kinds, entity existence = the segment row exists at all (a
       // segment may legitimately lack a caption vector but still be a real row).
       const entityExists =
-        kind === "region"
-          ? (id: string) => allRegionIds.has(id)
-          : kind === "frame" || kind === "frame_patches"
-            ? (id: string) => allFrameIds.has(id)
-            : (id: string) => this.stmts.selectSegmentById.get(id) !== undefined;
+        kind === "frame_patches"
+          ? (id: string) => allFrameIds.has(id)
+          : (id: string) => this.stmts.selectSegmentById.get(id) !== undefined;
 
       const orphanIds: string[] = [];
       for (const id of lanceIds) {
@@ -1489,30 +1470,21 @@ export class DualStore implements Store {
       // Missing: expected SQLite id absent from Lance -> re-embed candidate.
       for (const id of expected) {
         if (lanceIds.has(id)) continue;
-        missing.push(this.describeMissing(space, kind, id));
+        missing.push(this.describeMissing(space, id));
       }
     }
 
     return { orphansPruned, missing };
   }
 
-  private describeMissing(
-    space: VectorSpaceInsert,
-    kind: ReturnType<typeof kindForView>,
-    id: string,
-  ): MissingVector {
-    const base = {
+  private describeMissing(space: VectorSpaceInsert, id: string): MissingVector {
+    return {
       namespace: space.namespace,
       view: space.view,
       id,
+      entity: "segment",
+      segment: this.segmentRow(id),
     };
-    if (kind === "region") {
-      return { ...base, entity: "region", region: this.regionRow(id) };
-    }
-    if (kind === "frame") {
-      return { ...base, entity: "frame", frame: this.frameRow(id) };
-    }
-    return { ...base, entity: "segment", segment: this.segmentRow(id) };
   }
 
   async reconcileAndReembed(reembed: Reembedder): Promise<ReconcileResult> {
@@ -1531,23 +1503,8 @@ export class DualStore implements Store {
   }
 
   private vecRowFor(m: MissingVector, vector: Float32Array): VecRow {
-    const v = Array.from(vector);
-    if (m.entity === "region") {
-      const r = m.region!;
-      return {
-        id: r.id,
-        frame_id: r.frameId,
-        segment_id: r.segmentId,
-        session_id: r.sessionId,
-        vector: v,
-      };
-    }
-    if (m.entity === "frame") {
-      const f = m.frame!;
-      return { id: f.id, session_id: f.sessionId, segment_ids: f.segmentIds, vector: v };
-    }
     const s = m.segment!;
-    return { id: s.id, session_id: s.sessionId, vector: v };
+    return { id: s.id, session_id: s.sessionId, vector: Array.from(vector) };
   }
 
   // --- row hydration ---------------------------------------------------------

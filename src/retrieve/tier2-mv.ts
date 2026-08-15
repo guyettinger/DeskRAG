@@ -1,13 +1,14 @@
 /**
  * Tier-2 over the late-interaction `frame_patches` space.
  *
- * Differs from Tier2Retriever in three ways that matter:
+ The ONLY frame ANN there is, since the single-vector image lane was removed.
+ * Three things about it are worth stating rather than inferring:
  *
  *  - it serves TEXT queries as well as image queries, because one model embeds
  *    both into the same space, so text reaches frames directly;
  *  - highlights fall out of the CONTENT vectors' similarity map rather than a
- *    separate region ANN — the patches ARE the regions, so there is no Tier 3
- *    on this path;
+ *    separate region ANN — the patches ARE the regions, so Tier 3 stays
+ *    AX-label FTS only on this path;
  *  - query embedding is EXPLICIT rather than hidden inside retrieve*(). Embedding
  *    a query costs a vision forward pass (the graph requires pixel inputs even
  *    for text), so the caller embeds once and passes the vectors to both the
@@ -21,6 +22,7 @@ import { namespaceFor } from "../embed/types.js";
 import {
   cellToBox,
   computeTileGeometry,
+  expectedTokenCount,
   gridTokenCount,
   patchIndexToCell,
 } from "../embed/onnx/geometry.js";
@@ -63,9 +65,8 @@ export interface Tier2MultiVectorOptions {
  * 0.90). A patch map attends broadly, and a floor cannot make it precise — what
  * this constant buys is fewer, merged, ranked boxes, not a tight one.
  *
- * NOT measured: ColSmol (its table in the test library has zero rows, so
- * measuring it needs a full re-index) and image queries, whose 832 content
- * vectors are a different regime entirely.
+ * NOT measured: image queries, whose 832 content vectors are a different regime
+ * entirely.
  */
 const DEFAULT_RELATIVE_FLOOR = 0.8;
 
@@ -173,11 +174,28 @@ export class Tier2MultiVectorRetriever {
       .filter((v): v is Float32Array => v !== undefined);
     if (content.length === 0) return [];
 
-    const geo = computeTileGeometry(width, height);
+    // The PROVIDER's geometry, never DEFAULT_TILE_CONFIG. They coincide for
+    // ColModernVBERT, so the default was right by luck — and would have gone on
+    // looking right, with every box on the wrong part of the frame, the moment
+    // an export changed its tiling.
+    const geo = computeTileGeometry(width, height, this.provider.tileConfig);
+
+    // A GRID DISAGREEMENT IS FATAL TO EVERY BOX, so it draws none rather than
+    // truncating to whichever count is smaller.
+    //
+    // The geometry above is recomputed from the frame row's SCREEN POINTS
+    // (1920x1080), while the embedder tiled the JPEG (2560x1440) — and the
+    // JPEG's own dimensions are stored nowhere: `FrameRow` has only points and
+    // `BlobRow` has no dimensions at all. They agree today because the grid
+    // depends on ASPECT RATIO alone, which is exactly the kind of coincidence
+    // this check is here to notice breaking. A `Math.min` absorbed it silently,
+    // and a map read against the wrong grid puts every box somewhere arbitrary.
+    if (patches.length !== expectedTokenCount(geo)) return [];
+
     // GRID patches only. A global-tile token covers the whole frame — true, and
     // useless as a highlight — so it is excluded from the map rather than
     // dropped after the cap, where it silently cost a box.
-    const gridCount = Math.min(gridTokenCount(geo), patches.length);
+    const gridCount = gridTokenCount(geo);
     if (gridCount === 0) return [];
 
     const score = new Float64Array(gridCount);

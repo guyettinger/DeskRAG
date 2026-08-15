@@ -7,7 +7,7 @@ The pipeline composes explicit stages. Retrieval is a single call over the capst
 import {
   DualStore, BlobStore,
   CaptureSession, KeyframeBudget,
-  Segmenter, Representer, FrameRepresenter, RegionRepresenter, ComposeRepresenter,
+  Segmenter, Representer, FramePatchRepresenter, RegionRepresenter, ComposeRepresenter,
   StoredAxProvider, associateFrames, associateFrameAx, indexSegmentText,
   Retriever, TextViewSearcher, BehaviorViewSearcher, LexicalSegmentSearcher,
   FakeEmbeddingProvider, BehaviorFeatureExtractor,
@@ -37,11 +37,14 @@ await new Segmenter(store).segment(sessionId);
 await associateFrames(store, sessionId);              // frame ↔ segment links
 await associateFrameAx(store, sessionId);             // AX walk → the frame it describes
 await new RegionRepresenter(store, { axProvider: new StoredAxProvider(store).provide })
-  .represent(sessionId);                              // proposal only, without a cropper
+  .represent(sessionId);                              // geometry + AX role/label; no model
 await new Representer(store, { digestEmbedder: embed, behavior: new BehaviorFeatureExtractor() }).represent(sessionId);
 
-// Optional, provider-gated — these only ever add to the above.
-await new FrameRepresenter(store, { imageEmbedder: embed, blobStore: blobs }).represent(sessionId);
+// Optional, provider-gated — this only ever adds to the above. `patchEmbedder`
+// is a MultiVectorProvider (ColModernVBertMultiVector, imported from its own
+// path since it loads onnxruntime-node); patches ARE the regions, so there is no
+// separate region-embedding pass.
+// await new FramePatchRepresenter(store, { patchEmbedder, blobStore: blobs }).represent(sessionId);
 
 // Actions → tasks → phases → a named session. Always on: without a summarizer
 // the tree is still built, with templated rollups instead of prose.
@@ -54,7 +57,7 @@ const retriever = new Retriever(store, {
   searchers: [new TextViewSearcher(embed, "digest"), new BehaviorViewSearcher(new BehaviorFeatureExtractor())],
   // Needs no provider, so it always works — and it is the only path to an exact term.
   lexical: new LexicalSegmentSearcher(store),
-  imageEmbedder: embed,
+  // patchEmbedder,  // omit for the default configuration, which has no visual path
 });
 const result = await retriever.retrieve({ text: "debugging the auth dialog" /*, image, behavior */ });
 for (const frame of result.frames) {

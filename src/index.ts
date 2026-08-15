@@ -232,14 +232,10 @@ export {
   type TypedRun,
   type TypedRunOptions,
 } from "./represent/typed-runs.js";
-export {
-  FrameRepresenter,
-  type FrameRepresenterOptions,
-  type FrameRepresentResult,
-} from "./represent/frame-representer.js";
 /**
- * Multi-vector counterpart of `FrameRepresenter` (the `frame_patches` view).
- * Barrel-safe: the provider is injected, so nothing native loads from here.
+ * The `frame_patches` view — the ONLY frame vector there is, since the
+ * single-vector image lane was removed. Barrel-safe: the provider is injected,
+ * so nothing native loads from here.
  */
 export {
   FramePatchRepresenter,
@@ -339,7 +335,6 @@ export {
   type FusedItem,
 } from "./retrieve/rrf.js";
 export { Tier1Retriever } from "./retrieve/retriever.js";
-export { Tier2Retriever, type Tier2Options } from "./retrieve/tier2.js";
 export {
   Tier2MultiVectorRetriever,
   type Tier2MultiVectorOptions,

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   MULTIVECTOR_VIEWS,
+  RETIRED_MODELS,
+  RETIRED_VIEWS,
   VIEWS,
   namespaceFor,
   parseNamespace,
@@ -46,9 +48,9 @@ describe("namespaceFor", () => {
   });
 
   it("round-trips through parseNamespace", () => {
-    const ns = namespaceFor("region_image", nomic);
+    const ns = namespaceFor("caption", nomic);
     expect(parseNamespace(ns)).toEqual({
-      view: "region_image",
+      view: "caption",
       providerId: "onnx",
       model: "nomic-embed-text-v1.5",
       dimensions: 768,
@@ -59,12 +61,29 @@ describe("namespaceFor", () => {
     expect(() => parseNamespace("a:b:c")).toThrow();
     expect(() => parseNamespace("bogus:onnx:m:768")).toThrow();
   });
+
+  /**
+   * A RETIRED view is rejected here, and that is safe only because opening a
+   * store does not parse: `DualStore` reads the `view` COLUMN, and the sole
+   * caller of `parseNamespace` is `ensureTable`, on a namespace being
+   * registered. A store carried over from the single-vector build still HOLDS
+   * these rows — `purgeRetiredSpaces` drops them before anything walks the
+   * registry, and throwing on open is what took down a whole re-index once.
+   */
+  it("treats the retired single-vector image views as unknown", () => {
+    for (const view of RETIRED_VIEWS) {
+      expect(VIEWS as readonly string[]).not.toContain(view);
+      expect(() => parseNamespace(`${view}:onnx:m:768`)).toThrow();
+    }
+    expect(RETIRED_VIEWS).toEqual(["frame_image", "region_image"]);
+    expect(RETIRED_MODELS).toContain("colsmol-256m");
+  });
 });
 
 describe("multivector views", () => {
   it("registers frame_patches as a known view", () => {
     expect(VIEWS).toContain("frame_patches");
-    expect(parseNamespace("frame_patches:onnx:colsmol-256m:128").view).toBe(
+    expect(parseNamespace("frame_patches:onnx:colmodernvbert-250m:128").view).toBe(
       "frame_patches",
     );
   });
@@ -76,8 +95,8 @@ describe("multivector views", () => {
       "caption",
       "transcript",
       "behavior",
-      "frame_image",
-      "region_image",
+      "summary",
+      "app_caption",
     ] as const) {
       expect(MULTIVECTOR_VIEWS.has(v)).toBe(false);
     }
