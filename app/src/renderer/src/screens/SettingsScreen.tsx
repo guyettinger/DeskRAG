@@ -173,13 +173,11 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
   };
 
   const p = s.providers;
-  // BOTH late-interaction providers share ColSmol's Idefics3 tiler verbatim —
-  // ColModernVBERT's preprocessor_config.json matches it on every field the
-  // tiler reads — so the >=2048 width rule and the AX-labels rule apply to each
-  // identically. Keying these banners on "colsmol" alone would silently drop
-  // both warnings the moment the other one is picked.
-  const lateInteraction = p.imageProvider === "colsmol" || p.imageProvider === "colmodernvbert";
-  const imageModelName = p.imageProvider === "colmodernvbert" ? "ColModernVBERT" : "ColSmol";
+  // Kept as a named FLAG rather than folded into the comparisons below, because
+  // it is what the >=2048 width rule and the AX-labels rule are actually about:
+  // Idefics3 tiling, a property of the preprocessor rather than of one model.
+  const lateInteraction = p.imageProvider === "colmodernvbert";
+  const imageModelName = "ColModernVBERT";
   const narrowForTiling = lateInteraction && s.signals.screen.imageMaxWidth < 2048;
 
   return (
@@ -244,9 +242,7 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
             <div className="desc">
               {lateInteraction
                 ? "Slower (seconds per frame), answers TEXT queries too, and highlights come from matched patches"
-                : p.imageProvider === "nomic"
-                  ? "Fast, and adds labelled region highlights you can search by UI role — but answers search-by-image only, never a typed query"
-                  : "For search-by-image + region highlights"}
+                : "Off — search still answers from text and behavior, with AX-label highlights"}
             </div>
           </div>
           <select
@@ -254,11 +250,19 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
             onChange={(e) => void patchProviders({ imageProvider: e.target.value as ImageProvider })}
           >
             <option value="none">None (text + behavior only)</option>
-            <option value="nomic">Nomic Vision (recommended)</option>
-            <option value="colsmol">ColSmol (late interaction)</option>
             <option value="colmodernvbert">ColModernVBERT (late interaction)</option>
           </select>
         </div>
+
+        {env?.migratedImageProvider && (
+          <div className="banner">
+            <span className="led" /> This install was set to{" "}
+            {env.migratedImageProvider === "nomic" ? "Nomic Vision" : "ColSmol"}, which has been
+            removed — the image model is now ColModernVBERT. Frames indexed under the old model
+            are no longer searchable and their vector tables have been dropped. Re-index the
+            library below to rebuild them.
+          </div>
+        )}
 
         {narrowForTiling && (
           <div className="banner">

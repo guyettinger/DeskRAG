@@ -30,8 +30,7 @@ import { namespaceFor } from "../src/embed/types.js";
 
 const provider = new FakeEmbeddingProvider({ id: "fake", model: "m", dimensions: 4 });
 const digestNs = namespaceFor("digest", provider);
-const frameNs = namespaceFor("frame_image", provider);
-const regionNs = namespaceFor("region_image", provider);
+const patchNs = namespaceFor("frame_patches", provider);
 
 const vec = (n: number): Float32Array => Float32Array.from([n, 0, 0, 0]);
 
@@ -54,8 +53,7 @@ async function seed(store: DualStore): Promise<Seeded> {
 
   for (const [namespace, view] of [
     [digestNs, "digest"],
-    [frameNs, "frame_image"],
-    [regionNs, "region_image"],
+    [patchNs, "frame_patches"],
   ] as const) {
     await store.registerVectorSpace({
       namespace,
@@ -138,13 +136,12 @@ async function seed(store: DualStore): Promise<Seeded> {
       role: "button",
       label: "Save",
       priority: 1,
-      vector: { namespace: regionNs, vector: vec(1) },
     },
   ]);
   store.indexSegmentText(segmentId, "clicked Save in TextEdit");
   await store.putSegmentVectors([{ segmentId, sessionId, namespace: digestNs, vector: vec(1) }]);
-  await store.putFrameVectors([
-    { frameId, sessionId, segmentIds: [segmentId], namespace: frameNs, vector: vec(1) },
+  await store.putFramePatches([
+    { frameId, sessionId, segmentIds: [segmentId], namespace: patchNs, patches: [vec(1)] },
   ]);
 
   return { sessionId, segmentId, parentId, frameId, regionId };
@@ -203,8 +200,9 @@ describe("DualStore.purgeDerived", () => {
   it("deletes the vectors in every namespace kind", async () => {
     await store.purgeDerived(s.sessionId);
     expect(await store.searchSegments(digestNs, vec(1), 10)).toHaveLength(0);
-    expect(await store.searchFrames(frameNs, vec(1), 10)).toHaveLength(0);
-    expect(await store.searchRegions(regionNs, vec(1), 10, { frameIds: [s.frameId] })).toHaveLength(0);
+    // Keyed by FRAME id, not segment — the exhaustive `idsForKind` switch is
+    // what keeps a new kind from silently falling through to the wrong list.
+    expect(await store.searchFramePatches(patchNs, [vec(1)], 10)).toHaveLength(0);
   });
 
   /**
@@ -244,7 +242,7 @@ describe("DualStore.purgeDerived", () => {
   it("keeps the vector spaces registered", async () => {
     await store.purgeDerived(s.sessionId);
     expect(store.listVectorSpaces().map((v) => v.namespace).sort()).toEqual(
-      [digestNs, frameNs, regionNs].sort(),
+      [digestNs, patchNs].sort(),
     );
   });
 

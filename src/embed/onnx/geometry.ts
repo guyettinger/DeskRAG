@@ -1,17 +1,19 @@
 /**
- * ColSmol tile layout and the patch-index -> frame-bbox mapping that turns a
+ * Idefics3 tile layout and the patch-index -> frame-bbox mapping that turns a
  * MaxSim argmax into a highlight box.
  *
  * Pure — no weights, no native modules — because this is the design's highest-risk
  * silent failure: wrong geometry puts highlights on the wrong part of the frame
  * while retrieval scores stay entirely plausible.
  *
- * Numbers come from vidore/colSmol-256M: image_size 512, patch_size 16 -> 1024
+ Numbers come from the processor config: image_size 512, patch_size 16 -> 1024
  * patches per tile; pixel_shuffle_factor 4 -> divide by 16 -> 64 tokens per tile,
- * an 8x8 grid.
+ * an 8x8 grid. DEFAULT_TILE_CONFIG restates them, but a provider must pass its
+ * OWN `tileConfig` — see MultiVectorProvider.tileConfig. Agreeing with the
+ * default is a coincidence to be checked, never a fact to rely on.
  *
- * The tiling rule was MEASURED against ColIdefics3Processor, not inferred from
- * the config, because two plausible readings of it are both wrong:
+ The tiling rule was MEASURED against the reference Idefics3 processor, not
+ * inferred from the config, because two plausible readings of it are both wrong:
  *
  *   1. The longest edge is scaled TO maxEdge, not capped at it. A 1280x800 frame
  *      is scaled UP by 1.6x, not left alone.

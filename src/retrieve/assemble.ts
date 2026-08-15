@@ -7,24 +7,20 @@
  * and returns `highlights` (matched region bboxes + labels) per recalled frame —
  * so the UI can outline WHERE on the frame the match is.
  *
- * Query modes:
- *   - visual (image [+ text/behavior]): Tier1 (if text/behavior) -> Tier2 frames
- *     (scoped to those segments, else unscoped) -> Tier3 regions per frame.
- *   - text/behavioral only: Tier1 segments; frames recalled via segment membership
- *     (no visual ANN, so no highlights).
+ Query modes:
+ *   - with a patch embedder: Tier1 (if text/behavior) -> Tier2 late-interaction
+ *     frames, scoped to those segments (else unscoped), for TEXT as well as
+ *     image queries since one model embeds both -> Tier3 AX-label regions.
+ *   - without one: Tier1 segments; frames recalled via segment membership, and
+ *     Tier 3's AX-label FTS is the only per-frame evidence there is.
  *
  * Each score component is max-normalized across the candidates so the weights are
  * comparable despite RRF scores and ANN distances living on different scales.
  */
 
-import type {
-  ImageEmbeddingProvider,
-  MultiVectorProvider,
-  QueryEmbedding,
-} from "../embed/types.js";
+import type { MultiVectorProvider, QueryEmbedding } from "../embed/types.js";
 import type { FrameRow, Store } from "../store/types.js";
 import { Tier1Retriever } from "./retriever.js";
-import { Tier2Retriever } from "./tier2.js";
 import { Tier2MultiVectorRetriever } from "./tier2-mv.js";
 import { Tier3Retriever } from "./tier3.js";
 import type { Reranker, RerankCandidate } from "./rerank/types.js";
@@ -121,10 +117,8 @@ export function collapseAncestors<T extends { segmentId: string }>(
 
 export class Retriever {
   private readonly tier1: Tier1Retriever;
-  /** Single-vector visual path (cloud providers). Absent on the local path. */
-  private readonly tier2: Tier2Retriever | undefined;
-  private readonly tier3: Tier3Retriever | undefined;
-  /** Late-interaction visual path (local). Absent on the cloud path. */
+  private readonly tier3: Tier3Retriever;
+  /** The visual path. Absent when no image provider is configured. */
   private readonly tier2mv: Tier2MultiVectorRetriever | undefined;
   private readonly weights: RetrieverWeights;
   private readonly segmentScope: number;
@@ -138,12 +132,7 @@ export class Retriever {
     private readonly store: Store,
     config: {
       searchers: ViewSearcher[];
-      /**
-       * Exactly one visual path, or neither. They are alternatives, never both:
-       * a namespace is single- or multi-vector, and mixing them would compare
-       * incomparable spaces.
-       */
-      imageEmbedder?: ImageEmbeddingProvider;
+      /** The visual path. Omit for the DEFAULT configuration, which has none. */
       patchEmbedder?: MultiVectorProvider;
       /**
        * Optional lexical lane fused into Tier 1 alongside the dense views.
@@ -154,32 +143,16 @@ export class Retriever {
     },
     opts: RetrieverOptions = {},
   ) {
-    if (config.imageEmbedder && config.patchEmbedder) {
-      throw new Error(
-        "Retriever takes imageEmbedder OR patchEmbedder, not both — they index different spaces.",
-      );
-    }
     this.tier1 = new Tier1Retriever(store, config.searchers, {
       ...opts.tier1,
       ...(config.lexical ? { lexical: config.lexical } : {}),
     });
-    if (config.imageEmbedder) {
-      this.tier2 = new Tier2Retriever(store, config.imageEmbedder, {
-        ...(opts.frameTopN !== undefined ? { topN: opts.frameTopN } : {}),
-      });
-    }
-    // Tier 3 ALWAYS exists. Its ANN half needs the image embedder and gets it
-    // when there is one; its AX-label FTS half needs no model at all, and for a
-    // text query it is the only per-frame evidence in the system — without it,
-    // frames recalled by segment membership carry no distance and every frame
-    // sharing a segment scores identically. Measured before this: one query
-    // returned 11 frames tied to six decimal places.
-    //
-    // On the MULTIVECTOR path it is deliberately FTS-only (the embedder is not
-    // passed): there, patches ARE the regions, so a region score derived from
-    // the same MaxSim would double-count the frame's own evidence. An AX label
-    // is a different signal and double-counts nothing.
-    this.tier3 = new Tier3Retriever(store, config.imageEmbedder, {
+    // Tier 3 ALWAYS exists, and needs no provider: its AX-label FTS is, for a
+    // text query, the only per-frame evidence in the system. Without it, frames
+    // recalled by segment membership carry no distance and every frame sharing a
+    // segment scores identically — measured, one query returned 11 frames tied
+    // to six decimal places.
+    this.tier3 = new Tier3Retriever(store, {
       ...(opts.regionTopN !== undefined ? { topN: opts.regionTopN } : {}),
     });
     if (config.patchEmbedder) {
@@ -231,7 +204,7 @@ export class Retriever {
     // labelled regions unreachable from the search box).
     const frameIds = frameHits.map((f) => f.frameId);
     const regionHits =
-      this.tier3 && (query.image || query.text) && frameIds.length > 0
+      query.text && frameIds.length > 0
         ? await this.tier3.retrieveRegions(query, frameIds)
         : [];
     const regionsByFrame = new Map<string, RegionHit[]>();
@@ -305,11 +278,6 @@ export class Retriever {
       return segScope.length > 0
         ? this.tier2mv.retrieveFrames(queryVectors.vectors, segScope)
         : this.tier2mv.retrieveFramesUnscoped(queryVectors.vectors);
-    }
-    if (this.tier2 && query.image) {
-      return segScope.length > 0
-        ? this.tier2.retrieveFrames(query, segScope)
-        : this.tier2.retrieveFramesUnscoped(query);
     }
     if (segScope.length > 0) {
       // Non-visual: recall the frames belonging to the scoped segments (dedup).

@@ -74,36 +74,6 @@ export const MODELS = {
       },
     ],
   },
-  vision: {
-    id: "nomic-embed-vision-v1.5",
-    source: "download",
-    repo: "nomic-ai/nomic-embed-vision-v1.5",
-    revision: "e3a725bce72db07ca4adb1d83da08903f3ee02f8",
-    files: [
-      {
-        // int8, matching the text model's quantization. The fp32 export
-        // (onnx/model.onnx, 374MB) is bit-exact across batch sizes where int8 is
-        // not — which is why OnnxImageEmbedding embeds one image per pass. Swap
-        // to fp32 only with that note in mind.
-        path: "onnx/model_int8.onnx",
-        sha256: "ba9107df6e412828dae8c675096209aa39f6536de8ec8d9a872665b54dc750c3",
-        bytes: 96745606,
-      },
-      {
-        // Required: the adapter reads input size + CLIP mean/std from here
-        // rather than hardcoding them.
-        path: "preprocessor_config.json",
-        sha256: "77436fccc0108364dd52185181d65cace7e830113e3b81b2bad8009a47f59b34",
-        bytes: 791,
-      },
-      {
-        path: "config.json",
-        sha256: "8ba755dcfdd6f6ddd05c81b1b3c812818f48e3828c420e424ae667e8c32ec1fe",
-        bytes: 2140,
-      },
-    ],
-    // No tokenizer: this is a vision tower only. Text never enters this model.
-  },
   reranker: {
     id: "jina-reranker-v1-turbo-en",
     source: "download",
@@ -124,39 +94,6 @@ export const MODELS = {
         path: "tokenizer_config.json",
         sha256: "d291c6652d96d56ffdbcf1ea19d9bae5ed79003f7648c627e725a619227ce8fa",
         bytes: 1215,
-      },
-    ],
-  },
-  colsmol: {
-    id: "colSmol-256M-dynamic",
-    source: "download",
-    repo: "guyettinger/colSmol-256M-dynamic-onnx",
-    revision: "93956db0e440eebd497bc776e7bf34a06830b0c6",
-    files: [
-      {
-        path: "model.onnx",
-        sha256: "cf13ca0c6951a4607c303dbe15fd9c8161289ff624f8582ce539cca2ccd99084",
-        bytes: 953919521,
-      },
-      {
-        path: "tokenizer.json",
-        sha256: "77eaa5071d562289dbd9c18f8a998124d899a4a0a4311b1a4b6964a873d306b8",
-        bytes: 3548416,
-      },
-      {
-        path: "tokenizer_config.json",
-        sha256: "e5bc53ee738178fca59eac1df6dc821576d1082ffedb7b8f8dfe97ceab43eb92",
-        bytes: 28274,
-      },
-      {
-        path: "preprocessor_config.json",
-        sha256: "6b8e11369a62e97e3b2f37a0dd1440b9018d177f7ecd2cfc2492e316b930a78a",
-        bytes: 489,
-      },
-      {
-        path: "config.json",
-        sha256: "e68e589bbc081d258f585d32ff90d41f0eededdddd5d5d38f006d80ff7de0c0d",
-        bytes: 7268,
       },
     ],
   },

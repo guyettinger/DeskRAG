@@ -7,6 +7,10 @@ import { DualStore } from "../src/store/store.js";
 import { BlobStore } from "../src/store/blob-store.js";
 import { FramePatchRepresenter } from "../src/represent/frame-patch-representer.js";
 import { FakeMultiVectorProvider } from "../src/embed/fake.js";
+import {
+  computeTileGeometry,
+  expectedTokenCount,
+} from "../src/embed/onnx/geometry.js";
 import { namespaceFor } from "../src/embed/types.js";
 
 const provider = new FakeMultiVectorProvider(16, 3);
@@ -84,7 +88,13 @@ describe("FramePatchRepresenter", () => {
     await frameWithBlob("f1", 100, [1, 2, 3]);
     await rep().represent(sessionId);
     const stored = await store.getFramePatches(NS, "f1");
-    expect(stored!.length).toBe(3); // FakeMultiVectorProvider emits 3 per image
+    // The fake emits a GEOMETRY-CONSISTENT patch set, as a real provider does:
+    // one token per grid cell plus the global tile, for its declared frame size.
+    // A fixed small count is what silently disabled highlights, since the
+    // highlighter rejects a patch count that disagrees with its grid.
+    expect(stored!.length).toBe(
+      expectedTokenCount(computeTileGeometry(1280, 800, provider.tileConfig)),
+    );
     expect(stored![0]!.length).toBe(16);
   });
 

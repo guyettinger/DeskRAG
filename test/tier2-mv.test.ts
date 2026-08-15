@@ -10,6 +10,7 @@ import { TextViewSearcher } from "../src/retrieve/searchers.js";
 import { FakeEmbeddingProvider, FakeMultiVectorProvider } from "../src/embed/fake.js";
 import { namespaceFor } from "../src/embed/types.js";
 import {
+  DEFAULT_TILE_CONFIG,
   cellToBox,
   computeTileGeometry,
   gridTokenCount,
@@ -310,6 +311,59 @@ describe("MaxSim highlights", () => {
     }
   });
 
+  /**
+   * The highlighter must read the PROVIDER's geometry, not DEFAULT_TILE_CONFIG.
+   * For ColModernVBERT the two coincide, so the default was right by luck and
+   * would have gone on looking right — with every box on the wrong part of the
+   * frame — the moment an export changed its tiling. A fake declaring a
+   * deliberately DIFFERENT config is the only way to tell the two apart: with
+   * the same numbers on both sides, the wrong code and the right code produce
+   * identical boxes.
+   */
+  it("uses the provider's tileConfig, not the default", () => {
+    // Half the shuffle factor -> 4x the tokens per tile -> a 16x16 grid within
+    // each tile instead of 8x8, so every cell is a QUARTER the size.
+    const cfg = { ...DEFAULT_TILE_CONFIG, shuffleFactor: 2 };
+    const other = new FakeMultiVectorProvider(DIM, 4, { tileConfig: cfg });
+    const otherGeo = computeTileGeometry(W, H, cfg);
+    expect(otherGeo.tokensPerTile).toBe(256);
+
+    const patches: Float32Array[] = [];
+    for (let i = 0; i < gridTokenCount(otherGeo) + otherGeo.tokensPerTile; i++) {
+      patches.push(i === 0 ? axis(0) : axis(15, 0.01));
+    }
+    const hl = new Tier2MultiVectorRetriever(store, other).highlightsFrom(
+      "f1",
+      { vectors: [axis(0)], contentIndices: [0] },
+      patches,
+      W,
+      H,
+    );
+    expect(hl.length).toBe(1);
+    // Patch 0 is cell (0,0) under either config; what differs is the cell SIZE.
+    expect(hl[0]!.bbox.w).toBeCloseTo(cellToBox({ col: 0, row: 0 }, otherGeo).w, 9);
+    expect(hl[0]!.bbox.w).not.toBeCloseTo(cellToBox({ col: 0, row: 0 }, geo).w, 3);
+  });
+
+  /**
+   * A grid disagreement is fatal to EVERY box, so it draws none rather than
+   * truncating. The geometry is recomputed from the frame row's screen points
+   * while the embedder tiled the JPEG, and the JPEG's dimensions are stored
+   * nowhere — they agree today only because the grid depends on aspect ratio
+   * alone. `Math.min` absorbed the disagreement silently.
+   */
+  it("returns [] when the patch count disagrees with the grid, rather than truncating", () => {
+    const full = patchSet(new Map([[cellIndex(0, 0), axis(0)]]));
+    const q = { vectors: [axis(0)], contentIndices: [0] };
+    expect(t2().highlightsFrom("f1", q, full, W, H).length).toBe(1);
+
+    // One patch short, and one patch long: both are the wrong grid.
+    expect(t2().highlightsFrom("f1", q, full.slice(0, -1), W, H)).toEqual([]);
+    expect(t2().highlightsFrom("f1", q, [...full, axis(15, 0.01)], W, H)).toEqual([]);
+    // And the whole GRID with the global tile missing is still the wrong count.
+    expect(t2().highlightsFrom("f1", q, full.slice(0, gridTokenCount(geo)), W, H)).toEqual([]);
+  });
+
   it("reads stored patches when given a frame id", async () => {
     await seedFrames();
     const [q] = await mv.embedQueries(["x"]);
@@ -324,17 +378,6 @@ describe("MaxSim highlights", () => {
 
 describe("Retriever multivector dispatch", () => {
   const text = new FakeEmbeddingProvider({ dimensions: 8 });
-
-  it("refuses both visual paths at once", () => {
-    expect(
-      () =>
-        new Retriever(store, {
-          searchers: [],
-          imageEmbedder: text,
-          patchEmbedder: mv,
-        }),
-    ).toThrow(/not both/i);
-  });
 
   it("recalls frames for a TEXT query through the patch space", async () => {
     await seedFrames();

@@ -8,6 +8,10 @@
  * table per namespace so two models physically cannot be compared.
  */
 
+// Type-only, so it erases: `geometry.ts` is pure TS and loads nothing native,
+// unlike the rest of `onnx/`.
+import type { TileConfig } from "./onnx/geometry.js";
+
 /**
  * The distinct embeddable "views" of a segment/frame/region. Each view lives in
  * its own namespace even for the same provider+model, because a caption embedding
@@ -20,8 +24,6 @@ export type View =
   | "summary" // a COMPOSED level's text — what its children mean together
   | "transcript" // STT text (mic + desktop audio)
   | "behavior" // numeric input-dynamics feature vector
-  | "frame_image" // whole-frame image embedding
-  | "region_image" // region-crop image embedding (the PixelRAG part)
   | "frame_patches"; // multi-vector late-interaction frame patches
 
 export const VIEWS: readonly View[] = [
@@ -31,10 +33,35 @@ export const VIEWS: readonly View[] = [
   "summary",
   "transcript",
   "behavior",
-  "frame_image",
-  "region_image",
   "frame_patches",
 ] as const;
+
+/**
+ * Views that were registered by an older build and are no longer embeddable.
+ *
+ * `frame_image` and `region_image` were the SINGLE-VECTOR image lane, removed
+ * when the provider menu standardized on ColModernVBERT. They still appear in
+ * `vector_space` on any store indexed before that.
+ *
+ * `parseNamespace` REJECTS them, and that is safe only because opening a store
+ * does not parse: `DualStore` reads the `view` COLUMN, and the only caller of
+ * `parseNamespace` is `ensureTable`, which runs on a namespace being registered.
+ * A retired space is dropped on open before anything else walks the registry —
+ * throwing on open is what took down a whole re-index once already.
+ */
+export const RETIRED_VIEWS: readonly string[] = ["frame_image", "region_image"] as const;
+
+/**
+ * Models whose adapter has been removed, so nothing can produce a comparable
+ * vector for them again.
+ *
+ * Distinct from a view being retired, and BOTH checks are needed: ColSmol's view
+ * is `frame_patches`, which is still live, so a view check alone leaves its
+ * table on disk answering nothing. Distinct also from a model merely not being
+ * CONFIGURED — that is a user choice whose vectors become comparable again the
+ * moment it is selected, where these can never be.
+ */
+export const RETIRED_MODELS: readonly string[] = ["colsmol-256m"] as const;
 
 /**
  * Views whose Lance table holds MANY vectors per row (late interaction), not one.
@@ -56,7 +83,7 @@ export interface EmbedOptions {
 
 /**
  * Minimal shape needed to derive a namespace. Both {@link EmbeddingProvider} and
- * {@link ImageEmbeddingProvider} satisfy this, as does the built-in behavioral
+ * {@link MultiVectorProvider} satisfy this, as does the built-in behavioral
  * feature extractor (which is not a network provider but still owns a namespace).
  */
 export interface NamespacedProvider {
@@ -72,22 +99,6 @@ export interface EmbeddingProvider extends NamespacedProvider {
   embed(inputs: string[], opts?: EmbedOptions): Promise<Float32Array[]>;
 }
 
-export interface ImageEmbeddingProvider extends NamespacedProvider {
-  /**
-   * True when text and image land in ONE embedding space, so a text query could
-   * hit image vectors directly — as with nomic-embed-vision-v1.5, whose tower
-   * shares a space with nomic-embed-text-v1.5. Recorded as vector-space metadata
-   * on the Lance table; Tier 2/3 themselves only ever call `embedImages`.
-   */
-  readonly sharedTextSpace: boolean;
-  embedImages(images: Uint8Array[]): Promise<Float32Array[]>;
-}
-
-/**
- * Late-interaction provider: one model embeds both images and queries into the
- * same space, emitting MANY vectors each. `dimensions` is the PER-VECTOR width
- * (e.g. 128), not the total, so `namespaceFor` stays meaningful.
- */
 /**
  * One embedded query: every vector, plus which of them came from the user's
  * own words.
@@ -106,8 +117,26 @@ export interface QueryEmbedding {
   contentIndices: number[];
 }
 
+/**
+ * The ONLY image provider shape. One late-interaction model embeds both images
+ * and queries into the same space, emitting MANY vectors each; `dimensions` is
+ * the PER-VECTOR width (e.g. 128), not the total, so `namespaceFor` stays
+ * meaningful.
+ */
 export interface MultiVectorProvider extends NamespacedProvider {
   readonly multiVector: true;
+  /**
+   * The tile geometry this provider actually preprocessed with.
+   *
+   * REQUIRED, and for the same reason `contentIndices` is: the provider is the
+   * only thing that knows its own layout, so it is the only thing that should
+   * state it. The highlighter used `DEFAULT_TILE_CONFIG` instead, which for
+   * ColModernVBERT is numerically identical — i.e. it was right BY LUCK, the
+   * exact failure `readTileConfig` exists to avoid, and it would have stopped
+   * being right the moment an export changed its geometry, silently, with every
+   * box on the wrong part of the frame and every score still plausible.
+   */
+  readonly tileConfig: TileConfig;
   /** Per image: N vectors of `dimensions` each. */
   embedImages(images: Uint8Array[]): Promise<Float32Array[][]>;
   /** Per query: M vectors of `dimensions` each, with the content ones named. */

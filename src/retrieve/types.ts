@@ -17,7 +17,7 @@ export interface Query {
   text?: string;
   /** Behavioral intent vector — routed to the behavior view. */
   behavior?: Float32Array;
-  /** Visual example — routed to the frame_image view (Tier 2). */
+  /** Visual example — routed to the frame_patches view (Tier 2). */
   image?: Uint8Array;
 }
 
@@ -87,7 +87,11 @@ export interface RegionHit {
   bbox: { x: number; y: number; w: number; h: number };
   role: string | null;
   label: string | null;
-  /** How this region matched: image ANN, AX-label FTS, or both. */
+  /**
+   * How this region matched. `"fts"` is Tier 3's AX-label index; `"ann"` is a
+   * synthetic patch highlight from the late-interaction path. An array because
+   * the shape is shared, not because one hit can carry both today.
+   */
   matchedBy: ("ann" | "fts")[];
   /**
    * Confidence WITHIN this frame's highlight set: 1 is the strongest box on the
@@ -100,7 +104,7 @@ export interface RegionHit {
    * carry one.
    */
   strength: number | null;
-  /** ANN distance when matched by image (absent for FTS-only hits). */
+  /** Similarity distance where one exists (absent for FTS hits). */
   distance?: number;
   /**
    * 1-based DENSE rank of this region's role+label among the AX-label FTS

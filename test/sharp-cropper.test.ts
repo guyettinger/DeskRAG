@@ -123,16 +123,15 @@ describe("SharpRegionCropper in the region pipeline", () => {
 
     const axEl: UIElement = { role: "button", label: "Save", x: 10, y: 10, w: 20, h: 15 };
     const result = await new RegionRepresenter(store, {
-      imageEmbedder: fake,
-      blobStore: blobs,
-      cropper: new SharpRegionCropper({ format: "jpeg" }),
       axProvider: () => [axEl],
     }).represent(sessionId);
 
     expect(result.regionCount).toBeGreaterThan(0);
 
-    // The AX region is retrievable (its real crop was embedded + FTS-indexed).
-    const tier3 = new Tier3Retriever(store, fake);
+    // The AX region is retrievable by its label. Proposal writes the FTS entry;
+    // nothing crops it any more — SharpRegionCropper's remaining consumer is the
+    // app_caption stage, exercised directly above.
+    const tier3 = new Tier3Retriever(store);
     const hits = await tier3.retrieveRegions({ text: "Save" }, [kf.frameId!]);
     expect(hits.find((h) => h.label === "Save")).toBeDefined();
   });

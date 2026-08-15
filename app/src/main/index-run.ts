@@ -17,7 +17,6 @@ import {
   CaptionRepresenter,
   ComposeRepresenter,
   FramePatchRepresenter,
-  FrameRepresenter,
   RegionRepresenter,
   Representer,
   Segmenter,
@@ -31,7 +30,6 @@ import {
   type CaptionProvider as LibCaptionProvider,
   type DualStore,
   type EmbeddingProvider,
-  type ImageEmbeddingProvider,
   type MultiVectorProvider,
   type RegionCropper,
   type Reranker,
@@ -56,8 +54,7 @@ export interface Providers {
    * Tier-3 region ANN + AX-label FTS highlights. Mutually exclusive with
    * patchEmbedder: the library's Retriever rejects both at once.
    */
-  imageEmbedder: ImageEmbeddingProvider | null;
-  /** Late-interaction visual path. Mutually exclusive with imageEmbedder. */
+  /** The visual path. Null on the default install, which has none. */
   patchEmbedder: MultiVectorProvider | null;
   captioner: LibCaptionProvider | null;
   /**
@@ -139,14 +136,10 @@ export const STAGE_RUNNERS: Record<StageId, StageRun> = {
   },
 
   regions: async (ctx) => {
-    const { imageEmbedder } = ctx.providers;
-    const cropper = imageEmbedder ? await ctx.loadCropper() : undefined;
+    // Proposal only, always: nothing crops or embeds a region. What it writes —
+    // geometry, source, AX role/label — is what `region_fts`, the digest and
+    // `Anchor.visual` read, and none of that needs a model.
     await new RegionRepresenter(ctx.store, {
-      // Without a cropper there is nothing to embed, so drop back to proposal
-      // rather than skipping the stage.
-      ...(imageEmbedder && cropper
-        ? { imageEmbedder, blobStore: ctx.blobs, cropper }
-        : {}),
       axProvider: new StoredAxProvider(ctx.store).provide,
     }).represent(ctx.sessionId);
   },
@@ -159,13 +152,6 @@ export const STAGE_RUNNERS: Record<StageId, StageRun> = {
       // keymap and the regions the stage above just wrote. Absent either, the
       // digest degrades to tallies rather than guessing.
       digestContext: digestContextFor(ctx.store, ctx.sessionId),
-    }).represent(ctx.sessionId);
-  },
-
-  frameEmbeddings: async (ctx) => {
-    await new FrameRepresenter(ctx.store, {
-      imageEmbedder: ctx.providers.imageEmbedder!,
-      blobStore: ctx.blobs,
     }).represent(ctx.sessionId);
   },
 

@@ -17,7 +17,7 @@ export interface TestCtx {
 
 /** A throwaway store on a fresh tmp dir, with the given views registered. */
 export async function makeStore(
-  views: View[] = ["frame_image", "region_image"],
+  views: View[] = ["digest", "caption"],
   dims = 4,
 ): Promise<TestCtx> {
   const dir = mkdtempSync(join(tmpdir(), "erag-"));

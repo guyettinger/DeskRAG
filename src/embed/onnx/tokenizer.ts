@@ -1,6 +1,6 @@
 /**
  * Loading a HuggingFace tokenizer off disk — the one job every ONNX text-side
- * adapter shares (text embedding, cross-encoder rerank, ColSmol prompts).
+ * adapter shares (text embedding, cross-encoder rerank, late-interaction prompts).
  *
  * NOT in the package barrel: the import is dynamic, but this module exists to
  * serve adapters that load native code, and it has no standalone use.
@@ -13,7 +13,7 @@
  *
  * What is deliberately NOT here: the encode call itself. Each adapter needs a
  * different shape — a single sequence, a query/document PAIR with token_type_ids
- * for the cross-encoder, or a ColSmol prompt — and that difference is the whole
+ * for the cross-encoder, or a late-interaction prompt — and that difference is the whole
  * of what distinguishes them. This module stops at handing back the tokenizer.
  */
 

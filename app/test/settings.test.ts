@@ -97,6 +97,39 @@ describe("unknown persisted values", () => {
     expect(new SettingsStore(dir).view().providers[field as "imageProvider"]).toBe(expected);
   });
 
+  /**
+   * A REMOVED value with a successor migrates instead of resetting, and the two
+   * answers mean different things: `"none"` says the user asked for no visual
+   * search, where `"nomic"`/`"colsmol"` said they asked for the best one
+   * available — which is now ColModernVBERT.
+   *
+   * Rewriting a stored value is normally off-limits; this is safe for the same
+   * reason `audioDeviceFor`'s `":0"` migration is: only a previous BUILD could
+   * have written either string, so neither can be a live choice.
+   */
+  it.each([["nomic"], ["colsmol"]])("migrates imageProvider=%s to colmodernvbert", (old) => {
+    seed({ imageProvider: old });
+    const store = new SettingsStore(dir);
+    expect(store.view().providers.imageProvider).toBe("colmodernvbert");
+    // And it SAYS SO: the frames indexed under the old model are in a space
+    // nothing can query, so the user is told a re-index is needed.
+    expect(store.migratedImageProvider).toBe(old);
+  });
+
+  it("reports no migration when the persisted provider is a live one", () => {
+    seed({ imageProvider: "colmodernvbert" });
+    expect(new SettingsStore(dir).migratedImageProvider).toBeNull();
+    seed({ imageProvider: "none" });
+    expect(new SettingsStore(dir).migratedImageProvider).toBeNull();
+  });
+
+  it("does not migrate an unknown value — that resets", () => {
+    seed({ imageProvider: "voyage" });
+    const store = new SettingsStore(dir);
+    expect(store.view().providers.imageProvider).toBe("none");
+    expect(store.migratedImageProvider).toBeNull();
+  });
+
   it("rewrites the reset value on the next persist", () => {
     seed({ imageProvider: "voyage" });
     const s = new SettingsStore(dir);
@@ -142,18 +175,18 @@ describe("apply", () => {
     const v = s.apply({
       providers: {
         textProvider: "onnx",
-        imageProvider: "colsmol",
+        imageProvider: "colmodernvbert",
         captionProvider: "ollama",
         rerankProvider: "onnx",
         localModels: { dir: "/models" },
       },
     });
     expect(v.providers.textProvider).toBe("onnx");
-    expect(v.providers.imageProvider).toBe("colsmol");
+    expect(v.providers.imageProvider).toBe("colmodernvbert");
     expect(v.providers.localModels.dir).toBe("/models");
 
     const reloaded = new SettingsStore(dir).view().providers;
-    expect(reloaded.imageProvider).toBe("colsmol");
+    expect(reloaded.imageProvider).toBe("colmodernvbert");
     expect(reloaded.localModels.dir).toBe("/models");
   });
 
@@ -168,11 +201,11 @@ describe("apply", () => {
   it("patches providers and signals together", () => {
     const s = new SettingsStore(dir);
     const v = s.apply({
-      providers: { imageProvider: "colsmol" },
+      providers: { imageProvider: "colmodernvbert" },
       signals: { ax: { enabled: true }, screen: { imageMaxWidth: 2560 } },
     });
     expect(v.signals.ax.enabled).toBe(true);
-    // >= 2048 keeps ColSmol preprocessing on its downscale path
+    // >= 2048 keeps Idefics3 preprocessing on its downscale path
     expect(v.signals.screen.imageMaxWidth).toBe(2560);
     expect(v.signals.screen.fps).toBe(1); // sibling untouched
   });

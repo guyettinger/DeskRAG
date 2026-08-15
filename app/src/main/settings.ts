@@ -115,7 +115,7 @@ export function audioDeviceFor(device: string | undefined): string {
  */
 const PROVIDER_VALUES = {
   textProvider: ["ollama", "onnx"],
-  imageProvider: ["none", "nomic", "colsmol", "colmodernvbert"],
+  imageProvider: ["none", "colmodernvbert"],
   captionProvider: ["none", "ollama"],
   summaryProvider: ["none", "ollama"],
   rerankProvider: ["none", "onnx"],
@@ -123,10 +123,36 @@ const PROVIDER_VALUES = {
 
 type ProviderKey = keyof typeof PROVIDER_VALUES;
 
+/**
+ * Removed provider values, and what each becomes. Consulted BEFORE the
+ * reset-to-default loop above, which would otherwise send them to `"none"`.
+ *
+ * Rewriting a stored value is normally off-limits; this follows the
+ * `audioDeviceFor` precedent and is justified the same way — these are values
+ * only a PREVIOUS BUILD could have written, so none of them can be a live
+ * choice. And the two answers differ in what they mean: `"none"` says the user
+ * asked for no visual search, where these said they asked for the best one
+ * available, which is now this one.
+ *
+ * The migration is NOT free and is not hidden. Those frames are indexed in a
+ * vector space nothing can query any more, and `DualStore` drops its tables on
+ * open — so the install needs a re-index, which `EnvInfo.migratedImageProvider`
+ * exists to say out loud.
+ */
+const PROVIDER_MIGRATIONS: Partial<Record<ProviderKey, Record<string, string>>> = {
+  imageProvider: { nomic: "colmodernvbert", colsmol: "colmodernvbert" },
+};
+
 export class SettingsStore {
   private readonly dir: string;
   private readonly settingsPath: string;
   private settings: PersistedSettings;
+  /**
+   * The removed image provider this install had selected, if `load()` migrated
+   * one. Read once, at startup, into `EnvInfo` — the user is told a re-index is
+   * needed rather than one being started for them.
+   */
+  migratedImageProvider: string | null = null;
 
   constructor(dataDir: string) {
     this.dir = dataDir;
@@ -158,7 +184,13 @@ export class SettingsStore {
       };
       for (const key of Object.keys(PROVIDER_VALUES) as ProviderKey[]) {
         const allowed: readonly string[] = PROVIDER_VALUES[key];
-        if (!allowed.includes(providers[key])) {
+        if (allowed.includes(providers[key])) continue;
+        // A removed value with a successor migrates; anything else resets.
+        const migrated = PROVIDER_MIGRATIONS[key]?.[providers[key]];
+        if (migrated !== undefined) {
+          if (key === "imageProvider") this.migratedImageProvider = providers[key];
+          providers[key] = migrated as never;
+        } else {
           providers[key] = DEFAULTS.providers[key] as never;
         }
       }

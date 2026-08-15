@@ -27,7 +27,7 @@ describe("capabilitiesFor", () => {
   it("enables a capability on selection alone — local models need no credential", () => {
     const c = capabilitiesFor({
       ...base,
-      imageProvider: "colsmol",
+      imageProvider: "colmodernvbert",
       captionProvider: "ollama",
       rerankProvider: "onnx",
     });
@@ -35,7 +35,7 @@ describe("capabilitiesFor", () => {
   });
 
   it("keeps the three provider capabilities independent", () => {
-    expect(capabilitiesFor({ ...base, imageProvider: "colsmol" })).toEqual({
+    expect(capabilitiesFor({ ...base, imageProvider: "colmodernvbert" })).toEqual({
       imageSearch: true,
       caption: false,
       appCaption: false,

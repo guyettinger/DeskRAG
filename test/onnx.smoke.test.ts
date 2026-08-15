@@ -6,26 +6,18 @@
  *
  * expecting subdirectories:
  *   nomic-embed-text-v1.5/    model_int8.onnx tokenizer.json tokenizer_config.json
- *   nomic-embed-vision-v1.5/  model_int8.onnx preprocessor_config.json config.json
- *                             (no tokenizer — it is a vision tower only)
- *   colSmol-256M-dynamic/     model.onnx tokenizer.json tokenizer_config.json
- *                             preprocessor_config.json config.json
  *   colmodernvbert-250m/      model.onnx tokenizer.json tokenizer_config.json
  *                             preprocessor_config.json config.json
  *   jina-reranker-v1-turbo-en/model_int8.onnx tokenizer.json tokenizer_config.json
  *
- * The ColSmol entry must be a DYNAMIC export (scripts/export-colsmol.py); the
- * published one is traced at 13 tiles and rejects other counts.
- *
- * These are slow — ColSmol is seconds per image on CPU — so the timeouts are
- * generous and the whole file is opt-in.
+ * These are slow — a late-interaction forward pass is seconds per image on CPU —
+ * so the timeouts are generous and the whole file is opt-in.
  */
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { OnnxTextEmbedding } from "../src/embed/onnx/text.js";
-import { ColSmolMultiVector } from "../src/embed/onnx/colsmol.js";
 import { ColModernVBertMultiVector } from "../src/embed/onnx/colmodernvbert.js";
 import {
   MV_TOK,
@@ -35,7 +27,6 @@ import {
   tileMarker,
 } from "../src/embed/onnx/colmodernvbert-prompt.js";
 import { loadTokenizer } from "../src/embed/onnx/tokenizer.js";
-import { OnnxImageEmbedding } from "../src/embed/onnx/image.js";
 import { OnnxCrossEncoderReranker } from "../src/retrieve/rerank/onnx.js";
 import {
   computeTileGeometry,
@@ -52,8 +43,6 @@ const login = (): Uint8Array => new Uint8Array(readFileSync(join(FIXTURES, "logi
 const terminal = (): Uint8Array => new Uint8Array(readFileSync(join(FIXTURES, "terminal.png")));
 
 const textDir = join(MODELS, "nomic-embed-text-v1.5");
-const visionDir = join(MODELS, "nomic-embed-vision-v1.5");
-const colsmolDir = join(MODELS, "colSmol-256M-dynamic");
 const colmodernDir = join(MODELS, "colmodernvbert-250m");
 const rerankDir = join(MODELS, "jina-reranker-v1-turbo-en");
 
@@ -121,119 +110,6 @@ d("OnnxTextEmbedding (live)", () => {
     const [asDoc] = await e.embed(["a login form"], { role: "document" });
     const [asQuery] = await e.embed(["a login form"], { role: "query" });
     expect(cosine(asDoc!, asQuery!)).toBeLessThan(0.999);
-  });
-});
-
-d("OnnxImageEmbedding (live)", () => {
-  const provider = (): OnnxImageEmbedding =>
-    new OnnxImageEmbedding({
-      modelPath: join(visionDir, "model_int8.onnx"),
-      preprocessorPath: join(visionDir, "preprocessor_config.json"),
-    });
-
-  it("produces 768-dim unit vectors from a real screenshot", { timeout: 120_000 }, async () => {
-    expect(existsSync(join(visionDir, "model_int8.onnx"))).toBe(true);
-    const [v] = await provider().embedImages([login()]);
-    expect(v!.length).toBe(768);
-    expect(Math.sqrt(Array.from(v!).reduce((s, x) => s + x * x, 0))).toBeCloseTo(1, 4);
-  });
-
-  it("is deterministic for the same image", { timeout: 120_000 }, async () => {
-    const p = provider();
-    const [a] = await p.embedImages([login()]);
-    const [b] = await p.embedImages([login()]);
-    expect(cosine(a!, b!)).toBeCloseTo(1, 5);
-  });
-
-  it("separates two visually different screens", { timeout: 120_000 }, async () => {
-    const p = provider();
-    const [a, b] = await p.embedImages([login(), terminal()]);
-    // Distinct UIs must not collapse together, or Tier-2 ranks by noise.
-    expect(cosine(a!, b!)).toBeLessThan(0.95);
-  });
-
-  it("batching does not change a vector", { timeout: 180_000 }, async () => {
-    // A wrong CLS offset inside the batched buffer would only show up here:
-    // single-image calls would still look perfect.
-    const p = provider();
-    const [alone] = await p.embedImages([terminal()]);
-    const batched = await p.embedImages([login(), terminal()]);
-    expect(cosine(alone!, batched[1]!)).toBeCloseTo(1, 5);
-  });
-});
-
-d("ColSmolMultiVector (live)", () => {
-  const provider = (): ColSmolMultiVector =>
-    new ColSmolMultiVector({
-      modelPath: join(colsmolDir, "model.onnx"),
-      tokenizerPath: join(colsmolDir, "tokenizer.json"),
-    });
-
-  it("emits exactly the token count the geometry predicts", { timeout: 600_000 }, async () => {
-    const [patches] = await provider().embedImages([login()]);
-    const geo = computeTileGeometry(2560, 1600);
-    expect(patches!.length).toBe(expectedTokenCount(geo));
-    expect(patches![0]!.length).toBe(128);
-  });
-
-  it(
-    "CROSS-MODAL: a text query scores higher on the matching screenshot",
-    { timeout: 900_000 },
-    async () => {
-      // The single most important assertion in the design. If this fails,
-      // sharedTextSpace is a lie and text-into-image search is broken — and
-      // nothing else in the suite would catch it.
-      const p = provider();
-      const [loginPatches, terminalPatches] = await p.embedImages([login(), terminal()]);
-      const [q] = await p.embedQueries(["a login form with a sign in button"]);
-
-      const onLogin = maxSim(q!.vectors, loginPatches!);
-      const onTerminal = maxSim(q!.vectors, terminalPatches!);
-      console.log(`  MaxSim login=${onLogin.toFixed(4)} terminal=${onTerminal.toFixed(4)}`);
-      expect(onLogin).toBeGreaterThan(onTerminal);
-    },
-  );
-
-  it(
-    "CROSS-MODAL: the reverse query prefers the other screenshot",
-    { timeout: 900_000 },
-    async () => {
-      // Guards against a degenerate model that simply scores one image higher
-      // regardless of the query.
-      const p = provider();
-      const [loginPatches, terminalPatches] = await p.embedImages([login(), terminal()]);
-      const [q] = await p.embedQueries(["a terminal showing a typescript build error"]);
-
-      const onLogin = maxSim(q!.vectors, loginPatches!);
-      const onTerminal = maxSim(q!.vectors, terminalPatches!);
-      console.log(`  MaxSim login=${onLogin.toFixed(4)} terminal=${onTerminal.toFixed(4)}`);
-      expect(onTerminal).toBeGreaterThan(onLogin);
-    },
-  );
-
-  it("argmax highlights land inside the frame", { timeout: 600_000 }, async () => {
-    const p = provider();
-    const [patches] = await p.embedImages([login()]);
-    const [q] = await p.embedQueries(["sign in button"]);
-    const geo = computeTileGeometry(2560, 1600);
-
-    for (const qv of q!.vectors) {
-      let argmax = -1;
-      let top = -Infinity;
-      for (let i = 0; i < patches!.length; i++) {
-        const s = cosine(qv, patches![i]!);
-        if (s > top) {
-          top = s;
-          argmax = i;
-        }
-      }
-      const box = patchIndexToBox(argmax, geo);
-      expect(box).not.toBeNull();
-      expect(box!.x).toBeGreaterThanOrEqual(0);
-      expect(box!.y).toBeGreaterThanOrEqual(0);
-      expect(box!.x + box!.w).toBeLessThanOrEqual(2560 + 1e-6);
-      expect(box!.y + box!.h).toBeLessThanOrEqual(1600 + 1e-6);
-    }
   });
 });
 

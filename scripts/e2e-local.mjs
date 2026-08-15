@@ -1,7 +1,7 @@
 /**
  * End-to-end exercise of the fully-local pipeline, against REAL weights.
  *
- * Nothing here is faked: real ColSmol patch embeddings, a real DualStore on
+ * Nothing here is faked: real ColModernVBERT patch embeddings, a real DualStore on
  * disk, a real LanceDB multivector table, a real MaxSim search, real highlight
  * boxes. This is the thing the unit tests cannot prove.
  *
@@ -19,7 +19,7 @@ import { DualStore } from "../dist/store/store.js";
 import { BlobStore } from "../dist/store/blob-store.js";
 import { FramePatchRepresenter } from "../dist/represent/frame-patch-representer.js";
 import { Retriever } from "../dist/retrieve/assemble.js";
-import { ColSmolMultiVector } from "../dist/embed/onnx/colsmol.js";
+import { ColModernVBertMultiVector } from "../dist/embed/onnx/colmodernvbert.js";
 import { OnnxTextEmbedding } from "../dist/embed/onnx/text.js";
 
 const MODELS = process.argv[2];
@@ -37,9 +37,9 @@ step(`workspace ${dir}`);
 const store = await DualStore.open(join(dir, "app.db"), join(dir, "lance"));
 const blobs = new BlobStore(join(dir, "blobs"));
 
-const patchEmbedder = new ColSmolMultiVector({
-  modelPath: join(MODELS, "colSmol-256M-dynamic", "model.onnx"),
-  tokenizerPath: join(MODELS, "colSmol-256M-dynamic", "tokenizer.json"),
+const patchEmbedder = new ColModernVBertMultiVector({
+  modelPath: join(MODELS, "colmodernvbert-250m", "model.onnx"),
+  tokenizerPath: join(MODELS, "colmodernvbert-250m", "tokenizer.json"),
 });
 const textEmbedder = new OnnxTextEmbedding({
   modelPath: join(MODELS, "nomic-embed-text-v1.5", "model_int8.onnx"),

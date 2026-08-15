@@ -47,7 +47,7 @@ describe("libUrl", () => {
       "deskrag/capture/producers/active-window",
       "deskrag/represent/regions/sharp-cropper",
       "deskrag/embed/onnx/text",
-      "deskrag/embed/onnx/colsmol",
+      "deskrag/embed/onnx/colmodernvbert",
       "deskrag/retrieve/rerank/onnx",
     ]) {
       const file = fileURLToPath(libUrl(spec));

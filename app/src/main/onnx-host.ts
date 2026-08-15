@@ -1,7 +1,7 @@
 /**
  * Main-process half of the out-of-process ONNX runtime.
  *
- * WHY THIS EXISTS: embedding one frame with ColSmol peaks at 3-5GB RSS
+ * WHY THIS EXISTS: embedding one frame with a late-interaction model peaks at 3-5GB RSS
  * (measured: 13 tiles = 5.08GB, 5 tiles = 3.10GB). Run in the Electron main
  * process, alongside Chromium, LanceDB, libvips and better-sqlite3, that
  * allocation fails and V8's fatal-OOM handler aborts the whole app. A separate

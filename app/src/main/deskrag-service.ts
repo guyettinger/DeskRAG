@@ -40,7 +40,6 @@ import {
   wavPeaks,
   type Producer,
   type EmbeddingProvider,
-  type ImageEmbeddingProvider,
   type MultiVectorProvider,
   type CaptionProvider as LibCaptionProvider,
   type SummaryProvider as LibSummaryProvider,
@@ -169,6 +168,15 @@ export class DeskRagService {
       join(this.dir, "app.db"),
       join(this.dir, "lance"),
     );
+    // `store/` prints nothing, so the drop is reported here. Not a warning: it
+    // is the expected consequence of a removed provider, and Settings carries
+    // the actionable half (`EnvInfo.migratedImageProvider`, "re-index").
+    if (this.store.retiredSpacesPurged.length > 0) {
+      console.info(
+        `[deskrag] dropped ${this.store.retiredSpacesPurged.length} retired vector space(s): ` +
+          this.store.retiredSpacesPurged.join(", "),
+      );
+    }
     this.blobs = new BlobStore(join(this.dir, "blobs"));
     this.models = new ModelStore(join(this.dir, "models"), {
       overrideDir: this.settings.view().providers.localModels.dir,
@@ -256,43 +264,9 @@ export class DeskRagService {
       });
     }
 
-    // --- visual path (exactly one, or neither) --------------------------------
-    let imageEmbedder: ImageEmbeddingProvider | null = null;
+    // --- visual path (ColModernVBERT, or nothing) -----------------------------
     let patchEmbedder: MultiVectorProvider | null = null;
-    if (p.imageProvider === "nomic") {
-      const mod = await this.loadOnnx<typeof import("deskrag/embed/onnx/image")>(
-        "deskrag/embed/onnx/image",
-      );
-      if (!mod) {
-        throw new Error("Local image search is unavailable: onnxruntime-node failed to load.");
-      }
-      const dir = await this.models.ensure(MODELS.vision);
-      imageEmbedder = new mod.OnnxImageEmbedding({
-        modelPath: join(dir, "model_int8.onnx"),
-        // Read input size + normalization from the model's own config rather
-        // than assuming it, as the ColSmol branch does for tiling.
-        preprocessorPath: join(dir, "preprocessor_config.json"),
-        session: this.onnx.session(join(dir, "model_int8.onnx")),
-      });
-    } else if (p.imageProvider === "colsmol") {
-      const mod = await this.loadOnnx<typeof import("deskrag/embed/onnx/colsmol")>(
-        "deskrag/embed/onnx/colsmol",
-      );
-      if (!mod) {
-        throw new Error("Local image search is unavailable: onnxruntime-node failed to load.");
-      }
-      const dir = await this.models.ensure(MODELS.colsmol);
-      patchEmbedder = new mod.ColSmolMultiVector({
-        modelPath: join(dir, "model.onnx"),
-        tokenizerPath: join(dir, "tokenizer.json"),
-        session: this.onnx.session(join(dir, "model.onnx")),
-        // Read tiling from the model's own config rather than assuming it.
-        tileConfig: await mod.readTileConfig(
-          join(dir, "preprocessor_config.json"),
-          join(dir, "config.json"),
-        ),
-      });
-    } else if (p.imageProvider === "colmodernvbert") {
+    if (p.imageProvider === "colmodernvbert") {
       const mod = await this.loadOnnx<typeof import("deskrag/embed/onnx/colmodernvbert")>(
         "deskrag/embed/onnx/colmodernvbert",
       );
@@ -304,9 +278,11 @@ export class DeskRagService {
         modelPath: join(dir, "model.onnx"),
         tokenizerPath: join(dir, "tokenizer.json"),
         session: this.onnx.session(join(dir, "model.onnx")),
-        // Its OWN reader, not ColSmol's: this config puts pixel_shuffle_factor
-        // at the top level rather than under text_config, so the shared reader
-        // would fall through to the default and be right only by coincidence.
+        // Read tiling from the model's OWN config rather than assuming it. This
+        // config puts pixel_shuffle_factor at the top level, and the value it
+        // finds there also travels to the highlighter as `provider.tileConfig`
+        // — agreeing with DEFAULT_TILE_CONFIG is a coincidence to be checked,
+        // never a fact to rely on.
         tileConfig: await mod.readTileConfig(
           join(dir, "preprocessor_config.json"),
           join(dir, "config.json"),
@@ -355,7 +331,6 @@ export class DeskRagService {
     return {
       textEmbedder,
       behavior,
-      imageEmbedder,
       patchEmbedder,
       captioner,
       summarizer,
@@ -596,7 +571,6 @@ export class DeskRagService {
    */
   private stageWorld(sessionId: string, providers: Providers): StageWorld {
     const facts: StageFacts = {
-      imageEmbedder: providers.imageEmbedder !== null,
       patchEmbedder: providers.patchEmbedder !== null,
       captioner: providers.captioner !== null,
       hasAudio: this.store
@@ -664,7 +638,6 @@ export class DeskRagService {
     // Behavior searcher is always safe: it returns null (and is skipped) unless
     // the query carries a behavior vector, so it never hits a missing table.
     searchers.push(new BehaviorViewSearcher(prov.behavior));
-    // Exactly one visual path, or neither — Retriever rejects both at once.
     return new Retriever(this.store, {
       searchers,
       // Unconditional: FTS needs no provider and no vector space, so unlike
@@ -672,11 +645,7 @@ export class DeskRagService {
       // default install reaches an exact literal — a filename, an error string,
       // a URL — which is where the dense views are weakest.
       lexical: new LexicalSegmentSearcher(this.store),
-      ...(prov.patchEmbedder
-        ? { patchEmbedder: prov.patchEmbedder }
-        : prov.imageEmbedder
-          ? { imageEmbedder: prov.imageEmbedder }
-          : {}),
+      ...(prov.patchEmbedder ? { patchEmbedder: prov.patchEmbedder } : {}),
       ...(prov.reranker ? { reranker: prov.reranker } : {}),
     });
   }
@@ -704,12 +673,10 @@ export class DeskRagService {
   ): Promise<{ result: SearchResultDTO; highlights: Map<string, HighlightDTO[]> }> {
     const prov = await this.buildProviders();
     if (input.imageBytes) {
-      if (!prov.imageEmbedder && !prov.patchEmbedder) {
+      if (!prov.patchEmbedder) {
         throw new Error("Image search requires a configured image provider (Settings).");
       }
-      // Each visual path indexes a different view, so check the one in use.
-      const wantView = prov.patchEmbedder ? "frame_patches" : "frame_image";
-      if (!this.store.listVectorSpaces().some((s) => s.view === wantView)) {
+      if (!this.store.listVectorSpaces().some((s) => s.view === "frame_patches")) {
         throw new Error(
           "No image-indexed frames yet. Record a session with an image provider set, then try again.",
         );

@@ -137,11 +137,15 @@ clicking. See [ROADMAP.md](../ROADMAP.md).
 binary + model), **Capture defaults** (frame rate, keyframe max width, audio device,
 chunk seconds), and **Maintenance**.
 
-Three image models are offered: Nomic Vision (fast, adds labelled region highlights)
-and the two late-interaction ones, ColSmol and ColModernVBERT (seconds per frame,
-patch-granular matching). Picking either late-interaction model warns if your
-keyframe width is under 2048, where its preprocessor upscales and match quality
-degrades with no visible error.
+The image model is **ColModernVBERT**, or **None**. It is late interaction, so one
+model embeds images and text into one space — which is what lets a typed query
+reach frames directly — at seconds per frame and patch-granular matching.
+Picking it warns if your keyframe width is under 2048, where its preprocessor
+upscales and match quality degrades with no visible error.
+
+An install that had the removed `nomic` or `colsmol` selected is migrated to
+ColModernVBERT on launch and told so: those frames are indexed in a vector space
+nothing can query, their Lance tables are dropped, and a re-index rebuilds them.
 
 ![Settings screen](../docs/images/settings.png)
 

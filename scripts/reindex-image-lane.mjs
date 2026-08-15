@@ -1,8 +1,7 @@
 /**
  * Re-run the image lane over an ALREADY RECORDED session.
  *
- * WRITES TO THE REAL STORE — unlike scripts/imagelane-probe.mjs, which copies it.
- * QUIT DESKRAGAPP FIRST: a second process opening the same DualStore/LanceDB
+ WRITES TO THE REAL STORE. QUIT DESKRAGAPP FIRST: a second process opening the same DualStore/LanceDB
  * does not share it.
  *
  * This exists because the app has no path to it. `DeskRagService.index()` is
@@ -28,7 +27,6 @@ import { join } from "node:path";
 import { DualStore } from "../dist/store/store.js";
 import { BlobStore } from "../dist/store/blob-store.js";
 import { FramePatchRepresenter } from "../dist/represent/frame-patch-representer.js";
-import { FrameRepresenter } from "../dist/represent/frame-representer.js";
 
 const DATA_DIR =
   process.env.DESKRAG_DATA_DIR ??
@@ -47,48 +45,21 @@ const MODELS_DIR = arg("--models", process.env.DESKRAG_MODELS_DIR ?? join(DATA_D
  * derived from the provider, so a mismatch reads as "indexed nothing".
  */
 async function embedderFor(provider) {
-  if (provider === "colmodernvbert") {
-    const m = await import("../dist/embed/onnx/colmodernvbert.js");
-    const dir = join(MODELS_DIR, "colmodernvbert-250m");
-    return {
-      kind: "multi",
-      embedder: new m.ColModernVBertMultiVector({
-        modelPath: join(dir, "model.onnx"),
-        tokenizerPath: join(dir, "tokenizer.json"),
-        tileConfig: await m.readTileConfig(
-          join(dir, "preprocessor_config.json"),
-          join(dir, "config.json"),
-        ),
-      }),
-    };
+  if (provider !== "colmodernvbert") {
+    throw new Error(`imageProvider is "${provider}" — nothing to index`);
   }
-  if (provider === "colsmol") {
-    const m = await import("../dist/embed/onnx/colsmol.js");
-    const dir = join(MODELS_DIR, "colSmol-256M-dynamic");
-    return {
-      kind: "multi",
-      embedder: new m.ColSmolMultiVector({
-        modelPath: join(dir, "model.onnx"),
-        tokenizerPath: join(dir, "tokenizer.json"),
-        tileConfig: await m.readTileConfig(
-          join(dir, "preprocessor_config.json"),
-          join(dir, "config.json"),
-        ),
-      }),
-    };
-  }
-  if (provider === "nomic") {
-    const m = await import("../dist/embed/onnx/image.js");
-    const dir = join(MODELS_DIR, "nomic-embed-vision-v1.5");
-    return {
-      kind: "single",
-      embedder: new m.OnnxImageEmbedding({
-        modelPath: join(dir, "model_int8.onnx"),
-        preprocessorPath: join(dir, "preprocessor_config.json"),
-      }),
-    };
-  }
-  throw new Error(`imageProvider is "${provider}" — nothing to index`);
+  const m = await import("../dist/embed/onnx/colmodernvbert.js");
+  const dir = join(MODELS_DIR, "colmodernvbert-250m");
+  return new m.ColModernVBertMultiVector({
+    modelPath: join(dir, "model.onnx"),
+    tokenizerPath: join(dir, "tokenizer.json"),
+    // Its own reader: this config puts pixel_shuffle_factor at the top level,
+    // and the value also travels to the highlighter as `provider.tileConfig`.
+    tileConfig: await m.readTileConfig(
+      join(dir, "preprocessor_config.json"),
+      join(dir, "config.json"),
+    ),
+  });
 }
 
 const store = await DualStore.open(join(DATA_DIR, "app.db"), join(DATA_DIR, "lance"));
@@ -109,32 +80,29 @@ if (!sessionId) {
 
 const settings = JSON.parse(readFileSync(join(DATA_DIR, "settings.json"), "utf8"));
 const provider = settings.providers.imageProvider;
-const { kind, embedder } = await embedderFor(provider);
+const embedder = await embedderFor(provider);
 
 const frames = store.getFramesBySession(sessionId);
 if (frames.length === 0) {
   console.error(`session ${sessionId} has no frames`);
   process.exit(1);
 }
-console.log(`provider : ${provider} (${embedder.model}, ${kind})`);
+console.log(`provider : ${provider} (${embedder.model})`);
 console.log(`session  : ${sessionId}, ${frames.length} frames`);
 
 const blobs = new BlobStore(join(DATA_DIR, "blobs"));
 const t0 = Date.now();
-const rep =
-  kind === "multi"
-    ? new FramePatchRepresenter(store, {
-        patchEmbedder: embedder,
-        blobStore: blobs,
-        onProgress: (done, total) => {
-          const el = (Date.now() - t0) / 1000;
-          const eta = done > 0 ? (el / done) * (total - done) : 0;
-          process.stdout.write(
-            `\r  ${done}/${total} frames · ${el.toFixed(0)}s elapsed · ~${eta.toFixed(0)}s left   `,
-          );
-        },
-      })
-    : new FrameRepresenter(store, { imageEmbedder: embedder, blobStore: blobs });
+const rep = new FramePatchRepresenter(store, {
+  patchEmbedder: embedder,
+  blobStore: blobs,
+  onProgress: (done, total) => {
+    const el = (Date.now() - t0) / 1000;
+    const eta = done > 0 ? (el / done) * (total - done) : 0;
+    process.stdout.write(
+      `\r  ${done}/${total} frames · ${el.toFixed(0)}s elapsed · ~${eta.toFixed(0)}s left   `,
+    );
+  },
+});
 
 const res = await rep.represent(sessionId);
 process.stdout.write("\n");

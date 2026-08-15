@@ -21,14 +21,16 @@ import {
 import { parseNamespace } from "../../embed/types.js";
 
 /** Which physical row shape a namespace's view maps to. */
-export type TableKind = "segment" | "frame" | "region" | "frame_patches";
+export type TableKind = "segment" | "frame_patches";
 
+/**
+ * A RETIRED view (`frame_image`, `region_image` — the single-vector image lane)
+ * falls to "segment" here, and that is harmless rather than wrong: those tables
+ * are dropped on open, so nothing reads one afterwards, and every path that
+ * could reach one first (delete, purge) is already a no-op on an absent table.
+ */
 export function kindForView(view: string): TableKind {
   switch (view) {
-    case "frame_image":
-      return "frame";
-    case "region_image":
-      return "region";
     case "frame_patches":
       return "frame_patches";
     default:
@@ -80,25 +82,6 @@ function schemaFor(kind: TableKind, dims: number): Schema {
         new Field("session_id", utf8(), false),
         vectorField(dims),
       ]);
-    case "frame":
-      return new Schema([
-        new Field("id", utf8(), false),
-        new Field("session_id", utf8(), false),
-        new Field(
-          "segment_ids",
-          new List(new Field("item", utf8(), true)),
-          true,
-        ),
-        vectorField(dims),
-      ]);
-    case "region":
-      return new Schema([
-        new Field("id", utf8(), false),
-        new Field("frame_id", utf8(), false),
-        new Field("segment_id", utf8(), false),
-        new Field("session_id", utf8(), false),
-        vectorField(dims),
-      ]);
     case "frame_patches":
       return new Schema([
         new Field("id", utf8(), false),
@@ -115,20 +98,7 @@ export interface SegmentVecRow {
   session_id: string;
   vector: number[];
 }
-export interface FrameVecRow {
-  id: string;
-  session_id: string;
-  segment_ids: string[];
-  vector: number[];
-}
-export interface RegionVecRow {
-  id: string;
-  frame_id: string;
-  segment_id: string;
-  session_id: string;
-  vector: number[];
-}
-export type VecRow = SegmentVecRow | FrameVecRow | RegionVecRow;
+export type VecRow = SegmentVecRow;
 
 /** A frame's late-interaction patch set. Row counts differ between frames. */
 export interface FramePatchRow {
@@ -150,20 +120,15 @@ export interface SearchResult {
  */
 export interface VectorSide {
   ensureTable(namespace: string): Promise<void>;
+  /**
+   * Drop a namespace's table entirely. A namespace with NO TABLE is a NO-OP, for
+   * the same reason `deleteByIds` had to learn it: a space can be registered in
+   * SQLite while its table has never existed, and this is called on open for
+   * every retired namespace at once.
+   */
+  dropSpace(namespace: string): Promise<void>;
   add(namespace: string, rows: VecRow[]): Promise<void>;
   searchSegment(namespace: string, vector: Float32Array, k: number): Promise<SearchResult[]>;
-  searchFrame(
-    namespace: string,
-    vector: Float32Array,
-    k: number,
-    scope?: { segmentIds?: string[]; frameIds?: string[] },
-  ): Promise<SearchResult[]>;
-  searchRegion(
-    namespace: string,
-    vector: Float32Array,
-    k: number,
-    frameIds: string[],
-  ): Promise<SearchResult[]>;
   // --- late interaction (frame_patches) -------------------------------------
   addPatches(namespace: string, rows: FramePatchRow[]): Promise<void>;
   /** MaxSim search; `query` is one vector per query token. */
@@ -239,6 +204,13 @@ export class LanceStore implements VectorSide {
     await this.conn.createEmptyTable(name, schema);
   }
 
+  /** Drop the namespace's table. Absent table = already done, not an error. */
+  async dropSpace(namespace: string): Promise<void> {
+    const name = tableNameFor(namespace);
+    if (!(await this.conn.tableNames()).includes(name)) return;
+    await this.conn.dropTable(name);
+  }
+
   private open(namespace: string): Promise<lancedb.Table> {
     return this.conn.openTable(tableNameFor(namespace));
   }
@@ -275,27 +247,6 @@ export class LanceStore implements VectorSide {
       clauses.push(`array_has_any(segment_ids, [${list}])`);
     }
     return clauses.length ? clauses.join(" AND ") : undefined;
-  }
-
-  /** Frame search scoped by segment membership (array column) and/or frame ids. */
-  async searchFrame(
-    namespace: string,
-    vector: Float32Array,
-    k: number,
-    scope?: { segmentIds?: string[]; frameIds?: string[] },
-  ): Promise<SearchResult[]> {
-    return this.search(namespace, vector, k, this.frameFilter(scope));
-  }
-
-  /** Region search scoped to a set of frames (Tier-3). */
-  async searchRegion(
-    namespace: string,
-    vector: Float32Array,
-    k: number,
-    frameIds: string[],
-  ): Promise<SearchResult[]> {
-    if (frameIds.length === 0) return [];
-    return this.search(namespace, vector, k, idInClause("frame_id", frameIds));
   }
 
   private async search(

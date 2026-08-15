@@ -5,14 +5,19 @@
  * scoped-ANN and crash-recovery tests place vectors at controlled positions
  * (including a nearer *out-of-scope* vector) and assert exact behaviour.
  *
- * It also implements {@link ImageEmbeddingProvider} by hashing the raw bytes, so
- * a single fake can stand in for both text and image spaces in reconciliation.
+ The multivector fake below is the image side; there is no single-vector image
+ * provider any more, in the fakes or anywhere else.
  */
 
+import {
+  DEFAULT_TILE_CONFIG,
+  computeTileGeometry,
+  expectedTokenCount,
+  type TileConfig,
+} from "./onnx/geometry.js";
 import type {
   EmbedOptions,
   EmbeddingProvider,
-  ImageEmbeddingProvider,
   MultiVectorProvider,
   QueryEmbedding,
 } from "./types.js";
@@ -67,9 +72,7 @@ export interface FakeEmbeddingOptions {
   sharedTextSpace?: boolean;
 }
 
-export class FakeEmbeddingProvider
-  implements EmbeddingProvider, ImageEmbeddingProvider
-{
+export class FakeEmbeddingProvider implements EmbeddingProvider {
   readonly id: string;
   readonly model: string;
   readonly dimensions: number;
@@ -91,12 +94,6 @@ export class FakeEmbeddingProvider
     return inputs.map((s) => deterministicUnitVector(s, this.dimensions));
   }
 
-  async embedImages(images: Uint8Array[]): Promise<Float32Array[]> {
-    return images.map((bytes) =>
-      deterministicUnitVector(`img:${bytesKey(bytes)}`, this.dimensions),
-    );
-  }
-
   /**
    * Escape hatch for tests that need a specific vector at a specific position
    * (e.g. the nearer out-of-scope frame). Not part of the provider interface.
@@ -112,33 +109,60 @@ export class FakeEmbeddingProvider
 }
 
 /**
- * Deterministic multivector fake. Emits `count` vectors per input, each a stable
- * function of the input bytes and the vector index, so a query built from the
- * same bytes MaxSim-matches exactly.
+ * Deterministic multivector fake. Every vector is a stable function of the input
+ * and its index, so a query built from the same bytes MaxSim-matches exactly.
+ *
+ * An IMAGE gets a geometry-consistent patch set — `expectedTokenCount` vectors
+ * for the declared frame size — while a QUERY gets `queryVectorCount`. That
+ * asymmetry is the real shape, and it is load-bearing: the highlighter REJECTS a
+ * patch count that disagrees with the grid it computed, so a fake emitting four
+ * patches for a 1280x800 frame silently produced no highlights at all. The frame
+ * size is declared rather than read from the bytes because the bytes are fake.
  */
 export class FakeMultiVectorProvider implements MultiVectorProvider {
   readonly id = "fake";
   readonly model = "fake-mv";
   readonly multiVector = true as const;
+  /**
+   * Overridable so a test can declare a geometry that is DELIBERATELY not the
+   * default — which is the only way to assert that the highlighter reads the
+   * provider's config rather than `DEFAULT_TILE_CONFIG`. With both the same,
+   * the wrong code and the right code produce identical boxes.
+   */
+  readonly tileConfig: TileConfig;
+  /** How many patches an image gets: the token count for this declared size. */
+  private readonly patchCount: number;
 
   constructor(
     readonly dimensions = 128,
-    private readonly count = 4,
-  ) {}
+    private readonly queryVectorCount = 4,
+    opts: {
+      tileConfig?: TileConfig;
+      /** The size every fake image pretends to be. 1280x800 and 1920x1080 both
+       *  tile 4x3, so one default serves the frames the suite actually uses. */
+      frameWidth?: number;
+      frameHeight?: number;
+    } = {},
+  ) {
+    this.tileConfig = opts.tileConfig ?? DEFAULT_TILE_CONFIG;
+    this.patchCount = expectedTokenCount(
+      computeTileGeometry(opts.frameWidth ?? 1280, opts.frameHeight ?? 800, this.tileConfig),
+    );
+  }
 
-  private setFor(seed: string): Float32Array[] {
-    return Array.from({ length: this.count }, (_, k) =>
+  private setFor(seed: string, n: number): Float32Array[] {
+    return Array.from({ length: n }, (_, k) =>
       deterministicUnitVector(`${seed}#${k}`, this.dimensions),
     );
   }
 
   async embedImages(images: Uint8Array[]): Promise<Float32Array[][]> {
-    return images.map((bytes) => this.setFor(`img:${bytesKey(bytes)}`));
+    return images.map((bytes) => this.setFor(`img:${bytesKey(bytes)}`, this.patchCount));
   }
 
   async embedQueries(texts: string[]): Promise<QueryEmbedding[]> {
     return texts.map((t) => ({
-      vectors: this.setFor(`txt:${t}`),
+      vectors: this.setFor(`txt:${t}`, this.queryVectorCount),
       // The fake builds no prompt, so it declares the smallest honest shape: the
       // FIRST vector stands for the query's words and the rest for padding. A
       // fake whose every vector was content is what let the highlight bug ship
