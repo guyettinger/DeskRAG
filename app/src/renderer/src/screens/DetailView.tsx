@@ -94,7 +94,7 @@ export function DetailView({ frameId, onClose, onOpenRecording }: Props): React.
 
         <div className="detail__stage">
           {missing ? (
-            <div className="frame__noimg" style={{ position: "static" }}>
+            <div className="noshot" style={{ position: "static" }}>
               frame no longer exists
             </div>
           ) : !detail ? (
@@ -144,7 +144,7 @@ export function DetailView({ frameId, onClose, onOpenRecording }: Props): React.
               )}
             </div>
           ) : (
-            <div className="frame__noimg" style={{ position: "static" }}>
+            <div className="noshot" style={{ position: "static" }}>
               no keyframe image
             </div>
           )}
@@ -160,12 +160,11 @@ export function DetailView({ frameId, onClose, onOpenRecording }: Props): React.
                   <dd>{timecode(detail.tMono)}</dd>
                   <dt>When</dt>
                   <dd>{wallClock(detail.wallClock)}</dd>
-                  {detail.score !== undefined && (
-                    <>
-                      <dt>Score</dt>
-                      <dd style={{ color: "var(--accent)" }}>{detail.score.toFixed(3)}</dd>
-                    </>
-                  )}
+                  {/* No Score row. There was one and it never rendered —
+                      `detailWith` never set the field. It would have been the
+                      wrong number regardless: a score is relative to a result
+                      LIST, and this view is opened from the Library too, where
+                      there is neither a list nor a query. */}
                   <dt>Session</dt>
                   <dd>{detail.session.id.slice(0, 12)}…</dd>
                 </dl>

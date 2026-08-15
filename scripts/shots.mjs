@@ -126,13 +126,18 @@ const SHOTS = [
     //     note). The previous string described a pull-request review that
     //     appears in no recording;
     //   - it must produce region HIGHLIGHTS, since that is what the README says
-    //     a hit carries. The previous string badged 0 of the 8 cards a 1180x800
-    //     shot shows; this one badges 8 of 8;
-    //   - the results must be VARIED. A contact sheet of eight identical cards
-    //     undersells the screen, and the card's label is the segment digest, so
-    //     frames sharing a segment are indistinguishable on it. Distinct digests
-    //     over 30 hits: "formatting text in TextEdit" 4, "the underline button
-    //     in the text editor" 5, this one 14.
+    //     a hit carries. The previous string produced them for 0 of the 8 hits a
+    //     1180x800 shot shows; this one, for 8 of 8. They now surface as the
+    //     `on-screen label` lane in each row's evidence rather than as a badge
+    //     over the thumbnail, so the constraint holds and what it looks like
+    //     changed;
+    //   - the results must be VARIED. Eight rows saying the same thing
+    //     undersells the screen. The variety measurement below was taken when a
+    //     row was labelled by its segment DIGEST; rows now lead with the VLM
+    //     caption where one exists, which varies at least as much, so the
+    //     ranking of these candidates is unchanged. Distinct digests over 30
+    //     hits: "formatting text in TextEdit" 4, "the underline button in the
+    //     text editor" 5, this one 14.
     query: "stop the recording",
   },
   { id: "settings", nav: "Settings", settle: ".card" },
@@ -264,7 +269,7 @@ async function main() {
       if (shot.query) {
         await page.locator(".searchbar input:not([type=file])").fill(shot.query);
         await page.locator(".searchbar .btn:not(.ghost)").click();
-        await soften(page, ".sheet .frame, .empty, .banner", shot.id, "results");
+        await soften(page, ".results .result, .empty, .banner", shot.id, "results");
       }
       await soften(page, shot.ready, shot.id, "content");
 

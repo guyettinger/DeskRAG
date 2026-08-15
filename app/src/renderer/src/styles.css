@@ -80,7 +80,8 @@
   /* Type scale. MONO IS THE INSTRUMENT VOICE — timecodes, counts, ids and lane
      titles, all things a recorder prints. Sans is the prose voice. A lane title
      set as a letterspaced sans eyebrow reads as marketing furniture; set in
-     mono it reads as a channel name, which is what it is. */
+     mono it reads as a channel name, which is what it is.
+
      Nine steps, and the half-pixels they replace were the tell that there was
      no scale: 9.5, 10.5, 11.5 and 12.5 were all in use, which is four sizes
      nobody can tell apart doing the job of two. */
@@ -610,79 +611,106 @@ a:focus-visible {
   font-size: var(--t-small);
   margin: var(--s3) var(--s0) var(--s4);
 }
-
-/* contact sheet grid */
-.sheet {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(232px, 1fr));
-  gap: var(--s4);
+/* Separates the count from the ranking contract beside it. A rule rather than a
+   bullet: the two are different KINDS of statement — a measurement and a caveat
+   — and a dot would read as one list of two facts. */
+.search__rule {
+  flex: none;
+  width: 1px;
+  height: 12px;
+  background: var(--hairline);
 }
-/* A result card carries TWO actions — inspect what was captured, and go to the
-   moment in the Library — so the card is a container and `.frame__open` is the
-   button. A second button nested inside the first would be invalid markup, and
-   the jump is anchored to the CARD rather than the thumb because it has to be a
-   sibling of that full-card target. */
-.frame {
+
+/* ---- search results ------------------------------------------------------
+   ROWS, not a contact sheet. The sheet is the LIBRARY's idiom — a grid of
+   pictures you scan by eye. A search result has to carry text: what the screen
+   showed, what happened, what was said, what task it was part of, and why it
+   was retrieved at all. A 232px tile held two clamped lines and a number, so
+   everything else was thrown away before it reached the reader. */
+.results {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+/* A row carries TWO actions — inspect what was captured, and go to the moment
+   in the Library — so the row is a container and `.result__open` is the button.
+   A second button nested inside the first would be invalid markup, and the jump
+   is anchored to the ROW because it has to be a sibling of that full-row
+   target. (Unchanged from the card this replaces; the reasoning is the same.) */
+.result {
   position: relative;
   background: var(--panel);
   border: 1px solid var(--hairline-soft);
   border-radius: var(--radius);
   overflow: hidden;
-  transition: transform 0.14s, border-color 0.14s, box-shadow 0.14s;
-  display: flex;
-  flex-direction: column;
+  transition: border-color 0.14s, background 0.14s;
+  animation: result-in 0.22s ease both;
 }
-.frame:hover {
-  transform: translateY(-3px);
-  border-color: var(--accent);
-  box-shadow: var(--shadow);
+/* NO LIFT. `translateY(-3px)` is a card gesture; down a list of adjacent rows it
+   reads as the page twitching under the pointer. Rows in this app change
+   SURFACE instead — `.sessioncard` and `.routes__item` both do. */
+.result:hover {
+  border-color: var(--hairline);
+  background: var(--elevated);
 }
-.frame__open {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  text-align: left;
+@keyframes result-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
 }
-/* Top-LEFT: the highlight badge holds the top-right corner and the timecode the
-   bottom-left, and this must not cover either. Always visible, like both of
-   them — a hover-only affordance is one a reader has to already know about. */
-.frame__jump {
-  position: absolute;
-  left: var(--s2);
-  top: var(--s2);
-  z-index: 1;
+
+/* `minmax(0, 1fr)` and not `auto`: an auto track is floored at its content's
+   min-content width, so one unbroken string — a URL in a digest, a path in a
+   caption — widens the column and pushes the row past the page. The same trap
+   `.vds-slider-chapter-title` sprang in the player. */
+.result__open {
   display: grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 6px;
-  color: #fff;
-  background: rgba(10, 13, 17, 0.72);
-  backdrop-filter: blur(3px);
-  transition: color 0.14s, background 0.14s;
+  /* 208px, not 240. The keyframe is identification, not the subject — the
+     Library is where you look at a frame. A wider one made the thumbnail govern
+     the row height, so a row with only a headline carried 50px of empty space
+     under it before the evidence line, which is pinned to the bottom so that
+     every row's line up. */
+  grid-template-columns: 208px minmax(0, 1fr);
+  gap: var(--s4);
+  width: 100%;
+  padding: var(--s3);
+  /* Room for the locator strip, which is absolutely positioned at the bottom. */
+  padding-bottom: calc(var(--s3) + 3px);
+  text-align: left;
+  /* STRETCH, not `start`. The thumbnail is usually the taller of the two
+     columns, and with `start` the evidence line stopped wherever the prose
+     happened to end — floating in the middle of the row with dead space under
+     it. Stretched, the body fills the row and `.evidence` can sit on the
+     bottom, level with the bottom edge of the keyframe. */
+  align-items: stretch;
 }
-.frame__jump:hover {
-  color: var(--accent);
-  background: rgba(10, 13, 17, 0.88);
-}
-.frame__thumb {
+/* `align-self: start` so a stretched grid row does not stretch the keyframe
+   with it — the thumbnail keeps its own aspect ratio and the body grows past it
+   when the prose is long. */
+.result__thumb {
   position: relative;
+  align-self: start;
   aspect-ratio: 16 / 10;
-  background: #0a0d11
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--sunken)
     repeating-linear-gradient(
       45deg,
       #12161b 0 10px,
       #0d1116 10px 20px
     );
-  overflow: hidden;
 }
-.frame__thumb img {
+.result__thumb img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
 }
-.frame__noimg {
+/* Shared with DetailView and the Library — hence no BEM prefix. It used to be
+   `.frame__noimg`, which outlived `.frame` and would have read as search's. */
+.noshot {
   position: absolute;
   inset: 0;
   display: grid;
@@ -691,75 +719,228 @@ a:focus-visible {
   font-family: var(--font-mono);
   font-size: var(--t-meta);
 }
-/* film-edge timecode strip over the thumbnail */
-.frame__tc {
-  position: absolute;
-  left: var(--s2);
-  bottom: var(--s2);
-  font-family: var(--font-mono);
-  font-size: var(--t-micro);
-  font-variant-numeric: tabular-nums;
-  color: #fff;
-  background: rgba(10, 13, 17, 0.72);
-  padding: var(--s0) var(--s1);
-  border-radius: 4px;
-  backdrop-filter: blur(3px);
-}
-.frame__badge {
-  position: absolute;
-  right: var(--s2);
-  top: var(--s2);
-  font-family: var(--font-mono);
-  font-size: var(--t-micro);
-  color: var(--amber);
-  background: rgba(10, 13, 17, 0.72);
-  padding: var(--s0) var(--s1);
-  border-radius: 4px;
-}
-.frame__body {
-  padding: var(--s3);
+
+.result__body {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: var(--s1);
-  flex: 1;
 }
-.frame__digest {
-  font-size: var(--t-small);
+.result__head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-bottom: var(--s0);
+}
+/* The app, in the SAME colour its bar takes on that recording's rail and its
+   card takes in Flows — `appTone` hashes the name, so one app is one colour
+   everywhere and a reader can recognise it before reading it. */
+.result__app {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  min-width: 0;
+  font-size: var(--t-meta);
+  font-weight: 600;
   color: var(--text);
+}
+.result__app::before {
+  content: "";
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background: var(--tone, var(--muted-dim));
+}
+.result__tc {
+  flex: none;
+  font-size: var(--t-micro);
+  color: var(--muted);
+}
+/* Pushed right and dimmest of the three: it is the least useful way to identify
+   a moment, and the only one that is absolute rather than about the recording. */
+.result__when {
+  flex: none;
+  margin-left: auto;
+  font-size: var(--t-micro);
+  color: var(--muted-dim);
+}
+
+/* Whatever the one label rule resolved to — caption, digest or timecode. The
+   loudest text in the row, because it is the answer. */
+.result__headline {
+  font-size: var(--t-lead);
+  line-height: 1.4;
+  color: var(--text);
+  overflow-wrap: anywhere;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  min-height: 2.6em;
 }
-.frame__digest.empty {
+/* Nothing described this frame. Dim + italic is the app's degraded-text idiom
+   (`.sessioncard__purpose.is-rollup` uses it), and it names the remedy — the
+   alternative is a blank space that reads as a rendering fault. */
+.result__headline--none {
+  font-size: var(--t-small);
   color: var(--muted-dim);
   font-style: italic;
 }
-/* The task a hit happened inside — retrieval finding a moment, and then saying
-   what that moment was part of. Dimmed and clamped to one line: it is context
-   for the digest above it, not a second answer. */
-.frame__task {
-  font-size: var(--t-micro);
+/* The templated event digest, only when a caption took the headline. App,
+   window, URL, typed text and the label of what was clicked, all in one string
+   — evidence, so it is dimmed but not italicised: it is real, not degraded. */
+.result__digest,
+.result__said {
+  font-size: var(--t-small);
   color: var(--muted);
-  margin-top: var(--s1);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* Speech is quoted so it cannot be mistaken for the app's own text. */
+.result__said::before {
+  content: "\201C";
+  color: var(--muted-dim);
+}
+.result__said::after {
+  content: "\201D";
+  color: var(--muted-dim);
+}
+/* The task a hit happened inside — retrieval finding a moment, then saying what
+   that moment was part of. Dimmest and one line: context for everything above
+   it, not a second answer. Withheld entirely when null. */
+.result__task {
+  font-size: var(--t-micro);
+  color: var(--muted-dim);
+  overflow-wrap: anywhere;
   display: -webkit-box;
   -webkit-line-clamp: 1;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-.frame__foot {
+.result__task-in {
+  font-style: italic;
+}
+
+/* WHY this row is here. Replaces a bare `1.000`, which was not a quality
+   measure and could not be read as one: every term of the score is
+   max-normalized across the result set, so the top hit sits at the ceiling on
+   every query ever run. Rank orders, the bar compares within the list, and the
+   lanes are the part that actually answers "is this any good". */
+.evidence {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  font-family: var(--font-mono);
+  gap: var(--s2);
+  /* `auto` pins it to the BOTTOM of a stretched body, so it lands level with
+     the keyframe's bottom edge instead of trailing whatever the prose did. */
+  margin-top: auto;
+  padding-top: var(--s2);
+  /* Clear of the jump button, which is absolutely positioned over this corner.
+     Button width plus its inset plus a gap — the lanes wrap before they reach
+     it rather than running underneath. */
+  padding-right: calc(28px + var(--s3));
+  border-top: 1px solid var(--hairline-soft);
   font-size: var(--t-micro);
   color: var(--muted);
-  border-top: 1px solid var(--hairline-soft);
-  padding-top: var(--s2);
 }
-.score {
+.evidence__rank {
+  flex: none;
+  min-width: 1.5em;
+  font-size: var(--t-body);
+  color: var(--muted);
+  text-align: right;
+}
+.evidence__bar {
+  flex: none;
+  width: 72px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--sunken);
+  overflow: hidden;
+}
+/* AMBER, because amber already means "this matched your search" everywhere else
+   — the highlight boxes on the detail overlay are the same colour. Accent stays
+   reserved for what the reader can interact with. */
+.evidence__fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--amber);
+}
+/* Every hit scored identically. Drawing them all full would assert unanimous
+   agreement; drawing them all empty would assert none. A quarter-width bar in
+   the muted tone says "the bar has nothing to tell you here", and the header
+   says the same thing in words. */
+.evidence__bar[data-tied] .evidence__fill {
+  background: var(--muted-dim);
+}
+.evidence__lanes {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+
+/* THE RECORDING'S OWN AXIS, 3px of it, flush to the row's bottom edge — the
+   same axis the Library rail draws, so the jump lands somewhere already seen.
+   The dim ticks are the OTHER hits from this recording in this result list,
+   which is what turns "five results" into "one stretch of one session". */
+.locator {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: var(--sunken);
+  pointer-events: none;
+}
+.locator__tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--muted-dim);
+  transform: translateX(-0.5px);
+}
+.locator__tick--self {
+  width: 2px;
+  background: var(--rec);
+  transform: translateX(-1px);
+}
+
+/* The jump is always visible, never hover-only: an affordance that appears on
+   hover is one the reader has to already know about. Bottom-right, clear of the
+   locator strip and of every line of text. */
+.result__jump {
+  position: absolute;
+  right: var(--s3);
+  bottom: calc(var(--s3) + 3px);
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  background: var(--elevated);
+  border: 1px solid var(--hairline-soft);
+  transition: color 0.14s, background 0.14s, border-color 0.14s;
+}
+.result__jump:hover {
   color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* A 900x600 window leaves ~760px of content. The thumbnail is the first thing
+   to go: the text is the reason this is a row. */
+@media (max-width: 720px) {
+  .result__open {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .result__thumb {
+    max-width: 240px;
+  }
 }
 
 /* ---- empty / states ----------------------------------------------------- */
@@ -1649,7 +1830,9 @@ select {
 /* --- timeline track rail --------------------------------------------------
    NOT `.rail` — that is the left navigation sidebar (--rail-w: 76px). This is
    one global sheet with no scoping, so a base class is a repo-wide identifier;
-   `.drawer` exists because `.sheet` was already taken the same way.
+   `.drawer` exists because `.sheet` was taken at the time by the search
+   results grid, which is now `.results` — a name being FREE today is not a
+   reason to reuse one that collided before.
    --------------------------------------------------------------------------- */
 .tracks {
   /* Both from .player, so the rail cannot drift from the bar it sits under:
@@ -2322,20 +2505,26 @@ select {
 /* Tones. One app is one colour across every lane and every session, so these
    slots are assigned by a hash of the app name, never by position. Keyed by the
    attribute alone rather than per element, so the hover card's rows carry the
-   same colour as the bar they describe. */
-.tracks [data-tone="neutral"] { --tone: var(--muted-dim); }
-.tracks [data-tone="accent"] { --tone: var(--data-signal); }
-.tracks [data-tone="ok"] { --tone: var(--data-ok); }
-.tracks [data-tone="warn"] { --tone: var(--data-warn); }
-.tracks [data-tone="alarm"] { --tone: var(--data-alarm); }
-.tracks [data-tone="app-0"] { --tone: var(--data-0); }
-.tracks [data-tone="app-1"] { --tone: var(--data-1); }
-.tracks [data-tone="app-2"] { --tone: var(--data-2); }
-.tracks [data-tone="app-3"] { --tone: var(--data-3); }
-.tracks [data-tone="app-4"] { --tone: var(--data-4); }
-.tracks [data-tone="app-5"] { --tone: var(--data-5); }
-.tracks [data-tone="app-6"] { --tone: var(--data-6); }
-.tracks [data-tone="app-7"] { --tone: var(--data-7); }
+   same colour as the bar they describe.
+
+   GLOBAL, not scoped to `.tracks` — they were, and that was the only thing
+   stopping a search result from naming its app in the same colour as that app's
+   bar on the rail. Safe to widen because they set nothing but `--tone`, and
+   every consumer reads it as `var(--tone, <fallback>)`: an element that carries
+   the attribute and no rule reading it is inert. */
+[data-tone="neutral"] { --tone: var(--muted-dim); }
+[data-tone="accent"] { --tone: var(--data-signal); }
+[data-tone="ok"] { --tone: var(--data-ok); }
+[data-tone="warn"] { --tone: var(--data-warn); }
+[data-tone="alarm"] { --tone: var(--data-alarm); }
+[data-tone="app-0"] { --tone: var(--data-0); }
+[data-tone="app-1"] { --tone: var(--data-1); }
+[data-tone="app-2"] { --tone: var(--data-2); }
+[data-tone="app-3"] { --tone: var(--data-3); }
+[data-tone="app-4"] { --tone: var(--data-4); }
+[data-tone="app-5"] { --tone: var(--data-5); }
+[data-tone="app-6"] { --tone: var(--data-6); }
+[data-tone="app-7"] { --tone: var(--data-7); }
 
 /* --- confirm ------------------------------------------------------------- */
 .confirm {
@@ -2381,8 +2570,10 @@ select {
 /* `.routes` is minted here and `.route` was DELETED in the same change — grep
    this file before adding either back. It is one global sheet with no modules,
    so a class name is a repo-wide identifier: `.drawer` is not `.sheet` because
-   `.sheet` was already SearchScreen's contact-sheet grid, and inheriting its
-   `display: grid` collapsed the drawer's columns to one 250px track. */
+   `.sheet` was then SearchScreen's contact-sheet grid, and inheriting its
+   `display: grid` collapsed the drawer's columns to one 250px track. Search is
+   `.results` now and `.sheet` is gone, which does not make it safe to take —
+   the trap was silent inheritance, and the next collision will be too. */
 .flows { display: flex; flex-direction: column; gap: var(--s3); min-height: 0; }
 /* This file has no global muted-text utility — `.hint` and `.sub` are both
    scoped — so this one is scoped to the surfaces added here rather than

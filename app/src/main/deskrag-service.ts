@@ -51,7 +51,7 @@ import {
 import type { SettingsStore } from "./settings.js";
 import { MODELS } from "./models.js";
 import { libUrl } from "./lib-resolve.js";
-import { DEFAULT_GRAPH_ID, rebuildGraph } from "./trace-index.js";
+import { DEFAULT_GRAPH_ID, latestAt, rebuildGraph } from "./trace-index.js";
 import { planStages, reindexPlan, type StageFacts } from "./index-plan.js";
 import { runStages, type Providers, type StageWorld } from "./index-run.js";
 import { frequentRoutes, toGraphDTO } from "./graph-view.js";
@@ -81,9 +81,12 @@ import type {
 import { request as requestPermission } from "./permissions.js";
 import { resolveWhisperBinary, whisperAvailable } from "./whisper.js";
 import {
+  appTimeline,
+  appTone,
   buildSessionTracks,
   laneOriginOf,
   laneSec,
+  laneTotalSec,
   levelIndex,
   type AudioLaneInput,
 } from "./session-tracks.js";
@@ -707,16 +710,28 @@ export class DeskRagService {
     });
 
     const highlightsByFrame = new Map<string, HighlightDTO[]>();
-    // Hits span sessions, and each session's lane origin is its video's first
-    // frame. One list pass and one blob read per DISTINCT session, memoized —
-    // resolving per hit would rescan the session list for every result.
-    const laneOrigins = new Map<string, number>();
-    const originFor = (sessionId: string): number => {
-      const cached = laneOrigins.get(sessionId);
+    // Hits span sessions, and each session's lane axis is its video's — origin
+    // at the first frame, length the video's own span. One list pass and one
+    // blob read per DISTINCT session, memoized; resolving per hit would rescan
+    // the session list for every result.
+    const axes = new Map<string, { originMono: number; totalSec: number }>();
+    const axisFor = (sessionId: string): { originMono: number; totalSec: number } => {
+      const cached = axes.get(sessionId);
       if (cached !== undefined) return cached;
-      const origin = this.laneOriginFor(sessionId);
-      laneOrigins.set(sessionId, origin);
-      return origin;
+      const axis = this.laneAxisFor(sessionId);
+      axes.set(sessionId, axis);
+      return axis;
+    };
+    // The focused-app timeline, memoized the same way. `getEventsBySession`
+    // returns the whole firehose, so this must be per session and not per hit.
+    const appTimelines = new Map<string, { tMono: number; value: string }[]>();
+    const appAt = (sessionId: string, tMono: number): string | null => {
+      let timeline = appTimelines.get(sessionId);
+      if (timeline === undefined) {
+        timeline = appTimeline(this.store.getEventsBySession(sessionId));
+        appTimelines.set(sessionId, timeline);
+      }
+      return latestAt(timeline, tMono) ?? null;
     };
     const hits = frames.map((fr) => {
       const frame = fr.frame ?? this.store.getFrame(fr.frameId);
@@ -731,6 +746,8 @@ export class DeskRagService {
         strength: h.strength,
       }));
       highlightsByFrame.set(fr.frameId, highlights);
+      const axis = frame ? axisFor(frame.sessionId) : null;
+      const app = frame ? appAt(frame.sessionId, frame.tMono) : null;
       return {
         frameId: fr.frameId,
         score: fr.score,
@@ -739,12 +756,29 @@ export class DeskRagService {
         // No frame row means no recording to open — the hit degrades to the
         // same zeroed shape the other fields already take, and the renderer
         // withholds the jump rather than offering one that goes nowhere.
-        offsetSec: frame ? laneSec(frame.tMono, originFor(frame.sessionId)) : 0,
+        offsetSec: frame && axis ? laneSec(frame.tMono, axis.originMono) : 0,
+        sessionSpanSec: axis?.totalSec ?? 0,
         wallClock: session && frame ? session.startedAt + frame.tMono : 0,
         width: frame?.width ?? 0,
         height: frame?.height ?? 0,
+        // Caption and transcript cost nothing: `seg` is the whole row, and both
+        // were already read from disk to get the digest beside them.
         segmentDigest: seg?.digest ?? null,
+        segmentCaption: seg?.caption ?? null,
+        segmentTranscript: seg?.transcript ?? null,
         taskSummary: this.taskSummaryFor(seg?.id ?? null),
+        app,
+        appTone: app === null ? null : appTone(app),
+        evidence: {
+          frame: fr.evidence.frame,
+          region: fr.evidence.region,
+          segment: fr.evidence.segment,
+          lanes: fr.evidence.lanes.map((l) => ({
+            key: l.key,
+            rank: l.rank,
+            ...(l.count !== undefined ? { count: l.count } : {}),
+          })),
+        },
         thumbUrl: frame?.blobId ? `deskrag://frame/${frame.blobId}` : null,
         highlightCount: highlights.length,
       };
@@ -770,17 +804,26 @@ export class DeskRagService {
   }
 
   /**
-   * Where lane offset 0 sits for a session — the store reads behind
-   * `laneOriginOf`, which is the rule itself.
+   * A session's lane axis — where offset 0 sits and how long it runs. The store
+   * reads behind `laneOriginOf`/`laneTotalSec`, which are the rules themselves.
+   *
+   * Both come back together because both need the same video blob: fetching the
+   * origin and the length separately meant two list scans and two blob reads for
+   * one axis.
    *
    * A session's screen video is written once, when recording stops, so this is
-   * stable for anything searchable; it is deliberately not cached all the same,
-   * since it is one list scan on a path that already does far more work.
+   * stable for anything searchable; it is deliberately not cached on the service
+   * all the same, since it is one list scan on paths that already do far more
+   * work — `searchDetached` memoizes it per query instead.
    */
-  private laneOriginFor(sessionId: string): number {
+  private laneAxisFor(sessionId: string): { originMono: number; totalSec: number } {
     const row = this.store.listSessions().find((s) => s.id === sessionId);
     const blob = row?.videoBlobId ? this.store.getBlob(row.videoBlobId) : undefined;
-    return laneOriginOf(blob ?? null);
+    const durationMs = row?.endedAt ? Math.max(0, row.endedAt - row.startedAt) : 0;
+    return {
+      originMono: laneOriginOf(blob ?? null),
+      totalSec: laneTotalSec(blob ?? null, durationMs),
+    };
   }
 
   detail(frameId: string): ResultDetailDTO | null {
@@ -827,7 +870,7 @@ export class DeskRagService {
       width: frame.width,
       height: frame.height,
       tMono: frame.tMono,
-      offsetSec: laneSec(frame.tMono, this.laneOriginFor(frame.sessionId)),
+      offsetSec: laneSec(frame.tMono, this.laneAxisFor(frame.sessionId).originMono),
       wallClock: session ? session.startedAt + frame.tMono : 0,
       session: { id: frame.sessionId, startedAt: session?.startedAt ?? 0 },
       segment: seg
@@ -937,9 +980,7 @@ export class DeskRagService {
     // Offsets are measured from the video when there is one, so the rail and
     // the scrubber share an origin; from t_mono zero otherwise.
     const originMono = laneOriginOf(detail.video);
-    const totalSec = detail.video
-      ? (detail.video.tMonoEnd - detail.video.tMonoStart) / 1000
-      : detail.durationMs / 1000;
+    const totalSec = laneTotalSec(detail.video, detail.durationMs);
 
     const frames = this.store.getFramesBySession(sessionId);
     const regionCounts = new Map<string, number>();

@@ -6,12 +6,16 @@
  * flow is tall and narrow, so horizontal room is exactly what the transpose
  * freed; an inspector column would take it straight back.
  *
- * The class prefix is `drawer`, NOT `sheet`: `.sheet` is already SearchScreen's
+ * The class prefix is `drawer`, NOT `sheet`: `.sheet` was then SearchScreen's
  * contact-sheet grid (`display: grid; repeat(auto-fill, minmax(232px, 1fr))`).
  * Reusing the name made this element inherit that grid, so its header and body
  * became side-by-side grid items and the body's three columns collapsed into
  * one ~250px track — predicates wrapped one character per line. A base rule
  * that does not reset `display` inherits whatever the colliding rule set.
+ *
+ * Search has since become a list of `.result` rows and `.sheet` no longer
+ * exists. That does not make the name safe — the failure was a silent
+ * inheritance nothing typechecks, and it is waiting for whoever takes it next.
  */
 
 import React from "react";

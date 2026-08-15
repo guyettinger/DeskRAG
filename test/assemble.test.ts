@@ -191,6 +191,119 @@ describe("Retriever (assembly capstone)", () => {
   });
 
   /**
+   * `score` cannot say whether a hit is any good — every term is max-normalized
+   * across the candidate set, so the best hit of every query sits at the weight
+   * ceiling. `evidence` is what can: the lists this frame actually appeared in.
+   */
+  describe("evidence", () => {
+    it("names the ranked lists behind a hit, best rank first", async () => {
+      const { late } = await setup();
+      const res = await retriever().retrieve({ text: late.digest! });
+
+      const top = res.frames[0]!;
+      expect(top.evidence.lanes.length).toBeGreaterThan(0);
+      // Sorted by rank, so the strongest reason a row is here reads first.
+      const ranks = top.evidence.lanes.map((l) => l.rank);
+      expect(ranks).toEqual([...ranks].sort((a, b) => a - b));
+      // Every lane is a real list with a 1-based position in it.
+      for (const lane of top.evidence.lanes) {
+        expect(lane.key).not.toBe("");
+        expect(lane.rank).toBeGreaterThanOrEqual(1);
+      }
+      expect(top.evidence.lanes.map((l) => l.key)).toContain("digest");
+    });
+
+    /**
+     * The breakdown EXPLAINS the score rather than restating it: weight the
+     * three terms and add, and the number comes back. That is what lets the UI
+     * show a bar and a reason without them being able to disagree.
+     */
+    it("carries the same three terms the score is summed from", async () => {
+      const { late } = await setup();
+      const res = await retriever().retrieve({ text: late.digest!, image: imgB });
+
+      for (const f of res.frames) {
+        const w = { frame: 1, region: 0.5, segment: 0.5 };
+        const recomputed =
+          w.frame * f.evidence.frame +
+          w.region * f.evidence.region +
+          w.segment * f.evidence.segment;
+        expect(recomputed).toBeCloseTo(f.score, 10);
+        for (const term of [f.evidence.frame, f.evidence.region, f.evidence.segment]) {
+          expect(term).toBeGreaterThanOrEqual(0);
+          expect(term).toBeLessThanOrEqual(1);
+        }
+      }
+    });
+
+    /**
+     * A region lane is the ONLY per-frame evidence a text query has, and its
+     * count is what the UI prints as `on-screen label x7`. Dense ranks mean
+     * several regions legitimately share one — that is not a tie to break.
+     */
+    it("reports the best AX-label rank and how many regions matched", async () => {
+      const { late } = await setup();
+      const res = await retriever().retrieve({ text: `${late.digest!} Save` });
+
+      const withLabels = res.frames.find((f) =>
+        f.evidence.lanes.some((l) => l.key === "region_label"),
+      );
+      expect(withLabels).toBeDefined();
+      const lane = withLabels!.evidence.lanes.find((l) => l.key === "region_label")!;
+      expect(lane.rank).toBeGreaterThanOrEqual(1);
+      expect(lane.count).toBeGreaterThanOrEqual(1);
+      expect(lane.count).toBe(
+        withLabels!.highlights.filter((h) => h.ftsRank !== undefined).length,
+      );
+    });
+
+    /**
+     * ONLY the lanes that actually ran, on the DEFAULT configuration — no image
+     * provider and no captioner, which is the setup nobody tests and most people
+     * have. The UI prints these names verbatim, so a lane appearing here that
+     * never searched would be the row telling the reader a flat lie about why
+     * its hit is on screen.
+     */
+    it("names no lane that did not run", async () => {
+      const sessionId = ulid();
+      await store.putSession({ id: sessionId, startedAt: 1000, epochMono: 0 });
+      await store.putEvents([
+        { id: ulid(), sessionId, tMono: 0, kind: "focus_change", data: { app: "Slack" } },
+        { id: ulid(), sessionId, tMono: 6000, kind: "mouse_down", x: 500, y: 500 },
+      ]);
+      await store.endSession(sessionId, 9000);
+
+      const ing = new FrameIngestor(store, sessionId, new KeyframeBudget({ minIntervalMs: 0 }), blobs);
+      await ing.ingest({
+        tMono: 1000, width: 1920, height: 1080,
+        gray: grad(false), grayW: 9, grayH: 8, image: { bytes: imgA, codec: "png" },
+      });
+      await new Segmenter(store).segment(sessionId);
+      await associateFrames(store, sessionId);
+      await new Representer(store, { digestEmbedder: fake, behavior }).represent(sessionId);
+
+      const seg = store.getSegmentsBySession(sessionId).find((s) => s.digest)!;
+      // No patchEmbedder, and only the digest view registered.
+      const res = await new Retriever(store, {
+        searchers: [new TextViewSearcher(fake, "digest")],
+      }).retrieve({ text: seg.digest! });
+
+      expect(res.frames.length).toBeGreaterThan(0);
+      const keys = new Set(res.frames.flatMap((f) => f.evidence.lanes.map((l) => l.key)));
+      // Non-empty, or every assertion below is vacuous.
+      expect(keys.has("digest")).toBe(true);
+      // Never a namespace that was never registered — those spaces do not exist
+      // until something has been indexed by a captioner.
+      expect(keys.has("caption")).toBe(false);
+      expect(keys.has("app_caption")).toBe(false);
+      // And every key that IS here is one the retriever was actually given.
+      for (const key of keys) {
+        expect(["digest", "lexical", "region_label"]).toContain(key);
+      }
+    });
+  });
+
+  /**
    * The defect: for a text query, frames are recalled by segment MEMBERSHIP and
    * carry no ANN distance, so `frameScore` was 0 for every one of them and every
    * frame sharing a segment scored identically. Measured on a real library, one

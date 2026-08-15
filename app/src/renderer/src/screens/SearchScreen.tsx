@@ -4,6 +4,8 @@ import { api, timecode, wallClock } from "../api.js";
 import { IconSearch, IconImage, IconLibrary } from "../icons.js";
 import { DetailView } from "./DetailView.js";
 import { GhostLottie } from "../brand/GhostLottie.js";
+import { laneText } from "@shared/evidence";
+import { evidenceBars, locatorTicks, rowText, type LocatorTicks } from "../search-view.js";
 
 interface Props {
   /**
@@ -124,9 +126,6 @@ export function SearchScreen({ onOpenRecording }: Props): React.JSX.Element {
 
       {!loading && results && (
         <>
-          <div className="search__meta">
-            <span className="mono">{results.length}</span> frames
-          </div>
           {results.length === 0 ? (
             <div className="empty">
               <GhostLottie size={104} className="empty__ghost" playing />
@@ -162,16 +161,11 @@ export function SearchScreen({ onOpenRecording }: Props): React.JSX.Element {
               )}
             </div>
           ) : (
-            <div className="sheet">
-              {results.map((r) => (
-                <FrameCard
-                  key={r.frameId}
-                  hit={r}
-                  onOpen={() => setSelected(r.frameId)}
-                  onOpenRecording={onOpenRecording}
-                />
-              ))}
-            </div>
+            <ResultList
+              hits={results}
+              onOpen={setSelected}
+              onOpenRecording={onOpenRecording}
+            />
           )}
         </>
       )}
@@ -195,56 +189,201 @@ export function SearchScreen({ onOpenRecording }: Props): React.JSX.Element {
   );
 }
 
-function FrameCard({
+/**
+ * The header and the rows come from ONE `evidenceBars` call, because they state
+ * the same fact and must not be able to disagree about it: the header says how
+ * the list is ordered and every row draws a bar against that ordering.
+ *
+ * Saying it once at the top is what lets a row show a bar at all. The score is
+ * max-normalized within the result set, so the best hit of every query sits at
+ * the same ceiling however good it is — the bar means "against the best match
+ * here", and that sentence has to appear somewhere.
+ */
+function ResultList({
+  hits,
+  onOpen,
+  onOpenRecording,
+}: {
+  hits: FrameHitDTO[];
+  onOpen: (frameId: string) => void;
+  onOpenRecording: (sessionId: string, atSec: number) => void;
+}): React.JSX.Element {
+  const { fill, tied } = evidenceBars(hits);
+  return (
+    <>
+      <div className="search__meta">
+        <span className="mono">{hits.length}</span> frames
+        <span className="search__rule" />
+        <span>
+          {tied
+            ? "all matched equally — nothing here separates them"
+            : "ranked against the best match here"}
+        </span>
+      </div>
+      <div className="results">
+        {hits.map((hit, i) => (
+          <ResultRow
+            key={hit.frameId}
+            hit={hit}
+            rank={i + 1}
+            fill={fill[i] ?? 0}
+            tied={tied}
+            locator={locatorTicks(hits, i)}
+            // Capped so a long result list does not spend a second arriving.
+            delayMs={Math.min(i, 12) * 20}
+            onOpen={() => onOpen(hit.frameId)}
+            onOpenRecording={onOpenRecording}
+          />
+        ))}
+      </div>
+    </>
+  );
+}
+
+function ResultRow({
   hit,
+  rank,
+  fill,
+  tied,
+  locator,
+  delayMs,
   onOpen,
   onOpenRecording,
 }: {
   hit: FrameHitDTO;
+  rank: number;
+  fill: number;
+  tied: boolean;
+  locator: LocatorTicks | null;
+  delayMs: number;
   onOpen: () => void;
   onOpenRecording: (sessionId: string, atSec: number) => void;
 }): React.JSX.Element {
+  // The one label rule, minus its timecode rung — the header already prints
+  // that. Reading `segmentDigest` directly is what made this the only surface in
+  // the app that ignored a caption it had, and then printed "no digest" over a
+  // frame the rail was captioning happily.
+  const text = rowText(hit);
+
   return (
-    <div className="frame">
-      <button className="frame__open" onClick={onOpen}>
-        <div className="frame__thumb">
+    <div className="result" style={{ animationDelay: `${delayMs}ms` }}>
+      <button className="result__open" onClick={onOpen}>
+        <div className="result__thumb">
           {hit.thumbUrl ? (
             <img src={hit.thumbUrl} alt="" loading="lazy" />
           ) : (
-            <span className="frame__noimg">no keyframe</span>
-          )}
-          <span className="frame__tc mono">{timecode(hit.tMono)}</span>
-          {hit.highlightCount > 0 && (
-            <span className="frame__badge mono">◱ {hit.highlightCount}</span>
+            <span className="noshot">no keyframe</span>
           )}
         </div>
-        <div className="frame__body">
-          <div className={`frame__digest${hit.segmentDigest ? "" : " empty"}`}>
-            {hit.segmentDigest ?? "no digest"}
+
+        <div className="result__body">
+          <div className="result__head">
+            {hit.app !== null && (
+              <span className="result__app" data-tone={hit.appTone ?? "neutral"}>
+                {hit.app}
+              </span>
+            )}
+            <span className="result__tc mono">{timecode(hit.tMono)}</span>
+            <span className="result__when">{wallClock(hit.wallClock)}</span>
           </div>
-          {/* Withheld entirely when null — an empty "in:" would assert a
-              hierarchy the recording does not have. */}
-          {hit.taskSummary !== null && (
-            <div className="frame__task">in: {hit.taskSummary}</div>
+
+          {/* Every line below is WITHHELD when it has nothing to say. A row is
+              allowed to be short: the thumbnail sets the height, so absence
+              costs no reserved box — which is what the old card's
+              `min-height: 2.6em` "no digest" hole was. */}
+          {text.headline !== null ? (
+            <p className="result__headline">{text.headline}</p>
+          ) : (
+            <p className="result__headline result__headline--none">
+              No description — this recording was indexed without a captioner
+            </p>
           )}
-          <div className="frame__foot">
-            <span>{wallClock(hit.wallClock)}</span>
-            <span className="score">{hit.score.toFixed(3)}</span>
-          </div>
+          {text.digest !== null && <p className="result__digest">{text.digest}</p>}
+          {text.said !== null && <p className="result__said">{text.said}</p>}
+          {text.task !== null && (
+            <p className="result__task">
+              <span className="result__task-in">in</span> {text.task}
+            </p>
+          )}
+
+          <Evidence hit={hit} rank={rank} fill={fill} tied={tied} />
         </div>
       </button>
+
+      {locator && <Locator ticks={locator} />}
+
       {/* Withheld, never offered dead: a hit whose frame row has gone names no
           recording, and main sends an empty id rather than inventing one. */}
       {hit.sessionId !== "" && (
         <button
-          className="frame__jump"
+          className="result__jump"
           onClick={() => onOpenRecording(hit.sessionId, hit.offsetSec)}
           title={`Open this recording in the Library at ${timecode(hit.offsetSec * 1000)}`}
           aria-label="Open this recording in the Library"
         >
-          <IconLibrary style={{ width: 14, height: 14 }} />
+          <IconLibrary style={{ width: 15, height: 15 }} />
         </button>
       )}
+    </div>
+  );
+}
+
+/**
+ * Rank, a relative bar, and WHICH RANKED LISTS put this frame here.
+ *
+ * The lanes are the answer to "is this a good hit", which the score cannot give:
+ * a frame several independent lists agree on is trustworthy, one scraping in on
+ * `exact words` alone is a stretch. The raw score and the per-lane ranks go in
+ * the `title` — real, useful when debugging, and not worth a reader's attention.
+ */
+function Evidence({
+  hit,
+  rank,
+  fill,
+  tied,
+}: {
+  hit: FrameHitDTO;
+  rank: number;
+  fill: number;
+  tied: boolean;
+}): React.JSX.Element {
+  const lanes = hit.evidence.lanes;
+  const detail = lanes.length
+    ? lanes.map((l) => `${laneText(l)} #${l.rank}`).join("\n")
+    : "no ranked list of its own";
+  return (
+    <div className="evidence" title={`score ${hit.score.toFixed(3)}\n${detail}`}>
+      <span className="evidence__rank mono">{rank}</span>
+      <span className="evidence__bar" data-tied={tied || undefined} aria-hidden="true">
+        <span className="evidence__fill" style={{ width: `${fill * 100}%` }} />
+      </span>
+      <span className="evidence__lanes">
+        {/* An empty lane list is not a gap. The frame scope expands to leaves,
+            so a frame pulled in under a composed parent hit genuinely appeared
+            in no list of its own — it came along with its segment. */}
+        {lanes.length === 0
+          ? "recalled with its segment"
+          : lanes.map((l) => laneText(l)).join(" · ")}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * The recording's own axis, 3px of it, with this moment marked.
+ *
+ * The same axis the Library rail draws, so the jump lands somewhere already
+ * seen — and the dimmer ticks are every other hit from this recording, which is
+ * what turns "five separate results" into "one stretch of one session" at a
+ * glance. Decorative: the row's text says everything this says.
+ */
+function Locator({ ticks }: { ticks: LocatorTicks }): React.JSX.Element {
+  return (
+    <div className="locator" aria-hidden="true">
+      {ticks.others.map((at, i) => (
+        <span key={i} className="locator__tick" style={{ left: `${at * 100}%` }} />
+      ))}
+      <span className="locator__tick locator__tick--self" style={{ left: `${ticks.self * 100}%` }} />
     </div>
   );
 }

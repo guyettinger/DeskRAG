@@ -122,7 +122,7 @@ export function LibraryScreen({ openAt, onOpened }: Props = {}): React.JSX.Eleme
                   {s.posterUrl ? (
                     <img src={s.posterUrl} alt="" loading="lazy" />
                   ) : (
-                    <span className="frame__noimg">no keyframe</span>
+                    <span className="noshot">no keyframe</span>
                   )}
                 </div>
                 {/* The list IDENTIFIES a recording; the stage header SPECIFIES

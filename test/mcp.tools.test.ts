@@ -23,7 +23,21 @@ function oneHit(): SearchResultDTO {
         width: 2560,
         height: 1440,
         segmentDigest: 'clicked "=" in Calculator',
+        segmentCaption: null,
+        segmentTranscript: null,
         taskSummary: "Add numbers from 1 to 6",
+        app: "Calculator",
+        appTone: "app-3",
+        sessionSpanSec: 39.7,
+        evidence: {
+          frame: 0,
+          region: 0.5,
+          segment: 1,
+          lanes: [
+            { key: "digest", rank: 1 },
+            { key: "region_label", rank: 2, count: 2 },
+          ],
+        },
         thumbUrl: "deskrag://frame/b1",
         highlightCount: 2,
       },
@@ -189,6 +203,76 @@ describe("search_experience", () => {
     // Wall clock, not t_mono: an agent reasons in "yesterday", not in
     // milliseconds from a session epoch.
     expect(text).toMatch(/2025-07-31/);
+  });
+
+  /**
+   * The score is max-normalized across the result set, so the best hit of any
+   * query sits at the ceiling — `1.000` on a default install — however weak it
+   * is. An agent handed that number reports "100% confidence" to a user, which
+   * is the same class of failure as the empty-result branches below.
+   */
+  it("never shows the score, and says the ranking is relative", async () => {
+    const text = textOf(await callTool(fakeReader(), "search_experience", { query: "calculator" }));
+    expect(text).not.toMatch(/score/i);
+    expect(text).not.toMatch(/0\.830/);
+    expect(text).toMatch(/RELATIVE to this result set/);
+  });
+
+  it("names the ranked lists a hit appeared in, in the reader's words", async () => {
+    const text = textOf(await callTool(fakeReader(), "search_experience", { query: "calculator" }));
+    // The retriever's own key is `digest`/`region_label`; an agent is told what
+    // those MEAN, and the count comes along for the region lane.
+    expect(text).toMatch(/Matched in: what happened, on-screen label ×2/);
+    expect(text).not.toMatch(/region_label/);
+  });
+
+  it("says a frame recalled with its segment appeared in no list of its own", async () => {
+    const reader = fakeReader({
+      search: async () => ({
+        frames: [{ ...oneHit().frames[0]!, evidence: { frame: 0, region: 0, segment: 0, lanes: [] } }],
+      }),
+    });
+    const text = textOf(await callTool(reader, "search_experience", { query: "x" }));
+    expect(text).toMatch(/no list of its own — recalled with its segment/);
+  });
+
+  /**
+   * Frames sharing a segment with no region match are equal on every signal the
+   * retriever has. Presenting an arbitrary order as "best first" would invite an
+   * agent to treat the first one as the answer.
+   */
+  it("drops 'best first' when every hit scored identically", async () => {
+    const one = oneHit().frames[0]!;
+    const reader = fakeReader({
+      search: async () => ({
+        frames: [
+          { ...one, frameId: "a", score: 0.5 },
+          { ...one, frameId: "b", score: 0.5 },
+        ],
+      }),
+    });
+    const text = textOf(await callTool(reader, "search_experience", { query: "x" }));
+    expect(text).toMatch(/matched EQUALLY/);
+    expect(text).toMatch(/order below is arbitrary/);
+    expect(text).not.toMatch(/best first/);
+  });
+
+  it("carries the caption and the transcript, not only the digest", async () => {
+    const reader = fakeReader({
+      search: async () => ({
+        frames: [
+          {
+            ...oneHit().frames[0]!,
+            segmentCaption: "The Calculator shows 21",
+            segmentTranscript: "there we go",
+          },
+        ],
+      }),
+    });
+    const text = textOf(await callTool(reader, "search_experience", { query: "x" }));
+    expect(text).toMatch(/On screen: The Calculator shows 21/);
+    expect(text).toMatch(/Said: there we go/);
+    expect(text).toMatch(/What happened: clicked "=" in Calculator/);
   });
 
   it("requires a non-empty query", async () => {
