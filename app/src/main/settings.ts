@@ -38,10 +38,12 @@ export const DEFAULT_MCP_PORT = 41777;
 const DEFAULTS: PersistedSettings = {
   providers: {
     ollamaHost: "http://localhost:11434",
-    ollamaModel: "nomic-embed-text",
     ollamaCaptionModel: "qwen3-vl:4b",
     ollamaSummaryModel: "qwen3:4b",
-    textProvider: "ollama",
+    // Stays nomic even though embeddinggemma scores higher: flipping this
+    // strands every text vector on disk, so it is a decision for the bake-off
+    // against a real store, not for a leaderboard.
+    textModel: "nomic-embed-text-v1.5",
     imageProvider: "none",
     captionProvider: "none",
     // "none" still builds the whole hierarchy — structurally, with templated
@@ -114,7 +116,7 @@ export function audioDeviceFor(device: string | undefined): string {
  * app try to construct a provider that no longer exists.
  */
 const PROVIDER_VALUES = {
-  textProvider: ["ollama", "onnx"],
+  textModel: ["nomic-embed-text-v1.5", "embeddinggemma-300m"],
   imageProvider: ["none", "colmodernvbert"],
   captionProvider: ["none", "ollama"],
   summaryProvider: ["none", "ollama"],
@@ -143,6 +145,30 @@ const PROVIDER_MIGRATIONS: Partial<Record<ProviderKey, Record<string, string>>> 
   imageProvider: { nomic: "colmodernvbert", colsmol: "colmodernvbert" },
 };
 
+/**
+ * The retired text lane, read off a persisted file before the loop above runs.
+ *
+ * This one cannot go through `PROVIDER_MIGRATIONS`: that table migrates a
+ * VALUE of a key that still exists, and here the key itself is gone —
+ * `textProvider` and the free-text `ollamaModel` beside it are both no longer
+ * fields. So the shape of the old file is read directly, once.
+ *
+ * Only `"ollama"` is disclosed. `"onnx"` was already producing
+ * `*:onnx:nomic-embed-text-v1.5:768`, which is exactly what `textModel` now
+ * defaults to — that install lost nothing and must not be told to re-index.
+ */
+interface RetiredProviderFields {
+  textProvider?: string;
+}
+
+/** Provider fields a previous build persisted that are no longer settings. */
+const RETIRED_PROVIDER_FIELDS = ["textProvider", "ollamaModel"] as const;
+
+export function retiredTextProvider(raw: unknown): string | null {
+  const persisted = (raw as RetiredProviderFields | undefined)?.textProvider;
+  return persisted === "ollama" ? persisted : null;
+}
+
 export class SettingsStore {
   private readonly dir: string;
   private readonly settingsPath: string;
@@ -153,6 +179,12 @@ export class SettingsStore {
    * needed rather than one being started for them.
    */
   migratedImageProvider: string | null = null;
+  /**
+   * `"ollama"` if this install had the retired text lane selected. Same contract
+   * as the field above: read once into `EnvInfo`, and nothing is started for
+   * them.
+   */
+  migratedTextProvider: string | null = null;
 
   constructor(dataDir: string) {
     this.dir = dataDir;
@@ -168,6 +200,7 @@ export class SettingsStore {
     if (!existsSync(this.settingsPath)) return structuredClone(DEFAULTS);
     try {
       const raw = JSON.parse(readFileSync(this.settingsPath, "utf8")) as Partial<PersistedSettings>;
+      this.migratedTextProvider = retiredTextProvider(raw.providers);
       const providers: ProviderSettingsView = {
         ...DEFAULTS.providers,
         ...raw.providers,
@@ -182,6 +215,13 @@ export class SettingsStore {
         },
         localModels: { ...DEFAULTS.providers.localModels, ...raw.providers?.localModels },
       };
+      // The spread above copies whatever the old file held, including fields
+      // that are no longer settings at all. Dropped rather than carried, so the
+      // next save writes a file that matches the current shape instead of
+      // preserving a dead `textProvider` forever.
+      for (const dead of RETIRED_PROVIDER_FIELDS) {
+        delete (providers as unknown as Record<string, unknown>)[dead];
+      }
       for (const key of Object.keys(PROVIDER_VALUES) as ProviderKey[]) {
         const allowed: readonly string[] = PROVIDER_VALUES[key];
         if (allowed.includes(providers[key])) continue;

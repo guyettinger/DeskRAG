@@ -8,7 +8,7 @@ import type {
   SettingsPatch,
   SettingsView,
   SummaryProvider,
-  TextProvider,
+  TextModelId,
 } from "@shared/types";
 import { api } from "../api.js";
 import { McpPane } from "./McpPane.js";
@@ -236,15 +236,24 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
 
           <div className="form-row">
             <div>
-              <label>Text embeddings</label>
-              <div className="desc">ONNX runs in-process; Ollama needs the daemon running</div>
+              <label>Embedding model</label>
+              <div className="desc">
+                Runs in-process — powers digest, caption, transcript and summary search.
+                Changing it needs a re-index.
+              </div>
             </div>
+            {/* A fixed menu, not the daemon's model list: each entry is a pinned
+                export with a checked-in SHA and a declared dimension. The free-text
+                box this replaced accepted a 30B chat model and left two dead vector
+                spaces behind with nothing on screen to say so. */}
             <select
-              value={p.textProvider}
-              onChange={(e) => void patchProviders({ textProvider: e.target.value as TextProvider })}
+              value={p.textModel}
+              onChange={(e) =>
+                void patchProviders({ textModel: e.target.value as TextModelId })
+              }
             >
-              <option value="ollama">Ollama</option>
-              <option value="onnx">ONNX (in-process)</option>
+              <option value="nomic-embed-text-v1.5">Nomic v1.5 — 137MB, 2k context</option>
+              <option value="embeddinggemma-300m">EmbeddingGemma 300m — 309MB, 2k context</option>
             </select>
           </div>
 
@@ -395,18 +404,6 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
               type="text"
               value={p.ollamaHost}
               onChange={(e) => void patchProviders({ ollamaHost: e.target.value })}
-            />
-          </div>
-          <div className="form-row">
-            <div>
-              <label>Embedding model</label>
-              <div className="desc">Powers digest, caption, and transcript search</div>
-            </div>
-            <input
-              className="mono"
-              type="text"
-              value={p.ollamaModel}
-              onChange={(e) => void patchProviders({ ollamaModel: e.target.value })}
             />
           </div>
           <div className="form-row">

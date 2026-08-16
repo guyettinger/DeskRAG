@@ -25,8 +25,28 @@ export interface SignalConfig {
  * than left to how the user filled in Settings.
  */
 
-/** Where text embeddings come from. Ollama needs a daemon; onnx runs in-process. */
-export type TextProvider = "ollama" | "onnx";
+/**
+ * Which local text model embeds digest, caption, transcript and summary text.
+ *
+ * It was `TextProvider = "ollama" | "onnx"` with the Ollama model typed into a
+ * FREE-TEXT box, and that combination is gone for a reason that was measured on
+ * a real store rather than argued: a 30B chat model typed into that box minted
+ * `digest:ollama:muse-glimmer:768` and a Lance table declaring 768 floats, then
+ * failed on the add. Two dead vector spaces, no error on screen. The dimension
+ * was hardcoded 768 and never read from the model, so ANY 1024-dim choice
+ * (bge-m3, qwen3-embedding, mxbai) would have done the same — a dropdown over
+ * whatever the daemon happened to have pulled would ship the same bug wearing a
+ * `<select>`.
+ *
+ * So the menu is PINNED instead of discovered. Every entry is a real ONNX export
+ * with a checked-in SHA, a declared dimension, and its own prefixes — see
+ * `TEXT_PROFILES` in the library, which this list must stay in step with.
+ *
+ * The consequence is that text embedding no longer needs a daemon at ALL. Ollama
+ * remains for captions and summaries; it is no longer on the path between a
+ * query and a text result, which is the path a default install depends on.
+ */
+export type TextModelId = "nomic-embed-text-v1.5" | "embeddinggemma-300m";
 /**
  * The visual path: ColModernVBERT, or nothing.
  *
@@ -60,12 +80,16 @@ export type SummaryProvider = "none" | "ollama";
 
 export interface ProviderSettingsView {
   ollamaHost: string;
-  ollamaModel: string;
   /** The VLM used for captions — distinct from the embedding model. */
   ollamaCaptionModel: string;
   /** The chat model used to compose and name levels — distinct from both above. */
   ollamaSummaryModel: string;
-  textProvider: TextProvider;
+  /**
+   * There is no `ollamaModel` beside these two any more: text embedding left
+   * Ollama entirely and is `textModel` below. Ollama is still on this screen,
+   * but no longer between a query and a text result.
+   */
+  textModel: TextModelId;
   imageProvider: ImageProvider;
   captionProvider: CaptionProvider;
   summaryProvider: SummaryProvider;
@@ -575,6 +599,23 @@ export interface EnvInfo {
    * needed; nothing starts one for them.
    */
   migratedImageProvider: string | null;
+  /**
+   * `"ollama"` when this install had the retired Ollama text lane selected and
+   * `load()` moved it to a pinned ONNX model, else null.
+   *
+   * Surfaced for the same reason as its sibling and with the same restraint:
+   * every text vector this install holds is namespaced `*:ollama:<model>:768`,
+   * which nothing can query once the provider that produced it is gone — so the
+   * digest, caption, transcript and summary lanes are ALL empty until a
+   * re-index, which is far too big a consequence to leave to a user noticing
+   * that search got quiet.
+   *
+   * Deliberately null for an install that was already on `"onnx"`: its vectors
+   * sit in `*:onnx:nomic-embed-text-v1.5:768`, `textModel` defaults to exactly
+   * that model, and nothing it holds became unreachable. Telling that user to
+   * re-index would be a lie that costs them an hour.
+   */
+  migratedTextProvider: string | null;
 }
 
 // --- permissions -------------------------------------------------------------

@@ -6,6 +6,12 @@
  *
  * expecting subdirectories:
  *   nomic-embed-text-v1.5/    model_int8.onnx tokenizer.json tokenizer_config.json
+ *   embeddinggemma-300m/      model_quantized.onnx model_quantized.onnx_data
+ *                             tokenizer.json tokenizer_config.json
+ *                             (the .onnx_data is NOT optional — the .onnx beside
+ *                              it is a 568KB graph and external data holds the
+ *                              weights. Its parity test also wants `ollama pull
+ *                              embeddinggemma`, and skips without the daemon.)
  *   colmodernvbert-250m/      model.onnx tokenizer.json tokenizer_config.json
  *                             preprocessor_config.json config.json
  *   jina-reranker-v1-turbo-en/model_int8.onnx tokenizer.json tokenizer_config.json
@@ -18,6 +24,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { OnnxTextEmbedding } from "../src/embed/onnx/text.js";
+import { textProfile } from "../src/embed/text-profiles.js";
 import { ColModernVBertMultiVector } from "../src/embed/onnx/colmodernvbert.js";
 import {
   MV_TOK,
@@ -43,6 +50,7 @@ const login = (): Uint8Array => new Uint8Array(readFileSync(join(FIXTURES, "logi
 const terminal = (): Uint8Array => new Uint8Array(readFileSync(join(FIXTURES, "terminal.png")));
 
 const textDir = join(MODELS, "nomic-embed-text-v1.5");
+const gemmaDir = join(MODELS, "embeddinggemma-300m");
 const colmodernDir = join(MODELS, "colmodernvbert-250m");
 const rerankDir = join(MODELS, "jina-reranker-v1-turbo-en");
 
@@ -111,6 +119,66 @@ d("OnnxTextEmbedding (live)", () => {
     const [asQuery] = await e.embed(["a login form"], { role: "query" });
     expect(cosine(asDoc!, asQuery!)).toBeLessThan(0.999);
   });
+});
+
+/**
+ * EmbeddingGemma, and the one assertion that can catch reading the WRONG output.
+ *
+ * Its export emits BOTH `last_hidden_state` and `sentence_embedding`, and only
+ * the second has been through the two sentence-transformers Dense heads. Taking
+ * the first — which any "just grab the output" adapter does — yields a vector
+ * that is 768 wide, unit length, one row per input, and stable across runs. It
+ * passes every structural check this file could make.
+ *
+ * Measured, against Ollama's independent f16 build of the same weights:
+ *
+ *   correct (sentence_embedding) vs reference   cosine =  0.9938
+ *   WRONG   (mean-pooled hidden) vs reference   cosine = -0.0229
+ *
+ * Orthogonal. So the only test that distinguishes them is one that compares
+ * against a SECOND implementation, which is why this reaches for the daemon
+ * rather than asserting on shapes.
+ */
+d("OnnxTextEmbedding — embeddinggemma (live)", () => {
+  const gemma = (): OnnxTextEmbedding =>
+    new OnnxTextEmbedding({
+      modelPath: join(gemmaDir, "model_quantized.onnx"),
+      tokenizerPath: join(gemmaDir, "tokenizer.json"),
+      profile: textProfile("embeddinggemma-300m"),
+    });
+
+  const OLLAMA = process.env.OLLAMA_HOST ?? "http://localhost:11434";
+  const text = "Electron — DeskRAG. http://localhost:5173/ localhost. 1 click.";
+
+  it("emits 768 unit-length dimensions", async () => {
+    const [v] = await gemma().embed([text]);
+    expect(v!.length).toBe(768);
+    expect(Math.sqrt(Array.from(v!).reduce((n, x) => n + x * x, 0))).toBeCloseTo(1, 4);
+  }, 120_000);
+
+  it("agrees with Ollama's build of the same weights", async () => {
+    const profile = textProfile("embeddinggemma-300m");
+    // Ollama's template for this model is bare `{{ .Prompt }}` — it applies NO
+    // prefix — so the reference side must be handed the same prefixed string
+    // the adapter builds internally, or this compares two different inputs.
+    const res = await fetch(`${OLLAMA}/api/embed`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "embeddinggemma",
+        input: [profile.prefixes.document + text],
+      }),
+    }).catch(() => null);
+    if (!res?.ok) return; // no daemon, or model not pulled — not a failure here
+    const reference = Float32Array.from(
+      ((await res.json()) as { embeddings: number[][] }).embeddings[0]!,
+    );
+
+    const [mine] = await gemma().embed([text]);
+    // Not 1.0: this is q8 against Ollama's f16. Far above the ~0 that reading
+    // last_hidden_state would produce, which is the whole point of the floor.
+    expect(cosine(mine!, reference)).toBeGreaterThan(0.98);
+  }, 120_000);
 });
 
 d("ColModernVBertMultiVector (live)", () => {
