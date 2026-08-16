@@ -16,8 +16,10 @@
 `main` is at `35890c8`. Working tree clean, **684 tests passing**, all three
 gates green (`npm run typecheck`, `npm test`, `npm --prefix app run typecheck`).
 
-Read first: `CLAUDE.md` — section **"4. The executor (`src/replay/`)"** carries
-every invariant below in condensed form. Then, only if you need the reasoning:
+Read first: **[docs/internals/trace-and-replay.md](../internals/trace-and-replay.md)**
+— its "The executor (`src/replay/`)" section carries every invariant below in
+condensed form, and `CLAUDE.md` carries the one-line triggers pointing at it.
+Then, only if you need the reasoning:
 `docs/superpowers/specs/2026-07-31-executor-design.md` and
 `docs/superpowers/specs/2026-08-01-app-activation-repair-design.md`.
 

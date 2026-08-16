@@ -1,0 +1,291 @@
+# App renderer and UI
+
+The Library player, the track rail, Flows, and the one global stylesheet. Nearly every rule here was found by measuring the running app, not by reading code.
+
+> Moved out of `CLAUDE.md` on 2026-08-15, verbatim. Every number here is a measurement
+> taken from a real recording or a real run — not an estimate. Re-measure before changing one.
+
+- **The Library player (`renderer/src/screens/SessionPlayer.tsx`) puts the index on the timeline.** Keyframes become Vidstack *chapter cues* (so the scrubber is divided at exactly the frames that were indexed) and *thumbnail images* (an object array of `deskrag://frame/` URLs — never a WebVTT sprite, which would need a fetch the CSP does not allow). Duration is seeded from the `t_mono` span because a fragmented MP4 reports `Infinity` until buffered, then adopts the provider's value. Playback has no audio — the screen video is video-only — so mute/volume/audio-gain are removed, not styled. That adopted duration is also what the track rail's playhead divides by; see the rail's `videoSec` below, because it is NOT the same number the lanes are measured against.
+  - **THERE IS ONE RUNNING CLOCK AND IT IS THE RAIL'S.** The bar's
+    `currentTime`/`timeDivider`/`endTime` slots are null. They read MEDIA
+    seconds while every lane reads LANE seconds and the two genuinely differ —
+    measured, a bar reading `0:29` sat 260px from a header reading
+    `00:00:32.807` for the same recording. Two clocks disagreeing in one glance
+    is the screen contradicting itself, not a rounding nit. The ruler's readout
+    is in the axis' own seconds; the stage header carries the total.
+  - **`chapterTitle` is null too.** A VLM caption is a sentence, and the bar
+    ellipsized it — measured 886px, truncated. This app's rule is that nothing
+    truncates, because a label that either fits or is withheld makes a broken
+    layout visible while an ellipsis hides it. The rail's `caption` lane carries
+    the same text at its true extent and the hover card carries it whole.
+  - **One label rule, one source: `keyframeLabel()` in `renderer/src/api.ts` — caption → digest → timecode.** The VLM caption describes the pixels, so it wins; the templated event digest is the fallback for sessions indexed without a captioner. Every surface reads it (slider chapter titles and hover preview, chapters menu, and the rail's hover card — which takes it as an injected parameter) because they all resolve through that *one* chapters track. `KeyframeMarkerDTO` carries both, resolved in `sessionDetail()` from a single `getSegmentsBySession()` map — never a `getSegment()` per keyframe — using the same shortest-segment-wins rule as `detail()`, so a frame is labelled identically in both.
+  - **The controls are DOCKED under the frame, not overlaid on it** — a two-row grid on `.player__media` (frame | controls), which works only because `:where(.vds-video-layout)` is `display: contents`: `.vds-controls` and the overlays are direct grid items of the player, so `grid-area` places them. Vidstack's rules are nearly all `:where()` (specificity 0), so plain class selectors retune it without `!important`. Docked means always visible, hence the forced `opacity`/`visibility` and no scrim. The player's `aspect-ratio` is overridden to `auto` so the frame fills the stage at `object-fit: contain` — never cropped, because this is an inspection surface. Three traps, each measured in the running app:
+    - **The grid column must be `minmax(0, 1fr)`, never the implicit `auto`.** An `auto` track is floored at its content's min-content width, and `.vds-slider-chapter-title` — the scrubber's per-chapter hover label — has *no* `nowrap`, `overflow` or `max-width` in Vidstack's CSS. A caption-length title measured 2031px, which widened the column to 2131px inside a 966px stage and scaled the video (at `width: 100%` of the column) with it. Every flex link down to that text also needs `min-width: 0`, and the label itself a `max-width` + wrap.
+    - **`min-height` on the player must be explicit.** It sets `overflow: hidden` for the rounded corners, and a flex item's `min-height: auto` resolves to the content-based minimum *only while overflow is visible* — with `hidden` that automatic minimum is 0, so the player collapses under its own rows. The floor is ~200px of frame plus the ~100px bar; below it the interface stops filling and `.content` scrolls (the app allows a 900x600 window).
+    - **The poster needs `object-fit: contain` set by us.** Vidstack scopes its own to `.vds-poster :where(img)`, but `<Poster>` renders the `<img>` *as* `.vds-poster` with nothing inside it, so that rule never matches and the keyframe falls back to `fill` — a 2560x1440 keyframe stretched into a 2.87 box. It has to match the video exactly or the frame jumps the moment playback starts.
+    - **`smallLayoutWhen={false}`.** Vidstack's small layout (default `width < 576 || height < 380`) stacks a centred play button, a top menu row and a bottom slider — an arrangement for chrome floating over a whole frame. Docked in an `auto` row it stretches into dead space, and a 900x600 window trips it.
+  - **Fullscreen and PiP are removed, which takes four separate places** — the `fullscreenButton`/`pipButton` slots, the `f`/`i` key shortcuts, the `disablePictureInPicture` attribute set from `onProviderChange` (the element keeps its own affordance), and a `display: none` on the `toggle:fullscreen` *gesture*, which `DefaultVideoGestures` hardcodes. A gesture is hit-tested by its rect, so `display: none` disables it — that is how Vidstack disables its own. `noGestures` is the wrong tool: it would also kill click-to-pause. Nulling a button slot does **not** drop its `before*`/`after*` slots (`slot()` emits them regardless), which is what keeps Inspect at the end of the bar.
+  - **`.filmstrip` centring must not use `offsetLeft`.** Nothing from `.filmstrip` up to `<body>` is positioned, so `offsetLeft` reports a document-space number (rail + session list + page padding included) and scrolls the clicked keyframe out of view. Measure with `getBoundingClientRect()` deltas, and leave an already-visible item alone or a click yanks the thing just clicked.
+- **The track rail is the Library's ONE time axis** (`renderer/src/screens/TrackRail.tsx`),
+  and it REPLACED the keyframe filmstrip so the screen has a single mental model.
+  `main/session-tracks.ts` + `main/track-buckets.ts` are the pure projection, tested
+  in the ROOT suite like `graph-view.ts`; `DeskRagService.sessionTracks` does the I/O
+  and memoizes. Twenty lanes on a real recording, from `event`/`segment`/`frame`/
+  `ax_snapshot`/`region` rows plus the audio blobs — no schema change, since every
+  lane is derivable from what is already on disk.
+  - **FOUR shapes** (`density`, `span`, `mark`, `thumb`). The composed hierarchy is a FIXED three-level ladder (task, process, session), so it contributes AT MOST four lanes — action plus the three composed ones — never more, and never fewer once a session has been composed at all (`levelTitle` in `session-tracks.ts`, keyed off `LEVEL_GRANULARITY`, is what makes `level:3` unrepresentable rather than merely unseen). A new
+    signal is a builder in `session-tracks.ts` and never a new renderer component.
+  - **TWO CHROMA REGISTERS, SEPARATED BY LIGHTNESS — and the data one is
+    COMPUTED, not picked.** The INSTRUMENT (`--accent` selection/focus, `--rec`
+    playhead and live) sits above OKLCH L 0.67; DATA (`--data-0..7` plus the
+    semantic lane tones) sits inside L 0.595–0.665, so a lane colour can never
+    be mistaken for a control — before this, `app-0` was literally `--accent`'s
+    hex. The eight slots satisfy the data-viz categorical checks against
+    `--panel`: worst adjacent pair CVD ΔE 16.2 (protan/deutan, Machado 2009 at
+    severity 1.0), 21.3 unsimulated, all ≥3:1 contrast, all in the dark band.
+    **The set they replaced FAILED that check** — all eight above the band, and
+    `app-6` against `app-7` measured ΔE 1.6 under deuteranopia, i.e. one colour.
+    Re-derive with the validator against `--panel`; never hand-edit one slot.
+    One narrow band is also why a single `--ink` label works on all eight.
+  - **`appTone` HASHES a name into eight slots, so two applications in one
+    recording CAN collide** — that is the price of one app being one colour
+    across every session, and the invariant is deliberate. The mitigation is the
+    data-viz spacer rule, not a different assignment: `.tracks__span` carries a
+    1px ring in the surface colour, so adjacent bars are separated by 2px
+    whatever their tones. Measured on a real recording, Electron and Calculator
+    hashed to the same violet and the moment the user switched applications was
+    invisible. A `box-shadow` ring, never a border or margin — it paints OUTSIDE
+    the box, so every bar keeps its exact width and the extent rule is untouched.
+  - **A BAR IS CLAMPED TO THE AXIS AND SAYS SO.** Lane offsets are measured from
+    the video's FIRST FRAME, so anything captured while ffmpeg was still
+    spawning has a NEGATIVE start — measured on a real session, the `action` and
+    `task` lanes began at −1.9s and painted **57.3px across the lane titles**
+    (`plotLeft` 561 against `minLeft` 503.8). The part outside the axis is not
+    merely awkward, it is unrepresentable: no pixel means "before zero". So
+    `spanRects` cuts the bar and DECLARES the cut (`clippedStart`/`clippedEnd`),
+    the renderer hatches that edge — the broken-axis convention — and the ruler
+    names the stretch from `preRollSec`. A plain edge would assert the signal
+    began at 0:00, the one thing certainly false. `.tracks__plot` also sets
+    `overflow: hidden` as the backstop.
+  - **A BAR IS THE SIGNAL'S TRUE EXTENT AND MUST NEVER BE WIDENED TO BE CLICKED.**
+    `spanRects` returns the bar as percentages and a *separate* hit rect in px,
+    padded to `MIN_HIT_PX` (12) and clamped into the axis. A bar claiming two
+    seconds for an instantaneous click is a lie told for the mouse's benefit —
+    same principle as the Flows wire's fat transparent stroke under a 2px path.
+    The bar is `pointer-events: none`; `.tracks__span-hit` is the target. The
+    bar stays in percentages precisely so nothing flashes empty on the frame
+    before the `ResizeObserver` first fires (`hit` is `null` until measured).
+  - **NOTHING IN THE RAIL TRUNCATES, so there is no `text-overflow: ellipsis`.**
+    `labelFits` withholds a label that would not fit untruncated, and it keys on
+    the span's DURATION never its position, so — like `thumbPlacement` — it
+    cannot flip under a uniform time shift. An ellipsis reappearing could only
+    mean that rule had broken, and hiding that is exactly how a rail of adjacent
+    10s segments each stamped with a VLM caption came to read as one run-on
+    clipped paragraph. `showLabels` decides *policy* in the projection (only
+    `apps`, the one identity span lane) and is REQUIRED on `TrackLaneDTO`, which
+    is what makes the compiler find every builder and every test fixture;
+    geometry stays in `track-view.ts`. Prose is read in the hover card, which
+    already resolves all sixteen lanes at the cursor at once.
+  - **`null` in a density lane means NO COVERAGE and is not zero.** Recorded silence
+    is a flat zero; a stretch with no audio blob is null. Collapsing them makes a
+    dead microphone indistinguishable from a quiet room, which is half of why the
+    rail exists. Only audio emits null — for event-sourced lanes absence genuinely
+    is zero, because nobody typed. Measured: the real 39.7s session covers 852/1000
+    buckets, because four 10s blobs do not reach the end of a 39.6s axis.
+  - **`warning` is not `emptyReason`.** A session with `key_down` events and no
+    `keymap_change` has a full, healthy-looking typing lane whose every character
+    was dropped at lift by `resolveKeys`. An empty-reason cannot say that.
+  - **A per-bucket rate is arithmetically true and practically a lie.** At 1000
+    buckets over 40 seconds each bucket is 40ms, so ONE keystroke reported "25
+    keys/s". `bucketRate` smooths over `max(1s, one bucket)`; the same recording
+    then reports 10.1 keys/s. Found by driving a real session, invisible to the suite.
+  - **`wavPeaks` reports the duration it MEASURED from the bytes**, never the blob
+    row's declared span, so a truncated file reads as a gap for its missing tail
+    rather than an envelope stretched over time nobody recorded. It lives beside
+    `encodeWav` because two readers of one header is the drift hazard that already
+    bit `ax-dump`/`ax-exec`.
+  - **Bucket count is fixed at 1000 in main, never the renderer's width** — the width
+    changes on every frame of a resize drag, and an SVG path scales free.
+  - **`thumbPlacement` needs its epsilon.** `0.2 + 0.1` is `0.30000000000000004`, so
+    a thumbnail landing exactly on the previous one's right edge was kept at one
+    offset and dropped at another — floating-point noise alone deciding the layout,
+    the same trap `Path.curve` span splitting hit. The translation-invariance test
+    is what catches it.
+  - **`--video-bg`, `--video-border` and `--video-border-radius` MUST be declared on `.player`, never on `.vds-video-layout`.** Vidstack styles the host with `[data-media-player][data-layout='video']:not([data-fullscreen])`, and `.vds-video-layout` is a `display: contents` DESCENDANT of that host — so a custom property set there **can never reach it**. All three sat on the layout for months doing nothing, silently falling back to Vidstack's defaults: a **6px** radius (so the well's bottom corners were rounded and notched the seam with the rail), a `rgb(255 255 255 / 0.1)` border where the rail drew `--hairline-soft`, and a plain black frame instead of `#06080b`. Nothing errors — the fallback in `var(--x, default)` is the failure mode. Raising specificity on `.player__media` is the wrong instinct twice over: that selector is 0-3-0, and these tokens are the documented way in. The rest of the `--video-*` set is read by descendants and correctly stays on the layout.
+  - **`.vds-controls` needs `border-radius: 0`.** Vidstack rounds it by `--video-border-radius` for a FLOATING bar; docked at the bottom of the well that put a rounded corner over the rail's square top edge — a notch in the middle of one box.
+  - **The frame, the bar and the rail are ONE WELL, and the inset lives INSIDE it.** `.player` has `gap: 0`; `.player__media` keeps only its top corners; `.tracks` carries the border, the bottom corners and `overflow: hidden`, and `.tracks__ruler`/`.tracks__body` take `padding: 0 var(--bar-pad)` instead. Before this the rail was inset 12px from the stage while `.player__media` spanned it fully, so the control bar's panel edge sat 12px outside the ruler's — **two wells with a gap, however exactly the axes inside them agreed**, which they did. The equality that matters is now `well border (1px) + --bar-pad` on the rail against `--video-border (1px) + --bar-pad` on the bar: measured, both boxes 388→1368, seam 0, and both content columns starting at 401. Putting the inset back on `.tracks` re-opens the gap; putting the border back on `.tracks__body` double-draws it.
+  - **The scrubber and the lanes are ONE axis, and the geometry is declared once**
+    on `.player` (`--bar-pad`, `--transport-btn`, `--bar-gutter`, `--axis-inset`,
+    `--edge`). The scrubber's `.vds-controls-group` becomes a two-column grid —
+    gutter, then slider — and `.tracks` repeats exactly that grid, so alignment
+    is structural rather than tuned. **The transport moved there through the
+    `beforeTimeSlider` slot** (Vidstack's `slot()` emits `before*`/`after*` around
+    every slot, so no fork), which is what makes the gutter a *width the bar and
+    the rail share* instead of two numbers.
+    - **THE GUTTER HOLDS SIX BUTTONS, NOT THREE, AND EVERYTHING THAT IS NOT THE
+      AXIS LIVES IN IT.** The bar is now ONE row: the second row carried a media
+      clock and an ellipsized VLM caption, both removed. What was left (speed,
+      settings, Inspect) was first given its own `auto` column beside the slider
+      — which took **134px off the scrubber's right end, slider.right 1413
+      against axis.right 1547**, exactly the drift these tokens exist to
+      prevent. So the tail is packed to the RIGHT of the gutter, the transport
+      to its left, and `--bar-gutter` is `--transport-btn * 6`. A seventh
+      control means raising that multiplier; the two clusters tile the gutter
+      exactly. Verified after: slider, ruler and lane axis all 637→1547.
+    - **`margin: 0` on the slider group is load-bearing.** Vidstack gives it
+      `margin-bottom: -16px` to pull a FLOATING slider over the row beneath.
+      Docked and sharing one grid row with the tail, that shrinks its margin box
+      to 29px, the row is then sized by the 38px tail, and the two clusters
+      centre **8px apart** — measured, transport centre 541.5 against tail
+      533.5, which reads as the transport sitting low. A rule zeroed this before
+      via `:nth-last-child(2)` and it was deleted along with the second control
+      row, on the reading that it was about floating. Floating is the *cause*;
+      the rule was the *fix*.
+    - **Two overlap traps came with it, both invisible until clicked.**
+      `.player__transport` needs `width: max-content` — as a plain grid item it
+      stretches across the WHOLE gutter and covers the tail. And the tail needs
+      `z-index: 12`, because **Vidstack puts `z-index: 11` on the slider group**,
+      which spans the full bar and therefore lies over the tail. `pointer-events`
+      is not the lever: Vidstack forces `auto` on that group and wins. Symptom:
+      `document.elementFromPoint` over Inspect returned the slider group, no
+      click ever reached the button, and `npm run gen:shots` timed out opening
+      the detail view — a screenshot script is what caught it.
+    Three more traps, each found by measuring the running app, never by reading:
+    - **`.tracks__body`'s 1px border is load-bearing.** The player carries
+      `--video-border: 1px`, so the control bar's content box already starts one
+      pixel inside `.player__media`. Replacing the rail's border with an inset
+      shadow "so it adds no layout" put the two axes 1px apart (447 vs 446).
+    - **`--axis-inset` is 0, and that is a MEASUREMENT.** Vidstack insets
+      `.vds-slider` by half a thumb (`margin: 0 calc(var(--thumb-size)/2)`) — but
+      that rule is `:where()`-wrapped at specificity 0 and `styles.css`'s
+      `* { margin: 0 }` reset loads after it and wins. Giving the rail the 7px
+      back put it 7px off at each end.
+    - **The scrollbar is hidden** (`scrollbar-width: none` + a bottom fade mask),
+      because a classic scrollbar steals width from the RIGHT END OF THE AXIS
+      ONLY and would tilt the whole alignment whenever the rail overflowed.
+  - **`.tracks__axis` IS the axis — the plot column, not the rail.** The gutter
+    holds lane titles, so measuring the cursor against `.tracks__body` puts the
+    crosshair on a different SCALE from the lanes it stands over. It also has to
+    live inside `.tracks__inner` rather than on the scroller: an abspos child of a
+    scroll container is sized to the CLIENT box, so the playhead stopped at the
+    fold once the rail was scrolled.
+  - **The playhead is written imperatively** from `player.subscribe`, which fires
+    every animation frame; through state it would re-render sixteen lanes at 60fps.
+    It is **full width with the line drawn by its left border**: a percentage
+    `translateX` resolves against the ELEMENT's own size, and the 1px box it
+    shipped as moved the playhead ONE PIXEL across the whole timeline (measured
+    561.0 → 562.0 seeking 0 → 100%). It looked stationary and nothing failed.
+  - **MEDIA SECONDS *ARE* LANE SECONDS — one axis, and the conversion is gone.**
+    This reverses the old rule, which had `TrackRail` rescale media onto the lane
+    span. That rescale existed because the two clocks genuinely differed by an
+    OFFSET (media 0 happened after `video.tMonoStart`) and a RATE (the mp4 was
+    encoded CFR while the device delivered at its own pace — measured 1.4%,
+    7.100s of real time per 7.000s of media). Both are removed at the source:
+    `video.tMonoStart` is now the CAPTURE time of the first frame, and the mp4
+    carries capture timestamps (`-fps_mode passthrough`). So the playhead is
+    `currentTime / totalSec` and `seek` is identity. Measured after: seeking to
+    media 4/10/16s puts the playhead at 20.30/50.75/81.20% of the axis, all
+    giving one `totalSec` of 19.70s against a t_mono span of 19.705s; and the
+    video at media 5.000/12.000 reads a reference clock within 57ms/24ms of
+    prediction, where the same measurement gave 0.93s/1.03s and growing before.
+    `videoSec` survives ONLY as a readiness signal — it is `Infinity` until the
+    fragmented MP4 buffers, and a seek issued before then does not stick.
+  - **The rail is `.tracks`, NOT `.rail`** — `.rail` is the left navigation sidebar
+    (`--rail-w: 76px`). Caught by grepping before minting the class, the same rule
+    `.drawer` exists because of.
+  - **`.tracks` is `flex: 0 1 auto`, never `flex: none`.** With `none` it cannot
+    shrink, so the player's minimum became the media floor PLUS the whole rail,
+    which overflows the stage and puts the scrollbar back on `.content`. The
+    rail gives before the page does.
+  - **THE RAIL'S HEIGHT IS DRAGGED, NOT CAPPED, AND THAT FIXED A FIGHT NEITHER
+    SIDE COULD WIN.** `.tracks__body` used to carry `max-height: 34vh` against
+    `.player__media`'s `min-height: 300px`, and the frame lost at every window
+    size: **measured at 1600x1000, the video rendered 1124x197 under 305px of
+    rail** — the subject of the screen was the smallest thing on it. `TrackRail`
+    now writes an inline height from a grip drag (`RAIL_DEFAULT` 262), the
+    ceiling is computed at grab time as `stage − MONITOR_FLOOR` so the frame can
+    never be dragged away, and the floor moved to 260 (`MONITOR_FLOOR` in
+    `TrackRail.tsx` must stay in step with it). Same window after: **1162x478 of
+    video.** The height persists in `localStorage`, globally rather than per
+    session — which signals you watch is not a property of one recording.
+  - **Sixteen lanes gather into COLLAPSIBLE BANDS, and the band is on the DTO.**
+    `TrackGroup` (`screen`/`segments`/`audio`/`input`/`marks`) is a REQUIRED
+    field on `TrackLaneDTO`, so the compiler finds every builder — the same
+    rationale as `showLabels`. Bands are named for the SIGNAL, never the shape:
+    `keyframes` and `apps` are both `screen` though one is a thumbnail lane and
+    one a span, because what a reader collapses is "not looking at the screen
+    right now". `bandedLanes` in `session-tracks.ts` states order and band in
+    ONE table and `buildSessionTracks` emits them already gathered, so the rail
+    never sorts. Lanes are 32px (48 for `keyframes`, whose thumbnails need it)
+    and an EMPTY lane keeps its row at 22px — absence stays visible, because
+    `emptyReason` is the payload, it just stops costing a full row.
+  - **The hover card ANSWERS THE LANE YOU POINTED AT, and reports the rest as
+    context.** A hover carries an argument — "this bar, here" — and the card
+    that ignored it put the answer (`Calculator`) second in a ~550px card
+    behind four near-identical VLM captions. The lane under the cursor gets a
+    focus block at full weight; every other lane with a value follows as a
+    dimmed one-line row. Over a band header or the space below the last lane
+    there is no gesture to honour, so every row renders at full weight — and
+    that state is `readoutAt`'s DEFAULT (`focusLaneId` omitted), never a second
+    code path. A focused lane ALWAYS answers, using its own `emptyReason` where
+    it carries nothing at the cursor: a card that reported five other lanes and
+    not the one being pointed at reads as broken. **Collapsed bands are still
+    reported in full** — collapsing is a persistent choice about the plot and
+    must not silently cost evidence, where focusing is a gesture; the card now
+    distinguishes the two rather than flattening both into a list. The lane id
+    reaches the card from ONE mousemove via `closest(".tracks__lane")`, which
+    works only because `.tracks__axis` is `pointer-events: none`. Measured on a
+    real 29s recording: **256px over the APPS bar against 426px over a band
+    header**, a focused keyframe keeping its caption at three lines (59px)
+    where every context row clamps to one (18px). Its
+    position is MEASURED, not guessed: it flipped on a 336x260 estimate and the
+    real card is ~550px with sixteen lanes, so it ran off the bottom of the
+    window exactly when the reader had asked for everything. `useLayoutEffect`
+    clamps it into the viewport from its own `getBoundingClientRect`.
+  - **`THUMB_PX` in `TrackLane.tsx` is now the ONLY thumbnail width.** It was a
+    fraction in TS and a percentage in CSS with nothing enforcing the pair; the
+    rail measures its axis with a `ResizeObserver` and passes the width down, so
+    the same constant sizes the box and decides `thumbPlacement`'s overlap. An
+    image is also CLAMPED to the axis — centred on its time, a keyframe near t=0
+    painted over the title column, which is the transport's column too.
+  - **The hover readout is a CARD, and it is still one card for all lanes.**
+    `.tracks__tip` is `position: fixed` because the rail is a clipped scroller,
+    and each value is clamped to three lines because a segment lane's label is a
+    whole VLM caption. `readoutAt` takes `keyframeLabel` as an INJECTED
+    parameter — `api.ts` evaluates `window.deskrag` at module scope and cannot be
+    imported by a root test, and injecting keeps that function the one label rule.
+  - **A session with no video still gets a rail.** The axis comes from the `t_mono`
+    span; there is no playhead and a keyframe click opens `DetailView`, which is
+    what the filmstrip did in that case.
+- **The Library fills the content area; the panes scroll, not the page.** `.page--fill` → `.library` → `.library__stage` → `.player` → `.player__media` is a height chain: every link needs `min-height: 0` so the row *bounds* the video instead of growing to fit it (one omission silently restores page scroll), and the last link then needs an explicit floor back, for the reason above. `.content` was already a correctly bounded scroller — nothing there had to change.
+- **The Flows screen is a READER, and that is its hard rule.** `main/graph-view.ts` is the pure `Graph` → DTO projection and is tested in the ROOT suite (`tsconfig.json` and `vitest.config.ts` both map `@shared/types` and `deskrag` for it — exact file paths, because the app resolves modules as a bundler and may omit extensions while the root is NodeNext and may not). `DeskRagService.flows()` is the only I/O, and there is exactly one IPC channel (`flows:graph`) with no subscriptions.
+  - **The head carries the counts, and that is a height decision.** Flows is the one screen whose content is height-bound rather than scrolling, so `.flows__head` puts the states/actions chip and the active filters in the head's right-hand cluster instead of a second row beneath it — worth ~35px of canvas, measured. **The graph still cannot fit at `MIN_ZOOM` (0.35) once the drawer is open**: 441px of cards in a 314px box, so `fit` correctly centres it and clips 63px top and bottom, and pressing `fit` again changes nothing. That predates the head (it clipped 12px before) and the head made it worse; the canvas is pannable, so the remedy is a lower floor or a smaller drawer, not a re-fit.
+  - **The executor is kept and DELIBERATELY NOT WIRED.** `src/replay/`, `native/ax-exec` and every `test/replay.*` case are untouched and green; nothing in the app can reach them. There is no plan DTO, no arm channel, and no location poller — so **DeskRAGApp never spawns `ax-exec` at all**, where the screen this replaced kept a click-capable binary alive for as long as it was open. `app/src/main/index.ts` deliberately does NOT resolve `ERAG_AX_EXEC_BIN`; adding it back is the first step toward that regression.
+  - **Provenance is what makes the graph readable backwards.** `TraceNode`/`TraceEdge` carry optional `sources` (`{sessionId, tMono}` / `{sessionId, tMonoStart, tMonoEnd}`), stamped at lift — a node IS a boundary and a boundary carries a `t_mono` — and concatenated by `mergeTrace` beside each `observations += 1`, which is the only place a second recording's evidence for a shared state can be kept. **`observations` is NEVER derived from `sources` and vice versa**: a graph lifted before provenance existed has observations and no sources, and deleting a recording removes its sources while leaving the count it contributed. Both are shown, never smoothed over.
+  - **`trace_node_source`/`trace_edge_source` are TABLES because there is no migration mechanism** (`CREATE TABLE IF NOT EXISTS` on every open, so an existing table's shape can never change) — the `ax_snapshot_boundary` precedent. `session_id` cascades on purpose: evidence pointing at a deleted recording is a dead link. That forces one rule in `putGraph` — **an FK violation aborts the WHOLE transaction regardless of `ON CONFLICT`**, so sources are filtered against the live session set before insert or one dangling source costs the entire graph. Not silent loss: it is exactly what the cascade would do a moment later, and the window is real because a rebuild lifts every session in a loop.
+  - **A ROUTE IS KEYED BY THE STATES IT PASSES THROUGH, NAMED — and the two stricter keys were both measured and both failed.** On a real graph of 9 recordings / 17 nodes / 44 edges: the ordered **edge-id** sequence gave 9 routes all ×1 (five recordings of one Calculator task differed only in how many buttons were pressed — 4/5/6/8 steps), and the ordered **node-id** sequence also gave 9 routes all ×1, for a deeper reason: **equivalent states across recordings do not merge into one node**, because identity is task-derived and `matchNode` correctly declines when the outgoing edge targets a different element. Node identity cannot express "the same place" across recordings at all. The deduped `labelNode` sequence gave **5 routes, one of them ×5** — the right granularity because a label is app plus its distinguishing hint, which is the level at which a person says "I do this a lot". A predicate-less node is dropped from the key (vacuously true of every desktop, so it names no place); leaving it in put a meaningless `n0 — no state` at the head of all nine routes.
+  - **A route is NEVER a graph traversal.** A merged graph composes paths no single recording walked, so enumerating them would present routes the user has never performed as their common flows. A graph with no provenance yields **zero** routes and the screen says why — which is also why the rebuild banner is not optional: every existing install's graph has no sources until `Rebuild trace graph` is pressed.
+  - Loosening the key costs precision of highlight, and that is disclosed rather than hidden: several paths can share a route, so `nodeIds`/`edgeIds` are the **union** of what its recordings walked.
+  - **A wire's hit path uses `pointer-events: stroke`, never `fill`.** A 2px path cannot be hit with a mouse, so each wire is drawn twice with a fat transparent one beneath — and a filled hit area would make the region *enclosed* by a back edge's bow clickable, which is most of the canvas.
+  - **The app filter DIMS, never hides.** Layout is computed from the whole graph, so a hidden node's space stays reserved and its wires end in mid-air.
+  - **Selecting a route FRAMES it (zoom included), and the canvas re-fits on resize.** Centring on the route's first node keeps the fitted zoom, which on the real graph — nine nodes in one rank — pushed all but two cards out of the viewport: measured in the running app, the route lit up correctly and could not be seen. Re-fitting on resize is newly SAFE because the 2s location poll that forced fit-once is gone with the executor; without it, opening the drawer (~40% of the height) leaves the cards running under the zoom controls. A `touched` flag keeps it from fighting a reader who has panned or zoomed, and `fit` clears it.
+  - **EVERY screen reads the same scales, and a raw literal is the regression.** `styles.css` defines spacing `--s0..--s6` (2/4/8/12/16/24/32) and type `--t-nano..--t-display` (9/10/11/12/13/14/16/20/26/44); there are zero raw `font-size: <n>px` declarations left in the sheet, and gap/padding/margin literals survive only where the number is component GEOMETRY (a 92px record button, a 38px switch), never rhythm. The half-pixels the type scale replaced were the tell that no scale existed — **9.5, 10.5, 11.5 and 12.5px were all in use**, four sizes nobody can distinguish doing the work of two, and the Library measured 46/20/18/12/12 down its length with every number chosen locally. Add a step only when a real need has no home; snapping to the nearest is the default.
+  - **Audit the sheet for UNDEFINED tokens, because they fail silently.** `--panel-2` was referenced by `.gbtn` and `.gnode` and defined nowhere, so both `background` declarations were invalid at computed-value time and fell back to `transparent` — Flows node cards had no surface, on a canvas of the same colour. Nothing errors and nothing logs. Diff `var(--x)` against `^\s*--x:` after touching the sheet; `--frame-ar` (set inline by `DetailView`, and carrying a fallback) and `--tone` (set on the one-line `[data-tone]` rules) are the only legitimate absences.
+    - **A DEFINITION CAN ALSO BE SWALLOWED BY A COMMENT, and that reads as a definition being present.** The type-scale block closed with a stray `*/` mid-comment, so its remaining three prose lines parsed as a declaration running to the next `;` — which ATE `--t-nano: 9px`. The grep above finds it (the token has a `var()` and no definition) but only if you run it: nothing errors, and `.bbox__label` on the search detail overlay silently rendered at the inherited 14px in a box positioned for 9px. Reviewing the diff is not enough; a comment edit can delete a token.
+    - **`[data-tone]` is GLOBAL, not scoped to `.tracks`.** It was scoped, and that was the only thing stopping a search row from naming its app in the same colour as that app's bar on the rail. Safe to widen because the rules set nothing but `--tone` and every consumer reads `var(--tone, <fallback>)`, so an element carrying the attribute with no rule reading it is inert. Verified after: 307 tone-bearing elements in the rail, 0 unresolved, and `Electron` is `#b674d2` in both places.
+- **`styles.css` is ONE global sheet with no modules or scoping, so a class name is a repo-wide identifier.** The node drawer is `.drawer` because `.sheet` was then SearchScreen's contact-sheet grid (`display: grid; repeat(auto-fill, minmax(232px, 1fr))`) — and a base rule that does not restate `display` silently inherits the colliding one's. **Search is a list of `.result` rows now and `.sheet` no longer exists, which does NOT make the name safe to take**: the failure was a silent inheritance nothing typechecks, and it is waiting for whoever claims it next. The drawer's header and body became side-by-side grid items, its three body columns collapsed into one ~250px track, and every predicate wrapped to one character per line. It typechecks, it builds, and only looking at it shows anything is wrong. Grep the file for a base class before minting one — `.routes` was minted in the same change that deleted `.route`.
+  - **`TraceNode.visual.frameBlobId` holds a FRAME id, not a blob id** (`lift.ts` stores `snap.frameId`), so `deskrag://frame/<blobId>` cannot serve it directly — `DeskRagService.frameBlobId()` resolves it. The misleading name is still in the library.
+  - **Node labels legitimately collide** (two Chrome states both label "Google Chrome"), so the id chip is what distinguishes them — and chips must widen with a slice of the session ULID wherever a suffix repeats, which a second recording produces immediately.
+  - **The graph flows DOWNWARD and its layout is pure** (`graph-layout.ts`, in the ROOT suite like `graph-view.ts`). Rank is the row, so the graph grows along the axis a window has to spare. Within a rank, order by the mean x of already-placed parents — ties break on array index, and that tiebreak is load-bearing: a layout that reordered on equal barycenters would twitch on any re-render. **A SELF-LOOP needs its own path:** a revisited state collapses into a loop whose endpoints coincide exactly, so an out-and-back cubic degenerates into a flat horizontal stub that reads as a broken wire — measured on the real graph, fixed by giving it vertical extent.
+  - **There are TWO distinct reasons a node cannot be told apart and the UI must not confuse them:** an `app`-only identity is satisfied by every state in that application, while a ZERO-predicate node is vacuously a subset of every observation. Measured: the real graph's entry node has no predicates and was being told its identity was "only `app`".
+  - **Pure renderer modules must be `.ts`, never `.tsx`, to be root-testable.** The root `tsconfig.json` sets no `jsx`, so a root test that reaches into a `.tsx` even for a *type* breaks `npm run typecheck`.
+  - **The deep link carries LANE seconds, and `TrackRail.seek` is the one converter.** `Flows|Search → Library → SessionPlayer → TrackRail`: `atSec` is a `t_mono` offset all the way down, because the encoded video runs ~1% short of the span it covers and dividing one clock by the other's total is the bug to watch for. The seek waits on `mediaSec > 0` rather than sleeping — a fragmented MP4 reports `Infinity` until the provider adopts a real duration. The Library clears `openAt` once consumed, or picking another recording re-seeks.
+    - **TWO producers, ONE minter.** Search joined Flows on 2026-08-07 (`FrameHitDTO.sessionId` + `offsetSec`, a jump on every result card and in `DetailView`), and `App.tsx`'s `openRecording` is the only place an `OpenAt` is built. Before it, retrieval found a moment and then stranded the reader on it: `SearchScreen` was the one screen mounted with NO props, and the hit did not even carry a `sessionId`.
+    - **`laneSec`/`laneOriginOf` (`session-tracks.ts`) are the one definition of what a moment IS**, and the reason they exist is that a second producer found the first one wrong. Lane offset 0 is `video.tMonoStart`, never `t_mono` zero — capture runs while ffmpeg is still spawning, **measured at 450–1800ms of pre-roll across four real recordings** — and `graph-view.ts` minted `atSec` as raw `tMono / 1000`, so every Flows jump landed that much early. Four callers read the rule now (the rail's origin, the keyframe markers, a search hit, the Flows sources). It clamps at 0: the rail can DECLARE a pre-roll stretch (`preRollSec`, the hatched edge), a seek target cannot.
+    - **`OpenAt` carries a NONCE, because the same moment twice is two jumps.** React bails on identical state and `TrackRail`'s `seekDone` guard fires once per request — keyed on the seconds, the second identical jump was a dead click, which Search hits immediately since the screen unmounts on navigation and returning means re-running the query. Keyed on the nonce it works: verified in the running app, playhead parked at 0.5s, same hit clicked again, back to 20.109378.
+    - **The landing is correct against `t_mono`, and that was measured, not argued.** A search hit stamped `t_mono` 21909.708 seeks to media 20.109378 (= `offsetSec`), and the recorder's own millisecond clock IN that video frame reads **21.910** — agreement to the millisecond, `20.109 + 1.800 = 21.909`. The proportional alternative (`(sec/totalSec)*mediaSec` = 18.938) reads 20.310 there, ~16 frames early. So `videoSec` still being the seeded span at seek time makes the rescale a no-op AND lands on the right frame, agreeing with the chapter cues and `stepKeyframe`, which both use `offsetSec` as media time directly. **Do not "fix" that guard without re-taking this measurement** — extracted with `ffmpeg -ss <t> -i <blob>`, because Playwright screenshots the video's FIRST frame no matter where it is seeked.
+    - **The keyframe-lags-its-own-`t_mono` bug was FIXED on 2026-08-08**, in two passes — see the `FfmpegScreenProducer` paragraph above. It was never the MJPEG branch: gray and MJPEG arrive within 1ms of each other, and the cause was arrival-time stamping carrying the whole capture latency. The first pass stamped from PTS and fixed frame↔video exactly, but put frames on the MEDIA clock while events stayed on `t_mono` — visible on the rail as an APPS lane ~0.9s right of the picture. The second pass added the device-clock bridge, so both are on `t_mono`. **Recordings made before that keep the skew and are NOT comparable**; `session_clock`'s absence is what marks them, and the rail says so.
+
+---
+
+See also: [app-main.md](./app-main.md) · [capture.md](./capture.md) (the clocks the axis reads) · `../../CLAUDE.md`
