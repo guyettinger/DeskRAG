@@ -135,66 +135,76 @@ export function SearchScreen({ onOpenRecording }: Props): React.JSX.Element {
       )}
 
       {error && (
-        <div className="banner" style={{ marginTop: 16 }}>
+        <div className="banner">
           <span className="led" /> {error}
         </div>
       )}
 
-      {loading && <div className="spinner" />}
+      {/* THE ONLY THING ON THIS SCREEN THAT SCROLLS. Loading, empty and results
+          all occupy this one box, so the query above it stays put — it used to
+          leave the top of the window the moment a search returned more than a
+          screenful, which is exactly when you want to change it. */}
+      <div className="search__pane">
+        {loading && (
+          <div className="loading">
+            <div className="spinner" />
+          </div>
+        )}
 
-      {!loading && results && (
-        <>
-          {results.length === 0 ? (
-            <div className="empty">
-              <GhostLottie size={104} className="empty__ghost" playing />
-              {staleProvider ? (
-                <>
-                  {/* Not "no matches": vectors exist, but in a namespace this
-                      provider cannot read. Switching providers is deliberate and
-                      has no migration path, so say so rather than imply the
-                      library is empty. */}
-                  <h3>Indexed with a different provider</h3>
-                  <p>
-                    These recordings were indexed by another embedding model. Switch back in
-                    Settings, or record a new session to index with the current one.
-                  </p>
-                </>
-              ) : unlinked > 0 ? (
-                <>
-                  {/* The query DID match. Nothing came back because no keyframe
-                      is linked to any matching segment, which is an index
-                      defect with a specific remedy — not an empty library. */}
-                  <h3>Matched, but the index is incomplete</h3>
-                  <p>
-                    {unlinked} segment{unlinked === 1 ? "" : "s"} matched, but no keyframe is
-                    linked to any of them. Recordings indexed before this was fixed have no such
-                    links. Run <strong>Settings &rarr; Rebuild search index</strong>.
-                  </p>
-                </>
-              ) : (
-                <>
-                  <h3>No matches</h3>
-                  <p>Try different words, or record more sessions first.</p>
-                </>
-              )}
-            </div>
-          ) : (
-            <ResultList
-              hits={results}
-              onOpen={setSelected}
-              onOpenRecording={onOpenRecording}
-            />
-          )}
-        </>
-      )}
+        {!loading && results && (
+          <>
+            {results.length === 0 ? (
+              <div className="empty">
+                <GhostLottie size={104} className="empty__ghost" playing />
+                {staleProvider ? (
+                  <>
+                    {/* Not "no matches": vectors exist, but in a namespace this
+                        provider cannot read. Switching providers is deliberate and
+                        has no migration path, so say so rather than imply the
+                        library is empty. */}
+                    <h3>Indexed with a different provider</h3>
+                    <p>
+                      These recordings were indexed by another embedding model. Switch back in
+                      Settings, or record a new session to index with the current one.
+                    </p>
+                  </>
+                ) : unlinked > 0 ? (
+                  <>
+                    {/* The query DID match. Nothing came back because no keyframe
+                        is linked to any matching segment, which is an index
+                        defect with a specific remedy — not an empty library. */}
+                    <h3>Matched, but the index is incomplete</h3>
+                    <p>
+                      {unlinked} segment{unlinked === 1 ? "" : "s"} matched, but no keyframe is
+                      linked to any of them. Recordings indexed before this was fixed have no such
+                      links. Run <strong>Settings &rarr; Rebuild search index</strong>.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <h3>No matches</h3>
+                    <p>Try different words, or record more sessions first.</p>
+                  </>
+                )}
+              </div>
+            ) : (
+              <ResultList
+                hits={results}
+                onOpen={setSelected}
+                onOpenRecording={onOpenRecording}
+              />
+            )}
+          </>
+        )}
 
-      {!loading && !results && (
-        <div className="empty">
-          <GhostLottie size={104} className="empty__ghost" playing />
-          <h3>Nothing searched yet</h3>
-          <p>Record a session on the Record tab, then search for what you did.</p>
-        </div>
-      )}
+        {!loading && !results && (
+          <div className="empty">
+            <GhostLottie size={104} className="empty__ghost" playing />
+            <h3>Nothing searched yet</h3>
+            <p>Record a session on the Record tab, then search for what you did.</p>
+          </div>
+        )}
+      </div>
 
       {selected && (
         <DetailView

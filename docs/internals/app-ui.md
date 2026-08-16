@@ -47,6 +47,37 @@ The Library player, the track rail, Flows, and the one global stylesheet. Nearly
     `app-6` against `app-7` measured ΔE 1.6 under deuteranopia, i.e. one colour.
     Re-derive with the validator against `--panel`; never hand-edit one slot.
     One narrow band is also why a single `--ink` label works on all eight.
+  - **`--accent` IS THE MARK'S HUE, AND IT GOT THERE BY ROTATION.** It was
+    `#7c9cff` — OKLCH L 0.7122 C 0.1492 **H 268.9** — against the logo's hem
+    (`ghostBot` `#A18AF5` in `scripts/brand/geometry.ts`) at L 0.6993 C 0.1538
+    **H 291.8**: the same colour 23 degrees apart. The brand spec says why
+    (`docs/superpowers/specs/2026-07-23-brand-mark-design.md:31-33`) — `ghostBot`
+    is the reference art's violet *nudged toward* `--accent` so the mark would
+    read as part of the UI — but the nudge was never made from this side, so
+    **no brand hex appeared anywhere in `styles.css`** and the one interactive
+    colour in the app disagreed with the one picture of it. `#a58ff7` holds L
+    and C exactly and sets H to the mark's (round-tripped: L 0.7127 C 0.1491
+    H 291.9), so the instrument/data lightness separation is untouched. It also
+    repaired a latent collision: the old accent sat **1.2 degrees** from
+    `--data-6` (`#5f80e0` periwinkle) — an instrument colour and a lane colour
+    on one hue, held apart by lightness alone. That gap is now 24.2 degrees.
+    The nearest slot becomes `--data-2` (`#b674d2`, the violet Electron hashes
+    to) at CIEDE2000 21.7 → **11.1** in normal vision, barely moved under CVD
+    (deutan 6.8 → 6.3). That was the one risk and it was **checked on screen,
+    not in a spreadsheet**: an Electron app chip beside the accent Search button
+    reads as two colours. `--brand-violet` and `--brand-deep` carry the mark's
+    two violets verbatim for where the brand speaks as itself — the wordmark,
+    the ghost's grounds, the contact rule's glow — and are never interactive.
+  - **THE CONTACT RULE IS THE ONE WAY THE APP SAYS "CURRENT".** The mark is a
+    ghost hovering over a rounded desk bar, casting a violet contact shadow onto
+    it; an active item does the same — a 2px rounded rule in `--accent` inset
+    from the sides, with a `--brand-deep` glow beneath. It **replaced** three
+    ad-hoc treatments rather than adding a fourth (a tinted nav pill, the
+    session card's `inset 2px 0 0` left rule, a tinted route row), so "selected"
+    no longer looks different depending on which screen you are on. Written out
+    per selector and **never as a bare `.is-active`**: in a sheet with no
+    scoping that would claim every future use of the name. Three call sites
+    today — `App.tsx:93`, `RouteList.tsx:50`, `LibraryScreen.tsx:110`.
   - **`appTone` HASHES a name into eight slots, so two applications in one
     recording CAN collide** — that is the price of one app being one colour
     across every session, and the invariant is deliberate. The mitigation is the
@@ -257,7 +288,13 @@ The Library player, the track rail, Flows, and the one global stylesheet. Nearly
   - **A session with no video still gets a rail.** The axis comes from the `t_mono`
     span; there is no playhead and a keyframe click opens `DetailView`, which is
     what the filmstrip did in that case.
-- **The Library fills the content area; the panes scroll, not the page.** `.page--fill` → `.library` → `.library__stage` → `.player` → `.player__media` is a height chain: every link needs `min-height: 0` so the row *bounds* the video instead of growing to fit it (one omission silently restores page scroll), and the last link then needs an explicit floor back, for the reason above. `.content` was already a correctly bounded scroller — nothing there had to change.
+- **EVERY screen fills the content area; the panes scroll, not the page.** `.page` → `.library` → `.library__stage` → `.player` → `.player__media` is a height chain: every link needs `min-height: 0` so the row *bounds* the video instead of growing to fit it (one omission silently restores page scroll), and the last link then needs an explicit floor back, for the reason above. `.content` was already a correctly bounded scroller — nothing there had to change.
+  - **FILLING IS THE DEFAULT BECAUSE THE OPT-IN WAS THE BUG.** `.page` was `max-width: 1000px; margin: 0 auto` with a `.page--fill` modifier for the screens that wanted their height — and the modifier had to be *remembered*. Flows had already forgotten it: its populated state carried it and its **empty state did not**, so the same screen filled or top-hugged depending on whether you had recorded anything, with nothing erroring and the markup reading as correct. Record, Search and Settings never had it at all — three centred 1000px columns in a window that opens at 1180. Inverted on 2026-08-16 and `.page--fill` deleted, because after the pass **zero screens want the measured column**: every one ends in a `1fr` pane, and a modifier with no consumers is an unused repo-wide identifier. The prose measure the 1000px stood in for lives on `.page__head p` (`62ch`), the only prose element in the app. Measured after, at 1180x800: all five pages 1040x680, `bleedGap` 0, `content.scrollHeight === clientHeight` on every screen. At the 900x600 minimum only **Record** overflows (163px), on purpose — see its grid track below.
+  - **`container-type` MAY NEVER GO ON `.page`.** It implies `contain: layout`, which makes the element a containing block for **fixed** descendants — and `.overlay` (the full-bleed detail view, both confirm dialogs) and `.tracks__tip` are fixed children of `.page` on Search, Settings and the Library. A container query there would silently un-full-bleed the detail overlay, whose 1426x921 keyframe is a measurement. The two container queries in the sheet are therefore scoped to `.record__band` and `.results`, neither of which has a fixed descendant. Verified after: the overlay still reports 1180x800 against a 1180x800 viewport.
+  - **`.result` needs `flex: none`, and it is not tidiness.** `.result` sets `overflow: hidden` for its rounded corners, so its automatic minimum block size resolves to **0** — the same rule that makes `.player`'s explicit `min-height` load-bearing. The moment `.results` became a scrolling flex column every row would have been crushed to nothing. Measured after: min row height 159px across 30 rows.
+  - **`.record`'s middle track is a plain `1fr`, deliberately NOT `minmax(0, 1fr)`.** A grid track's automatic minimum is its content, which is what stops the 92px record button and the 44px readout being crushed. `minmax(0, 1fr)` would clip the one control the screen exists for; overflowing at 900x600 and letting `.content` scroll is the better failure.
+  - **The signals band says five or two, never four-plus-one.** `auto-fill` cannot express "five, or a clean fold": at `minmax(220px, 1fr)` the fit count was 4 for every page width between 916 and 1104px, so the default window orphaned one card on a row of its own. `SIGNALS` is a fixed five, so a container query on `.record__band` switches 2-up to 5-up at 940px. `.signal__name` reserves two lines (`min-height: calc(2 * 1.5em)`) because at the 198px five-up gives each card, two of the five names wrap and the others do not — with the row centred, each switch then sat at a different height across the band.
+  - **`@media (max-width: 720px)` on `.result__open` had NEVER FIRED.** `minWidth: 900` in `app/src/main/index.ts` means the viewport is never below 900. The comment stated the right intent and the wrong number: page width is viewport − 76 rail − 64 padding, so 900px of window is 760px of row, and the condition it wanted was not expressible as a viewport query at all. It is now `@container results (max-width: 760px)`.
 - **The Flows screen is a READER, and that is its hard rule.** `main/graph-view.ts` is the pure `Graph` → DTO projection and is tested in the ROOT suite (`tsconfig.json` and `vitest.config.ts` both map `@shared/types` and `deskrag` for it — exact file paths, because the app resolves modules as a bundler and may omit extensions while the root is NodeNext and may not). `DeskRagService.flows()` is the only I/O, and there is exactly one IPC channel (`flows:graph`) with no subscriptions.
   - **The head carries the counts, and that is a height decision.** Flows is the one screen whose content is height-bound rather than scrolling, so `.flows__head` puts the states/actions chip and the active filters in the head's right-hand cluster instead of a second row beneath it — worth ~35px of canvas, measured. **The graph still cannot fit at `MIN_ZOOM` (0.35) once the drawer is open**: 441px of cards in a 314px box, so `fit` correctly centres it and clips 63px top and bottom, and pressing `fit` again changes nothing. That predates the head (it clipped 12px before) and the head made it worse; the canvas is pannable, so the remedy is a lower floor or a smaller drawer, not a re-fit.
   - **The executor is kept and DELIBERATELY NOT WIRED.** `src/replay/`, `native/ax-exec` and every `test/replay.*` case are untouched and green; nothing in the app can reach them. There is no plan DTO, no arm channel, and no location poller — so **DeskRAGApp never spawns `ax-exec` at all**, where the screen this replaced kept a click-capable binary alive for as long as it was open. `app/src/main/index.ts` deliberately does NOT resolve `ERAG_AX_EXEC_BIN`; adding it back is the first step toward that regression.

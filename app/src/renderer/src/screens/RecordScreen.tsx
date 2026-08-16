@@ -82,7 +82,14 @@ export function RecordScreen({ status, env }: Props): React.JSX.Element {
     if (status.state === "idle") refresh();
   }, [status.state]);
 
-  if (!settings) return <div className="spinner" />;
+  if (!settings)
+    return (
+      <div className="page">
+        <div className="loading">
+          <div className="spinner" />
+        </div>
+      </div>
+    );
 
   const permState = (k?: PermissionKind): PermissionStatus | undefined =>
     perms.find((p) => p.kind === k);
@@ -101,7 +108,7 @@ export function RecordScreen({ status, env }: Props): React.JSX.Element {
   const busy = status.state === "indexing";
 
   return (
-    <div className="page">
+    <div className="page record">
       <div className="page__head">
         <span className="eyebrow">Session recorder</span>
         <h1>Capture an experience</h1>
@@ -111,46 +118,50 @@ export function RecordScreen({ status, env }: Props): React.JSX.Element {
         </p>
       </div>
 
-      <div className="transport">
-        <div className={`transport__readout${live ? "" : " is-idle"}`}>
-          {timecode(live ? elapsedMs : 0)}
+      {/* The transport owns the screen's slack: it is the subject, the band
+          below is reference, and the head is read once. */}
+      <div className="record__stage">
+        <div className="transport">
+          <div className={`transport__readout${live ? "" : " is-idle"}`}>
+            {timecode(live ? elapsedMs : 0)}
+          </div>
+          <button
+            className={`recbtn${live ? " is-live" : ""}`}
+            onClick={live ? stop : start}
+            disabled={busy}
+            aria-label={live ? "Stop recording" : "Start recording"}
+          >
+            <span className="recbtn__core" />
+          </button>
+          <div className="transport__hint">
+            {busy ? "Indexing the last recording…" : live ? "Click to stop" : "Click to start recording"}
+          </div>
         </div>
-        <button
-          className={`recbtn${live ? " is-live" : ""}`}
-          onClick={live ? stop : start}
-          disabled={busy}
-          aria-label={live ? "Stop recording" : "Start recording"}
-        >
-          <span className="recbtn__core" />
-        </button>
-        <div className="transport__hint">
-          {busy ? "Indexing the last recording…" : live ? "Click to stop" : "Click to start recording"}
-        </div>
+
+        {busy && (
+          <div className="indexing">
+            <div className="indexing__ghost">
+              <GhostLottie size={84} playing />
+            </div>
+            <div className="indexing__row">
+              <span className="indexing__stage">{progress?.stage ?? "Preparing…"}</span>
+              <span className="mono" style={{ color: "var(--muted)" }}>
+                {progress ? `${progress.done}/${progress.total}` : ""}
+              </span>
+            </div>
+            <div className="bar">
+              <div
+                className="bar__fill"
+                style={{ width: progress ? `${(progress.done / Math.max(1, progress.total)) * 100}%` : "8%" }}
+              />
+            </div>
+          </div>
+        )}
       </div>
 
-      {busy && (
-        <div className="indexing">
-          <div className="indexing__ghost">
-            <GhostLottie size={84} playing />
-          </div>
-          <div className="indexing__row">
-            <span className="indexing__stage">{progress?.stage ?? "Preparing…"}</span>
-            <span className="mono" style={{ color: "var(--muted)" }}>
-              {progress ? `${progress.done}/${progress.total}` : ""}
-            </span>
-          </div>
-          <div className="bar">
-            <div
-              className="bar__fill"
-              style={{ width: progress ? `${(progress.done / Math.max(1, progress.total)) * 100}%` : "8%" }}
-            />
-          </div>
-        </div>
-      )}
-
-      <div style={{ marginTop: 28 }}>
+      <div className="record__band">
         <span className="eyebrow">Signals</span>
-        <div className="signals" style={{ marginTop: 10 }}>
+        <div className="signals">
           {SIGNALS.map((sig) => {
             const cfg = settings.signals[sig.id];
             const perm = permState(sig.permission);
