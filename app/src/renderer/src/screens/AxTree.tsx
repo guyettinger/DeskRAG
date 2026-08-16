@@ -86,7 +86,7 @@ export function AxTree({ nodes, frameW, frameH, selected, onSelect, onHover }: P
       </div>
 
       {nodes.length === 0 ? (
-        <span className="field__text empty">no AX captured for this frame</span>
+        <span className="field__text field__text--empty">no AX captured for this frame</span>
       ) : (
         <>
           {!locatable && (
@@ -139,6 +139,14 @@ export function AxTree({ nodes, frameW, frameH, selected, onSelect, onHover }: P
                   </span>
                   <span className="axtree__role">{n.role}</span>
                   {n.label && <span className="axtree__label">{n.label}</span>}
+                  {/* WHICH element had the keyboard. It is on every capture and
+                      was never drawn, though it is the one property that says
+                      where the session was actually pointed at this instant. */}
+                  {n.focused && (
+                    <span className="axtree__focused" title="had keyboard focus">
+                      focus
+                    </span>
+                  )}
                   {kids.length > 0 && !open && <span className="axtree__count">{kids.length}</span>}
                 </button>
               );

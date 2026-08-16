@@ -53,6 +53,9 @@ const detail = (over: Partial<ResultDetailDTO> = {}): ResultDetailDTO => ({
   tMono: 21_909,
   offsetSec: 20.109,
   wallClock: EPOCH + 21_909,
+  app: "Calculator",
+  appTone: "app-3",
+  sessionSpanSec: 39.7,
   session: { id: "s1", startedAt: EPOCH },
   segment: {
     id: "seg1",

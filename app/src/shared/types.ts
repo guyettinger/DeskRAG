@@ -307,6 +307,23 @@ export interface ResultDetailDTO {
    * level above its leaves.
    */
   taskSummary: string | null;
+  /**
+   * The focused application at this frame's `t_mono` and its stable palette
+   * slot, exactly as `FrameHitDTO` carries them.
+   *
+   * FRAME-INTRINSIC, which is why it belongs here and `score` does not: which
+   * app was in front at a given moment is a fact about the recording, not about
+   * a result list, so the Library's keyframe inspector gets it too. That view
+   * previously could not name the application at all.
+   */
+  app: string | null;
+  appTone: TrackTone | null;
+  /**
+   * The recording's own axis length in LANE seconds, so this frame can be placed
+   * on it. 0 when unknown, which withholds the locator rather than dividing by it
+   * — the same rule `locatorTicks` already follows for a search row.
+   */
+  sessionSpanSec: number;
   ax: UIElementDTO[];
   highlights: HighlightDTO[];
 }

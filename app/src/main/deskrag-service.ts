@@ -863,6 +863,14 @@ export class DeskRagService {
       ...(e.parent !== undefined ? { parent: e.parent } : {}),
       ...(e.depth !== undefined ? { depth: e.depth } : {}),
     }));
+    // One axis read serves both the jump target and the locator; `laneAxisFor`
+    // is a list scan plus a blob read, so asking it twice for one frame is the
+    // shape `searchDetached` memoizes precisely to avoid.
+    const axis = this.laneAxisFor(frame.sessionId);
+    // Frame-intrinsic, so it is resolved here rather than passed down from a
+    // result list: the Library opens this view with no query and still deserves
+    // to be told which application was in front.
+    const app = latestAt(appTimeline(this.store.getEventsBySession(frame.sessionId)), frame.tMono) ?? null;
     return {
       frameId,
       taskSummary: this.taskSummaryFor(seg?.id ?? null),
@@ -870,7 +878,10 @@ export class DeskRagService {
       width: frame.width,
       height: frame.height,
       tMono: frame.tMono,
-      offsetSec: laneSec(frame.tMono, this.laneAxisFor(frame.sessionId).originMono),
+      offsetSec: laneSec(frame.tMono, axis.originMono),
+      app,
+      appTone: app === null ? null : appTone(app),
+      sessionSpanSec: axis.totalSec,
       wallClock: session ? session.startedAt + frame.tMono : 0,
       session: { id: frame.sessionId, startedAt: session?.startedAt ?? 0 },
       segment: seg
