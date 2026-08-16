@@ -86,10 +86,21 @@ bar, or by clicking a search hit. It shows the full keyframe with the segment's
 digest / caption / transcript, and everything the accessibility tree captured.
 
 Two things get drawn over the frame, and which you see depends on how you arrived.
-A search hit carries **region highlights** — the boxes that matched the query.
-Selecting a row in the **accessibility tree** locates that element on the frame
-instead, with its label; the screenshot below is opened from the Library, so there
-is no query and the AX locator is the only overlay.
+A search hit carries **region highlights** — the boxes that matched the query, each
+one named in the **Matched regions** list beside them. Selecting a row in the
+**accessibility tree** locates that element instead, in blue rather than amber,
+because "this matched your search" and "this is the element you picked" are
+different claims. Opened from the Library there is no query, so the evidence and
+matched-region sections are absent rather than empty.
+
+The stage is a **loupe**: scroll to zoom about the cursor, drag to pan, and click a
+matched region to frame it. Scale is counted in stored pixels per screen pixel, so
+`1.00×` is the ceiling of what was actually captured — past it the image is drawn
+hard-edged and the readout says so, rather than inventing detail that was never
+recorded.
+
+The screenshot below is a search hit: the query was *stop the recording*, and the
+box on the stop button is the region the accessibility index matched.
 
 ![Detail view](../docs/images/detail.png)
 

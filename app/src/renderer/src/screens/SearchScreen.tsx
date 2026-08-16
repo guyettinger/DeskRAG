@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import type { Capabilities, FrameHitDTO } from "@shared/types";
 import { api, timecode, wallClock } from "../api.js";
 import { IconSearch, IconImage, IconLibrary } from "../icons.js";
-import { DetailView } from "./DetailView.js";
+import { DetailView, type SearchContext } from "./DetailView.js";
 import { GhostLottie } from "../brand/GhostLottie.js";
 import { laneText } from "@shared/evidence";
 import { evidenceBars, locatorTicks, rowText, type LocatorTicks } from "../search-view.js";
@@ -66,6 +66,24 @@ export function SearchScreen({ onOpenRecording }: Props): React.JSX.Element {
       setLoading(false);
     }
   };
+
+  /**
+   * The row's own retrieval context, handed to the overlay it opens.
+   *
+   * Rank and the bar's fill are LIST-RELATIVE — they mean "against the others
+   * this query returned" — which is exactly why they are props from here rather
+   * than fields on `ResultDetailDTO`: `detailWith` also answers the Library and
+   * MCP, where there is no list to be relative to. The same argument that kept
+   * `score` off the DTO. `SearchScreen` already has all of it and used to throw
+   * it away, passing only the frame id.
+   */
+  const openedFrom = ((): SearchContext | undefined => {
+    if (selected === null || results === null) return undefined;
+    const i = results.findIndex((h) => h.frameId === selected);
+    if (i < 0) return undefined;
+    const { fill, tied } = evidenceBars(results);
+    return { hit: results[i]!, rank: i + 1, fill: fill[i] ?? 0, tied };
+  })();
 
   return (
     <div className="page">
@@ -183,6 +201,7 @@ export function SearchScreen({ onOpenRecording }: Props): React.JSX.Element {
           frameId={selected}
           onClose={() => setSelected(null)}
           onOpenRecording={onOpenRecording}
+          {...(openedFrom ? { openedFrom } : {})}
         />
       )}
     </div>

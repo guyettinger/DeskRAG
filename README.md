@@ -53,7 +53,7 @@ permissions, and how it's wired.
 <td width="50%"><img src="docs/images/search.png" alt="Search screen"><br><strong>Search</strong> — hits come back as a contact sheet of keyframes.</td>
 </tr>
 <tr>
-<td width="50%"><img src="docs/images/detail.png" alt="Detail view"><br><strong>Detail</strong> — pick an accessibility node to locate it on the frame.</td>
+<td width="50%"><img src="docs/images/detail.png" alt="Detail view"><br><strong>Detail</strong> — why a frame came back, what matched on it, and a loupe to read the pixels.</td>
 <td width="50%"><img src="docs/images/flows.png" alt="Flows screen"><br><strong>Flows</strong> — the paths you take, and one click back to the recording.</td>
 </tr>
 </table>

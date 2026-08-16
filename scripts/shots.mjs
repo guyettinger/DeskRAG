@@ -84,22 +84,6 @@ const SHOTS = [
     nav: "Library",
     settle: ".library, .empty",
     ready: ".player, .empty",
-    // The detail view is captured from the Library, not from Search, on purpose.
-    // DetailView draws detail.highlights unconditionally, and a search hit carries
-    // them — on the late-interaction path those are patch-map boxes, which scatter across the
-    // frame as small yellow rectangles with no labels and read as noise. Opened
-    // from the Library there is no query, so highlights is empty and the AX
-    // locator (below) is the only thing drawn.
-    detail: {
-      id: "detail",
-      open: '[aria-label="Inspect keyframe"]',
-      settle: ".detail",
-      // Select a labelled, on-frame AX node so the blue locator box + its label
-      // land on the keyframe — the point of the panel. Rows marked --off are
-      // outside the captured frame and would draw nothing.
-      select: ".axtree__row:not(.axtree__row--off):has(.axtree__label)",
-      close: ".detail__close",
-    },
   },
   {
     id: "flows",
@@ -139,6 +123,32 @@ const SHOTS = [
     //     hits: "formatting text in TextEdit" 4, "the underline button in the
     //     text editor" 5, this one 14.
     query: "stop the recording",
+    // The detail view is captured from SEARCH, and it used to be captured from
+    // the Library for a reason that the 2026-08-16 rebuild removed.
+    //
+    // The old reason: a search hit's highlights include patch-map boxes, which
+    // scattered across the frame as small unlabelled yellow rectangles and read
+    // as noise, so the shot was taken where `highlights` is empty and selected an
+    // AX row to draw one blue locator box instead. Every box on the frame is now
+    // named in the panel's `Matched regions` list, so the same rectangles read as
+    // an annotated result rather than as noise — and the two things this view
+    // exists to answer, "why did this come back" and "what matched, where", only
+    // exist on this path. Opened from the Library both sections are correctly
+    // ABSENT, so that shot could not show them at all.
+    //
+    // It also fixes a shot that had been quietly degrading: the keyframe the
+    // Library path landed on has AX elements 0, so the locator box it selected
+    // for was never drawn and the warning had been firing for two regenerations.
+    //
+    // No `select`. The amber boxes arrive with the query, and clicking a matched
+    // region would zoom the stage to that one control — worth doing by hand, but
+    // a close-up of a button is not the image that shows what the screen is.
+    detail: {
+      id: "detail",
+      open: ".result__open",
+      settle: ".detail",
+      close: ".detail__close",
+    },
   },
   { id: "settings", nav: "Settings", settle: ".card" },
   {

@@ -982,47 +982,204 @@ a:focus-visible {
   padding: var(--s6);
   z-index: 40;
 }
-/* A DEFINITE height (not max-height) plus an explicitly bounded row is what lets
+/* The INSPECTION overlay, as opposed to the .confirm dialogs that share
+   .overlay. A modifier and not a change to the base rule: three other callers
+   (the Library delete, both Settings confirms) want the small centred card and
+   would be stretched by it. */
+.overlay--wide {
+  padding: var(--s4);
+}
+/* A DEFINITE height (not max-height) plus explicitly bounded rows is what lets
    .detail__side scroll: with the default `auto` row the track sizes to its
    content, so the side panel never gets a height to overflow and a long AX tree
-   just ran off the clipped bottom of the modal. */
+   just ran off the clipped bottom of the modal.
+
+   FULL-BLEED, and the side panel is a fixed track rather than a fraction. At
+   1.55fr / 1fr every pixel a wider window gained was split with the text column,
+   so the subject of the screen grew slowest — the same mistake the rail's old
+   `max-height` made against the video, measured there at 1124x197. */
 .detail {
-  width: min(1120px, 100%);
-  height: min(90vh, 900px);
+  width: 100%;
+  height: 100%;
   background: var(--panel);
   border: 1px solid var(--hairline);
   border-radius: 14px;
   box-shadow: var(--shadow);
   display: grid;
-  grid-template-columns: 1.55fr 1fr;
-  grid-template-rows: minmax(0, 1fr);
+  /* minmax(0, 1fr), never the implicit `auto`: an auto track is floored at its
+     content's min-content width, and a caption-length task summary in the head
+     would widen the column and take the stage with it. */
+  grid-template-columns: minmax(0, 1fr) clamp(340px, 26vw, 460px);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
 }
+.detail__head {
+  grid-area: 1 / 1 / 2 / 3;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  padding: var(--s3) var(--s3) var(--s3) var(--s5);
+  border-bottom: 1px solid var(--hairline-soft);
+  min-width: 0;
+}
+/* The head does not scroll: what this frame IS stays put while the evidence
+   under it moves. */
+.detail__ident {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.detail__app {
+  flex: none;
+  padding: 2px var(--s2);
+  border-radius: var(--radius-sm);
+  font-size: var(--t-meta);
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--tone, var(--muted));
+}
+.detail__title {
+  font-size: var(--t-title);
+  line-height: 1.35;
+  color: var(--text);
+  min-width: 0;
+  /* Wraps to a second line rather than clipping. Nothing truncates. */
+  overflow-wrap: anywhere;
+}
+.detail__headmeta {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+}
+.detail__tc {
+  font-size: var(--t-small);
+  color: var(--muted);
+}
+.detail__rank {
+  position: absolute;
+  left: var(--s1);
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: var(--t-meta);
+  color: var(--muted-dim);
+}
+/* THE STAGE IS A SCROLL CONTAINER, and the zoom sizes the canvas rather than
+   transforming it. The Flows canvas uses `transform: scale()` and that is the
+   wrong tool here: under a transform a 1.5px bbox outline becomes 12px at 8x and
+   every label needs its own counter-scale. Sizing the canvas instead leaves the
+   percentage mapping untouched, keeps outlines and labels at their true pixel
+   size at every zoom, and makes panning plain scrollLeft/scrollTop. */
 .detail__stage {
+  grid-area: 2 / 1 / 3 / 2;
   background: #06080b;
   display: grid;
-  place-items: center;
   position: relative;
   min-height: 0;
-  /* AX bboxes are GLOBAL screen coords, so an element on a second display sits
-     outside the captured frame. Clip rather than blow out the grid. */
-  overflow: hidden;
+  min-width: 0;
+  overflow: auto;
+  scrollbar-width: none;
+  cursor: grab;
+  overscroll-behavior: contain;
+}
+.detail__stage::-webkit-scrollbar {
+  display: none;
+}
+.detail__stage--panning {
+  cursor: grabbing;
 }
 /* The canvas is the positioning context for every bbox, so it has to be exactly
    the painted image rect or the percentages drift. Driving it from the image's
    own aspect ratio (set inline on load) makes object-fit a no-op — there is no
-   letterboxing left inside the box. */
+   letterboxing left inside the box.
+
+   `margin: auto` and NOT `place-items: center` on the stage: a centred grid item
+   larger than its container is clipped at the START edge and cannot be scrolled
+   back to, so the top-left of a zoomed frame would be unreachable. Auto margins
+   resolve to 0 once the item overflows, which is exactly the wanted behaviour. */
 .detail__canvas {
   position: relative;
+  margin: auto;
+  flex: none;
   aspect-ratio: var(--frame-ar, 16 / 9);
+  /* Width is set inline (imgW * scale); this is only the pre-measurement state,
+     before the ResizeObserver and the image load have both landed. */
   max-width: 100%;
-  max-height: 100%;
 }
 .detail__canvas img {
   display: block;
   width: 100%;
   height: 100%;
   object-fit: contain;
+  -webkit-user-select: none;
+  user-select: none;
+}
+/* ---- the loupe ---------------------------------------------------------- */
+
+.loupe {
+  grid-area: 3 / 1 / 4 / 2;
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  padding: var(--s2) var(--s5);
+  background: var(--sunken);
+  border-top: 1px solid var(--hairline-soft);
+  min-width: 0;
+}
+.loupe__controls {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+}
+.loupe__btn {
+  min-width: 30px;
+  height: 24px;
+  padding: 0 var(--s2);
+  border-radius: var(--radius-sm);
+  background: var(--elevated);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--t-micro);
+}
+.loupe__btn:hover:not(:disabled) {
+  color: var(--text);
+}
+.loupe__btn[aria-pressed="true"] {
+  color: var(--accent);
+}
+.loupe__btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.loupe__readout {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+  min-width: 0;
+  font-size: var(--t-meta);
+  color: var(--muted-dim);
+}
+.loupe__scale {
+  font-size: var(--t-small);
+  color: var(--muted);
+}
+/* Past the capture ceiling the image is drawn hard-edged and the number says so.
+   --data-warn, not --rec: this is a property of the recording being read, not a
+   live or interactive state, so it belongs to the DATA register. */
+.loupe__scale[data-past] {
+  color: var(--data-warn);
+}
+.loupe__note {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.loupe__dims {
+  margin-left: auto;
+  flex: none;
 }
 .bbox {
   position: absolute;
@@ -1067,9 +1224,12 @@ a:focus-visible {
   padding: 1px var(--s1);
   border-radius: 3px;
   white-space: nowrap;
-  max-width: 100vw;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* NO text-overflow. `bboxLabelFits` withholds a label that would not fit its
+     box untruncated — the rail's `labelFits` rule in two dimensions. On a
+     fit-to-stage keyframe almost every tag used to clip to two characters, and
+     a row reading `Ap…` `Re…` `Se…` says less than no tags at all. The panel's
+     matched list carries every label whole, and because the box grows with the
+     zoom the labels reappear in place as a reader zooms in. */
 }
 /* An element flush with the top of the frame has no room above it for its tag. */
 .bbox__label--inside {
@@ -1079,37 +1239,142 @@ a:focus-visible {
 .bbox__label--ax {
   background: var(--accent);
 }
+/* Spans both lower rows, so the panel runs the full height beside the stage and
+   its loupe. Ordered by the QUESTION each block answers — why this frame, what
+   matched, what it says, what was on screen, and only then the identifiers. */
 .detail__side {
+  grid-area: 2 / 2 / 4 / 3;
   padding: var(--s5);
+  border-left: 1px solid var(--hairline-soft);
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: var(--s4);
+  gap: var(--s5);
   min-width: 0;
   min-height: 0;
 }
-/* Full width beneath the meta grid, which is a two-column `dl` and no place for
-   an action. The grid's own top margin is inline, so this only needs its own. */
-.detail__open {
-  width: 100%;
-  margin-top: var(--s3);
-  justify-content: center;
-}
 .detail__close {
-  position: absolute;
-  top: var(--s3);
-  right: var(--s3);
+  flex: none;
   width: 30px;
   height: 30px;
   border-radius: 8px;
-  background: rgba(10, 13, 17, 0.7);
-  color: var(--text);
+  color: var(--muted);
   display: grid;
   place-items: center;
-  z-index: 2;
 }
 .detail__close:hover {
   background: var(--elevated);
+  color: var(--text);
+}
+/* The result row's own `.evidence` is pinned to the bottom of a stretched card
+   and cleared of a jump button absolutely positioned over that corner. Neither
+   is true here, and inheriting both put the bar at the foot of its section with
+   a 40px hole beside it. */
+.detail .evidence {
+  margin-top: 0;
+  padding-top: 0;
+  padding-right: 0;
+  border-top: none;
+}
+.detail__why {
+  font-size: var(--t-meta);
+  color: var(--muted);
+}
+/* One lane per row rather than the card's joined string: this is the surface
+   with room to name the rank each lane gave, which the card hides in a title. */
+.lanes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s0);
+  list-style: none;
+}
+.lanes__row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  font-size: var(--t-small);
+  color: var(--muted);
+}
+.lanes__name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.lanes__rank {
+  margin-left: auto;
+  flex: none;
+  font-size: var(--t-meta);
+  color: var(--muted-dim);
+}
+/* ---- matched regions ---------------------------------------------------- */
+
+.hits {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s0);
+  margin: 0 calc(var(--s1) * -1);
+}
+.hits__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--s0) var(--s2);
+  padding: var(--s1);
+  border-radius: 5px;
+  text-align: left;
+}
+.hits__row:hover:not(:disabled) {
+  background: var(--elevated);
+}
+.hits__row:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.hits__name {
+  font-size: var(--t-small);
+  color: var(--text);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.hits__by {
+  grid-column: 1;
+  font-size: var(--t-meta);
+  color: var(--muted-dim);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+/* AMBER, matching the box it points at — the panel row and the outline on the
+   frame are one claim shown twice. */
+.hits__strength {
+  grid-area: 1 / 2 / 3 / 3;
+  align-self: center;
+  width: 44px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--sunken);
+  overflow: hidden;
+}
+.hits__fill {
+  display: block;
+  height: 100%;
+  background: var(--amber);
+}
+/* The row and its box light together, so pointing at one names the other. */
+.bbox--active {
+  border-color: var(--amber);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.5),
+    0 0 12px rgba(255, 194, 75, 0.45);
+}
+.bbox--patch.bbox--active {
+  opacity: 1;
+}
+/* The row's locator is a 3px strip pinned to the card's bottom edge; in the
+   panel it is a block in the flow with room to breathe. */
+.locator--wide {
+  position: relative;
+  height: 4px;
+  border-radius: 2px;
+  margin-bottom: var(--s1);
 }
 .meta-grid {
   display: grid;
@@ -1143,7 +1408,15 @@ a:focus-visible {
   line-height: 1.55;
   color: var(--text);
 }
-.field__text.empty {
+/* A REAL modifier, not the bare `.empty`, which is the full-screen empty-state
+   block (`text-align: center` + 64px of vertical padding). `.field__text empty`
+   matched both, so every withheld line in this panel — "no digest", "no AX
+   captured for this frame" — sat centred inside a 148px box. Measured in the
+   running app: the AX field was 167px tall to hold one 20px line. Nothing
+   errors; `.field__text.empty` looks like a compound selector doing the whole
+   job, and the collision is invisible until you measure it. The repo-wide
+   identifier rule, caught by the audit rather than by reading. */
+.field__text--empty {
   color: var(--muted-dim);
   font-style: italic;
 }
@@ -1230,6 +1503,18 @@ a:focus-visible {
   margin-left: var(--s0);
   color: var(--muted-dim);
   font-size: var(--t-nano);
+}
+/* Had the keyboard. --data-signal, the same tone the rail gives an indexed
+   signal, because this is a fact read off the capture and not a control. */
+.axtree__focused {
+  flex: 0 0 auto;
+  margin-left: var(--s1);
+  padding: 0 var(--s1);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--data-signal) 22%, transparent);
+  color: var(--data-signal);
+  font-size: var(--t-nano);
+  letter-spacing: 0.06em;
 }
 .axtree__hint {
   font-size: var(--t-meta);
