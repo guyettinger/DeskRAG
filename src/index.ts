@@ -23,6 +23,20 @@ export * from "./embed/types.js";
 export { FakeEmbeddingProvider, FakeMultiVectorProvider } from "./embed/fake.js";
 export { OllamaTextEmbedding } from "./embed/ollama.js";
 /**
+ * What each selectable text model needs from the adapter, as data. Barrel-safe
+ * on purpose — plain objects, no native module — so a CONSUMER that only pins
+ * and downloads weights (the app's model manifest) can read the same prefixes
+ * and dimensions the adapter runs on, instead of restating them beside a
+ * download URL and drifting.
+ */
+export {
+  EMBEDDINGGEMMA_PROFILE,
+  NOMIC_PROFILE,
+  TEXT_PROFILES,
+  textProfile,
+} from "./embed/text-profiles.js";
+export type { TextModelId, TextModelProfile, TextOutput } from "./embed/text-profiles.js";
+/**
  * The composing provider — it partitions a level AND names each run in one
  * call. Barrel-safe like every other Ollama adapter: plain fetch, no native
  * module, so importing the package loads nothing until it runs.

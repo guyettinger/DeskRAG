@@ -4,9 +4,8 @@ import type { ProviderSettingsView } from "../src/shared/types.js";
 
 const base: ProviderSettingsView = {
   ollamaHost: "http://localhost:11434",
-  ollamaModel: "nomic-embed-text",
   ollamaCaptionModel: "qwen3-vl:4b",
-  textProvider: "ollama",
+  textModel: "nomic-embed-text-v1.5",
   imageProvider: "none",
   captionProvider: "none",
   rerankProvider: "none",

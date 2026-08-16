@@ -47,6 +47,29 @@ const DEFAULT_MODELS = join(
 );
 const MODELS = process.env.DESKRAG_MODELS_DIR || DEFAULT_MODELS;
 const MODEL_DIR = join(MODELS, "colmodernvbert-250m");
+/**
+ * The TEXT model, which now runs on every install rather than as an opt-in.
+ *
+ * Retiring the Ollama text lane moved this session from "a setting few people
+ * picked" to "the path every search takes", so it belongs under the same
+ * allocator the image model is checked against. Read from settings.json so the
+ * smoke exercises whichever model the app is actually configured to load.
+ */
+const SETTINGS = join(MODELS, "..", "settings.json");
+const TEXT_MODEL = (() => {
+  // DESKRAG_TEXT_MODEL exists so the model NOT currently selected can still be
+  // checked. Whichever one ships as the default, the other is one settings
+  // change away from running on every search, so both want an allocator run.
+  if (process.env.DESKRAG_TEXT_MODEL) return process.env.DESKRAG_TEXT_MODEL;
+  try {
+    return JSON.parse(readFileSync(SETTINGS, "utf8")).providers?.textModel ?? "nomic-embed-text-v1.5";
+  } catch {
+    return "nomic-embed-text-v1.5";
+  }
+})();
+const TEXT_DIR = join(MODELS, TEXT_MODEL);
+const TEXT_WEIGHTS =
+  TEXT_MODEL === "embeddinggemma-300m" ? "model_quantized.onnx" : "model_int8.onnx";
 const FIXTURE = join(ROOT, "test/fixtures/login.png");
 const ELECTRON = join(ROOT, "app/node_modules/.bin/electron");
 
@@ -126,6 +149,47 @@ if (process.parentPort) {
       }
     }
   }
+  /* --- the text lane, same allocator, same repetition rule --------------- */
+  if (existsSync(join(TEXT_DIR, TEXT_WEIGHTS))) {
+    const { OnnxTextEmbedding } = await import(`${D}/text.js`);
+    const { textProfile } = await import(
+      `file://${join(ROOT, "dist/embed/text-profiles.js")}`
+    );
+    const text = new OnnxTextEmbedding({
+      modelPath: join(TEXT_DIR, TEXT_WEIGHTS),
+      tokenizerPath: join(TEXT_DIR, "tokenizer.json"),
+      profile: textProfile(TEXT_MODEL),
+    });
+    // A BATCH, not one string: batch x seq is what sizes the activation block,
+    // and a single short input allocates too little to prove anything.
+    const batch = Array.from({ length: 16 }, (_, i) =>
+      `window ${i} — DeskRAG. http://localhost:5173/ localhost. clicked Merge pull request. ` +
+      "typed: npx vitest run test/dual-store.crash.test.ts",
+    );
+    let firstText;
+    for (let i = 1; i <= RUNS; i++) {
+      const t0 = Date.now();
+      const vecs = await text.embed(batch);
+      const secs = ((Date.now() - t0) / 1000).toFixed(1);
+      console.log(
+        `[smoke] text run ${i}/${RUNS} ok in ${secs}s vectors=${vecs.length}x${vecs[0].length} ` +
+          `rss=${gb(process.memoryUsage.rss())}GB`,
+      );
+      if (i === 1) {
+        firstText = vecs;
+      } else {
+        for (let k = 0; k < firstText[0].length; k++) {
+          if (firstText[0][k] !== vecs[0][k]) {
+            console.error(`FAIL: text run ${i} vector 0 differs from run 1 at index ${k}`);
+            process.exit(1);
+          }
+        }
+      }
+    }
+  } else {
+    console.log(`[smoke] no text weights at ${TEXT_DIR} — text lane skipped`);
+  }
+
   process.exit(0);
 }
 
@@ -153,7 +217,7 @@ if (process.versions.electron) {
             `both enableCpuMemArena and enableMemPattern must be false.`,
         );
       } else {
-        console.log(`\nPASS: ${RUNS} consecutive ColModernVBERT runs under Electron.`);
+        console.log(`\nPASS: ${RUNS} consecutive ColModernVBERT + text runs under Electron.`);
       }
       app.exit(code === 0 ? 0 : 1);
     });
@@ -180,6 +244,7 @@ if (process.versions.electron) {
   }
 
   console.log(`[smoke] models: ${MODEL_DIR}`);
+  console.log(`[smoke] text:   ${TEXT_DIR} (${TEXT_WEIGHTS})`);
   console.log(`[smoke] ${RUNS} runs under Electron (run 2 is the one that matters)`);
   const res = spawnSync(ELECTRON, [SELF, String(RUNS)], { stdio: "inherit" });
   process.exit(res.status ?? 1);

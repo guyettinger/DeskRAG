@@ -31,6 +31,8 @@
  * small enough to fetch on first use and accurate enough for desktop speech.
  */
 
+import type { TextModelId } from "@shared/types";
+
 export interface ModelFile {
   /** Path within the repo; the basename is what lands on disk. */
   path: string;
@@ -45,6 +47,13 @@ export interface ModelSpec {
   repo?: string;
   /** Commit SHA — never "main". Download entries only. */
   revision?: string;
+  /**
+   * Basename of the graph to open, when `files` holds more than one candidate.
+   * Named rather than inferred: an external-data export ships a `.onnx` and a
+   * `.onnx_data`, and picking by extension would work right up until a repo
+   * offers two quantizations.
+   */
+  weights?: string;
   files: ModelFile[];
 }
 
@@ -54,6 +63,7 @@ export const MODELS = {
     source: "download",
     repo: "nomic-ai/nomic-embed-text-v1.5",
     revision: "e9b6763023c676ca8431644204f50c2b100d9aab",
+    weights: "model_int8.onnx",
     files: [
       {
         path: "onnx/model_int8.onnx",
@@ -71,6 +81,61 @@ export const MODELS = {
         path: "tokenizer_config.json",
         sha256: "d7e0000bcc80134debd2222220427e6bf5fa20a669f40a0d0d1409cc18e0a9bc",
         bytes: 1191,
+      },
+    ],
+  },
+  /**
+   * The second selectable text model. Its profile lives in the library
+   * (`EMBEDDINGGEMMA_PROFILE`) — prefixes, pooling and dimensions are read from
+   * there, never restated here, because a download URL that disagrees with the
+   * adapter it feeds is exactly the drift this split exists to prevent.
+   *
+   * `onnx-community` rather than `google/embeddinggemma-300m`: the upstream repo
+   * is `gated: manual` on HuggingFace and this app downloads anonymously, so the
+   * official weights are unreachable rather than merely inconvenient.
+   *
+   * `model_quantized` (q8) rather than the smaller q4 or the half-size q4f16:
+   * EmbeddingGemma's activations do not support fp16, which rules out every f16
+   * variant outright, and q4 is a sharper quantization on a 300M model than this
+   * lane has ever measured. q8 is 309MB against nomic's 137MB.
+   *
+   * TWO files make the weights, not one. Every variant in this repo is exported
+   * with external data, so `model_quantized.onnx` is a 568KB GRAPH that is
+   * useless without `model_quantized.onnx_data` beside it. `ModelStore` flattens
+   * both to their basenames and the graph's reference is a bare filename, so
+   * they land as siblings and resolve — verified by loading this exact pair
+   * through `scripts/inspect-onnx.mjs`, which also pinned the I/O contract the
+   * profile declares: inputs `input_ids` + `attention_mask` ONLY (no
+   * token_type_ids, no position_ids), and outputs BOTH `last_hidden_state` and
+   * `sentence_embedding` — which is why the adapter names the output it wants
+   * instead of taking the first one.
+   */
+  embeddinggemma: {
+    id: "embeddinggemma-300m",
+    source: "download",
+    repo: "onnx-community/embeddinggemma-300m-ONNX",
+    revision: "5090578d9565bb06545b4552f76e6bc2c93e4a66",
+    weights: "model_quantized.onnx",
+    files: [
+      {
+        path: "onnx/model_quantized.onnx",
+        sha256: "172efde319fe1542dc41f31be6154910b05b78f7a861c265c4600eec906bd6d8",
+        bytes: 567874,
+      },
+      {
+        path: "onnx/model_quantized.onnx_data",
+        sha256: "705626e28e4c23c82ade34566b4197d97f534c12275fa406dfb71e9937d388c0",
+        bytes: 308890624,
+      },
+      {
+        path: "tokenizer.json",
+        sha256: "4dda02faaf32bc91031dc8c88457ac272b00c1016cc679757d1c441b248b9c47",
+        bytes: 20323312,
+      },
+      {
+        path: "tokenizer_config.json",
+        sha256: "3ca953eea6c3c9fcda9cf3df22949ff18b216f7c74bd6459230f3f1013953f3a",
+        bytes: 1156830,
       },
     ],
   },
@@ -151,3 +216,16 @@ export const MODELS = {
 } satisfies Record<string, ModelSpec>;
 
 export type ModelKey = keyof typeof MODELS;
+
+/**
+ * Which pinned download backs each selectable text model.
+ *
+ * Keyed by `TextModelId`, so adding a model to that union without pinning
+ * weights for it is a type error rather than a download that 404s on first
+ * search. The ids here must equal the library profile ids — they become the
+ * `model` segment of every namespace those vectors are written under.
+ */
+export const TEXT_MODEL_SPECS = {
+  "nomic-embed-text-v1.5": MODELS.text,
+  "embeddinggemma-300m": MODELS.embeddinggemma,
+} as const satisfies Record<TextModelId, ModelSpec>;

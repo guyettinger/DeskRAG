@@ -41,7 +41,8 @@
     "app:install": "npm --prefix app install",
     "app:dev": "npm run build && npm --prefix app run dev",
     "app:build": "npm run build && npm --prefix app run build",
-    "app:dist": "npm run build && npm --prefix app run dist"
+    "app:dist": "npm run build && npm --prefix app run dist",
+    "probe:embed": "node scripts/embed-probe.mjs"
   },
   "dependencies": {
     "@huggingface/tokenizers": "0.1.3",

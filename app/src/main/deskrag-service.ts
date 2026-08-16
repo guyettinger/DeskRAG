@@ -17,7 +17,6 @@ import { screen } from "electron";
 import {
   DualStore,
   BlobStore,
-  OllamaTextEmbedding,
   BehaviorFeatureExtractor,
   CaptureSession,
   FfmpegScreenProducer,
@@ -37,6 +36,7 @@ import {
   BehaviorViewSearcher,
   OllamaCaptionProvider,
   nestAxElements,
+  textProfile,
   wavPeaks,
   type Producer,
   type EmbeddingProvider,
@@ -49,7 +49,7 @@ import {
   type Graph,
 } from "deskrag";
 import type { SettingsStore } from "./settings.js";
-import { MODELS } from "./models.js";
+import { MODELS, TEXT_MODEL_SPECS } from "./models.js";
 import { libUrl } from "./lib-resolve.js";
 import { DEFAULT_GRAPH_ID, latestAt, rebuildGraph } from "./trace-index.js";
 import { planStages, reindexPlan, type StageFacts } from "./index-plan.js";
@@ -246,26 +246,26 @@ export class DeskRagService {
     const behavior = new BehaviorFeatureExtractor();
 
     // --- text embedder --------------------------------------------------------
-    let textEmbedder: EmbeddingProvider = new OllamaTextEmbedding({
-      host: p.ollamaHost,
-      model: p.ollamaModel,
-    });
-    if (p.textProvider === "onnx") {
-      const mod = await this.loadOnnx<typeof import("deskrag/embed/onnx/text")>(
-        "deskrag/embed/onnx/text",
-      );
-      if (!mod) {
-        throw new Error(
-          "Local text embedding is unavailable: onnxruntime-node failed to load.",
-        );
-      }
-      const dir = await this.models.ensure(MODELS.text);
-      textEmbedder = new mod.OnnxTextEmbedding({
-        modelPath: join(dir, "model_int8.onnx"),
-        tokenizerPath: join(dir, "tokenizer.json"),
-        session: this.onnx.session(join(dir, "model_int8.onnx")),
-      });
+    // One lane, always in-process. Text embedding used to default to Ollama,
+    // which put a daemon between a query and every text result on a default
+    // install; the model is now a pinned ONNX export chosen from a fixed menu.
+    const mod = await this.loadOnnx<typeof import("deskrag/embed/onnx/text")>(
+      "deskrag/embed/onnx/text",
+    );
+    if (!mod) {
+      throw new Error("Local text embedding is unavailable: onnxruntime-node failed to load.");
     }
+    const spec = TEXT_MODEL_SPECS[p.textModel];
+    const dir = await this.models.ensure(spec);
+    const weights = join(dir, spec.weights ?? "model_int8.onnx");
+    const textEmbedder: EmbeddingProvider = new mod.OnnxTextEmbedding({
+      modelPath: weights,
+      tokenizerPath: join(dir, "tokenizer.json"),
+      // The profile carries the prefixes, the pooling and the dimensions. Passing
+      // the model id alone would silently run this export on nomic's contract.
+      profile: textProfile(p.textModel),
+      session: this.onnx.session(weights),
+    });
 
     // --- visual path (ColModernVBERT, or nothing) -----------------------------
     let patchEmbedder: MultiVectorProvider | null = null;

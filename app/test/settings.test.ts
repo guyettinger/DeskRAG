@@ -30,7 +30,7 @@ function seedSignals(signals: Record<string, unknown>): void {
 describe("defaults", () => {
   it("ships with every optional model off", () => {
     const p = new SettingsStore(dir).view().providers;
-    expect(p.textProvider).toBe("ollama");
+    expect(p.textModel).toBe("nomic-embed-text-v1.5");
     expect(p.imageProvider).toBe("none");
     expect(p.captionProvider).toBe("none");
     expect(p.rerankProvider).toBe("none");
@@ -91,7 +91,7 @@ describe("unknown persisted values", () => {
     ["imageProvider", "voyage", "none"],
     ["captionProvider", "anthropic", "none"],
     ["rerankProvider", "anthropic", "none"],
-    ["textProvider", "gemini", "ollama"],
+    ["textModel", "text-embedding-3-large", "nomic-embed-text-v1.5"],
   ])("resets %s=%s to %s", (field, bad, expected) => {
     seed({ [field]: bad });
     expect(new SettingsStore(dir).view().providers[field as "imageProvider"]).toBe(expected);
@@ -123,6 +123,44 @@ describe("unknown persisted values", () => {
     expect(new SettingsStore(dir).migratedImageProvider).toBeNull();
   });
 
+  /**
+   * The retired text lane. Unlike imageProvider this is a removed KEY, not a
+   * removed value, so it cannot ride PROVIDER_VALUES/PROVIDER_MIGRATIONS.
+   */
+  it("migrates a persisted textProvider=ollama and says so", () => {
+    seed({ textProvider: "ollama", ollamaModel: "nomic-embed-text" });
+    const store = new SettingsStore(dir);
+    expect(store.view().providers.textModel).toBe("nomic-embed-text-v1.5");
+    // Every text vector this install holds is namespaced *:ollama:*, which
+    // nothing can query now — digest, caption, transcript and summary search
+    // are ALL empty until a re-index, so it must not be silent.
+    expect(store.migratedTextProvider).toBe("ollama");
+  });
+
+  /**
+   * An install already on ONNX lost NOTHING: its vectors sit in
+   * `*:onnx:nomic-embed-text-v1.5:768`, which is exactly what textModel now
+   * defaults to. Telling that user to re-index would be a lie costing an hour.
+   */
+  it("stays silent for an install already on the onnx lane", () => {
+    seed({ textProvider: "onnx" });
+    const store = new SettingsStore(dir);
+    expect(store.view().providers.textModel).toBe("nomic-embed-text-v1.5");
+    expect(store.migratedTextProvider).toBeNull();
+  });
+
+  it("drops the retired fields rather than persisting them forever", () => {
+    seed({ textProvider: "ollama", ollamaModel: "muse-glimmer:30b-mlx" });
+    const s = new SettingsStore(dir);
+    s.apply({ providers: { textModel: "embeddinggemma-300m" } });
+    const raw = JSON.parse(readFileSync(join(dir, "settings.json"), "utf8")) as {
+      providers: Record<string, unknown>;
+    };
+    expect(raw.providers.textProvider).toBeUndefined();
+    expect(raw.providers.ollamaModel).toBeUndefined();
+    expect(raw.providers.textModel).toBe("embeddinggemma-300m");
+  });
+
   it("does not migrate an unknown value — that resets", () => {
     seed({ imageProvider: "voyage" });
     const store = new SettingsStore(dir);
@@ -133,7 +171,7 @@ describe("unknown persisted values", () => {
   it("rewrites the reset value on the next persist", () => {
     seed({ imageProvider: "voyage" });
     const s = new SettingsStore(dir);
-    s.apply({ providers: { textProvider: "onnx" } });
+    s.apply({ providers: { textModel: "embeddinggemma-300m" } });
     const raw = JSON.parse(readFileSync(join(dir, "settings.json"), "utf8")) as {
       providers: Record<string, unknown>;
     };
@@ -141,10 +179,14 @@ describe("unknown persisted values", () => {
   });
 
   it("keeps valid siblings when resetting one field", () => {
-    seed({ imageProvider: "voyage", textProvider: "onnx", ollamaHost: "http://h:1" });
+    seed({
+      imageProvider: "voyage",
+      textModel: "embeddinggemma-300m",
+      ollamaHost: "http://h:1",
+    });
     const p = new SettingsStore(dir).view().providers;
     expect(p.imageProvider).toBe("none");
-    expect(p.textProvider).toBe("onnx");
+    expect(p.textModel).toBe("embeddinggemma-300m");
     expect(p.ollamaHost).toBe("http://h:1");
   });
 
@@ -174,14 +216,14 @@ describe("apply", () => {
     const s = new SettingsStore(dir);
     const v = s.apply({
       providers: {
-        textProvider: "onnx",
+        textModel: "embeddinggemma-300m",
         imageProvider: "colmodernvbert",
         captionProvider: "ollama",
         rerankProvider: "onnx",
         localModels: { dir: "/models" },
       },
     });
-    expect(v.providers.textProvider).toBe("onnx");
+    expect(v.providers.textModel).toBe("embeddinggemma-300m");
     expect(v.providers.imageProvider).toBe("colmodernvbert");
     expect(v.providers.localModels.dir).toBe("/models");
 
