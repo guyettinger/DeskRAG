@@ -257,6 +257,18 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
             </select>
           </div>
 
+          {/* Directly under the control it is about. The consequence is LARGER
+              than its image sibling's: that one cost the frame lane, this one
+              costs the text, caption, transcript and summary lanes at once. */}
+          {env?.migratedTextProvider && (
+            <div className="banner">
+              <span className="led" /> This install embedded text through Ollama, which has been
+              removed — the embedding model now runs in-process and needs no daemon. Everything
+              indexed under the old model is no longer searchable by text, caption, transcript or
+              summary. Re-index the library below to rebuild it.
+            </div>
+          )}
+
           <div className="form-row">
             <div>
               <label>Image model</label>
