@@ -85,13 +85,19 @@ if (rows.length === 0) {
 /**
  * The haystack is DISTINCT TEXT, not segments — and this is load-bearing.
  *
- * Measured on the real store: 750 segments carry a digest and 144 of them are
- * distinct. One string ("Calculator — Calculator. 1 click. clicked in
- * Calculator.") appears 85 times, because that is genuinely what happened 85
+ * Measured on LIB-14 (the author's 14-session library as of 2026-08-16, since
+ * reset — see docs/internals/models.md): 750 segments carried a digest and 144
+ * of them were distinct. One string ("Calculator — Calculator. 1 click. clicked
+ * in Calculator.") appeared 85 times, because that is genuinely what happened 85
  * times. Scoring "did the model return this exact segment id" against 85
  * byte-identical documents caps top-1 at 1/85 for that query, and the first
  * run of this probe duly reported 1-3% top-1 and a 28.6% MRR "lift" that was
  * entirely noise off an unreachable ceiling.
+ *
+ * That store is gone, but the RATIO is not specific to it: a digest is a window
+ * title plus a gesture, so any desktop corpus is mostly repeats. The header this
+ * probe prints reports both counts every run, so the ratio you are actually
+ * measuring against is never left implicit.
  *
  * Identical documents are ONE document. Ranking a tied duplicate is not an
  * error, so a hit is "the returned text equals the gold text", which restores
