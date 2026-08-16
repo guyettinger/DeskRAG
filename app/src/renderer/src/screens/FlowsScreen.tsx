@@ -79,7 +79,14 @@ export function FlowsScreen({ onOpenRecording }: Props): React.JSX.Element {
     [route],
   );
 
-  if (flows === undefined) return <div className="spinner" />;
+  if (flows === undefined)
+    return (
+      <div className="page">
+        <div className="loading">
+          <div className="spinner" />
+        </div>
+      </div>
+    );
 
   if (flows === null) {
     return (
@@ -116,7 +123,7 @@ export function FlowsScreen({ onOpenRecording }: Props): React.JSX.Element {
   };
 
   return (
-    <div className="page page--fill flows">
+    <div className="page flows">
       {/* The counts and the active filters ride IN the head rather than in a
           row beneath it. Two stacked header rows were doing one job, and this
           screen pays for height in canvas: the bar cost the graph ~40px, on top

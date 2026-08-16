@@ -70,7 +70,14 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
   // indicator subscribes for the lifetime of the view.
   useEffect(() => api.models.onDownload((p) => setDownload(p.done ? null : p)), []);
 
-  if (!s) return <div className="spinner" />;
+  if (!s)
+    return (
+      <div className="page">
+        <div className="loading">
+          <div className="spinner" />
+        </div>
+      </div>
+    );
 
   const flash = (): void => {
     setSaved(true);
@@ -203,451 +210,458 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
         </div>
       )}
 
-      <div className="card">
-        <h2>Models</h2>
-        <p className="sub">
-          Which local model backs each step of the pipeline. Everything but text embeddings can be
-          turned off.
-        </p>
+      {/* THE CARDS SCROLL, THE HEAD DOES NOT. Settings is four screenfuls
+          long and the page used to carry the whole scroll, so the title left
+          the window and there was nothing to tell you where you were. The two
+          confirm dialogs stay OUTSIDE this box: they are `position: fixed`. */}
+      <div className="settings">
+        <div className="card">
+          <h2>Models</h2>
+          <p className="sub">
+            Which local model backs each step of the pipeline. Everything but text embeddings can be
+            turned off.
+          </p>
 
-        {download && (
-          <div className="form-row">
-            <div>
-              <label>Downloading {download.modelId}</label>
-              <div className="desc">
-                {Math.round((download.receivedBytes / Math.max(1, download.totalBytes)) * 100)}% —
-                one-time
+          {download && (
+            <div className="form-row">
+              <div>
+                <label>Downloading {download.modelId}</label>
+                <div className="desc">
+                  {Math.round((download.receivedBytes / Math.max(1, download.totalBytes)) * 100)}% —
+                  one-time
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          )}
 
-        <div className="form-row">
-          <div>
-            <label>Text embeddings</label>
-            <div className="desc">ONNX runs in-process; Ollama needs the daemon running</div>
-          </div>
-          <select
-            value={p.textProvider}
-            onChange={(e) => void patchProviders({ textProvider: e.target.value as TextProvider })}
-          >
-            <option value="ollama">Ollama</option>
-            <option value="onnx">ONNX (in-process)</option>
-          </select>
-        </div>
-
-        <div className="form-row">
-          <div>
-            <label>Image model</label>
-            <div className="desc">
-              {lateInteraction
-                ? "Slower (seconds per frame), answers TEXT queries too, and highlights come from matched patches"
-                : "Off — search still answers from text and behavior, with AX-label highlights"}
+          <div className="form-row">
+            <div>
+              <label>Text embeddings</label>
+              <div className="desc">ONNX runs in-process; Ollama needs the daemon running</div>
             </div>
-          </div>
-          <select
-            value={p.imageProvider}
-            onChange={(e) => void patchProviders({ imageProvider: e.target.value as ImageProvider })}
-          >
-            <option value="none">None (text + behavior only)</option>
-            <option value="colmodernvbert">ColModernVBERT (late interaction)</option>
-          </select>
-        </div>
-
-        {env?.migratedImageProvider && (
-          <div className="banner">
-            <span className="led" /> This install was set to{" "}
-            {env.migratedImageProvider === "nomic" ? "Nomic Vision" : "ColSmol"}, which has been
-            removed — the image model is now ColModernVBERT. Frames indexed under the old model
-            are no longer searchable and their vector tables have been dropped. Re-index the
-            library below to rebuild them.
-          </div>
-        )}
-
-        {narrowForTiling && (
-          <div className="banner">
-            <span className="led" /> {imageModelName} needs keyframes at 2048px or wider — below
-            that its preprocessor upscales and match quality degrades without any visible error.
-            Yours is {s.signals.screen.imageMaxWidth}px.
-            <button
-              className="btn"
-              style={{ marginLeft: 12 }}
-              onClick={() => void patchSignals({ screen: { imageMaxWidth: 2560 } })}
+            <select
+              value={p.textProvider}
+              onChange={(e) => void patchProviders({ textProvider: e.target.value as TextProvider })}
             >
-              Set to 2560
-            </button>
+              <option value="ollama">Ollama</option>
+              <option value="onnx">ONNX (in-process)</option>
+            </select>
           </div>
-        )}
 
-        {lateInteraction && !s.signals.ax.enabled && (
-          <div className="banner">
-            <span className="led" /> Turn on accessibility capture for exact-text search — the image
-            model reads layout, not text, so AX labels are what match a typed phrase.
-            <button
-              className="btn"
-              style={{ marginLeft: 12 }}
-              onClick={() => void patchSignals({ ax: { enabled: true } })}
+          <div className="form-row">
+            <div>
+              <label>Image model</label>
+              <div className="desc">
+                {lateInteraction
+                  ? "Slower (seconds per frame), answers TEXT queries too, and highlights come from matched patches"
+                  : "Off — search still answers from text and behavior, with AX-label highlights"}
+              </div>
+            </div>
+            <select
+              value={p.imageProvider}
+              onChange={(e) => void patchProviders({ imageProvider: e.target.value as ImageProvider })}
             >
-              Enable AX
+              <option value="none">None (text + behavior only)</option>
+              <option value="colmodernvbert">ColModernVBERT (late interaction)</option>
+            </select>
+          </div>
+
+          {env?.migratedImageProvider && (
+            <div className="banner">
+              <span className="led" /> This install was set to{" "}
+              {env.migratedImageProvider === "nomic" ? "Nomic Vision" : "ColSmol"}, which has been
+              removed — the image model is now ColModernVBERT. Frames indexed under the old model
+              are no longer searchable and their vector tables have been dropped. Re-index the
+              library below to rebuild them.
+            </div>
+          )}
+
+          {narrowForTiling && (
+            <div className="banner">
+              <span className="led" /> {imageModelName} needs keyframes at 2048px or wider — below
+              that its preprocessor upscales and match quality degrades without any visible error.
+              Yours is {s.signals.screen.imageMaxWidth}px.
+              <button
+                className="btn"
+                style={{ marginLeft: 12 }}
+                onClick={() => void patchSignals({ screen: { imageMaxWidth: 2560 } })}
+              >
+                Set to 2560
+              </button>
+            </div>
+          )}
+
+          {lateInteraction && !s.signals.ax.enabled && (
+            <div className="banner">
+              <span className="led" /> Turn on accessibility capture for exact-text search — the image
+              model reads layout, not text, so AX labels are what match a typed phrase.
+              <button
+                className="btn"
+                style={{ marginLeft: 12 }}
+                onClick={() => void patchSignals({ ax: { enabled: true } })}
+              >
+                Enable AX
+              </button>
+            </div>
+          )}
+
+          <div className="form-row">
+            <div>
+              <label>Captions</label>
+              <div className="desc">
+                {visionModels.length > 0
+                  ? "A local VLM describes each keyframe"
+                  : "No local vision model — run: ollama pull qwen3-vl:4b"}
+              </div>
+            </div>
+            <select
+              value={p.captionProvider}
+              disabled={visionModels.length === 0 && p.captionProvider === "none"}
+              onChange={(e) =>
+                void patchProviders({ captionProvider: e.target.value as CaptionProvider })
+              }
+            >
+              <option value="none">None</option>
+              <option value="ollama">Ollama (local VLM)</option>
+            </select>
+          </div>
+
+          <div className="form-row">
+            <div>
+              <label>Task summaries</label>
+              <div className="desc">
+                {chatModels.length > 0
+                  ? "A local LLM groups actions into tasks and names each one"
+                  : "No local chat model — run: ollama pull qwen3:4b"}
+              </div>
+            </div>
+            <select
+              value={p.summaryProvider}
+              disabled={chatModels.length === 0 && p.summaryProvider === "none"}
+              onChange={(e) =>
+                void patchProviders({ summaryProvider: e.target.value as SummaryProvider })
+              }
+            >
+              {/* "None" still builds the whole hierarchy — structurally, with
+                  templated rollups. This picker only changes the prose. */}
+              <option value="none">None (structural)</option>
+              <option value="ollama">Ollama (local LLM)</option>
+            </select>
+          </div>
+
+          <div className="form-row">
+            <div>
+              <label>Rerank (Tier 4)</label>
+              <div className="desc">A cross-encoder reorders the top text results</div>
+            </div>
+            <select
+              value={p.rerankProvider}
+              onChange={(e) =>
+                void patchProviders({
+                  rerankProvider: e.target.value as ProviderSettingsView["rerankProvider"],
+                })
+              }
+            >
+              <option value="none">None</option>
+              <option value="onnx">Local cross-encoder</option>
+            </select>
+          </div>
+
+          <div className="form-row">
+            <div>
+              <label>Model directory</label>
+              <div className="desc">Leave blank for managed downloads under the app data dir</div>
+            </div>
+            <input
+              className="mono"
+              type="text"
+              placeholder="(managed)"
+              value={p.localModels.dir}
+              onChange={(e) => void patchProviders({ localModels: { dir: e.target.value } })}
+            />
+          </div>
+        </div>
+
+        <div className="card">
+          <h2>Ollama</h2>
+          <p className="sub">
+            Used for whichever steps above are set to Ollama. The daemon must be running on this
+            host.
+          </p>
+          <div className="form-row">
+            <label>Host</label>
+            <input
+              className="mono"
+              type="text"
+              value={p.ollamaHost}
+              onChange={(e) => void patchProviders({ ollamaHost: e.target.value })}
+            />
+          </div>
+          <div className="form-row">
+            <div>
+              <label>Embedding model</label>
+              <div className="desc">Powers digest, caption, and transcript search</div>
+            </div>
+            <input
+              className="mono"
+              type="text"
+              value={p.ollamaModel}
+              onChange={(e) => void patchProviders({ ollamaModel: e.target.value })}
+            />
+          </div>
+          <div className="form-row">
+            <div>
+              <label>Caption model</label>
+              <div className="desc">
+                {visionModels.length > 0
+                  ? "Vision models pulled on this machine"
+                  : "None pulled — run: ollama pull qwen3-vl:4b"}
+              </div>
+            </div>
+            <select
+              value={p.ollamaCaptionModel}
+              disabled={visionModels.length === 0}
+              onChange={(e) => void patchProviders({ ollamaCaptionModel: e.target.value })}
+            >
+              {/* Sourced from /api/tags, never hardcoded: Ollama's library now
+                  includes cloud-hosted models, and listing one here would send
+                  screenshots off the machine. */}
+              {visionModels.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+              {visionModels.length === 0 && <option value={p.ollamaCaptionModel}>—</option>}
+            </select>
+          </div>
+          <div className="form-row">
+            <div>
+              <label>Summary model</label>
+              <div className="desc">
+                {chatModels.length > 0
+                  ? "Chat models pulled on this machine"
+                  : "None pulled — run: ollama pull qwen3:4b"}
+              </div>
+            </div>
+            <select
+              value={p.ollamaSummaryModel}
+              disabled={chatModels.length === 0}
+              onChange={(e) => void patchProviders({ ollamaSummaryModel: e.target.value })}
+            >
+              {/* /api/tags again, same reason: a cloud-hosted entry offered here
+                  would send a recording's own text off the machine. */}
+              {chatModels.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+              {chatModels.length === 0 && <option value={p.ollamaSummaryModel}>—</option>}
+            </select>
+          </div>
+        </div>
+
+        <div className="card">
+          <h2>Transcription (local Whisper)</h2>
+          <p className="sub">
+            Recorded audio is transcribed by a local whisper.cpp binary. The model downloads
+            automatically on the first transcript — leave the model path empty to use it.{" "}
+            {env?.whisperConfigured ? "Ready." : "Audio is stored, but not transcribed."}
+          </p>
+
+          {/* Installing the binary changes nothing the app notices on its own, so
+              the probe needs a way to be re-run without restarting. */}
+          {env && !env.whisperConfigured && (
+            <div className="banner">
+              <span className="led" /> No whisper.cpp binary found. Install one with{" "}
+              <span className="mono">brew install whisper-cpp</span>, or point the path below at
+              your own build.
+              <button className="btn" style={{ marginLeft: 12 }} onClick={refreshEnv}>
+                Re-check
+              </button>
+            </div>
+          )}
+          <div className="form-row">
+            <div>
+              <label>Binary path</label>
+              <div className="desc">Optional — empty looks up whisper-cli on PATH</div>
+            </div>
+            <input
+              className="mono"
+              type="text"
+              value={p.whisper.binaryPath}
+              onChange={(e) => void patchProviders({ whisper: { binaryPath: e.target.value } })}
+              placeholder="whisper-cli"
+            />
+          </div>
+          <div className="form-row">
+            <div>
+              <label>Model path</label>
+              <div className="desc">Optional — empty uses the managed base.en model</div>
+            </div>
+            <input
+              className="mono"
+              type="text"
+              value={p.whisper.modelPath}
+              onChange={(e) => void patchProviders({ whisper: { modelPath: e.target.value } })}
+              placeholder="/path/to/ggml-base.en.bin"
+            />
+          </div>
+        </div>
+
+        <div className="card">
+          <h2>Capture defaults</h2>
+          <p className="sub">
+            Applied to new recordings. Toggle which signals record on the Record tab.
+          </p>
+          <div className="form-row">
+            <label>Screen frame rate</label>
+            <input
+              type="number"
+              min={1}
+              max={10}
+              value={s.signals.screen.fps}
+              onChange={(e) => void patchSignals({ screen: { fps: Number(e.target.value) } })}
+            />
+          </div>
+          <div className="form-row">
+            <div>
+              <label>Keyframe max width</label>
+              <div className="desc">2048 or more when an image model is on</div>
+            </div>
+            <input
+              type="number"
+              min={320}
+              max={3840}
+              step={80}
+              value={s.signals.screen.imageMaxWidth}
+              onChange={(e) =>
+                void patchSignals({ screen: { imageMaxWidth: Number(e.target.value) } })
+              }
+            />
+          </div>
+          <div className="form-row">
+            <div>
+              <label>Audio device</label>
+              <div className="desc">
+                <span className="mono">:default</span> follows macOS Sound. An index like{" "}
+                <span className="mono">:2</span> picks one device — check it with{" "}
+                <span className="mono">ffmpeg -f avfoundation -list_devices true -i ""</span>,
+                since index 0 is often a virtual device that records silence.
+              </div>
+            </div>
+            <input
+              className="mono"
+              type="text"
+              value={s.signals.audio.device}
+              onChange={(e) => void patchSignals({ audio: { device: e.target.value } })}
+              placeholder=":default"
+            />
+          </div>
+          <div className="form-row">
+            <label>Audio chunk seconds</label>
+            <input
+              type="number"
+              min={2}
+              max={30}
+              value={s.signals.audio.chunkSeconds}
+              onChange={(e) => void patchSignals({ audio: { chunkSeconds: Number(e.target.value) } })}
+            />
+          </div>
+        </div>
+
+        <McpPane mcp={s.mcp} onPatch={patchMcp} />
+
+        <div className="card">
+          <h2>Maintenance</h2>
+          <p className="sub">Housekeeping for what has been recorded and downloaded on this machine.</p>
+          <div className="form-row">
+            <div>
+              <label>Re-index library</label>
+              <div className="desc">
+                Discards everything indexing derived — segments, regions, captions, transcripts,
+                summaries, the search index — and builds it again from the raw capture, which is
+                never touched. Needed for anything recorded before the digest carried window
+                titles, typed text and clicked labels, and for text search to return anything from
+                a recording indexed with no image provider. Asks first: it rebuilds with the
+                providers set now, and runs the models.
+              </div>
+            </div>
+            <button
+              className="btn ghost"
+              onClick={() => {
+                setReindexError(null);
+                setReindexAllConfirming(true);
+              }}
+              disabled={reindexingAll || reindexing}
+            >
+              {reindexingAll ? "Re-indexing…" : "Re-index library"}
             </button>
           </div>
-        )}
 
-        <div className="form-row">
-          <div>
-            <label>Captions</label>
-            <div className="desc">
-              {visionModels.length > 0
-                ? "A local VLM describes each keyframe"
-                : "No local vision model — run: ollama pull qwen3-vl:4b"}
+          <div className="form-row">
+            <div>
+              <label>Trace graph</label>
+              <div className="desc">
+                Re-lifts every recording into a fresh trace graph. Nothing is re-recorded, and no
+                video or keyframe is touched. Needed after a lift-rule change, or if the Flows
+                screen says the graph was built before recordings were tracked.
+              </div>
             </div>
-          </div>
-          <select
-            value={p.captionProvider}
-            disabled={visionModels.length === 0 && p.captionProvider === "none"}
-            onChange={(e) =>
-              void patchProviders({ captionProvider: e.target.value as CaptionProvider })
-            }
-          >
-            <option value="none">None</option>
-            <option value="ollama">Ollama (local VLM)</option>
-          </select>
-        </div>
-
-        <div className="form-row">
-          <div>
-            <label>Task summaries</label>
-            <div className="desc">
-              {chatModels.length > 0
-                ? "A local LLM groups actions into tasks and names each one"
-                : "No local chat model — run: ollama pull qwen3:4b"}
-            </div>
-          </div>
-          <select
-            value={p.summaryProvider}
-            disabled={chatModels.length === 0 && p.summaryProvider === "none"}
-            onChange={(e) =>
-              void patchProviders({ summaryProvider: e.target.value as SummaryProvider })
-            }
-          >
-            {/* "None" still builds the whole hierarchy — structurally, with
-                templated rollups. This picker only changes the prose. */}
-            <option value="none">None (structural)</option>
-            <option value="ollama">Ollama (local LLM)</option>
-          </select>
-        </div>
-
-        <div className="form-row">
-          <div>
-            <label>Rerank (Tier 4)</label>
-            <div className="desc">A cross-encoder reorders the top text results</div>
-          </div>
-          <select
-            value={p.rerankProvider}
-            onChange={(e) =>
-              void patchProviders({
-                rerankProvider: e.target.value as ProviderSettingsView["rerankProvider"],
-              })
-            }
-          >
-            <option value="none">None</option>
-            <option value="onnx">Local cross-encoder</option>
-          </select>
-        </div>
-
-        <div className="form-row">
-          <div>
-            <label>Model directory</label>
-            <div className="desc">Leave blank for managed downloads under the app data dir</div>
-          </div>
-          <input
-            className="mono"
-            type="text"
-            placeholder="(managed)"
-            value={p.localModels.dir}
-            onChange={(e) => void patchProviders({ localModels: { dir: e.target.value } })}
-          />
-        </div>
-      </div>
-
-      <div className="card">
-        <h2>Ollama</h2>
-        <p className="sub">
-          Used for whichever steps above are set to Ollama. The daemon must be running on this
-          host.
-        </p>
-        <div className="form-row">
-          <label>Host</label>
-          <input
-            className="mono"
-            type="text"
-            value={p.ollamaHost}
-            onChange={(e) => void patchProviders({ ollamaHost: e.target.value })}
-          />
-        </div>
-        <div className="form-row">
-          <div>
-            <label>Embedding model</label>
-            <div className="desc">Powers digest, caption, and transcript search</div>
-          </div>
-          <input
-            className="mono"
-            type="text"
-            value={p.ollamaModel}
-            onChange={(e) => void patchProviders({ ollamaModel: e.target.value })}
-          />
-        </div>
-        <div className="form-row">
-          <div>
-            <label>Caption model</label>
-            <div className="desc">
-              {visionModels.length > 0
-                ? "Vision models pulled on this machine"
-                : "None pulled — run: ollama pull qwen3-vl:4b"}
-            </div>
-          </div>
-          <select
-            value={p.ollamaCaptionModel}
-            disabled={visionModels.length === 0}
-            onChange={(e) => void patchProviders({ ollamaCaptionModel: e.target.value })}
-          >
-            {/* Sourced from /api/tags, never hardcoded: Ollama's library now
-                includes cloud-hosted models, and listing one here would send
-                screenshots off the machine. */}
-            {visionModels.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-            {visionModels.length === 0 && <option value={p.ollamaCaptionModel}>—</option>}
-          </select>
-        </div>
-        <div className="form-row">
-          <div>
-            <label>Summary model</label>
-            <div className="desc">
-              {chatModels.length > 0
-                ? "Chat models pulled on this machine"
-                : "None pulled — run: ollama pull qwen3:4b"}
-            </div>
-          </div>
-          <select
-            value={p.ollamaSummaryModel}
-            disabled={chatModels.length === 0}
-            onChange={(e) => void patchProviders({ ollamaSummaryModel: e.target.value })}
-          >
-            {/* /api/tags again, same reason: a cloud-hosted entry offered here
-                would send a recording's own text off the machine. */}
-            {chatModels.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-            {chatModels.length === 0 && <option value={p.ollamaSummaryModel}>—</option>}
-          </select>
-        </div>
-      </div>
-
-      <div className="card">
-        <h2>Transcription (local Whisper)</h2>
-        <p className="sub">
-          Recorded audio is transcribed by a local whisper.cpp binary. The model downloads
-          automatically on the first transcript — leave the model path empty to use it.{" "}
-          {env?.whisperConfigured ? "Ready." : "Audio is stored, but not transcribed."}
-        </p>
-
-        {/* Installing the binary changes nothing the app notices on its own, so
-            the probe needs a way to be re-run without restarting. */}
-        {env && !env.whisperConfigured && (
-          <div className="banner">
-            <span className="led" /> No whisper.cpp binary found. Install one with{" "}
-            <span className="mono">brew install whisper-cpp</span>, or point the path below at
-            your own build.
-            <button className="btn" style={{ marginLeft: 12 }} onClick={refreshEnv}>
-              Re-check
+            <button
+              className="btn ghost"
+              onClick={() => void reindex()}
+              disabled={reindexing || reindexingAll}
+            >
+              {reindexing ? "Rebuilding…" : "Rebuild trace graph"}
             </button>
           </div>
-        )}
-        <div className="form-row">
-          <div>
-            <label>Binary path</label>
-            <div className="desc">Optional — empty looks up whisper-cli on PATH</div>
+
+          {reindexed && (
+            <div className="banner" style={{ marginTop: 16 }}>
+              <span className="led" /> {reindexed}
+            </div>
+          )}
+
+          {reindexError && (
+            <div className="banner" style={{ marginTop: 16 }}>
+              <span className="led" /> {reindexError}
+            </div>
+          )}
+
+          <div className="form-row">
+            <div>
+              <label>Reset application</label>
+              <div className="desc">
+                Deletes every recording, the trace graph, the search index, and downloaded model
+                weights, and returns settings to their defaults. A custom Model directory (above)
+                lives outside the app data dir and is not touched. The app relaunches once it's
+                done. This cannot be undone.
+              </div>
+            </div>
+            <button
+              className="btn danger"
+              onClick={() => {
+                setResetConfirmText("");
+                setResetError(null);
+                setResetConfirming(true);
+              }}
+            >
+              Reset application…
+            </button>
           </div>
-          <input
-            className="mono"
-            type="text"
-            value={p.whisper.binaryPath}
-            onChange={(e) => void patchProviders({ whisper: { binaryPath: e.target.value } })}
-            placeholder="whisper-cli"
-          />
         </div>
-        <div className="form-row">
-          <div>
-            <label>Model path</label>
-            <div className="desc">Optional — empty uses the managed base.en model</div>
-          </div>
-          <input
-            className="mono"
-            type="text"
-            value={p.whisper.modelPath}
-            onChange={(e) => void patchProviders({ whisper: { modelPath: e.target.value } })}
-            placeholder="/path/to/ggml-base.en.bin"
-          />
-        </div>
+
+        {/*
+          A re-index is destructive of everything DERIVED, and the two lines below
+          are the part a row of prose cannot carry: what comes back depends on what
+          is configured right now. Re-indexing with no captioner discards every
+          caption for good — the pixels are still on disk, but only a run with a
+          captioner will turn them back into text. No typed word to confirm, unlike
+          Reset: nothing recorded is lost, and everything here is recomputable by a
+          later run that has the provider.
+        */}
       </div>
 
-      <div className="card">
-        <h2>Capture defaults</h2>
-        <p className="sub">
-          Applied to new recordings. Toggle which signals record on the Record tab.
-        </p>
-        <div className="form-row">
-          <label>Screen frame rate</label>
-          <input
-            type="number"
-            min={1}
-            max={10}
-            value={s.signals.screen.fps}
-            onChange={(e) => void patchSignals({ screen: { fps: Number(e.target.value) } })}
-          />
-        </div>
-        <div className="form-row">
-          <div>
-            <label>Keyframe max width</label>
-            <div className="desc">2048 or more when an image model is on</div>
-          </div>
-          <input
-            type="number"
-            min={320}
-            max={3840}
-            step={80}
-            value={s.signals.screen.imageMaxWidth}
-            onChange={(e) =>
-              void patchSignals({ screen: { imageMaxWidth: Number(e.target.value) } })
-            }
-          />
-        </div>
-        <div className="form-row">
-          <div>
-            <label>Audio device</label>
-            <div className="desc">
-              <span className="mono">:default</span> follows macOS Sound. An index like{" "}
-              <span className="mono">:2</span> picks one device — check it with{" "}
-              <span className="mono">ffmpeg -f avfoundation -list_devices true -i ""</span>,
-              since index 0 is often a virtual device that records silence.
-            </div>
-          </div>
-          <input
-            className="mono"
-            type="text"
-            value={s.signals.audio.device}
-            onChange={(e) => void patchSignals({ audio: { device: e.target.value } })}
-            placeholder=":default"
-          />
-        </div>
-        <div className="form-row">
-          <label>Audio chunk seconds</label>
-          <input
-            type="number"
-            min={2}
-            max={30}
-            value={s.signals.audio.chunkSeconds}
-            onChange={(e) => void patchSignals({ audio: { chunkSeconds: Number(e.target.value) } })}
-          />
-        </div>
-      </div>
-
-      <McpPane mcp={s.mcp} onPatch={patchMcp} />
-
-      <div className="card">
-        <h2>Maintenance</h2>
-        <p className="sub">Housekeeping for what has been recorded and downloaded on this machine.</p>
-        <div className="form-row">
-          <div>
-            <label>Re-index library</label>
-            <div className="desc">
-              Discards everything indexing derived — segments, regions, captions, transcripts,
-              summaries, the search index — and builds it again from the raw capture, which is
-              never touched. Needed for anything recorded before the digest carried window
-              titles, typed text and clicked labels, and for text search to return anything from
-              a recording indexed with no image provider. Asks first: it rebuilds with the
-              providers set now, and runs the models.
-            </div>
-          </div>
-          <button
-            className="btn ghost"
-            onClick={() => {
-              setReindexError(null);
-              setReindexAllConfirming(true);
-            }}
-            disabled={reindexingAll || reindexing}
-          >
-            {reindexingAll ? "Re-indexing…" : "Re-index library"}
-          </button>
-        </div>
-
-        <div className="form-row">
-          <div>
-            <label>Trace graph</label>
-            <div className="desc">
-              Re-lifts every recording into a fresh trace graph. Nothing is re-recorded, and no
-              video or keyframe is touched. Needed after a lift-rule change, or if the Flows
-              screen says the graph was built before recordings were tracked.
-            </div>
-          </div>
-          <button
-            className="btn ghost"
-            onClick={() => void reindex()}
-            disabled={reindexing || reindexingAll}
-          >
-            {reindexing ? "Rebuilding…" : "Rebuild trace graph"}
-          </button>
-        </div>
-
-        {reindexed && (
-          <div className="banner" style={{ marginTop: 16 }}>
-            <span className="led" /> {reindexed}
-          </div>
-        )}
-
-        {reindexError && (
-          <div className="banner" style={{ marginTop: 16 }}>
-            <span className="led" /> {reindexError}
-          </div>
-        )}
-
-        <div className="form-row">
-          <div>
-            <label>Reset application</label>
-            <div className="desc">
-              Deletes every recording, the trace graph, the search index, and downloaded model
-              weights, and returns settings to their defaults. A custom Model directory (above)
-              lives outside the app data dir and is not touched. The app relaunches once it's
-              done. This cannot be undone.
-            </div>
-          </div>
-          <button
-            className="btn danger"
-            onClick={() => {
-              setResetConfirmText("");
-              setResetError(null);
-              setResetConfirming(true);
-            }}
-          >
-            Reset application…
-          </button>
-        </div>
-      </div>
-
-      {/*
-        A re-index is destructive of everything DERIVED, and the two lines below
-        are the part a row of prose cannot carry: what comes back depends on what
-        is configured right now. Re-indexing with no captioner discards every
-        caption for good — the pixels are still on disk, but only a run with a
-        captioner will turn them back into text. No typed word to confirm, unlike
-        Reset: nothing recorded is lost, and everything here is recomputable by a
-        later run that has the provider.
-      */}
       {reindexAllConfirming && (
         <div
           className="overlay"

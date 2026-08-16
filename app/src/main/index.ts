@@ -87,7 +87,10 @@ function createWindow(): void {
     minHeight: 600,
     show: false,
     title: "DeskRAG",
-    backgroundColor: "#0f1115",
+    // EXACTLY the renderer's --ink. It was #0f1115 — one digit off, so the frame
+    // Electron paints before the renderer's first paint was a different
+    // near-black from the one that replaced it.
+    backgroundColor: "#0f1216",
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     icon: brandAsset("icon.png"),
     webPreferences: {

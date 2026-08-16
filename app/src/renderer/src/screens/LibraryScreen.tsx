@@ -79,10 +79,17 @@ export function LibraryScreen({ openAt, onOpened }: Props = {}): React.JSX.Eleme
     }
   };
 
-  if (!sessions) return <div className="spinner" />;
+  if (!sessions)
+    return (
+      <div className="page">
+        <div className="loading">
+          <div className="spinner" />
+        </div>
+      </div>
+    );
 
   return (
-    <div className="page page--fill">
+    <div className="page">
       <div className="page__head">
         <span className="eyebrow">Library</span>
         <h1>Your recordings</h1>
@@ -179,7 +186,9 @@ export function LibraryScreen({ openAt, onOpened }: Props = {}): React.JSX.Eleme
                 <SessionPlayer key={detail.id} detail={detail} seekTo={seekTo} />
               </>
             ) : (
-              <div className="spinner" />
+              <div className="loading">
+                <div className="spinner" />
+              </div>
             )}
           </div>
         </div>

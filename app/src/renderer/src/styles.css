@@ -15,11 +15,35 @@
   --muted: #7e8a99;
   --muted-dim: #5a6472;
 
-  --accent: #7c9cff; /* interactive */
+  /* THE ACCENT IS THE MARK'S OWN HUE, and it is a ROTATION, not a new colour.
+     It was #7c9cff — OKLCH L 0.7122 C 0.1492 H 268.9 — against the logo's hem
+     (`ghostBot` #A18AF5, scripts/brand/geometry.ts) at L 0.6993 C 0.1538
+     H 291.8. The two were the same colour 23 degrees apart, and the brand spec
+     says why: ghostBot was the reference art's violet nudged TOWARD --accent so
+     the mark would read as part of the UI. The nudge was never finished from
+     this side, so no brand hex appeared anywhere in this sheet and the one
+     interactive colour in the app disagreed with the one picture of it.
+     This holds L and C EXACTLY and sets H to the mark's: round-tripped,
+     L 0.7127 C 0.1491 H 291.9. The instrument/data lightness separation below
+     is therefore untouched (0.713, well above the 0.665 ceiling).
+     It also repairs a latent collision: the old accent sat 1.2 DEGREES of hue
+     from --data-6 (#5f80e0 periwinkle) — an instrument colour and a lane colour
+     on one hue, held apart by lightness alone. That gap is now 24.2 degrees. */
+  --accent: #a58ff7; /* interactive */
   --accent-ink: #0f1216;
   --rec: #ff5a4d; /* live / recording only */
   --amber: #ffc24b; /* search-hit region highlights (AX selection uses --accent) */
   --ok: #58d5a3;
+
+  /* The mark's two violets, verbatim from scripts/brand/geometry.ts, for the
+     places the BRAND speaks as itself rather than as a control. They are not
+     interactive colours and must not be used as one: --accent does that job.
+     Deliberately narrow — the wordmark, the ghost's grounds, and the contact
+     rule's glow. The neutrals need no equivalent: the logo's `face` #12161C is
+     already effectively --ink and its `desk` #8A93A3 is already effectively
+     --muted, which is why only the accent hue ever had to move. */
+  --brand-violet: #a18af5; /* the ghost's hem */
+  --brand-deep: #6d5bd0; /* its contact shadow on the desk */
 
   /* --- data colours ------------------------------------------------------
      TWO CHROMA REGISTERS, SEPARATED BY LIGHTNESS, and that separation is the
@@ -93,6 +117,9 @@
   --t-lead: 14px;
   --t-title: 16px;
   --t-head: 20px;
+  /* Unreferenced since every page head condensed to --t-head. Kept, not
+     deleted: it is the scale's step above --t-head, and removing a step is a
+     claim about the scale rather than a consequence of one layout change. */
   --t-page: 26px;
   --t-display: 44px; /* the record timer — the one number read across a room */
 
@@ -136,6 +163,24 @@ a:focus-visible {
   outline-offset: 2px;
 }
 
+/* Scrollbars, on the panes that scroll. This pass moved the scroll off the page
+   and INTO the panes, which put a scrollbar inside the instrument instead of at
+   its edge — and the platform default is a wide light track that reads as a
+   foreign object on a dark panel. Thin, and drawn in the sheet's own hairline.
+   `.tracks__body` is deliberately excluded: it hides its scrollbar entirely
+   (`scrollbar-width: none`), because a classic scrollbar steals width from the
+   RIGHT END OF THE AXIS ONLY and would tilt the rail's whole alignment. */
+.content,
+.settings,
+.results,
+.library__list,
+.routes__list,
+.detail__side,
+.mcp-log {
+  scrollbar-width: thin;
+  scrollbar-color: var(--hairline) transparent;
+}
+
 .mono {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
@@ -176,12 +221,17 @@ a:focus-visible {
   gap: var(--s1);
   padding: var(--s2) 0 var(--s4);
 }
+/* The wordmark under the mark, in the mark's OWN violet rather than --muted.
+   The lockup (assets/deskrag-logo.svg) sets "Desk" in slate and "RAG" in
+   #A18AF5; rendered here as grey UI text it read as a caption on the ghost
+   instead of as half of a logo. --brand-violet and not --accent: this is the
+   brand naming itself, not a control, and it must not read as clickable. */
 .rail__brand-word {
   font-family: var(--font-mono);
   font-weight: 700;
   font-size: var(--t-micro);
   letter-spacing: 0.08em;
-  color: var(--muted);
+  color: var(--brand-violet);
 }
 /* The generated SVG carries its own 256x256 width/height; override so the
    inlined mark fills whatever box GhostMark's `size` prop sets. */
@@ -224,6 +274,46 @@ a:focus-visible {
 .rail__item.is-active {
   background: color-mix(in srgb, var(--accent) 16%, transparent);
   color: var(--accent);
+}
+
+/* ---- the contact rule ----------------------------------------------------
+   THE MARK'S OWN GEOMETRY, AS THE ONE WAY THE APP SAYS "THIS IS THE CURRENT
+   THING". The DeskRAG ghost hovers over a rounded desk bar and casts a soft
+   violet contact shadow onto it (scripts/brand/geometry.ts: a 216x7 r3.5 bar,
+   and a radial #6D5BD0 ellipse over it). An active item does the same.
+
+   It REPLACES three ad-hoc treatments rather than adding a fourth: the nav item
+   had a tinted pill, the session card an `inset 2px 0 0` left rule, the route
+   row a tint and nothing else — three answers to one question, so "selected"
+   looked different depending on which screen you were on. The tints stay as the
+   quiet half; this is the part that reads across the room.
+
+   Written out per selector and NEVER as a bare `.is-active`: in a sheet with no
+   scoping a class is a repo-wide identifier, and a bare rule would silently
+   claim every future use of the name. There are exactly three today
+   (App.tsx:93, RouteList.tsx:50, LibraryScreen.tsx:110).
+
+   A `box-shadow` for the glow, so it paints OUTSIDE the box and costs no
+   layout — the same reason `.tracks__span` uses a ring rather than a border. */
+.rail__item.is-active,
+.routes__item.is-active {
+  position: relative;
+}
+.rail__item.is-active::after,
+.sessioncard.is-active::after,
+.routes__item.is-active::after {
+  content: "";
+  position: absolute;
+  /* Inset from the sides like the desk bar under the ghost, which is narrower
+     than the art it carries. */
+  left: var(--s2);
+  right: var(--s2);
+  bottom: 0;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 2px 7px color-mix(in srgb, var(--brand-deep) 60%, transparent);
+  pointer-events: none;
 }
 .rail__spacer {
   flex: 1;
@@ -321,58 +411,105 @@ a:focus-visible {
   overflow-y: auto;
   padding: var(--s6) var(--s6) calc(var(--s6) + var(--s4));
 }
+/* A PAGE OWNS THE WHOLE CONTENT AREA. FILLING IS THE DEFAULT, BECAUSE THE
+   OPT-IN WAS THE BUG.
+
+   This was `max-width: 1000px; margin: 0 auto` with a `.page--fill` modifier
+   for the screens that wanted the height — and the modifier had to be
+   REMEMBERED. Flows had already forgotten it: `FlowsScreen`'s populated state
+   carried it and its EMPTY state did not, so the same screen filled or
+   top-hugged depending on whether you had recorded anything. Nothing errors,
+   nothing logs, and the markup reads as correct — the same silent failure a
+   missing `min-height: 0` produces. Record, Search and Settings never had it at
+   all: three centred 1000px columns in a window that opens at 1180 and gets
+   maximised.
+
+   Inverted rather than sprinkled onto three more screens, because after this
+   pass ZERO screens want the measured column — every one ends in a `1fr` pane —
+   and a modifier with no consumers is an unused repo-wide identifier in a sheet
+   with no scoping. The prose measure the 1000px was standing in for already
+   lives on the only prose element in the app: `.page__head p`, below.
+
+   NEVER put `container-type` on this rule. It implies `contain: layout`, which
+   makes .page a containing block for FIXED descendants — and `.overlay` (the
+   full-bleed detail view, the confirm dialogs) and `.tracks__tip` are fixed
+   children of .page on Search, Settings and the Library. A container query here
+   would silently un-full-bleed the detail overlay, whose 1426x921 keyframe is a
+   measurement. Put it on an inner element with no fixed descendants. */
 .page {
-  max-width: 1000px;
-  margin: 0 auto;
-}
-/* A page that owns the whole content area instead of flowing down it: full width,
-   the height .content already has, and a bounded flex column so the panes inside
-   scroll rather than the page. */
-.page--fill {
-  max-width: none;
   height: 100%;
   min-height: 0;
   display: flex;
   flex-direction: column;
 }
-/* A filling page spends its height on the instrument, not on its own preamble.
-   The Library's head measured 111px of a 682px column — a sentence you read once
-   taking a sixth of the working area, above a video frame pinned at its floor. */
-.page--fill .page__head {
+/* A page spends its height on the instrument, not on its own preamble. The
+   Library's head measured 111px of a 682px column — a sentence you read once
+   taking a sixth of the working area, above a video frame pinned at its floor.
+   Every screen is height-bound now, so this IS the head, not a variant of it. */
+.page__head {
   flex: none;
   margin-bottom: var(--s4);
 }
-.page--fill .page__head h1 {
-  font-size: var(--t-head);
-  margin-top: var(--s0);
-}
-.page--fill .page__head p {
-  margin-top: var(--s0);
-  font-size: var(--t-body);
-}
-.page__head {
-  margin-bottom: var(--s5);
-}
 .page__head h1 {
-  font-size: var(--t-page);
+  font-size: var(--t-head);
   font-weight: 700;
   letter-spacing: -0.02em;
-  margin-top: var(--s1);
+  margin-top: var(--s0);
 }
 .page__head p {
   color: var(--muted);
-  margin-top: var(--s1);
+  margin-top: var(--s0);
+  font-size: var(--t-body);
+  /* The measure the page-wide max-width used to enforce, on the one element in
+     the app that is actually prose. */
   max-width: 62ch;
 }
 
 /* ---- record transport --------------------------------------------------- */
+
+/* Head / transport / band, and the TRANSPORT OWNS THE SLACK. It is the subject
+   of the screen; the signal band is reference and the head is read once. The
+   screen used to end after the signals and leave the rest of the window empty —
+   at 1180x800 roughly 240px of nothing under the last card. */
+.record {
+  /* Restates `display` rather than inheriting .page's flex: a base rule that
+     does not restate it is the silent-inheritance trap `.drawer` exists for. */
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: var(--s5);
+}
+/* PLAIN `1fr`, NOT `minmax(0, 1fr)`, and it is the one deliberate inversion of
+   the house rule in this pass. A grid track's automatic minimum is its content,
+   so the stage can never be crushed below the 92px button plus the 44px
+   readout; at 900x600 the page overflows and `.content` scrolls, which is the
+   documented fallback. `minmax(0, 1fr)` would clip the record button instead —
+   the one control the screen exists for. */
+.record__stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s4);
+}
+.record__band {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  /* The container the signal band is measured against. HERE AND NEVER ON .page:
+     `container-type` implies `contain: layout`, which makes the element a
+     containing block for FIXED descendants — `.overlay` and `.tracks__tip` are
+     fixed children of .page on other screens, so a container there would
+     silently un-full-bleed the detail overlay. The band has no fixed
+     descendants and its inline size IS the page's. */
+  container-type: inline-size;
+  container-name: recband;
+}
 
 .transport {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: var(--s4);
-  padding: var(--s6) 0 var(--s2);
 }
 .transport__readout {
   font-family: var(--font-mono);
@@ -425,11 +562,23 @@ a:focus-visible {
 
 /* ---- signal switches ---------------------------------------------------- */
 
+/* TWO UP IS THE FLOOR, FIVE UP IS THE POINT. `auto-fill` cannot express "five,
+   or a clean fold": at `minmax(220px, 1fr)` the fit count was 4 for every page
+   width between 916 and 1104px, so the default window showed 4 + 1 — one card
+   orphaned on a row of its own with three cards' worth of gap beside it. The
+   set is a FIXED five (`SIGNALS` in RecordScreen.tsx), not an open list, so the
+   band can say five as soon as it has room for five and two until then. */
 .signals {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--s3);
-  margin-top: var(--s2);
+}
+/* 940px = five cards at ~178px, the narrowest that fits a signal's name beside
+   its 38px switch on one line. Measured in the running app, not derived. */
+@container recband (min-width: 940px) {
+  .signals {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
 }
 .signal {
   background: var(--panel);
@@ -462,9 +611,16 @@ a:focus-visible {
 .led.off {
   background: var(--muted-dim);
 }
+/* TWO LINES OF ROOM, ALWAYS, so the five switches line up. At the 198px a
+   five-up band gives each card, "Input (mouse + keys)" and "Accessibility tree"
+   wrap and the other three do not — and with the row centred, each switch then
+   sat at a different height across the band. Reserving the second line costs
+   ~21px once and makes the row of instruments read as a row. Nothing truncates
+   here: the name wraps, it is never clipped. */
 .signal__name {
   font-weight: 650;
   flex: 1;
+  min-height: calc(2 * 1.5em);
 }
 .signal__meta {
   color: var(--muted);
@@ -518,8 +674,10 @@ a:focus-visible {
 
 /* ---- indexing progress -------------------------------------------------- */
 
+/* Its own measure, because it now sits in a centred column beside a 92px
+   button rather than spanning a 1000px page. */
 .indexing {
-  margin-top: var(--s5);
+  width: min(420px, 100%);
   background: var(--panel);
   border: 1px solid var(--hairline-soft);
   border-radius: var(--radius);
@@ -557,6 +715,9 @@ a:focus-visible {
   border-radius: var(--radius);
   padding: var(--s1) var(--s1) var(--s1) var(--s3);
   margin-bottom: var(--s2);
+  /* A direct child of a filling .page, so it must not be stretched or squeezed
+     by the pane beside it. Same for .search__meta and .banner below. */
+  flex: none;
 }
 .searchbar:focus-within {
   border-color: var(--accent);
@@ -610,6 +771,7 @@ a:focus-visible {
   color: var(--muted);
   font-size: var(--t-small);
   margin: var(--s3) var(--s0) var(--s4);
+  flex: none;
 }
 /* Separates the count from the ranking contract beside it. A rule rather than a
    bullet: the two are different KINDS of statement — a measurement and a caveat
@@ -627,10 +789,36 @@ a:focus-visible {
    showed, what happened, what was said, what task it was part of, and why it
    was retrieved at all. A 232px tile held two clamped lines and a number, so
    everything else was thrown away before it reached the reader. */
+/* Head, query and notices stay put; the list is the only thing that moves.
+   `ResultList` returns a FRAGMENT, so `.search__meta` and `.results` are direct
+   children of this pane — which is what pins the ranking contract ("ranked
+   against the best match here") above rows that scroll under it. Those two
+   state the same fact and must not be able to disagree, so they must not be
+   able to separate either. */
+.search__pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
 .results {
   display: flex;
   flex-direction: column;
   gap: var(--s3);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  /* The scroller, so the last row is not flush against the window edge — the
+     page's own bottom padding no longer sits under it. */
+  padding: 0 var(--s1) var(--s2) 0;
+}
+/* REQUIRED, NOT TIDINESS. `.result` sets `overflow: hidden` for its rounded
+   corners, and a flex item's automatic minimum resolves to the content-based
+   minimum ONLY while overflow is visible — with `hidden` it is 0. In a
+   scrolling flex column every row would be crushed to nothing. Exactly the trap
+   `.player`'s explicit `min-height` exists for. */
+.result {
+  flex: none;
 }
 
 /* A row carries TWO actions — inspect what was captured, and go to the moment
@@ -799,6 +987,17 @@ a:focus-visible {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+/* A MEASURE, because the row now grows and the thumbnail does not. `.result__open`
+   is `208px minmax(0, 1fr)` and the 208px is deliberate, so every pixel a wider
+   window gains lands in this column — ~790px at the default 1180 and unbounded
+   on a 2560 display. A two-line clamp set across 1500px is not a line anyone
+   reads. Capped here rather than on the row: the keyframe, the evidence lanes
+   and the locator strip all want the full width. */
+.result__headline,
+.result__digest,
+.result__said {
+  max-width: 92ch;
+}
 /* Speech is quoted so it cannot be mistaken for the app's own text. */
 .result__said::before {
   content: "\201C";
@@ -932,9 +1131,23 @@ a:focus-visible {
   border-color: var(--accent);
 }
 
-/* A 900x600 window leaves ~760px of content. The thumbnail is the first thing
-   to go: the text is the reason this is a row. */
-@media (max-width: 720px) {
+/* A 900x600 window leaves ~760px of ROW, and the thumbnail is the first thing
+   to go: the text is the reason this is a row.
+
+   IT WAS KEYED ON THE VIEWPORT AT 720px AND HAD THEREFORE NEVER FIRED —
+   `minWidth: 900` in `app/src/main/index.ts` means the viewport is never below
+   900. The comment stated the right intent and the wrong number: page width is
+   viewport − 76 rail − 64 padding, so 900px of window is 760px of row and the
+   condition it wanted was never expressible as a viewport query. Now a
+   container query on the actual box, which also survives any future change to
+   the rail's width or the page's padding. The container is `.results` and not
+   `.page`: `container-type` implies `contain: layout`, which would make .page a
+   containing block for the fixed `.overlay` and un-full-bleed the detail view. */
+.results {
+  container-type: inline-size;
+  container-name: results;
+}
+@container results (max-width: 760px) {
   .result__open {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -945,15 +1158,43 @@ a:focus-visible {
 
 /* ---- empty / states ----------------------------------------------------- */
 
+/* CENTRED IN THE SPACE IT WAS GIVEN, not padded down from the top. The
+   `calc(var(--s6) * 2)` of vertical padding was standing in for centring inside
+   a page of natural height; now that every page fills, it can centre properly.
+   Four consumers, all full-screen empty states (Search x2, Library, Flows) —
+   and this class has form: a bare `.empty` once matched `.field__text.empty` in
+   the detail panel and put a 20.1px line inside a 167.1px box. Grep before
+   reusing the name. */
 .empty {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
   text-align: center;
-  padding: calc(var(--s6) * 2) var(--s5);
+  padding: var(--s5);
   color: var(--muted);
 }
 .empty h3 {
   color: var(--text);
   font-size: var(--t-title);
   margin-bottom: var(--s2);
+}
+/* A full-width page would otherwise set an empty state's sentence across the
+   whole window — the same measure argument as `.page__head p`. */
+.empty p {
+  max-width: 52ch;
+}
+/* THE BOX A SPINNER IS CENTRED IN. Five screens returned a bare
+   `<div className="spinner" />` that bypassed the page wrapper entirely, so the
+   loading frame was a 22px circle at the top-left of an empty content area and
+   the whole layout jumped when data landed. The spinner itself is unchanged. */
+.loading {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
 }
 .spinner {
   width: 22px;
@@ -963,6 +1204,9 @@ a:focus-visible {
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
   margin: var(--s6) auto;
+}
+.loading .spinner {
+  margin: 0;
 }
 @keyframes spin {
   to {
@@ -1202,10 +1446,10 @@ a:focus-visible {
    blue means "this is the element you picked in the tree". They coexist. */
 .bbox--ax {
   border-color: var(--accent);
-  background: rgba(124, 156, 255, 0.14);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
   box-shadow:
     0 0 0 1px rgba(0, 0, 0, 0.5),
-    0 0 12px rgba(124, 156, 255, 0.35);
+    0 0 12px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 .bbox--ax-hover {
   border-style: dashed;
@@ -1461,7 +1705,7 @@ a:focus-visible {
 }
 .axtree__row--selected,
 .axtree__row--selected:hover {
-  background: rgba(124, 156, 255, 0.16);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
   color: var(--accent);
 }
 .axtree__row--off {
@@ -1524,6 +1768,15 @@ a:focus-visible {
 
 /* ---- settings ----------------------------------------------------------- */
 
+/* The cards scroll; the head does not. One column at full width — the cards
+   stretch and the control column grows with them, rather than a 1000px measure
+   leaving the rest of the window empty beside four screenfuls of scroll. */
+.settings {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: var(--s1);
+}
 .card {
   background: var(--panel);
   border: 1px solid var(--hairline-soft);
@@ -1541,9 +1794,16 @@ a:focus-visible {
   font-size: var(--t-small);
   margin-bottom: var(--s4);
 }
+/* THE CARD IS FULL WIDTH; THE CONTROL IS NOT. Measured in the running app at
+   1180x800, an unbounded control column put the word "Ollama" in a 1301px-wide
+   select — the width had gone somewhere useless, and a control that wide stops
+   reading as a control. Capped on the COLUMN rather than on the card, so the
+   card still spans the window and carries the section as one surface. 560px is
+   the widest value any of these fields holds ("ColModernVBERT (late
+   interaction)", the `claude mcp add` line) plus room to grow. */
 .form-row {
   display: grid;
-  grid-template-columns: 190px 1fr;
+  grid-template-columns: 190px minmax(0, 560px);
   align-items: center;
   gap: var(--s3);
   padding: var(--s2) 0;
@@ -1596,6 +1856,7 @@ select {
   color: var(--text);
   font-size: var(--t-small);
   margin-bottom: var(--s4);
+  flex: none;
 }
 .banner .led {
   background: var(--amber);
@@ -1621,11 +1882,16 @@ select {
 
 /* --- library ------------------------------------------------------------- */
 /* The list and the stage fill the content area and scroll internally, so the
-   page itself never scrolls. Every link in the chain from .page--fill down needs
+   page itself never scrolls. Every link in the chain from .page down needs
    min-height: 0 or the row grows to fit the video instead of bounding it. */
 .library {
   display: grid;
-  grid-template-columns: 264px minmax(0, 1fr);
+  /* FLUID BETWEEN TWO FLOORS, not a fixed 264. A percentage so a maximised
+     window gives the list more room too — but clamped, because the extra width
+     must mostly reach the frame: splitting it evenly is the rail-versus-video
+     mistake, and the detail overlay's fixed side track exists for the same
+     reason. 264 sits inside the range, so the default window is unchanged. */
+  grid-template-columns: clamp(240px, 22%, 340px) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   gap: var(--s4);
   align-items: stretch;
@@ -1663,13 +1929,13 @@ select {
   background: var(--panel);
   border-color: var(--hairline-soft);
 }
-/* The active row is marked by a left rule in the accent, not by an outline
-   around the whole card: an outlined 264px row competes with the stage it
-   selects, and this list is navigation, not content. */
+/* Not an outline around the whole card: an outlined row competes with the stage
+   it selects, and this list is navigation, not content. The `inset 2px 0 0`
+   left rule it used to carry is now the contact rule under it — see the shell
+   section — so the three active states in the app say the same thing. */
 .sessioncard.is-active {
   background: var(--elevated);
   border-color: transparent;
-  box-shadow: inset 2px 0 0 var(--accent);
 }
 .sessioncard__thumb {
   position: relative;
@@ -2409,7 +2675,7 @@ select {
    gutter keeps its exact width and the lane titles do not shift by 2px as the
    cursor moves down the rail — the same reason `.tracks__span` uses a ring. */
 .tracks__lane[data-hovered] {
-  background: rgba(124, 156, 255, 0.07);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
 }
 .tracks__lane[data-hovered] .tracks__gutter {
   box-shadow: inset 2px 0 0 var(--accent);
@@ -2884,7 +3150,7 @@ select {
 .flows__route {
   font-size: var(--t-meta); color: var(--accent); padding: var(--s0) var(--s2);
   border-radius: 999px;
-  background: rgb(124 156 255 / 0.14); border: 1px solid rgb(124 156 255 / 0.3);
+  background: color-mix(in srgb, var(--accent) 14%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
 }
 .flows__warn { font-size: var(--t-small); color: var(--amber); overflow-wrap: anywhere; }
 
@@ -2923,7 +3189,7 @@ select {
   color: var(--text);
 }
 .routes__item:hover { background: rgb(255 255 255 / 0.05); }
-.routes__item.is-active { background: rgb(124 156 255 / 0.16); }
+.routes__item.is-active { background: color-mix(in srgb, var(--accent) 16%, transparent); }
 /* A count above one is the whole signal: it means you did this more than once. */
 .routes__count {
   font-family: var(--font-mono); font-size: var(--t-meta); color: var(--muted-dim);
@@ -2984,7 +3250,7 @@ select {
   border: 1px solid var(--hairline); background: var(--elevated); color: var(--text);
   transition: opacity 0.12s;
 }
-.gnode.is-selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgb(124 156 255 / 0.25); }
+.gnode.is-selected { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent); }
 /* Dimmed, never hidden: the layout is computed from the whole graph, so
    removing a card would leave its space reserved and its wires in mid-air. */
 .gnode.is-dim { opacity: 0.22; }
@@ -2998,7 +3264,7 @@ select {
 .gnode__meta { display: flex; gap: var(--s1); align-items: center; font-size: var(--t-micro); color: var(--muted); }
 .gnode__id { font-family: var(--font-mono); }
 .gnode__tag { padding: 1px var(--s1); border-radius: 999px; background: rgb(255 255 255 / 0.07); }
-.gnode__tag.is-seen { background: rgb(124 156 255 / 0.18); color: var(--accent); }
+.gnode__tag.is-seen { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
 
 /* The drawer rises from the bottom. A downward-flowing graph is tall and
    narrow, so horizontal room is what the transpose freed — an inspector column
@@ -3046,7 +3312,7 @@ select {
   width: 100%; padding: var(--s1); border-radius: 5px; font-size: var(--t-small);
   color: var(--text); text-align: left;
 }
-.reclist__item:hover { background: rgb(124 156 255 / 0.14); color: var(--accent); }
+.reclist__item:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
 .reclist__when { overflow-wrap: anywhere; }
 .reclist__at { font-size: var(--t-meta); color: var(--muted); white-space: nowrap; }
 
