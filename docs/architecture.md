@@ -1,7 +1,8 @@
 # Architecture
 
 How DeskRAG is put together, and which seams are load-bearing. For the
-invariants that constrain changes to this design, see [CLAUDE.md](../CLAUDE.md).
+invariants that constrain changes to this design, see [CLAUDE.md](../CLAUDE.md);
+for the measurements behind each one, [docs/internals/](./internals/).
 
 ## Highlights
 
@@ -157,6 +158,8 @@ text/raw first then the vector, and slot into reconciliation and a Tier-1
 
 ## See also
 
+- [Internals](./internals/) — the measured detail behind every invariant, one
+  file per subsystem. Written for someone about to change the code.
 - [Setup and requirements](./setup.md)
 - [Providers](./providers.md) — what runs where, and why every one is local
 - [Agent access (MCP)](./mcp.md) — the read-only surface an external agent reads
