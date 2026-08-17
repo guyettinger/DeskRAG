@@ -28,7 +28,11 @@ export function registerIpc(
     getWindow()?.webContents.send(channel, payload);
   };
   service.onState((s) => send(IPC.recordingStateEvent, s));
-  service.onIndexing((p) => send(IPC.recordingIndexingEvent, p));
+  // Two indexing channels, not one. The snapshot fires on transitions; the tick
+  // fires per frame inside the patch stage, and re-serialising the whole queue
+  // at that rate would be waste.
+  service.onIndexQueue((q) => send(IPC.indexingQueueEvent, q));
+  service.onIndexTick((t) => send(IPC.indexingTickEvent, t));
   service.onModelDownload((p) => send(IPC.modelDownloadEvent, p));
 
   ipcMain.handle(IPC.settingsGet, () => settings.view());
@@ -56,9 +60,22 @@ export function registerIpc(
   ipcMain.handle(IPC.sessionsList, () => service.listSessions());
   ipcMain.handle(IPC.sessionsDetail, (_e, sessionId: string) => service.sessionDetail(sessionId));
   ipcMain.handle(IPC.sessionsRemove, (_e, sessionId: string) => service.removeSession(sessionId));
-  ipcMain.handle(IPC.sessionsReindex, () => service.reindexTraces());
-  ipcMain.handle(IPC.sessionsReindexAll, () => service.reindexAll());
   ipcMain.handle(IPC.sessionsTracks, (_e, sessionId: string) => service.sessionTracks(sessionId));
+
+  // Every one of these ENQUEUES and returns. None runs the pipeline inline, and
+  // none refuses because a recording is in progress — that is the whole point of
+  // the queue, and it also closes a real hole: `sessions:reindex-all` had no
+  // guard here at all, so anything that could invoke it twice ran two library
+  // rebuilds over the same recordings. Enqueue is idempotent per kind+session.
+  ipcMain.handle(IPC.indexingQueue, () => service.indexQueue());
+  ipcMain.handle(IPC.indexingReindexSession, (_e, sessionId: string) =>
+    service.reindexSession(sessionId),
+  );
+  ipcMain.handle(IPC.indexingReindexAll, () => service.reindexAll());
+  ipcMain.handle(IPC.indexingRebuildTraces, () => service.rebuildTraces());
+  ipcMain.handle(IPC.indexingCancel, (_e, jobId: string) => service.cancelIndexJob(jobId));
+  ipcMain.handle(IPC.indexingRetry, (_e, jobId: string) => service.retryIndexJob(jobId));
+  ipcMain.handle(IPC.indexingClearFinished, () => service.clearFinishedIndexJobs());
 
   /**
    * The Flows screen, in one read-only call. There is deliberately no watch, no

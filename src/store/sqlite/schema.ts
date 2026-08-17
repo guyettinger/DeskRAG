@@ -341,6 +341,39 @@ CREATE TABLE IF NOT EXISTS session_clock (
   device_epoch_ms REAL NOT NULL,         -- ax-dump --clock, CLOCK_UPTIME_RAW
   mono_epoch_ms   REAL NOT NULL          -- clock.now() taken beside it
 );
+
+-- The indexing work queue: one row per unit of indexing work, durable across
+-- quits and crashes.
+--
+-- It exists because capture and indexing used to be ONE awaited call, so a
+-- recording could not start while the last one indexed, and a crash mid-index
+-- left no trace it had ever been attempted — "indexed" was inferred three
+-- different ways from derived rows, none of which can tell "never indexed" from
+-- "indexing failed".
+--
+-- kind, payload and progress are DELIBERATELY OPAQUE HERE. What a stage is
+-- (StageId, the plan table, the gates) is an APP concept, and store/ must not
+-- learn it — the same seam that keeps store/ free of represent/. This table owns
+-- a job's identity, lifecycle and ordering; the app owns what is inside it.
+--
+-- session_id is NULL for library-scoped work (the trace-graph rebuild, which
+-- accretes across every recording and cannot belong to one). Otherwise the FK
+-- cascades, so deleting a recording drops its queued work for free.
+CREATE TABLE IF NOT EXISTS index_job (
+  id          TEXT PRIMARY KEY,          -- ULID, minted by the caller
+  session_id  TEXT REFERENCES session(id) ON DELETE CASCADE,
+  kind        TEXT NOT NULL,             -- app-defined discriminator
+  state       TEXT NOT NULL,             -- queued | running | done | failed | cancelled
+  enqueued_at INTEGER NOT NULL,          -- wall-clock ms, for display and ordering
+  started_at  INTEGER,
+  ended_at    INTEGER,
+  attempts    INTEGER NOT NULL DEFAULT 0,
+  error       TEXT,
+  payload     TEXT NOT NULL,             -- JSON, app-defined
+  progress    TEXT                       -- JSON, app-defined; last write wins
+);
+CREATE INDEX IF NOT EXISTS idx_index_job_state ON index_job(state, enqueued_at);
+CREATE INDEX IF NOT EXISTS idx_index_job_session ON index_job(session_id);
 `;
 
 /**
@@ -403,6 +436,20 @@ export const DERIVED_LIBRARY_TABLES = [
   "trace_edge_source",
   "trace_slot",
 ] as const;
+
+/**
+ * OPERATIONAL state: neither captured nor derived, and never purged.
+ *
+ * `index_job` is the work queue that DRIVES a re-index, so a purge that cleared
+ * it would delete the job currently running — the classification is not a
+ * formality, it is the reason a re-index does not eat its own queue. It is also
+ * not captured: losing it costs pending work, which is re-enqueueable, never a
+ * recording, which is not.
+ *
+ * The guard below unions all four lists against `sqlite_master`, so a new table
+ * still has to answer this question rather than silently defaulting.
+ */
+export const OPERATIONAL_TABLES = ["index_job"] as const;
 
 /** Pragmas applied on every connection open. WAL = single-writer + concurrent reads. */
 export const PRAGMA_SQL = /* sql */ `

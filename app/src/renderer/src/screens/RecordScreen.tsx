@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from "react";
 import type {
   EnvInfo,
-  IndexingProgress,
   PermissionKind,
   PermissionStatus,
   RecordingStatus,
@@ -9,11 +8,12 @@ import type {
   SignalConfig,
 } from "@shared/types";
 import { api, timecode } from "../api.js";
-import { GhostLottie } from "../brand/GhostLottie.js";
 
 interface Props {
   status: RecordingStatus;
   env: EnvInfo | null;
+  /** Where the recording just stopped went. See the handoff line below. */
+  onOpenIndexing: () => void;
 }
 
 type SignalId = keyof SignalConfig;
@@ -57,10 +57,9 @@ const SIGNALS: SignalDef[] = [
   },
 ];
 
-export function RecordScreen({ status, env }: Props): React.JSX.Element {
+export function RecordScreen({ status, env, onOpenIndexing }: Props): React.JSX.Element {
   const [settings, setSettings] = useState<SettingsView | null>(null);
   const [perms, setPerms] = useState<PermissionStatus[]>([]);
-  const [progress, setProgress] = useState<IndexingProgress | null>(null);
   const [tick, setTick] = useState(0);
 
   const refresh = (): void => {
@@ -68,7 +67,6 @@ export function RecordScreen({ status, env }: Props): React.JSX.Element {
     api.permissions.check().then(setPerms);
   };
   useEffect(refresh, []);
-  useEffect(() => api.recording.onIndexing(setProgress), []);
 
   // Live elapsed readout.
   const live = status.state === "recording";
@@ -78,7 +76,6 @@ export function RecordScreen({ status, env }: Props): React.JSX.Element {
     return () => clearInterval(t);
   }, [live]);
   useEffect(() => {
-    if (status.state === "indexing") setProgress(null);
     if (status.state === "idle") refresh();
   }, [status.state]);
 
@@ -105,7 +102,6 @@ export function RecordScreen({ status, env }: Props): React.JSX.Element {
 
   const start = (): void => void api.recording.start();
   const stop = (): void => void api.recording.stop();
-  const busy = status.state === "indexing";
 
   return (
     <div className="page record">
@@ -125,38 +121,26 @@ export function RecordScreen({ status, env }: Props): React.JSX.Element {
           <div className={`transport__readout${live ? "" : " is-idle"}`}>
             {timecode(live ? elapsedMs : 0)}
           </div>
+          {/* NEVER disabled by indexing. That is the whole point of the
+              queue: stopping a recording hands it off, and the next one can
+              start immediately. The button used to go dead for the length of
+              the pipeline — about ten minutes over 546 frames. */}
           <button
             className={`recbtn${live ? " is-live" : ""}`}
             onClick={live ? stop : start}
-            disabled={busy}
             aria-label={live ? "Stop recording" : "Start recording"}
           >
             <span className="recbtn__core" />
           </button>
           <div className="transport__hint">
-            {busy ? "Indexing the last recording…" : live ? "Click to stop" : "Click to start recording"}
+            {live ? "Click to stop" : "Click to start recording"}
           </div>
+          {/* The handoff, named. Without this the recording appears to vanish
+              on stop: nothing on this screen says where it went. */}
+          <button className="transport__handoff" onClick={onOpenIndexing}>
+            Recordings are indexed in the background — open the queue
+          </button>
         </div>
-
-        {busy && (
-          <div className="indexing">
-            <div className="indexing__ghost">
-              <GhostLottie size={84} playing />
-            </div>
-            <div className="indexing__row">
-              <span className="indexing__stage">{progress?.stage ?? "Preparing…"}</span>
-              <span className="mono" style={{ color: "var(--muted)" }}>
-                {progress ? `${progress.done}/${progress.total}` : ""}
-              </span>
-            </div>
-            <div className="bar">
-              <div
-                className="bar__fill"
-                style={{ width: progress ? `${(progress.done / Math.max(1, progress.total)) * 100}%` : "8%" }}
-              />
-            </div>
-          </div>
-        )}
       </div>
 
       <div className="record__band">
@@ -179,7 +163,7 @@ export function RecordScreen({ status, env }: Props): React.JSX.Element {
                   <button
                     className={`switch${cfg.enabled ? " on" : ""}`}
                     onClick={() => void toggle(sig.id)}
-                    disabled={live || busy}
+                    disabled={live}
                     aria-pressed={cfg.enabled}
                     aria-label={`Toggle ${sig.name}`}
                   />

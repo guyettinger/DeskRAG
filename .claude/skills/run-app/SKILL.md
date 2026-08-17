@@ -63,7 +63,7 @@ that meant "Search" silently drove a different screen and waited 8 seconds for a
 selector that was never coming. `gotoScreen()` uses an anchored regex and throws
 if the match is not exactly one.
 
-Screens: `Record`, `Library`, `Flows`, `Search`, `Settings`.
+Screens: `Record`, `Indexing`, `Library`, `Flows`, `Search`, `Settings`.
 
 ## Wait for CONTENT, not for a timer
 
@@ -145,3 +145,16 @@ continues.
   whether it needs the same edit.
 - `scripts/decimate-probe.mjs` is the read-only harness for keyframe thresholds
   and needs no app at all.
+- `scripts/indexing-report.mjs` measures the Indexing screen's stage ladder —
+  node geometry, wire routing, truncation, and that the record button is not
+  disabled. Read-only.
+- `scripts/queue-handoff-probe.mjs` is the one that RECORDS: it proves a second
+  recording can start while the first indexes, and that the queue yields to it.
+  Two short real captures land in the library.
+
+**Do not write `page.waitForFunction(async () => ...)`.** An async predicate
+returns a PROMISE, which is always truthy, so the wait resolves on its first
+tick. It cost an afternoon here: the handoff probe reported "no job was
+enqueued" against a store that had one moments later, and the confident wrong
+answer looked exactly like a real bug in the app. Poll from node instead, where
+`await` means what it says — `until()` in `queue-handoff-probe.mjs`.

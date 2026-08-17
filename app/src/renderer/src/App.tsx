@@ -1,18 +1,29 @@
 import React, { useEffect, useRef, useState } from "react";
-import type { EnvInfo, RecordingStatus } from "@shared/types";
+import type { EnvInfo, IndexQueueDTO, RecordingStatus } from "@shared/types";
 import { api } from "./api.js";
 import { GhostMark } from "./brand/GhostMark.js";
-import { IconFlows, IconLibrary, IconRecord, IconSearch, IconSettings } from "./icons.js";
+import {
+  IconFlows,
+  IconIndexing,
+  IconLibrary,
+  IconRecord,
+  IconSearch,
+  IconSettings,
+} from "./icons.js";
+import { IndexingScreen } from "./screens/IndexingScreen.js";
 import { LibraryScreen } from "./screens/LibraryScreen.js";
 import { RecordScreen } from "./screens/RecordScreen.js";
 import { FlowsScreen } from "./screens/FlowsScreen.js";
 import { SearchScreen } from "./screens/SearchScreen.js";
 import { SettingsScreen } from "./screens/SettingsScreen.js";
 
-type Route = "record" | "library" | "flows" | "search" | "settings";
+type Route = "record" | "indexing" | "library" | "flows" | "search" | "settings";
 
+// Between Record and Library, which is the order the work actually happens in:
+// a recording is captured, then indexed, then watched.
 const NAV: { id: Route; label: string; Icon: typeof IconRecord }[] = [
   { id: "record", label: "Record", Icon: IconRecord },
+  { id: "indexing", label: "Indexing", Icon: IconIndexing },
   { id: "library", label: "Library", Icon: IconLibrary },
   { id: "flows", label: "Flows", Icon: IconFlows },
   { id: "search", label: "Search", Icon: IconSearch },
@@ -21,6 +32,7 @@ const NAV: { id: Route; label: string; Icon: typeof IconRecord }[] = [
 
 const TITLES: Record<Route, string> = {
   record: "Recorder",
+  indexing: "Indexing",
   library: "Library",
   flows: "Flows",
   search: "Experience Search",
@@ -55,6 +67,7 @@ export function App(): React.JSX.Element {
   const [status, setStatus] = useState<RecordingStatus>({ state: "idle", activeSignals: [] });
   const [env, setEnv] = useState<EnvInfo | null>(null);
   const [openAt, setOpenAt] = useState<OpenAt | null>(null);
+  const [queue, setQueue] = useState<IndexQueueDTO | null>(null);
   /** A counter, not a clock: two clicks land in the same millisecond. */
   const jumps = useRef(0);
 
@@ -76,8 +89,21 @@ export function App(): React.JSX.Element {
     return off;
   }, []);
 
+  /**
+   * The queue is subscribed at the SHELL, not only on the Indexing screen.
+   *
+   * Indexing now runs in the background for minutes at a time, and the topbar
+   * chip is the only thing that says so from the other five screens. Subscribing
+   * per-screen would mean the chip appeared when you navigated to it.
+   */
+  useEffect(() => {
+    api.indexing.queue().then(setQueue);
+    return api.indexing.onQueue(setQueue);
+  }, []);
+
   const live = status.state === "recording";
-  const busy = status.state === "indexing";
+  const indexing = queue?.runningJobId != null;
+  const pending = queue ? queue.jobs.filter((j) => j.state === "queued").length : 0;
 
   return (
     <div className="shell">
@@ -112,12 +138,21 @@ export function App(): React.JSX.Element {
                 <span className="dot" /> Recording
               </span>
             )}
-            {busy && (
-              <span className="chip busy">
+            {/* A BUTTON, not a chip: indexing now happens somewhere the reader
+                can go and look at, so the status is also the way there. The
+                count is the backlog behind the running job, which is the number
+                that actually predicts how long this will go on. */}
+            {indexing && (
+              <button
+                className="chip busy chip--go"
+                onClick={() => setRoute("indexing")}
+                title="Open the indexing queue"
+              >
                 <span className="dot" /> Indexing
-              </span>
+                {pending > 0 && <span className="mono">+{pending}</span>}
+              </button>
             )}
-            {!live && !busy && (
+            {!live && !indexing && (
               <span className="chip">
                 <span className="dot" /> Idle
               </span>
@@ -126,7 +161,13 @@ export function App(): React.JSX.Element {
         </header>
 
         <main className="content">
-          {route === "record" && <RecordScreen status={status} env={env} />}
+          {route === "record" && (
+            <RecordScreen status={status} env={env} onOpenIndexing={() => setRoute("indexing")} />
+          )}
+          {/* The queue arrives as a prop rather than being re-fetched: the shell
+              already holds it for the topbar chip, and two subscriptions to one
+              channel would show two answers for one moment. */}
+          {route === "indexing" && <IndexingScreen queue={queue} />}
           {/* `openAt` is cleared BY the Library once it has acted on it.
               Leaving it set would re-seek every time the user picked a
               different recording from the list. */}

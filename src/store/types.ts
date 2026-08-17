@@ -347,6 +347,52 @@ export interface SessionSummaryRow extends SessionRow {
   videoBlobId: string | null;
 }
 
+/**
+ * Where a unit of indexing work is in its life.
+ *
+ * `running` is the one state that can be WRONG on disk: a process that dies
+ * mid-stage leaves it behind, which is exactly what makes it useful — see
+ * `Store.requeueRunningJobs`.
+ */
+export type IndexJobState = "queued" | "running" | "done" | "failed" | "cancelled";
+
+/**
+ * One unit of indexing work, durable across quits and crashes.
+ *
+ * **`kind`, `payload` and `progress` are opaque to the store**, deliberately.
+ * What a stage is — the plan table, the gates, which provider skips what — is an
+ * app concept, and `store/` must not learn it, the same seam that keeps `store/`
+ * free of `represent/`. This layer owns identity, lifecycle and ordering only.
+ *
+ * `sessionId` is null for library-scoped work: a trace graph accretes across
+ * every recording and so belongs to none of them.
+ */
+export interface IndexJobRow {
+  id: string;
+  sessionId: string | null;
+  kind: string;
+  state: IndexJobState;
+  /** Wall-clock ms. Ordering is by this, so the queue is FIFO within a state. */
+  enqueuedAt: number;
+  startedAt: number | null;
+  endedAt: number | null;
+  /** Incremented each time the job is claimed, so a crash loop is bounded. */
+  attempts: number;
+  error: string | null;
+  /** App-defined JSON. Parsed by the app, never by the store. */
+  payload: string;
+  /** App-defined JSON, last write wins. Null until the job first reports. */
+  progress: string | null;
+}
+
+/** What `enqueueIndexJob` needs; everything else is stamped by the store. */
+export interface IndexJobInput {
+  id: string;
+  sessionId: string | null;
+  kind: string;
+  payload: string;
+}
+
 export interface BlobRow {
   id: string;
   sessionId: string;
@@ -551,6 +597,50 @@ export interface Store {
    * files — call `BlobStore.removeSession` after this, in that order.
    */
   deleteSession(sessionId: string): Promise<void>;
+
+  // indexing work queue (SQLite only — no vector space, no Lance)
+
+  /**
+   * Add one job, or return the job already holding this slot.
+   *
+   * **Idempotent per (kind, sessionId) while a job is live** (`queued` or
+   * `running`), which is what keeps a double-stop or a double-pressed rebuild
+   * from indexing one recording twice. That guarantee used to be bought by a
+   * synchronous state claim in the app; making it a property of the queue means
+   * every future caller inherits it. Returns the EXISTING row when it collides,
+   * so a caller can tell that its job was folded in.
+   */
+  enqueueIndexJob(input: IndexJobInput): Promise<IndexJobRow>;
+  /** Every job, newest-enqueued last. `states` filters when given. */
+  listIndexJobs(states?: readonly IndexJobState[]): IndexJobRow[];
+  /** One job row, or undefined if the id is unknown. */
+  getIndexJob(jobId: string): IndexJobRow | undefined;
+  /**
+   * Claim the oldest `queued` job, flipping it to `running` and incrementing
+   * `attempts` in one transaction. Returns undefined when the queue is empty.
+   */
+  claimIndexJob(): Promise<IndexJobRow | undefined>;
+  /** Overwrite a job's opaque progress payload. Cheap; called per stage. */
+  updateIndexJobProgress(jobId: string, progress: string): Promise<void>;
+  /** Move a job to a terminal state, stamping `ended_at` and any error. */
+  finishIndexJob(
+    jobId: string,
+    state: "done" | "failed" | "cancelled",
+    error?: string,
+  ): Promise<void>;
+  /**
+   * Re-queue every `running` job, because a job in that state at open time is
+   * one a previous process died inside.
+   *
+   * Returns the rows it touched. Anything past `maxAttempts` goes to `failed`
+   * instead — a job that crashes the app on every attempt must not resurrect
+   * itself forever. **Resuming mid-plan is not offered and must not be added**:
+   * the stage bodies append rather than replace (`putRegions` mints a fresh
+   * ULID per region), so only a purge makes a second pass safe.
+   */
+  requeueRunningJobs(maxAttempts: number): Promise<IndexJobRow[]>;
+  /** Drop terminal jobs beyond the newest `keep`, so the table cannot grow forever. */
+  pruneIndexJobs(keep: number): Promise<number>;
 
   // experience trace graphs (src/trace/) — SQLite only, no vector space
 

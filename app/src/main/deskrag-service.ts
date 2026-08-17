@@ -14,6 +14,7 @@
 
 import { join } from "node:path";
 import { screen } from "electron";
+import { ulid } from "ulid";
 import {
   DualStore,
   BlobStore,
@@ -52,20 +53,34 @@ import type { SettingsStore } from "./settings.js";
 import { MODELS, TEXT_MODEL_SPECS } from "./models.js";
 import { libUrl } from "./lib-resolve.js";
 import { DEFAULT_GRAPH_ID, latestAt, rebuildGraph } from "./trace-index.js";
-import { planStages, reindexPlan, type StageFacts } from "./index-plan.js";
-import { runStages, type Providers, type StageWorld } from "./index-run.js";
+import type { StageFacts, StageId } from "./index-plan.js";
+import type { Providers, StageWorld } from "./index-run.js";
+import {
+  decodePayload,
+  decodeStages,
+  encodePayload,
+  initialStages,
+  holdMessage,
+  isIndexJobKind,
+  jobProgress,
+  nextRunnable,
+  type IndexJobKind,
+} from "./index-queue.js";
+import { buildStageGraph } from "./index-graph.js";
+import { IndexWorker } from "./index-worker.js";
 import { frequentRoutes, toGraphDTO } from "./graph-view.js";
 import { ModelStore, type ModelDownloadProgress } from "./model-store.js";
 import { OnnxHost } from "./onnx-host.js";
 import { spawnOnnxWorker } from "./onnx-spawn.js";
 import { TRACK_BUCKETS } from "@shared/types";
-import type { SegmentRow, SegmentSummaryRow } from "deskrag";
+import type { IndexJobRow, SegmentRow, SegmentSummaryRow } from "deskrag";
 import type {
   Capabilities,
   FlowsDTO,
   HighlightDTO,
-  IndexingProgress,
-  ReindexResultDTO,
+  IndexJobDTO,
+  IndexQueueDTO,
+  IndexTickDTO,
   KeyframeMarkerDTO,
   ProviderSettingsView,
   RecordingStatus,
@@ -126,6 +141,8 @@ export class DeskRagService {
 
   private session: CaptureSession | undefined;
   private state: RecordingStatus = { state: "idle", activeSignals: [] };
+  /** In-flight `stopRecording` tail — see `pendingStop`. */
+  private stopping: Promise<void> | undefined;
 
   private models!: ModelStore;
   /**
@@ -134,10 +151,22 @@ export class DeskRagService {
    * Chromium, LanceDB and libvips. See onnx-host.ts.
    */
   private onnx!: OnnxHost;
-  /** The indexing stage currently running, so a weight download can label itself. */
-  private downloading: IndexingProgress | undefined;
+  /**
+   * The indexing queue's drain loop. Constructed in `open()`, because every one
+   * of its dependencies is.
+   */
+  private worker!: IndexWorker;
+  /**
+   * The stage currently running, so a weight download can label itself.
+   *
+   * Scoped to the WORKER now. It used to be plain service state that any caller
+   * could set, and `search()` builds providers too — so a download started from
+   * a search could rewrite the label of a stage it had nothing to do with.
+   */
+  private runningStage: { jobId: string; stageId: StageId; label: string } | null = null;
   private stateListeners = new Set<(s: RecordingStatus) => void>();
-  private indexingListeners = new Set<(p: IndexingProgress) => void>();
+  private queueListeners = new Set<(q: IndexQueueDTO) => void>();
+  private tickListeners = new Set<(t: IndexTickDTO) => void>();
   private modelListeners = new Set<(p: ModelDownloadProgress) => void>();
   /**
    * Region highlights from the most recent search, for detail() to reuse.
@@ -186,17 +215,79 @@ export class DeskRagService {
       onProgress: (p) => {
         for (const cb of this.modelListeners) cb(p);
         // Settings renders this channel directly, but indexing has its own
-        // screen and its own progress bar — so while a stage is running, fold
-        // the download into that stage's label rather than leaving it silent.
-        const at = this.downloading;
+        // screen — so while a stage is running, fold the download into that
+        // stage's detail rather than leaving it silent. 57MB fetched inside
+        // Transcribing is otherwise indistinguishable from a hang.
+        const at = this.runningStage;
         if (at && !p.done) {
-          this.emitIndexing({ ...at, stage: `${at.stage} — ${downloadLabel(p)}` });
+          this.emitTick({ jobId: at.jobId, stageId: at.stageId, detail: downloadLabel(p) });
         }
       },
     });
     // 60s idle: back-to-back searches reuse a warm worker (a session costs
     // hundreds of ms to build), but the weights do not sit resident forever.
     this.onnx = new OnnxHost({ spawn: spawnOnnxWorker, idleMs: 60_000 });
+
+    this.worker = new IndexWorker({
+      store: this.store,
+      // Read through a closure rather than captured once: capture can start at
+      // any point during a drain, and the gate has to see that.
+      isRecording: () => this.state.state === "recording",
+      buildProviders: () => this.buildProviders(),
+      stageWorld: async (sessionId, providers) => this.stageWorld(sessionId, providers),
+      setRunningStage: (at) => {
+        this.runningStage = at;
+      },
+      // A finished session is immutable, which is what the rail's memo assumes —
+      // and a re-index is the one thing that makes it false. The highlights go
+      // for a related reason: they name REGION ids from the last search, and
+      // `putRegions` mints fresh ULIDs, so every one of them now points at a row
+      // that no longer exists. This used to live inside `reindexAll`; it has to
+      // live here now, because a background job can land while the Library is
+      // open on the very session it rebuilt.
+      onJobSettled: (job) => {
+        this.lastHighlights.clear();
+        if (job.sessionId) this.trackCache.delete(job.sessionId);
+        else this.trackCache.clear();
+      },
+      emitQueue: () => this.emitQueue(),
+      emitTick: (tick) => this.emitTick(tick),
+    });
+
+    // Anything left `running` is a job a previous process died inside — nothing
+    // else writes that state and then stops. Recover BEFORE the first kick, or
+    // the drain would step over it and it would sit there forever.
+    await this.worker.recover();
+    await this.adoptUnclosedSessions();
+    this.worker.kick();
+  }
+
+  /**
+   * Close and enqueue any recording the last process left open.
+   *
+   * A session with no `ended_at` at STARTUP cannot be recording — this process
+   * has only just begun — so it is one a previous process died inside, between
+   * `session.stop()` and the enqueue. Found by driving the app: quitting during
+   * that window left a real 6-frame recording on disk with no end stamp and no
+   * job, and nothing would ever have looked at it again.
+   *
+   * This is recovery of a specific, identified failure, NOT general backlog
+   * repair: it adopts only sessions whose end stamp is missing, and it never
+   * goes looking for recordings that merely lack derived rows.
+   *
+   * The end time is taken from the last thing actually captured rather than
+   * from `Date.now()`, which would claim the recording ran until the app next
+   * launched — days, in the case this recovers from.
+   */
+  private async adoptUnclosedSessions(): Promise<void> {
+    const open = this.store.listSessions().filter((s) => s.endedAt === null);
+    for (const s of open) {
+      const events = this.store.getEventsBySession(s.id);
+      const lastMono = events.length > 0 ? events[events.length - 1]!.tMono : 0;
+      await this.store.endSession(s.id, s.startedAt + lastMono);
+      await this.enqueueJob("record", s.id, null);
+      console.info(`[deskrag] adopted an unclosed recording: ${s.id}`);
+    }
   }
 
   close(): void {
@@ -210,9 +301,18 @@ export class DeskRagService {
     this.stateListeners.add(cb);
     return () => this.stateListeners.delete(cb);
   }
-  onIndexing(cb: (p: IndexingProgress) => void): () => void {
-    this.indexingListeners.add(cb);
-    return () => this.indexingListeners.delete(cb);
+  /** Full queue snapshots, on transitions. */
+  onIndexQueue(cb: (q: IndexQueueDTO) => void): () => void {
+    this.queueListeners.add(cb);
+    return () => this.queueListeners.delete(cb);
+  }
+  /**
+   * The running stage's detail line — its own channel because the patch stage
+   * reports per frame, and re-serialising the whole queue at that rate is waste.
+   */
+  onIndexTick(cb: (t: IndexTickDTO) => void): () => void {
+    this.tickListeners.add(cb);
+    return () => this.tickListeners.delete(cb);
   }
   /** Weight downloads can start from search(), not just index(), so this is its
    *  own channel rather than a stage of IndexingProgress. */
@@ -220,11 +320,28 @@ export class DeskRagService {
     this.modelListeners.add(cb);
     return () => this.modelListeners.delete(cb);
   }
+  /**
+   * A recording-state change is ALSO a queue change, and they are emitted
+   * together so they cannot disagree.
+   *
+   * `IndexQueueDTO.held` is a function of whether capture is running, so
+   * starting a recording changes the queue's answer without touching a single
+   * job row. Emitting only the recording state left the renderer holding a
+   * snapshot that still said `held: null` — measured by driving the app, a
+   * second recording ran with the queue correctly reporting a hold over IPC and
+   * the SCREEN showing no banner at all, because nothing had pushed it one.
+   */
   private emitState(): void {
     for (const cb of this.stateListeners) cb(this.state);
+    this.emitQueue();
   }
-  private emitIndexing(p: IndexingProgress): void {
-    for (const cb of this.indexingListeners) cb(p);
+  private emitQueue(): void {
+    if (this.queueListeners.size === 0) return;
+    const q = this.indexQueue();
+    for (const cb of this.queueListeners) cb(q);
+  }
+  private emitTick(t: IndexTickDTO): void {
+    for (const cb of this.tickListeners) cb(t);
   }
 
   status(): RecordingStatus {
@@ -500,63 +617,58 @@ export class DeskRagService {
     }
   }
 
+  /**
+   * Stop capture and HAND THE RECORDING TO THE QUEUE.
+   *
+   * This used to `await this.index(sessionId)` inline, which is why the record
+   * button was dead for as long as indexing took — measured at about ten minutes
+   * over 546 frames with an image provider configured. It now returns as soon as
+   * the producers are down, and the state goes straight back to `idle`, so the
+   * next recording can start immediately.
+   *
+   * The synchronous state claim survives that change and must: a second
+   * concurrent call racing in behind this one has to see `state !== "recording"`
+   * BEFORE the first await, or it passes the guard above too. It used to double-
+   * index — measured on a real recording as 28 segment rows, 14 duplicated,
+   * because `Segmenter.segment()` has no dedup and just re-inserts. The queue
+   * now backs that up with a second guarantee of its own (enqueue is idempotent
+   * per kind+session while a job is live), but belt and braces on the one race
+   * that has actually happened here is not excessive.
+   */
   async stopRecording(): Promise<RecordingStatus> {
     if (this.state.state !== "recording" || !this.session) return this.state;
     const sessionId = this.state.sessionId!;
     const session = this.session;
-    // Claim the transition SYNCHRONOUSLY, before the first await: a second
-    // concurrent call racing in behind this one must see state !== "recording"
-    // immediately, or it passes the guard above too and calls index() twice —
-    // measured on a real recording as 28 segment rows (14 duplicated) from one
-    // session, because Segmenter.segment() has no dedup and just re-inserts.
     this.session = undefined;
-    this.state = { state: "indexing", sessionId, activeSignals: this.state.activeSignals };
-    this.emitState();
-
-    await session.stop();
-
-    try {
-      await this.index(sessionId);
-    } catch (err) {
-      console.error("[deskrag] indexing failed:", err);
-      this.emitIndexing({ stage: "Indexing failed — see logs", done: 0, total: 0 });
-    }
     this.state = { state: "idle", activeSignals: [] };
     this.emitState();
+
+    // Published so the QUIT PATH can wait for it. Everything after this point —
+    // shutting the producers down, stamping `ended_at`, enqueueing the job — is
+    // still in flight while the UI already reads idle, which is the point. But
+    // `before-quit` used to close the store straight through that window:
+    // measured by driving the app, quitting ~150ms after pressing stop left a
+    // session with `ended_at` NULL and NO job, so the recording existed on disk
+    // and nothing would ever index it.
+    this.stopping = (async () => {
+      await session.stop();
+      await this.enqueueJob("record", sessionId, null);
+    })().finally(() => {
+      this.stopping = undefined;
+    });
+
+    await this.stopping;
     return this.state;
   }
 
   /**
-   * Run the indexing pipeline over one recording.
+   * The in-flight `stopRecording`, or undefined when nothing is stopping.
    *
-   * The ordering does not live here — it lives in `INDEX_STAGES`, and the stage
-   * bodies live in `STAGE_RUNNERS`. This method's whole job is to turn the
-   * service's state into `StageFacts` + a `StageWorld` and to say how progress
-   * is counted, which for a single recording is by stage.
+   * Exists for the quit path alone. `before-quit` is synchronous and closing the
+   * store mid-stop loses the recording's end stamp and its indexing job.
    */
-  private async index(sessionId: string): Promise<void> {
-    const world = this.stageWorld(sessionId, await this.buildProviders());
-    const plan = planStages(world.facts);
-    const total = plan.length;
-
-    try {
-      await runStages(plan, world, {
-        begin: (_id, label, i, n) => {
-          // Named so a weight download that starts INSIDE this stage can rewrite
-          // the label. Whisper's model is fetched lazily by Transcribing, and
-          // 57MB of silence is indistinguishable from a hung stage.
-          this.downloading = { stage: label, done: i, total: n };
-          this.emitIndexing({ stage: label, done: i, total: n });
-        },
-        update: (label, done, n) => this.emitIndexing({ stage: label, done, total: n }),
-      });
-    } finally {
-      // In a finally because a stage that throws leaves this set, and the next
-      // weight download — which can start from a SEARCH — would then label
-      // itself with the stage that failed.
-      this.downloading = undefined;
-    }
-    this.emitIndexing({ stage: "Done", done: total, total });
+  pendingStop(): Promise<void> | undefined {
+    return this.stopping;
   }
 
   /**
@@ -1069,6 +1181,17 @@ export class DeskRagService {
     if (this.state.state !== "idle" && this.state.sessionId === sessionId) {
       throw new Error("That recording is still in progress — stop it before deleting.");
     }
+    // AND not while it is being indexed. `index_job` cascades on session delete,
+    // so the row would vanish out from under the worker mid-stage while it went
+    // on writing derived rows for a session that no longer exists. That guard
+    // used to come for free: "indexing" was a value of the recording state, so
+    // the check above covered both. Splitting them is what opened this.
+    const running = this.store
+      .listIndexJobs(["running"])
+      .find((j) => j.sessionId === sessionId);
+    if (running) {
+      throw new Error("That recording is being indexed — wait for the current stage to finish.");
+    }
     // Rows first: a row pointing at a deleted file is a broken read, whereas a
     // file with no row is just reclaimable disk.
     await this.store.deleteSession(sessionId);
@@ -1077,9 +1200,33 @@ export class DeskRagService {
     this.trackCache.delete(sessionId);
   }
 
+  // --- the indexing queue ----------------------------------------------------
+  //
+  // EVERY method below ENQUEUES AND RETURNS. None of them runs the pipeline
+  // inline, and none of them refuses because a recording is in progress — the
+  // worker yields to capture on its own, between stages.
+  //
+  // That is a deliberate reversal. `reindexAll` and `reindexTraces` used to run
+  // a whole library rebuild inside their IPC handler, guarded by
+  // `state !== "idle"` — and then never SET the state, so `startRecording`
+  // succeeded mid-rebuild and capture wrote into sessions the loop was purging,
+  // with no indication anywhere in the UI. The guard was doing nothing it
+  // appeared to do.
+
   /**
-   * Re-index the whole library: discard everything derived, then run the full
-   * pipeline again over every recording.
+   * Re-index one recording from raw capture.
+   *
+   * A separate KIND from the record job rather than a flag on it, because jobs
+   * deduplicate by (kind, session): a manual re-index must be able to queue
+   * behind the automatic job for the same recording, not be folded into it and
+   * silently do nothing.
+   */
+  async reindexSession(sessionId: string): Promise<void> {
+    await this.enqueueJob("reindex", sessionId, null);
+  }
+
+  /**
+   * Re-index the whole library: one job per recording, plus the graph rebuild.
    *
    * NOT a subset of the record path, which is the point. It used to be one — the
    * text-side stages, hand-written a second time — and it went stale: composing
@@ -1088,144 +1235,244 @@ export class DeskRagService {
    * hierarchy at all. Both paths now select from `INDEX_STAGES`, so there is no
    * second list to keep in step.
    *
-   * Re-segmenting is now safe, and it was not before. The old worry was that new
+   * Re-segmenting is safe, and it was not before. The old worry was that new
    * segment ids would orphan every caption, app_caption and transcript attached
-   * to the old ones — true, and the reason `Segmenter` was excluded. `purgeDerived`
-   * removes those rows first and the stages rewrite them, so nothing is left
-   * pointing at an id that no longer exists.
+   * to the old ones — true, and the reason `Segmenter` was excluded.
+   * `purgeDerived` removes those rows first and the stages rewrite them.
    *
    * WHAT THIS COSTS, and why the UI confirms first: a recording is rebuilt with
    * the providers configured NOW. Re-indexing with no captioner permanently
    * discards every caption; with no whisper binary, every transcript. Both are
    * recomputable from blobs still on disk, but only by a run that has the
-   * provider. It also runs the model stages, so a library takes minutes to hours
-   * where the old text-only rebuild took seconds.
+   * provider. It also runs the model stages, so a library takes minutes to hours.
    *
-   * The trace graph is rebuilt ONCE at the end rather than per recording: a graph
-   * accretes, so re-lifting one session into a graph that still contains it
-   * double-counts its observations and corrupts the counts `edgeCost` uses.
+   * **Oldest recording first**, which is the order `rebuildGraph` replays in, so
+   * the rebuilt graph accretes the way the incremental path produced it. That
+   * order survives the queue because jobs are claimed by INSERTION order rather
+   * than by id — every job in this fan-out lands in the same millisecond, so the
+   * tiebreak is the ordering, and a ULID tiebreak would have shuffled it.
    *
-   * Refused while recording: the session in flight is still writing the events
-   * these stages read.
+   * The trace graph is one job at the END rather than one per recording: a graph
+   * accretes, so re-lifting a session into a graph that still contains it
+   * double-counts the observations `edgeCost` uses.
    */
-  async reindexAll(): Promise<{ sessions: number; segments: number }> {
-    if (this.state.state !== "idle") {
-      throw new Error("Stop the current recording before re-indexing.");
-    }
-    // Oldest first — the order `rebuildGraph` replays in, so the rebuilt graph
-    // accretes the same way the incremental path produced it.
+  async reindexAll(): Promise<void> {
+    const batchId = ulid();
     const sessions = [...this.store.listSessions()].sort((a, b) => a.startedAt - b.startedAt);
-    const n = sessions.length;
-    // One step per recording plus the graph rebuild that finishes the run.
-    const total = n + 1;
-    this.emitIndexing({ stage: "Re-indexing", done: 0, total });
-    try {
-      const providers = await this.buildProviders();
-      for (let i = 0; i < n; i++) {
-        const id = sessions[i]!.id;
-        const world = this.stageWorld(id, providers);
-        const { perSession } = reindexPlan(world.facts);
-        const at = (label: string): string => `Recording ${i + 1}/${n} — ${label}`;
-
-        // Purge FIRST. Every stage below appends rather than replaces —
-        // `putRegions` inserts with a fresh ulid and adds to Lance without
-        // deleting — so a second pass over live rows would double them, and a
-        // duplicate vector that still has a SQLite row is not an orphan, so
-        // `reconcile()` could never prune it.
-        await this.store.purgeDerived(id);
-
-        await runStages(perSession, world, {
-          begin: (_id, label) => {
-            // Same field the record path sets, so a weight download inside a
-            // stage rewrites this label instead of stalling silently. The old
-            // rebuild never set it — and never ran transcription either.
-            this.downloading = { stage: at(label), done: i, total };
-            this.emitIndexing({ stage: at(label), done: i, total });
-          },
-          update: (label) => this.emitIndexing({ stage: at(label), done: i, total }),
-        });
-      }
-      this.downloading = undefined;
-
-      // The library-scoped finisher. `reindexPlan` puts `trace` here rather than
-      // in the loop; running it is not optional, or a re-index would leave the
-      // graph describing segments that no longer exist.
-      this.emitIndexing({ stage: "Rebuilding trace graph", done: n, total });
-      await rebuildGraph(this.store);
-
-      // A finished session is immutable, which is what the rail's memo assumes —
-      // and a re-index is the one thing that makes it false. The highlights go
-      // for a related reason: they name REGION ids from the last search, and
-      // `putRegions` mints fresh ulids, so every one of them now points at a row
-      // that no longer exists.
-      this.trackCache.clear();
-      this.lastHighlights.clear();
-
-      const segments = sessions.reduce(
-        (sum, x) =>
-          sum +
-          this.store
-            .getSegmentsBySession(x.id)
-            .filter((g) => g.granularity === LEAF_GRANULARITY).length,
-        0,
-      );
-      this.emitIndexing({
-        stage:
-          n === 0
-            ? "Nothing to re-index — no recordings yet"
-            : `Re-indexed ${n} recording${n === 1 ? "" : "s"}, ${segments} actions`,
-        done: total,
-        total,
-      });
-      return { sessions: n, segments };
-    } catch (err) {
-      this.downloading = undefined;
-      this.emitIndexing({ stage: "Re-index failed — see logs", done: 0, total });
-      throw err;
-    }
+    for (const s of sessions) await this.enqueueJob("reindex", s.id, batchId);
+    await this.enqueueJob("trace-rebuild", null, batchId);
   }
 
   /**
-   * Re-lift every recording into a fresh trace graph.
+   * Re-lift every recording into a fresh trace graph, as one library-scoped job.
    *
    * Lifting reads `ax_snapshot` and the event stream, both already on disk, so
    * nothing is re-recorded — this is how a corrected predicate filter or lift
    * rule reaches recordings already taken. Indexing otherwise runs only when a
    * recording stops, which left existing graphs frozen under whatever rules were
    * in force the day they were made.
-   *
-   * Refused while recording: the session in flight is still writing the events
-   * a lift would read, so it would be lifted half-formed and then merged again
-   * when it stops.
    */
-  async reindexTraces(): Promise<ReindexResultDTO> {
-    if (this.state.state !== "idle") {
-      throw new Error("Stop the current recording before rebuilding the graph.");
+  async rebuildTraces(): Promise<void> {
+    await this.enqueueJob("trace-rebuild", null, null);
+  }
+
+  private async enqueueJob(
+    kind: IndexJobKind,
+    sessionId: string | null,
+    batchId: string | null,
+  ): Promise<void> {
+    await this.store.enqueueIndexJob({
+      id: ulid(),
+      sessionId,
+      kind,
+      payload: encodePayload({ batchId }),
+    });
+    this.emitQueue();
+    this.worker.kick();
+  }
+
+  /**
+   * What the gates will decide, predicted from SETTINGS rather than from built
+   * providers.
+   *
+   * The real run derives its facts from the provider objects it actually
+   * constructed (`stageWorld`), because that is the only thing that can be
+   * trusted at the moment of running. Here nothing is constructed yet — the
+   * point is to answer before paying for an ONNX session — so the two agree by
+   * reading the same settings `buildProviders` reads. A disagreement is possible
+   * if settings change between enqueue and claim, and it resolves itself: the
+   * run overwrites this with what really happened.
+   */
+  private plannedFacts(sessionId: string | null): StageFacts {
+    const providers = this.settings.view().providers;
+    return {
+      patchEmbedder: providers.imageProvider !== "none",
+      captioner: providers.captionProvider !== "none",
+      hasAudio:
+        sessionId !== null &&
+        this.store
+          .getBlobsBySession(sessionId)
+          .some((b) => b.media === "mic" || b.media === "desktop_audio"),
+      whisper: whisperAvailable(providers.whisper.binaryPath),
+    };
+  }
+
+  /**
+   * Drop a queued job.
+   *
+   * A RUNNING job is REFUSED rather than silently ignored. Stopping mid-stage is
+   * the one thing this whole design avoids: every stage appends, so a job cut in
+   * half leaves derived rows the next pass would double. Waiting out one stage
+   * is the price, and saying so is better than a button that does nothing.
+   */
+  async cancelIndexJob(jobId: string): Promise<void> {
+    const job = this.store.getIndexJob(jobId);
+    if (!job) return;
+    if (job.state === "running") {
+      throw new Error("That job is running — it will finish the stage it is on.");
     }
-    // The existing indexing channel, so the renderer's progress surface covers
-    // this with no second mechanism.
-    this.emitIndexing({ stage: "Rebuilding trace graph", done: 0, total: 1 });
-    try {
-      const r = await rebuildGraph(this.store, (done, total) => {
-        this.emitIndexing({
-          stage: `Re-lifting recordings ${Math.min(done + 1, total)}/${total}`,
-          done,
-          total,
-        });
-      });
-      const summary =
-        r.sessions === 0
-          ? "Nothing to rebuild — no recording produced any events"
-          : `Rebuilt from ${r.sessions} recording${r.sessions === 1 ? "" : "s"} — ` +
-            `graph ${r.nodes}/${r.edges}, ${r.actions} actions` +
-            (r.variables > 0 ? `, ${r.variables} variables` : "") +
-            (r.missingKeymap ? " (a recording had no keyboard layout: typed text not captured)" : "");
-      this.emitIndexing({ stage: summary, done: 1, total: 1 });
-      return r;
-    } catch (err) {
-      this.emitIndexing({ stage: "Rebuild failed — see logs", done: 0, total: 1 });
-      throw err;
-    }
+    if (job.state !== "queued") return;
+    await this.store.finishIndexJob(jobId, "cancelled");
+    this.emitQueue();
+  }
+
+  /**
+   * Re-queue a failed or cancelled job, as a new job carrying the same payload.
+   *
+   * A NEW row rather than a state flip, so the failure that prompted the retry
+   * stays on the screen next to it. The retry purges before it runs — not
+   * because of a flag, but because `mustPurge` reads the kind, and a `record`
+   * job that failed part-way is re-enqueued as one whose first claim finds
+   * derived rows already there.
+   */
+  async retryIndexJob(jobId: string): Promise<void> {
+    const job = this.store.getIndexJob(jobId);
+    if (!job || job.state === "queued" || job.state === "running") return;
+    await this.store.enqueueIndexJob({
+      id: ulid(),
+      // A retry always purges, whatever failed the first time — so it goes back
+      // as a `reindex`, which is exactly what "run this again over a recording
+      // that may already have half its derived rows" means.
+      sessionId: job.sessionId,
+      kind: job.sessionId ? "reindex" : "trace-rebuild",
+      payload: job.payload,
+    });
+    this.emitQueue();
+    this.worker.kick();
+  }
+
+  /** Forget every terminal job. Queued and running ones are never touched. */
+  async clearFinishedIndexJobs(): Promise<void> {
+    await this.store.pruneIndexJobs(0);
+    this.emitQueue();
+  }
+
+  /**
+   * The whole queue as the renderer sees it.
+   *
+   * Session labels are resolved HERE rather than in the renderer because the
+   * store is private and this is the only place that can join a job to the
+   * recording it is about — the same reason `listSessions` resolves a purpose.
+   */
+  indexQueue(): IndexQueueDTO {
+    const rows = this.store.listIndexJobs();
+    const running = rows.find((j) => j.state === "running");
+    const recording = this.state.state === "recording";
+    const queued = rows.some((j) => j.state === "queued");
+
+    /*
+     * A RECORDING IS A HOLD EVEN WHILE A STAGE IS STILL RUNNING, and getting
+     * that wrong is what the running app caught. The gate is checked between
+     * stages, and the slowest stage measured 14m 16s — so reporting `held: null`
+     * whenever a job happened to be mid-flight meant that during a second
+     * recording the screen showed a job running and said nothing at all about
+     * yielding to it. The state was correct; the disclosure was missing.
+     *
+     * `holdMessage` carries the distinction instead: pausing-shortly versus
+     * paused. With nothing queued and nothing running there is no hold to
+     * report — a queue that said "paused" while empty would read as broken.
+     */
+    const held = recording
+      ? running || queued
+        ? ("recording" as const)
+        : ("empty" as const)
+      : running
+        ? null
+        : // The WORKER's own hold beats a recomputed one: it is the thing
+          // actually waiting on the poll.
+          this.worker.holding
+          ? ("recording" as const)
+          : nextRunnable(rows, { recording }).held;
+
+    const labels = new Map(
+      rows
+        .map((j) => j.sessionId)
+        .filter((id): id is string => id !== null)
+        .map((id) => [id, this.jobSessionLabel(id)] as const),
+    );
+
+    return {
+      jobs: rows.map((j) => this.indexJobDto(j, labels)),
+      runningJobId: running?.id ?? null,
+      held,
+      heldMessage: held ? holdMessage(held, running !== undefined) : null,
+    };
+  }
+
+  /**
+   * What to call the recording a job is about.
+   *
+   * The composed root's summary if it has one — the same rule the Library list
+   * uses, so a recording is named identically on both screens. Null while a
+   * recording has never been indexed, which is the common case for the job
+   * queued the moment it stopped: the screen falls back to its wall clock rather
+   * than inventing a name.
+   */
+  private jobSessionLabel(sessionId: string): { purpose: string | null; poster: string | null } {
+    const root = this.store
+      .getSegmentsBySession(sessionId)
+      .find((seg) => seg.granularity === ROOT_GRANULARITY);
+    const purpose = root === undefined ? undefined : this.store.getSegmentSummary(root.id);
+    const frame = this.store.getFramesBySession(sessionId).find((f) => f.blobId);
+    return {
+      purpose: purpose?.text ?? null,
+      poster: frame?.blobId ? `deskrag://frame/${frame.blobId}` : null,
+    };
+  }
+
+  private indexJobDto(
+    job: IndexJobRow,
+    labels: Map<string, { purpose: string | null; poster: string | null }>,
+  ): IndexJobDTO {
+    // An unrecognised kind reads as a plain record job rather than throwing: a
+    // row written by a newer build must still be describable by an older one.
+    const kind: IndexJobKind = isIndexJobKind(job.kind) ? job.kind : "record";
+    // A job that has not run yet has no ladder ON DISK, and must still show one.
+    // PREDICTING it here rather than writing it at enqueue keeps the stored
+    // progress meaning exactly one thing — what actually happened — and covers
+    // rows enqueued by an older build for free. Measured before this: five jobs
+    // queued behind one running job all read "0/0 stages" beside an empty
+    // diagram, which is the question a reader has *while they wait*.
+    const stages = job.progress === null ? initialStages(kind, this.plannedFacts(job.sessionId)) : decodeStages(job.progress);
+    const { done, total } = jobProgress(stages);
+    const at = job.sessionId ? labels.get(job.sessionId) : undefined;
+
+    return {
+      id: job.id,
+      kind,
+      sessionId: job.sessionId,
+      sessionLabel: at?.purpose ?? null,
+      posterUrl: at?.poster ?? null,
+      state: job.state,
+      enqueuedAt: job.enqueuedAt,
+      startedAt: job.startedAt,
+      endedAt: job.endedAt,
+      error: job.error,
+      batchId: decodePayload(job.payload).batchId,
+      stages: buildStageGraph(stages),
+      done,
+      total,
+    };
   }
 
   // --- blobs (served over the deskrag:// protocol) --------------------------

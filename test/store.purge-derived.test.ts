@@ -9,6 +9,7 @@ import {
   CAPTURED_TABLES,
   DERIVED_LIBRARY_TABLES,
   DERIVED_SESSION_TABLES,
+  OPERATIONAL_TABLES,
 } from "../src/store/sqlite/schema.js";
 import { FakeEmbeddingProvider } from "../src/embed/fake.js";
 import { namespaceFor } from "../src/embed/types.js";
@@ -179,6 +180,23 @@ describe("DualStore.purgeDerived", () => {
   });
 
   /**
+   * The queue DRIVES the re-index, so a purge that cleared it would delete the
+   * job currently running. That is why `index_job` is classified operational
+   * rather than derived, and this is the assertion that classification buys.
+   */
+  it("leaves the indexing queue untouched — a re-index must not eat its own job", async () => {
+    const job = await store.enqueueIndexJob({
+      id: ulid(),
+      sessionId: s.sessionId,
+      kind: "reindex",
+      payload: "{}",
+    });
+    await store.purgeDerived(s.sessionId);
+    expect(store.getIndexJob(job.id)?.state).toBe("queued");
+    for (const t of OPERATIONAL_TABLES) expect(rows(t), t).toBe(1);
+  });
+
+  /**
    * The half that makes this a re-index rather than a delete. Everything derived
    * is recomputed FROM these rows, so losing one is unrecoverable — the video and
    * the event stream cannot be re-recorded.
@@ -282,6 +300,7 @@ describe("table classification", () => {
         ...CAPTURED_TABLES,
         ...DERIVED_SESSION_TABLES,
         ...DERIVED_LIBRARY_TABLES,
+        ...OPERATIONAL_TABLES,
       ]);
       // FTS5 keeps its own shadow tables beside each virtual table; they are an
       // implementation detail of a table that IS classified.

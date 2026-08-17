@@ -30,6 +30,9 @@ import type {
   FramePatchInsert,
   FrameRow,
   FrameScope,
+  IndexJobInput,
+  IndexJobRow,
+  IndexJobState,
   MissingVector,
   ReconcileResult,
   Reembedder,
@@ -314,6 +317,59 @@ export class DualStore implements Store {
                   ORDER BY b.t_mono_start ASC LIMIT 1)                     AS video_blob_id
            FROM session s
           ORDER BY s.started_at DESC`,
+      ),
+      // --- indexing work queue ---------------------------------------------
+      insertIndexJob: db.prepare(
+        `INSERT INTO index_job
+           (id, session_id, kind, state, enqueued_at, started_at, ended_at,
+            attempts, error, payload, progress)
+         VALUES (?, ?, ?, 'queued', ?, NULL, NULL, 0, NULL, ?, NULL)`,
+      ),
+      // The idempotence check. `IS` rather than `=` because session_id is NULL
+      // for library-scoped work, and `NULL = NULL` is NULL, not true — a plain
+      // equality would let every trace rebuild enqueue a duplicate.
+      selectLiveIndexJob: db.prepare(
+        `SELECT * FROM index_job
+          WHERE kind = ? AND session_id IS ? AND state IN ('queued','running')
+          ORDER BY enqueued_at ASC LIMIT 1`,
+      ),
+      // ORDER BY rowid, NOT by id. `enqueued_at` is a millisecond and a
+      // `reindexAll` fan-out enqueues every recording inside ONE of them, so
+      // the tiebreak IS the ordering for a whole library rebuild — and a ULID
+      // tiebreak would have been random there, because `ulid()` randomizes
+      // within a millisecond rather than incrementing. rowid is insertion
+      // order by construction, which is exactly what "oldest first" means.
+      selectIndexJobs: db.prepare("SELECT * FROM index_job ORDER BY enqueued_at ASC, rowid ASC"),
+      selectIndexJob: db.prepare("SELECT * FROM index_job WHERE id = ?"),
+      selectNextQueuedJob: db.prepare(
+        `SELECT * FROM index_job WHERE state = 'queued'
+          ORDER BY enqueued_at ASC, rowid ASC LIMIT 1`,
+      ),
+      startIndexJob: db.prepare(
+        `UPDATE index_job SET state = 'running', started_at = ?, attempts = attempts + 1
+          WHERE id = ?`,
+      ),
+      updateIndexJobProgress: db.prepare("UPDATE index_job SET progress = ? WHERE id = ?"),
+      finishIndexJob: db.prepare(
+        "UPDATE index_job SET state = ?, ended_at = ?, error = ? WHERE id = ?",
+      ),
+      selectRunningIndexJobs: db.prepare(
+        "SELECT * FROM index_job WHERE state = 'running' ORDER BY enqueued_at ASC",
+      ),
+      // Re-queue rather than resume: the stage bodies append, so only a purge
+      // makes a second pass safe, and the app records that in the payload.
+      requeueIndexJob: db.prepare(
+        `UPDATE index_job SET state = 'queued', started_at = NULL, payload = ? WHERE id = ?`,
+      ),
+      // Terminal jobs beyond the newest `keep`. The subquery names what to KEEP,
+      // so an empty table and a short table both delete nothing.
+      pruneIndexJobs: db.prepare(
+        `DELETE FROM index_job
+          WHERE state IN ('done','failed','cancelled')
+            AND id NOT IN (
+              SELECT id FROM index_job WHERE state IN ('done','failed','cancelled')
+               ORDER BY enqueued_at DESC, rowid DESC LIMIT ?
+            )`,
       ),
       selectEventsBySession: db.prepare(
         "SELECT * FROM event WHERE session_id = ? ORDER BY t_mono ASC",
@@ -1098,6 +1154,123 @@ export class DualStore implements Store {
       byteLength: r.byte_length as number,
       videoBlobId: (r.video_blob_id as string | null) ?? null,
     }));
+  }
+
+  // --- indexing work queue ---------------------------------------------------
+  //
+  // SQLite only: a job has no vector, so none of the commit-then-add ordering
+  // applies. Writes still go through the mutex, because `enqueueIndexJob` and
+  // `claimIndexJob` are read-then-write pairs and the whole point of both is
+  // that two callers cannot land on the same slot.
+
+  private hydrateIndexJob(r: Record<string, unknown>): IndexJobRow {
+    return {
+      id: r.id as string,
+      sessionId: (r.session_id as string | null) ?? null,
+      kind: r.kind as string,
+      state: r.state as IndexJobState,
+      enqueuedAt: r.enqueued_at as number,
+      startedAt: (r.started_at as number | null) ?? null,
+      endedAt: (r.ended_at as number | null) ?? null,
+      attempts: r.attempts as number,
+      error: (r.error as string | null) ?? null,
+      payload: r.payload as string,
+      progress: (r.progress as string | null) ?? null,
+    };
+  }
+
+  async enqueueIndexJob(input: IndexJobInput): Promise<IndexJobRow> {
+    return this.mutex.run(async () => {
+      const live = this.stmts.selectLiveIndexJob.get(input.kind, input.sessionId) as
+        | Record<string, unknown>
+        | undefined;
+      if (live) return this.hydrateIndexJob(live);
+      this.stmts.insertIndexJob.run(
+        input.id,
+        input.sessionId,
+        input.kind,
+        Date.now(),
+        input.payload,
+      );
+      return this.hydrateIndexJob(
+        this.stmts.selectIndexJob.get(input.id) as Record<string, unknown>,
+      );
+    });
+  }
+
+  listIndexJobs(states?: readonly IndexJobState[]): IndexJobRow[] {
+    const all = (this.stmts.selectIndexJobs.all() as Record<string, unknown>[]).map((r) =>
+      this.hydrateIndexJob(r),
+    );
+    if (!states) return all;
+    const want = new Set(states);
+    return all.filter((j) => want.has(j.state));
+  }
+
+  getIndexJob(jobId: string): IndexJobRow | undefined {
+    const r = this.stmts.selectIndexJob.get(jobId) as Record<string, unknown> | undefined;
+    return r ? this.hydrateIndexJob(r) : undefined;
+  }
+
+  async claimIndexJob(): Promise<IndexJobRow | undefined> {
+    return this.mutex.run(async () => {
+      const r = this.stmts.selectNextQueuedJob.get() as Record<string, unknown> | undefined;
+      if (!r) return undefined;
+      const id = r.id as string;
+      this.stmts.startIndexJob.run(Date.now(), id);
+      return this.hydrateIndexJob(
+        this.stmts.selectIndexJob.get(id) as Record<string, unknown>,
+      );
+    });
+  }
+
+  async updateIndexJobProgress(jobId: string, progress: string): Promise<void> {
+    await this.mutex.run(async () => {
+      this.stmts.updateIndexJobProgress.run(progress, jobId);
+    });
+  }
+
+  async finishIndexJob(
+    jobId: string,
+    state: "done" | "failed" | "cancelled",
+    error?: string,
+  ): Promise<void> {
+    await this.mutex.run(async () => {
+      this.stmts.finishIndexJob.run(state, Date.now(), error ?? null, jobId);
+    });
+  }
+
+  async requeueRunningJobs(maxAttempts: number): Promise<IndexJobRow[]> {
+    return this.mutex.run(async () => {
+      const rows = (this.stmts.selectRunningIndexJobs.all() as Record<string, unknown>[]).map(
+        (r) => this.hydrateIndexJob(r),
+      );
+      for (const job of rows) {
+        if (job.attempts >= maxAttempts) {
+          this.stmts.finishIndexJob.run(
+            "failed",
+            Date.now(),
+            `Abandoned after ${job.attempts} attempts — the app did not survive this job.`,
+            job.id,
+          );
+          continue;
+        }
+        // Re-queued UNCHANGED, payload included. A half-run job left derived
+        // rows behind and every stage APPENDS, so the retry has to purge first
+        // — but that is the app's rule to apply, not the store's, and the app
+        // reads it off `attempts > 0` rather than from a flag the store would
+        // have to parse the payload to set. Keeping this write blind is what
+        // keeps `payload` genuinely opaque.
+        this.stmts.requeueIndexJob.run(job.payload, job.id);
+      }
+      return rows.map(
+        (j) => this.hydrateIndexJob(this.stmts.selectIndexJob.get(j.id) as Record<string, unknown>),
+      );
+    });
+  }
+
+  async pruneIndexJobs(keep: number): Promise<number> {
+    return this.mutex.run(async () => this.stmts.pruneIndexJobs.run(keep).changes);
   }
 
   getEventsBySession(sessionId: string): EventRow[] {

@@ -108,21 +108,19 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
    * the lift reads the AX snapshots and event stream already on disk, so this is
    * how a corrected lift rule reaches sessions captured under the old one.
    * Indexing otherwise runs only when a recording stops.
+   *
+   * This ENQUEUES and returns — it used to run the whole rebuild inline, behind
+   * a guard that refused while recording and then never set the state it was
+   * guarding on. The work is the same; where you watch it is the Indexing
+   * screen, and a recording can now start while it runs.
    */
   const reindex = async (): Promise<void> => {
     setReindexing(true);
     setReindexError(null);
     setReindexed(null);
     try {
-      const r = await api.sessions.reindex();
-      setReindexed(
-        r.sessions === 0
-          ? "Nothing to rebuild — no recording produced any events."
-          : `Rebuilt from ${r.sessions} recording${r.sessions === 1 ? "" : "s"}: ` +
-            `${r.nodes} nodes, ${r.edges} edges, ${r.actions} actions` +
-            (r.variables > 0 ? `, ${r.variables} variables` : "") +
-            (r.skipped > 0 ? ` · ${r.skipped} empty session skipped` : ""),
-      );
+      await api.indexing.rebuildTraces();
+      setReindexed("Queued — follow it on the Indexing screen.");
     } catch (e) {
       setReindexError(String(e));
     } finally {
@@ -141,18 +139,18 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
    * all. Raw capture survives — video, audio, keyframes, events and AX walks are
    * never touched — but a recording is rebuilt with the providers configured NOW,
    * which is what the confirm exists to say.
+   *
+   * ENQUEUES one job per recording plus the trace rebuild, oldest recording
+   * first, and returns. The confirmation still runs BEFORE the enqueue: what it
+   * discloses is destructive whether it happens inline or in a queue.
    */
   const reindexAll = async (): Promise<void> => {
     setReindexingAll(true);
     setReindexError(null);
     setReindexed(null);
     try {
-      const r = await api.sessions.reindexAll();
-      setReindexed(
-        r.sessions === 0
-          ? "Nothing to re-index — no recordings yet."
-          : `Re-indexed ${r.sessions} recording${r.sessions === 1 ? "" : "s"}: ${r.segments} actions.`,
-      );
+      await api.indexing.reindexAll();
+      setReindexed("Queued one job per recording — follow it on the Indexing screen.");
       setReindexAllConfirming(false);
     } catch (e) {
       setReindexError(String(e));
