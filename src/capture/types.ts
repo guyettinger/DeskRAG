@@ -87,6 +87,41 @@ export interface CaptureContext {
 }
 
 /**
+ * A tee of what a running capture is producing, for a live readout.
+ *
+ * This is NOT a second write path and carries no ids a reader could join on: it
+ * is what a meter needs and nothing more. The session emits one of these at each
+ * of the four points every signal converges on, which is why it can exist at all
+ * without touching a single producer.
+ *
+ * A `peak` of 0 is DIGITAL SILENCE and a `peaks` of null means the bytes could
+ * not be read as 16-bit PCM — the distinction {@link wavPeaks} already draws, and
+ * the one a dead microphone hides behind. A store full of zero samples looks
+ * perfectly healthy (docs/internals/capture.md).
+ */
+export type CaptureActivity =
+  | { kind: "event"; eventKind: string; tMono: number; data?: unknown }
+  | { kind: "frame"; kept: boolean; tMono: number; blobId?: string }
+  | {
+      kind: "audio";
+      media: "mic" | "desktop_audio";
+      byteLength: number;
+      tMonoStart: number;
+      tMonoEnd: number;
+      /** Peak envelope of this chunk, 0..1 per bucket. Null: not readable PCM. */
+      peaks: number[] | null;
+    }
+  | { kind: "ax"; reason: string; elements: number };
+
+/**
+ * Optional live observer. CALLED ON THE CAPTURE PATH, so it must be cheap and it
+ * must not throw — the session wraps every call, because capture is real-time and
+ * unrepeatable while a meter is decoration. Same rule as composing never failing
+ * an index run.
+ */
+export type ActivityObserver = (a: CaptureActivity) => void;
+
+/**
  * A signal source. Stamps events on the session's monotonic clock and hands them to
  * the `CaptureContext`; `stop()` must not resolve until the signal is fully drained.
  */

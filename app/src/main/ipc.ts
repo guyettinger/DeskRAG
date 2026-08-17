@@ -28,6 +28,9 @@ export function registerIpc(
     getWindow()?.webContents.send(channel, payload);
   };
   service.onState((s) => send(IPC.recordingStateEvent, s));
+  // Same split as the two indexing channels: state changes twice per recording,
+  // the per-signal counters change every second while one runs.
+  service.onRecordingTick((t) => send(IPC.recordingTickEvent, t));
   // Two indexing channels, not one. The snapshot fires on transitions; the tick
   // fires per frame inside the patch stage, and re-serialising the whole queue
   // at that rate would be waste.

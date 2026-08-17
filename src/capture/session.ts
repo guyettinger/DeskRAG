@@ -21,7 +21,15 @@ import { AxCapturer } from "./ax/ax-capturer.js";
 import { BoundaryAxTrigger } from "./ax/boundary.js";
 import type { AxSource } from "./ax/types.js";
 import type { BlobStore } from "../store/blob-store.js";
-import type { CaptureContext, Producer } from "./types.js";
+import { wavPeaks } from "./producers/wav.js";
+import type { ActivityObserver, CaptureActivity, CaptureContext, Producer } from "./types.js";
+
+/**
+ * Buckets of peak envelope reported per audio chunk. Small on purpose: this is a
+ * sparkline for a live readout, not the rail's envelope — that one is computed at
+ * read time from the stored blob, against the session's own axis.
+ */
+const AUDIO_ACTIVITY_BUCKETS = 24;
 
 /** What the session injects into producers, and how it batches their events. */
 export interface CaptureSessionOptions extends BatcherOptions {
@@ -48,6 +56,12 @@ export interface CaptureSessionOptions extends BatcherOptions {
    * this exists to remove. Tests pass a `FakeDeviceClockSource`.
    */
   deviceClockSource: DeviceClockSource;
+  /**
+   * Live tee of what the capture is producing, for a meter. Optional, never load
+   * bearing, and every call is wrapped: a recording is real-time and cannot be
+   * taken again, so an observer must not be able to sink one.
+   */
+  onActivity?: ActivityObserver;
   /** Settle delay before a boundary-triggered AX walk (default 250ms). */
   axSettleMs?: number;
   /** Input-idle gap that counts as a dwell for AX triggering (default 3000ms). */
@@ -163,7 +177,8 @@ export class CaptureSession {
             async (reason, boundaryTMono) => {
               // A boundary walk has no frame (the screen is settled, so the
               // keyframe gate emitted nothing); it is keyed by its boundary.
-              await this.axCapturer!.capture(reason, undefined, boundaryTMono);
+              const elements = await this.axCapturer!.capture(reason, undefined, boundaryTMono);
+              this.report({ kind: "ax", reason, elements });
             },
             {
               ...(this.opts.axSettleMs !== undefined ? { settleMs: this.opts.axSettleMs } : {}),
@@ -181,18 +196,37 @@ export class CaptureSession {
       // On a kept keyframe, snapshot the live AX tree alongside it.
       ingestFrame: async (frame) => {
         const res = await this.ingestor!.ingest(frame);
+        this.report({
+          kind: "frame",
+          kept: res.kept,
+          tMono: frame.tMono,
+          ...(res.blobId !== undefined ? { blobId: res.blobId } : {}),
+        });
         // NO frameId. The walk starts now, but `frame` shows the screen a whole
         // capture latency ago (~2.2s measured), so this is not the frame the
         // walk describes. `associateFrameAx` assigns it at represent time, when
         // the neighbouring frames' capture times are known.
         if (res.kept && res.frameId && this.axCapturer) {
-          await this.axCapturer.capture("keyframe");
+          // The element count was already being computed and thrown away here.
+          this.report({ kind: "ax", reason: "keyframe", elements: await this.axCapturer.capture("keyframe") });
         }
         return res;
       },
       // Persist a raw audio chunk as a blob (mic/desktop_audio). Best-effort:
       // without a blob store there is nowhere to keep the bytes, so drop it.
       ingestAudio: async (chunk) => {
+        // Read BEFORE the write, and from the same bytes the blob gets: this is
+        // the only moment a live readout can say whether the microphone is
+        // actually hearing anything. A silent default recorded −91 dB for a
+        // whole session and every row about it looked healthy.
+        this.report({
+          kind: "audio",
+          media: chunk.media,
+          byteLength: chunk.bytes.byteLength,
+          tMonoStart: chunk.tMonoStart,
+          tMonoEnd: chunk.tMonoEnd,
+          peaks: wavPeaks(chunk.bytes, AUDIO_ACTIVITY_BUCKETS)?.peaks ?? null,
+        });
         if (!this.opts.blobStore) return;
         const insert = await this.opts.blobStore.write(
           this.sessionId!,
@@ -253,8 +287,15 @@ export class CaptureSession {
         };
         this.batcher.add(row);
         // The session is the only component that sees EVERY producer's events, so
-        // cross-signal triggering belongs here — producers stay store-free.
+        // cross-signal triggering belongs here — producers stay store-free. The
+        // live tee is here for exactly the same reason.
         this.boundaryAx?.onEvent(row.kind, row.tMono);
+        this.report({
+          kind: "event",
+          eventKind: row.kind,
+          tMono: row.tMono,
+          ...(row.data !== undefined ? { data: row.data } : {}),
+        });
       },
     };
     this.emitUrl = (url, tMono) => ctx.emitEvent({ kind: "url_change", tMono, data: { url } });
@@ -280,5 +321,18 @@ export class CaptureSession {
   /** Buffered until the capture context exists, then routed through it. */
   private emitUrlChange(url: string, tMono: number): void {
     this.emitUrl?.(url, tMono);
+  }
+
+  /**
+   * Hand one activity to the observer. SWALLOWS everything it throws: this runs
+   * on the capture path, and a meter is not worth a lost recording.
+   */
+  private report(a: CaptureActivity): void {
+    if (!this.opts.onActivity) return;
+    try {
+      this.opts.onActivity(a);
+    } catch {
+      /* a live readout may never fail a capture */
+    }
   }
 }

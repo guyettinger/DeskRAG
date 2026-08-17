@@ -498,7 +498,15 @@ a:focus-visible {
    so the stage can never be crushed below the 92px button plus the 44px
    readout; at 900x600 the page overflows and `.content` scrolls, which is the
    documented fallback. `minmax(0, 1fr)` would clip the record button instead —
-   the one control the screen exists for. */
+   the one control the screen exists for.
+
+   THE OVERFLOW GREW WITH THE CHANNEL STRIPS AND THAT IS THE TRADE, measured:
+   163px before, 365px at 900x600 now, because a card carrying a sentence and a
+   well is ~177px against ~92px and the fold below 940px stacks five of them in
+   three rows. At 1180x800 — the size the window opens at — the band still fits
+   with the transport keeping its slack: overflow 0, five cards at 177px, and the
+   record button still 92x92. Trimming the well or the prose to buy back the
+   minimum window would cost the screen its answer at every size it is used at. */
 .record__stage {
   display: flex;
   flex-direction: column;
@@ -595,19 +603,45 @@ a:focus-visible {
     grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 }
+/* A CHANNEL STRIP, not a checkbox. Each card says what it captures, what it is
+   configured to, and — while a recording runs — what it has actually produced.
+   The well is pinned to the bottom (`margin-top: auto`) so five cards of unequal
+   prose still read as one row of instruments; grid items already stretch to the
+   row, so nothing needs a reserved line to line up. */
 .signal {
   background: var(--panel);
   border: 1px solid var(--hairline-soft);
   border-radius: var(--radius);
-  padding: var(--s3) var(--s4);
+  padding: var(--s3) var(--s4) var(--s3);
   display: flex;
   flex-direction: column;
   gap: var(--s2);
 }
+/* A switched-off signal RECEDES rather than disappearing — it is still a thing
+   the reader can turn on, and its card still states what it would capture. */
+.signal--off {
+  background: none;
+  border-color: var(--hairline-soft);
+}
+.signal--off .signal__name,
+.signal--off .signal__what {
+  color: var(--muted);
+}
+/* ALIGNED TO THE FIRST LINE BOX, never to the row. This was `align-items:
+   center` against a name that reserved two lines, so on a one-line name the lamp
+   and the switch both sat MEASURED 10.8px below the text they belong to — on all
+   five cards, at every window size. The offset is written against the row's own
+   line-height so it survives a change to the type scale. */
 .signal__row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--s2);
+}
+.signal__row .led {
+  margin-top: calc((1.5em - 8px) / 2);
+}
+.signal__row .switch {
+  align-self: flex-start;
 }
 .led {
   width: 8px;
@@ -626,19 +660,27 @@ a:focus-visible {
 .led.off {
   background: var(--muted-dim);
 }
-/* TWO LINES OF ROOM, ALWAYS, so the five switches line up. At the 198px a
-   five-up band gives each card, "Input (mouse + keys)" and "Accessibility tree"
-   wrap and the other three do not — and with the row centred, each switch then
-   sat at a different height across the band. Reserving the second line costs
-   ~21px once and makes the row of instruments read as a row. Nothing truncates
-   here: the name wraps, it is never clipped. */
+/* The name no longer RESERVES a second line. It used to, so that five switches
+   of unequal name length would line up — and that reservation is exactly what
+   put the lamp 10.8px below its own text. The alignment is structural now: the
+   lamp and the switch sit on the first line box, and the well pins to the card's
+   bottom, so a card whose name wraps still agrees with one whose name does not.
+   Nothing truncates here either: the name wraps, it is never clipped. */
 .signal__name {
   font-weight: 650;
   flex: 1;
-  min-height: calc(2 * 1.5em);
+  min-width: 0;
+}
+/* WHAT THE SIGNAL CAPTURES, in a sentence. `StageSpec.describe`'s counterpart —
+   this screen exists to say what a recording will contain, and it answered with
+   "UI labels + roles". It wraps and never ellipsizes. */
+.signal__what {
+  font-size: var(--t-small);
+  color: var(--muted);
+  text-wrap: pretty;
 }
 .signal__meta {
-  color: var(--muted);
+  color: var(--muted-dim);
   font-size: var(--t-meta);
   font-family: var(--font-mono);
 }
@@ -646,10 +688,82 @@ a:focus-visible {
   font-size: var(--t-meta);
   color: var(--amber);
 }
+/* An advisory, not a fault: the audio is recorded either way. */
+.signal__note--soft {
+  color: var(--muted);
+}
 .signal__note a {
   color: var(--accent);
   cursor: pointer;
   text-decoration: none;
+}
+
+/* THE WELL — cut into the strip, the way the timeline well is cut into the
+   Library. `--sunken` sits BELOW --ink for exactly this reading, and this is the
+   first place outside the rail that needs it: a meter is not another panel
+   floating on the instrument, it is a recess in it.
+
+   It ALWAYS answers. Off, blocked, ready, or a figure — a well that went blank
+   while switched off would be indistinguishable from one nobody implemented,
+   which is the rule the Indexing ladder's skipped stages already follow. */
+.signal__well {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+  min-height: 34px;
+  padding: var(--s1) var(--s2);
+  border-radius: var(--radius-sm);
+  background: var(--sunken);
+  border: 1px solid var(--hairline-soft);
+}
+/* A STATE reads quieter than a MEASUREMENT. Same distinction the rail draws
+   between an empty lane's reason and a lane carrying data. */
+.signal__well--idle .signal__figure {
+  color: var(--muted);
+  font-weight: 400;
+}
+.signal__figure {
+  font-size: var(--t-small);
+  font-weight: 600;
+  color: var(--text);
+  min-width: 0;
+}
+/* An application is ONE COLOUR everywhere — the same `[data-tone]` slot it has
+   on the rail, in Flows and on a search row. The hash lives in main and is
+   imported, never repeated. */
+.signal__figure--tone {
+  color: var(--tone, var(--text));
+}
+.signal__aside {
+  font-size: var(--t-meta);
+  color: var(--muted);
+  white-space: nowrap;
+  flex: none;
+}
+/* THE CONTACT SHEET, LIVE. The frame this signal just kept, while it keeps it —
+   the one loud element in a band that is otherwise all quiet figures. Fixed
+   width so a 16:9 and a 16:10 display give the same row height. */
+.signal__thumb {
+  width: 44px;
+  height: 26px;
+  object-fit: cover;
+  border-radius: 3px;
+  border: 1px solid var(--hairline);
+  flex: none;
+}
+/* The envelope of the LAST COMPLETED CHUNK, drawn from the same `wavPeaks`
+   numbers the rail's audio lane uses. Mirrored about the centre, so a flat line
+   is silence rather than an empty chart. */
+.signal__wave {
+  width: 44px;
+  height: 20px;
+  flex: none;
+}
+.signal__wave path {
+  fill: var(--data-signal);
+  stroke: none;
 }
 
 /* switch */
