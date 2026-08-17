@@ -36,6 +36,12 @@ export interface IngestResult {
   kept: boolean;
   phash: bigint;
   frameId?: string;
+  /**
+   * The keyframe image blob, when one was written or carried in. Reported so a
+   * caller can SHOW the frame it just kept without a store round trip — the row
+   * and the blob both exist by the time this returns.
+   */
+  blobId?: string;
 }
 
 export class FrameIngestor {
@@ -81,7 +87,7 @@ export class FrameIngestor {
         ...(blobId !== undefined ? { blobId } : {}),
       },
     ]);
-    return { kept: true, phash, frameId };
+    return { kept: true, phash, frameId, ...(blobId !== undefined ? { blobId } : {}) };
   }
 
   /** Number of keyframes kept so far (== next frame_offset). */

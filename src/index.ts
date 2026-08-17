@@ -78,7 +78,15 @@ export { mergeSortedByTMono, isMonotonic, type Stamped } from "./timeline/sync.j
  * A `Producer` emits stamped events; `CaptureSession` batches them into the store
  * and owns blob reservation, so producers never touch the store themselves.
  */
-export type { Producer, CaptureContext, EmittedEvent, EventKind, AudioChunk } from "./capture/types.js";
+export type {
+  Producer,
+  CaptureContext,
+  EmittedEvent,
+  EventKind,
+  AudioChunk,
+  CaptureActivity,
+  ActivityObserver,
+} from "./capture/types.js";
 export { CaptureSession, type CaptureSessionOptions } from "./capture/session.js";
 export { EventBatcher, type BatcherOptions } from "./capture/batcher.js";
 export { SyntheticInputProducer } from "./capture/synthetic.js";

@@ -4,10 +4,13 @@ import type {
   PermissionKind,
   PermissionStatus,
   RecordingStatus,
+  RecordingTickDTO,
   SettingsView,
   SignalConfig,
+  SignalKind,
 } from "@shared/types";
 import { api, timecode } from "../api.js";
+import { signalReadout, wavePath, type SignalGate } from "./signal-view.js";
 
 interface Props {
   status: RecordingStatus;
@@ -20,8 +23,29 @@ type SignalId = keyof SignalConfig;
 
 interface SignalDef {
   id: SignalId;
+  /** The kind main reports against. `activeWin` is `active-win` over IPC. */
+  kind: SignalKind;
   name: string;
-  meta: (s: SettingsView) => string;
+  /**
+   * WHAT THIS SIGNAL CAPTURES, in a sentence, REQUIRED and with no default.
+   *
+   * The `StageSpec.describe` precedent, and for the same reason: this screen
+   * exists to explain what a recording will contain, and it used to answer with
+   * two-word labels — "UI labels + roles", "focus changes" — from which a reader
+   * could learn nothing. Written from the user's side: what it records, not how.
+   * It WRAPS and never ellipsizes.
+   */
+  describe: string;
+  /**
+   * The signal's CONFIGURATION, or null where it has none.
+   *
+   * Null rather than a filler string. Input, Active window and the AX tree used
+   * to carry "clicks · scroll · keys", "focus changes" and "UI labels + roles" in
+   * this slot — none of which is a setting, and all three now restate `describe`
+   * in fewer words. A line with nothing to say is furniture; the card simply
+   * does not draw one.
+   */
+  meta: (s: SettingsView) => string | null;
   permission?: PermissionKind;
   needs?: (env: EnvInfo) => { ok: boolean; note: string } | null;
 }
@@ -29,16 +53,34 @@ interface SignalDef {
 const SIGNALS: SignalDef[] = [
   {
     id: "screen",
+    kind: "screen",
     name: "Screen",
+    describe: "Samples the display and keeps a frame each time the picture changes.",
     meta: (s) => `${s.signals.screen.fps} fps · ${s.signals.screen.imageMaxWidth}px`,
     permission: "screen",
     needs: (e) => (e.ffmpegAvailable ? null : { ok: false, note: "ffmpeg not found on PATH" }),
   },
-  { id: "input", name: "Input (mouse + keys)", meta: () => "clicks · scroll · keys", permission: "accessibility" },
-  { id: "activeWin", name: "Active window", meta: () => "focus changes", permission: "screen" },
+  {
+    id: "input",
+    kind: "input",
+    name: "Input",
+    describe: "Records where you click and scroll, and the text you type.",
+    meta: () => null,
+    permission: "accessibility",
+  },
+  {
+    id: "activeWin",
+    kind: "active-win",
+    name: "Active window",
+    describe: "Notes which app and window you are in, and when you switch.",
+    meta: () => null,
+    permission: "screen",
+  },
   {
     id: "audio",
+    kind: "audio",
     name: "Microphone",
+    describe: "Records what you say, in short chunks, transcribed after the recording.",
     meta: (s) => `${s.signals.audio.device} · ${s.signals.audio.chunkSeconds}s chunks`,
     permission: "microphone",
     needs: (e) =>
@@ -50,8 +92,10 @@ const SIGNALS: SignalDef[] = [
   },
   {
     id: "ax",
+    kind: "ax",
     name: "Accessibility tree",
-    meta: () => "UI labels + roles",
+    describe: "Reads the name and role of everything on screen, so you can search by label.",
+    meta: () => null,
     permission: "accessibility",
     needs: (e) => (e.axSidecarAvailable ? null : { ok: false, note: "ax-dump sidecar missing (npm run build:ax)" }),
   },
@@ -61,6 +105,7 @@ export function RecordScreen({ status, env, onOpenIndexing }: Props): React.JSX.
   const [settings, setSettings] = useState<SettingsView | null>(null);
   const [perms, setPerms] = useState<PermissionStatus[]>([]);
   const [tick, setTick] = useState(0);
+  const [signals, setSignals] = useState<RecordingTickDTO | null>(null);
 
   const refresh = (): void => {
     api.settings.get().then(setSettings);
@@ -78,6 +123,15 @@ export function RecordScreen({ status, env, onOpenIndexing }: Props): React.JSX.
   useEffect(() => {
     if (status.state === "idle") refresh();
   }, [status.state]);
+
+  // The wells. Subscribed for the life of the screen, not for the life of a
+  // recording: main is silent while nothing captures, and a subscription torn
+  // down on a state change would miss the first tick, which arrives immediately.
+  // Cleared on stop so no well can report counts for a recording that has ended.
+  useEffect(() => api.recording.onTick(setSignals), []);
+  useEffect(() => {
+    if (!live) setSignals(null);
+  }, [live]);
 
   if (!settings)
     return (
@@ -151,14 +205,18 @@ export function RecordScreen({ status, env, onOpenIndexing }: Props): React.JSX.
             const perm = permState(sig.permission);
             const need = env && sig.needs ? sig.needs(env) : null;
             const granted = !sig.permission || perm?.state === "granted" || perm?.state === "unknown";
-            let led: "ok" | "warn" | "off" = "off";
-            if (cfg.enabled) {
-              led = granted && (need?.ok ?? true) ? "ok" : "warn";
-            }
+            const gate: SignalGate = {
+              enabled: cfg.enabled,
+              granted,
+              // Only a HARD gate blocks: the whisper note is `ok: true` — the
+              // audio is recorded either way, only the transcript waits.
+              ...(need && !need.ok ? { blockedBy: need.note } : {}),
+            };
+            const read = signalReadout(sig.kind, gate, live, signals?.signals[sig.kind]);
             return (
-              <div className="signal" key={sig.id}>
+              <div className={`signal${cfg.enabled ? "" : " signal--off"}`} key={sig.id}>
                 <div className="signal__row">
-                  <span className={`led ${led}`} />
+                  <span className={`led ${read.led}`} />
                   <span className="signal__name">{sig.name}</span>
                   <button
                     className={`switch${cfg.enabled ? " on" : ""}`}
@@ -168,7 +226,10 @@ export function RecordScreen({ status, env, onOpenIndexing }: Props): React.JSX.
                     aria-label={`Toggle ${sig.name}`}
                   />
                 </div>
-                <div className="signal__meta">{sig.meta(settings)}</div>
+                <p className="signal__what">{sig.describe}</p>
+                {sig.meta(settings) !== null && (
+                  <div className="signal__meta">{sig.meta(settings)}</div>
+                )}
                 {cfg.enabled && sig.permission && perm && perm.state !== "granted" && perm.state !== "unknown" && (
                   <div className="signal__note">
                     Needs {sig.permission} permission ·{" "}
@@ -179,11 +240,37 @@ export function RecordScreen({ status, env, onOpenIndexing }: Props): React.JSX.
                     )}
                   </div>
                 )}
-                {cfg.enabled && need && (
-                  <div className="signal__note" style={need.ok ? { color: "var(--muted)" } : undefined}>
-                    {need.note}
-                  </div>
-                )}
+                {cfg.enabled && need?.ok && <div className="signal__note signal__note--soft">{need.note}</div>}
+                {/* The well ALWAYS answers — off, blocked, ready, or a figure.
+                    A card that simply went blank would be indistinguishable
+                    from one nobody finished. */}
+                <div
+                  className={`signal__well${read.idle ? " signal__well--idle" : ""}`}
+                  {...(read.note ? { title: read.note } : {})}
+                >
+                  <span
+                    className={`signal__figure mono${read.tone ? " signal__figure--tone" : ""}`}
+                    {...(read.tone ? { "data-tone": read.tone } : {})}
+                  >
+                    {read.figure}
+                  </span>
+                  {read.glyph?.kind === "count" && (
+                    <span className="signal__aside mono">{read.glyph.text}</span>
+                  )}
+                  {read.glyph?.kind === "frame" && (
+                    <img
+                      className="signal__thumb"
+                      src={`deskrag://frame/${read.glyph.blobId}`}
+                      alt="The keyframe just kept"
+                    />
+                  )}
+                  {read.glyph?.kind === "wave" && (
+                    <svg className="signal__wave" viewBox="0 0 64 20" preserveAspectRatio="none" aria-hidden>
+                      <path d={wavePath(read.glyph.peaks, 64, 20)} />
+                    </svg>
+                  )}
+                </div>
+                {read.warning && <div className="signal__note">{read.warning}</div>}
               </div>
             );
           })}

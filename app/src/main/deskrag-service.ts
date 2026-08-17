@@ -67,6 +67,7 @@ import {
   type IndexJobKind,
 } from "./index-queue.js";
 import { buildStageGraph } from "./index-graph.js";
+import { SignalTally } from "./recording-activity.js";
 import { IndexWorker } from "./index-worker.js";
 import { frequentRoutes, toGraphDTO } from "./graph-view.js";
 import { ModelStore, type ModelDownloadProgress } from "./model-store.js";
@@ -84,6 +85,7 @@ import type {
   KeyframeMarkerDTO,
   ProviderSettingsView,
   RecordingStatus,
+  RecordingTickDTO,
   ResultDetailDTO,
   SearchInput,
   SearchResultDTO,
@@ -143,6 +145,10 @@ export class DeskRagService {
   private state: RecordingStatus = { state: "idle", activeSignals: [] };
   /** In-flight `stopRecording` tail — see `pendingStop`. */
   private stopping: Promise<void> | undefined;
+  /** Live per-signal counters for the running capture, and the interval that
+   *  publishes them. Both undefined whenever nothing is recording. */
+  private tally: SignalTally | undefined;
+  private tallyTimer: NodeJS.Timeout | undefined;
 
   private models!: ModelStore;
   /**
@@ -167,6 +173,7 @@ export class DeskRagService {
   private stateListeners = new Set<(s: RecordingStatus) => void>();
   private queueListeners = new Set<(q: IndexQueueDTO) => void>();
   private tickListeners = new Set<(t: IndexTickDTO) => void>();
+  private recordingTickListeners = new Set<(t: RecordingTickDTO) => void>();
   private modelListeners = new Set<(p: ModelDownloadProgress) => void>();
   /**
    * Region highlights from the most recent search, for detail() to reuse.
@@ -322,6 +329,18 @@ export class DeskRagService {
   onIndexTick(cb: (t: IndexTickDTO) => void): () => void {
     this.tickListeners.add(cb);
     return () => this.tickListeners.delete(cb);
+  }
+  /**
+   * Per-signal counters while capturing.
+   *
+   * Its own channel, and a POLLED one rather than a pushed one, for the reason
+   * `onIndexTick` is separate: activity arrives per event and `mouse_move` alone
+   * is throttled to 12ms during a drag, so forwarding each one would put
+   * thousands of messages a second behind a readout that changes once.
+   */
+  onRecordingTick(cb: (t: RecordingTickDTO) => void): () => void {
+    this.recordingTickListeners.add(cb);
+    return () => this.recordingTickListeners.delete(cb);
   }
   /** Weight downloads can start from search(), not just index(), so this is its
    *  own channel rather than a stage of IndexingProgress. */
@@ -520,8 +539,16 @@ export class DeskRagService {
     const active: SignalKind[] = [];
 
     const axSource = sig.ax.enabled ? new SwiftAxSource() : undefined;
+    // The tally cannot be built yet — it takes the set of signals that actually
+    // ATTACHED, and that is not known until every producer below has been tried.
+    // Nothing is lost by deferring it: no activity can occur before
+    // `session.start()`, which is what starts the producers.
+    let tally: SignalTally | undefined;
     const session = new CaptureSession(this.store, {
       blobStore: this.blobs,
+      // A TEE, never a second write path. Wrapped by the session too, because a
+      // recording is real-time and cannot be taken again.
+      onActivity: (a) => tally?.observe(a),
       // REQUIRED, and unlike axSource it is not gated on a setting: frames and
       // audio are timed by converting capture-device timestamps through this,
       // so without it a recording could only stamp arrival times — a whole
@@ -601,11 +628,40 @@ export class DeskRagService {
     }
     if (sig.ax.enabled) active.push("ax");
 
+    tally = new SignalTally(active);
+    this.tally = tally;
     const sessionId = await session.start();
     this.session = session;
     this.state = { state: "recording", sessionId, startedAt: Date.now(), activeSignals: active };
     this.emitState();
+    this.startTicking(sessionId);
     return this.state;
+  }
+
+  /**
+   * Publish the tally once a second for as long as capture runs.
+   *
+   * One interval, cleared on stop — the Indexing screen's rule that a running
+   * clock belongs to the renderer applies here too, so this carries no elapsed
+   * time and nothing derived from wall clock beyond the stamp itself. The first
+   * snapshot goes out immediately so the wells are never blank for a second
+   * after the button is pressed.
+   */
+  private startTicking(sessionId: string): void {
+    this.stopTicking();
+    const emit = (): void => {
+      if (!this.tally || this.state.state !== "recording") return;
+      const t = this.tally.snapshot(sessionId, Date.now());
+      for (const cb of this.recordingTickListeners) cb(t);
+    };
+    emit();
+    this.tallyTimer = setInterval(emit, 1000);
+    this.tallyTimer.unref?.();
+  }
+
+  private stopTicking(): void {
+    if (this.tallyTimer) clearInterval(this.tallyTimer);
+    this.tallyTimer = undefined;
   }
 
   private async loadNativeProducer(
@@ -649,6 +705,11 @@ export class DeskRagService {
     const sessionId = this.state.sessionId!;
     const session = this.session;
     this.session = undefined;
+    // The tally goes with the state, not with the tail below: the screen reads
+    // idle from this instant, and a well reporting counts for a recording that
+    // has stopped would be the two-clocks defect in another place.
+    this.stopTicking();
+    this.tally = undefined;
     this.state = { state: "idle", activeSignals: [] };
     this.emitState();
 

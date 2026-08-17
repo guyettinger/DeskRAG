@@ -14,6 +14,7 @@ import {
   type ModelDownloadProgress,
   type PermissionKind,
   type RecordingStatus,
+  type RecordingTickDTO,
   type SearchInput,
   type SettingsPatch,
 } from "@shared/types";
@@ -40,6 +41,7 @@ const api: DeskRagApi = {
     stop: () => ipcRenderer.invoke(IPC.recordingStop),
     status: () => ipcRenderer.invoke(IPC.recordingStatus),
     onState: (cb: (s: RecordingStatus) => void) => subscribe(IPC.recordingStateEvent, cb),
+    onTick: (cb: (t: RecordingTickDTO) => void) => subscribe(IPC.recordingTickEvent, cb),
   },
   indexing: {
     queue: () => ipcRenderer.invoke(IPC.indexingQueue),

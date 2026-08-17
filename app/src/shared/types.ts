@@ -186,6 +186,59 @@ export interface RecordingStatus {
   activeSignals: SignalKind[];
 }
 
+/**
+ * What ONE signal has produced so far in the running recording.
+ *
+ * Every field is something that OCCURRED — there is no rate, no ETA and no
+ * staleness verdict, the same rule the Indexing screen's meters follow. A count
+ * of zero twenty seconds in is a fact, and it is precisely the fact that exposes
+ * a screen producer which found no display and returned without spawning.
+ *
+ * `attached` is main's own record of what actually started, not what Settings
+ * asks for: the microphone is dropped when its permission is refused, and a
+ * native producer that fails to load is never pushed. A card showing green off
+ * the settings alone has been lying about both.
+ */
+export interface RecordingSignalDTO {
+  attached: boolean;
+  /** Kept keyframes, and the blob id of the last one — screen only. */
+  keyframes?: number;
+  lastFrameBlobId?: string;
+  /** Input only. */
+  keys?: number;
+  clicks?: number;
+  scrolls?: number;
+  /** Active window only: the app in focus right now, as the producer named it. */
+  app?: string;
+  /** Its `[data-tone]` slot, from the SAME hash the rail and Flows use, so one
+   *  application is one colour everywhere in the app. */
+  appTone?: TrackTone;
+  focusChanges?: number;
+  /** Audio only. `peaks` is the LAST chunk's envelope; null means unreadable
+   *  bytes, which is a different claim from an envelope of zeros. */
+  chunks?: number;
+  peaks?: number[] | null;
+  /** AX only: walks taken, and the element count of the most recent one. */
+  walks?: number;
+  elements?: number;
+}
+
+/**
+ * One second of a running capture, per signal.
+ *
+ * Pushed on an interval from main rather than per activity: `mouse_move` alone
+ * is a firehose (throttled to 12ms during a drag), and forwarding it would put
+ * thousands of IPC messages a second behind a readout that changes once. There
+ * is deliberately NO elapsed field — a running clock belongs to the renderer,
+ * the lesson the Indexing ladder's fourteen-minute "0ms" stage taught.
+ */
+export interface RecordingTickDTO {
+  sessionId: string;
+  /** Wall-clock ms this snapshot was taken at. */
+  atMs: number;
+  signals: Record<SignalKind, RecordingSignalDTO>;
+}
+
 // --- indexing queue ----------------------------------------------------------
 
 /**
@@ -1078,6 +1131,8 @@ export interface DeskRagApi {
     stop(): Promise<RecordingStatus>;
     status(): Promise<RecordingStatus>;
     onState(cb: (s: RecordingStatus) => void): () => void;
+    /** Per-signal counters, once a second while capturing. Silent when idle. */
+    onTick(cb: (t: RecordingTickDTO) => void): () => void;
   };
   /**
    * The indexing queue. Every mutating call here ENQUEUES and returns — none of
@@ -1238,6 +1293,8 @@ export const IPC = {
   recordingStop: "recording:stop",
   recordingStatus: "recording:status",
   recordingStateEvent: "recording:state-event",
+  /** Per-signal counters, once a second while capturing. */
+  recordingTickEvent: "recording:tick-event",
   indexingQueue: "indexing:queue",
   indexingReindexSession: "indexing:reindex-session",
   indexingReindexAll: "indexing:reindex-all",
