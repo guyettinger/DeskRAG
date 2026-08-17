@@ -1063,15 +1063,31 @@ export interface GraphDTO {
  * Deliberately NOT a graph traversal. A merged graph composes paths no single
  * recording ever walked, and listing those as "your common flows" would be the
  * same category error the IR rejects elsewhere — variation comes from recording
- * a task twice, not from something inventing it. So a route is keyed by the
- * ordered edge-id sequence a session actually produced, and two recordings of
- * one task merge onto the same edges and become one route with `count: 2`.
+ * a task twice, not from something inventing it. So a route is built from the
+ * edges a session actually walked, and two recordings of one task become one
+ * route with `count: 2`.
  *
  * A graph with no provenance therefore yields NO routes, never a synthesized
  * one. The screen says so and points at the rebuild.
  */
 export interface FlowRouteDTO {
-  /** The joined edge-id sequence — stable across reloads, and its own key. */
+  /**
+   * The route's key: the DE-DUPLICATED sequence of place labels it passes
+   * through, joined with " → " (`places.join(" → ")` in `frequentRoutes`).
+   *
+   * NOT an edge-id sequence, and this comment said otherwise for a while.
+   * Edge-id and node-id keys were both measured on a real 9-recording graph and
+   * both split five identical walks into nine routes of ×1, because equivalent
+   * states across recordings do not merge into one node. The label sequence
+   * collapsed them to five, one of them ×5.
+   *
+   * The consequence is that it is **stable across reloads but NOT across
+   * recordings**: record the same task once more in a way that touches one extra
+   * application and the key changes, and `rebuildGraph` replays everything from
+   * zero on each re-index. Anything that needs to survive that — a kept skill —
+   * must store this as a record of a past act and re-bind, never treat it as an
+   * identity. See `app/src/main/skill-bind.ts`.
+   */
   id: string;
   /** Recordings that walked exactly this sequence. */
   count: number;
@@ -1105,6 +1121,126 @@ export interface FlowsDTO {
   graph: GraphDTO;
   /** Most-walked first. Empty when the graph carries no provenance. */
   routes: FlowRouteDTO[];
+}
+
+/**
+ * A SKILL.md the user chose to keep, written from a route they actually walked.
+ *
+ * AUTHORED, unlike everything else on this screen's side of the wire: a re-index
+ * rebuilds the trace graph and re-keys every route, but it must never touch
+ * these. See `AUTHORED_TABLES` in `src/store/sqlite/schema.ts`.
+ */
+export type SkillState = "active" | "archived" | "dismissed";
+
+/** Where a skill's route went. See `app/src/main/skill-bind.ts`. */
+export type SkillBindState = "exact" | "rebound" | "ambiguous" | "orphaned";
+
+export interface SkillBindingDTO {
+  state: SkillBindState;
+  /** The route key at accept time. Only an explicit re-bind changes it. */
+  routeKey: string;
+  /** The key it reads from now. Equal when exact; null when it cannot tell. */
+  liveRouteKey: string | null;
+  routeLabel: string;
+  boundAt: number;
+  boundSessionIds: string[];
+  overlap: number;
+  lostSessionIds: string[];
+  gainedSessionIds: string[];
+  /**
+   * The LIVE recording count, from the route.
+   *
+   * Never derived from `boundSessionIds.length`, and it never derives that —
+   * the two disagreeing is the fact this screen exists to show, exactly as
+   * `observations` and `sources` do one level down.
+   */
+  recordings: number;
+  /** Every route that tied. Empty unless `state === "ambiguous"`. */
+  candidates: string[];
+  /** One sentence for the row and for the file. Null when nothing moved. */
+  note: string | null;
+}
+
+export interface SkillDTO {
+  id: string;
+  state: SkillState;
+  pinned: boolean;
+  createdAt: number;
+  updatedAt: number;
+  /** Frontmatter `name`: lowercase, hyphens, unique across active skills. */
+  slug: string;
+  title: string;
+  description: string;
+  /**
+   * The PROSE half only — everything a model or a human may write. It is emitted
+   * strictly above `## Recorded steps` and can never reach the record below it.
+   */
+  body: string;
+  bodySource: SummarySourceLike;
+  /** "ollama qwen3:4b", or null when the template wrote it. */
+  bodyModel: string | null;
+  /** True once a human edited title/description/body. Regenerating warns. */
+  edited: boolean;
+  /** OFF by default. When true the rendered file prints recorded slot VALUES. */
+  showSamples: boolean;
+  /** Why the last generate produced what it did. Null when nothing needs saying. */
+  generateNote: string | null;
+  /**
+   * The whole SKILL.md.
+   *
+   * Rendered in MAIN and handed out verbatim: the clipboard button and
+   * `get_skill` both return this string, so the two can never drift. The
+   * renderer never re-renders the document.
+   */
+  markdown: string;
+  binding: SkillBindingDTO;
+}
+
+/** `llm | template`, spelled here so this file imports nothing from the library. */
+export type SummarySourceLike = "llm" | "template";
+
+/** A route with no skill and no dismissal yet. COMPUTED, never stored. */
+export interface SkillProposalDTO {
+  routeKey: string;
+  name: string | null;
+  label: string;
+  count: number;
+  steps: number;
+  nameObservations: number;
+  sessionIds: string[];
+  apps: string[];
+  /** The record it would produce, so Accept is never a blind act. */
+  preview: string;
+}
+
+export interface SkillsDTO {
+  skills: SkillDTO[];
+  proposals: SkillProposalDTO[];
+  /**
+   * False when no trace graph exists at all — a DIFFERENT emptiness from a graph
+   * with no provenance, which yields zero routes and zero proposals and points
+   * at Rebuild trace graph instead.
+   */
+  graphPresent: boolean;
+  /**
+   * Whether a model can write prose, and which one.
+   *
+   * Here rather than on `Capabilities` because this screen needs the model's
+   * NAME for its disclosure, and a boolean there plus a name here would be two
+   * answers to one question — the drift `shared/evidence.ts` exists to stop.
+   */
+  prose: { available: boolean; model: string | null };
+}
+
+/** Any subset. Absent means unchanged — the `SettingsPatch` precedent. */
+export interface SkillPatch {
+  title?: string;
+  description?: string;
+  slug?: string;
+  body?: string;
+  showSamples?: boolean;
+  pinned?: boolean;
+  state?: SkillState;
 }
 
 export interface DeskRagApi {

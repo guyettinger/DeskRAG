@@ -8,7 +8,8 @@
  * module only walks and formats.
  */
 
-import type { EdgeActionDTO, FlowRouteDTO, FlowsDTO, GraphEdgeDTO } from "@shared/types";
+import type { FlowRouteDTO, FlowsDTO } from "@shared/types";
+import { flowSteps, type FlowStep, type FlowStepAction } from "../flow-steps.js";
 
 /** A route by its id, or undefined — the caller reports the miss. */
 export function findRoute(flows: FlowsDTO, routeId: string): FlowRouteDTO | undefined {
@@ -26,8 +27,15 @@ function when(startedAt: number, atSec: number): string {
  * a task twice produces, and the reason `trace/` refuses to let a model invent
  * variation. One sample is just a value that happened to be typed, and calling
  * it a variable would overstate the evidence.
+ *
+ * This prints recorded VALUES unconditionally, and deliberately keeps doing so:
+ * `get_flow` is a shipped contract, documented in `docs/mcp.md` as returning
+ * "the values that varied between attempts". The SKILL.md renderer makes the
+ * opposite default choice for its own reasons — a file that gets pasted
+ * elsewhere is a different exposure from a tool result — and the two differ here
+ * rather than in the walk they share.
  */
-function actionLine(a: EdgeActionDTO): string {
+function actionLine(a: FlowStepAction): string {
   const head = `    ${a.action.padEnd(12)} ${a.target}`;
   if (a.slot === undefined) return head;
   const samples = a.slot.samples.map((s) => JSON.stringify(s)).join(", ");
@@ -35,30 +43,25 @@ function actionLine(a: EdgeActionDTO): string {
   return `${head}\n      slot \`${a.slot.name}\`: ${samples}${varies}`;
 }
 
-function stepLines(edge: GraphEdgeDTO, index: number, labelOf: (id: string) => string): string[] {
-  const out = [`Step ${index + 1} — ${labelOf(edge.from)}  ⟶  ${labelOf(edge.to)}`];
-  if (edge.actions.length === 0) out.push("    (no actions recorded on this edge)");
-  out.push(...edge.actions.map(actionLine));
+function stepLines(step: FlowStep): string[] {
+  const out = [`Step ${step.index + 1} — ${step.from}  ⟶  ${step.to}`];
+  if (step.actions.length === 0) out.push("    (no actions recorded on this edge)");
+  out.push(...step.actions.map(actionLine));
 
   const walked =
-    edge.observations === 1 ? "walked once" : `walked by ${edge.observations} recordings`;
-  const first = edge.sources[0];
+    step.observations === 1 ? "walked once" : `walked by ${step.observations} recordings`;
   // `sources` can be SHORTER than `observations` — a graph lifted before
   // provenance has none, and deleting a recording removes its sources while
   // leaving the count. Never derive one from the other; print what each says.
   const seen =
-    first === undefined ? "" : `, first at ${when(first.startedAt, first.atSec)}`;
+    step.firstAt === null ? "" : `, first at ${when(step.firstAt.startedAt, step.firstAt.atSec)}`;
   out.push(`    · ${walked}${seen}`);
 
-  for (const w of edge.liftWarnings ?? []) out.push(`    · lifting note: ${w}`);
+  for (const w of step.liftWarnings) out.push(`    · lifting note: ${w}`);
   return out;
 }
 
 export function renderFlow(flows: FlowsDTO, route: FlowRouteDTO): string {
-  const nodeById = new Map(flows.graph.nodes.map((n) => [n.id, n]));
-  const edgeById = new Map(flows.graph.edges.map((e) => [e.id, e]));
-  const labelOf = (id: string): string => nodeById.get(id)?.label ?? `${id} (unknown state)`;
-
   const out: string[] = [];
   out.push(route.name ?? route.label);
   if (route.name !== null) out.push(route.label);
@@ -75,15 +78,14 @@ export function renderFlow(flows: FlowsDTO, route: FlowRouteDTO): string {
   );
   out.push("");
 
-  route.edgeIds.forEach((id, i) => {
-    const edge = edgeById.get(id);
-    if (edge === undefined) {
+  for (const step of flowSteps(flows, route)) {
+    if (step.missing) {
       // Skipping it would make the flow read as shorter than it was.
-      out.push(`Step ${i + 1} — edge ${id} is not in the graph (index defect)`, "");
-      return;
+      out.push(`Step ${step.index + 1} — edge ${step.edgeId} is not in the graph (index defect)`, "");
+      continue;
     }
-    out.push(...stepLines(edge, i, labelOf), "");
-  });
+    out.push(...stepLines(step), "");
+  }
 
   return out.join("\n").trimEnd();
 }
