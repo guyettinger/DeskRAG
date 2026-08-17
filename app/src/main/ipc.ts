@@ -11,6 +11,7 @@ import {
   type SearchInput,
   type SettingsPatch,
 } from "@shared/types";
+import type { SkillPatch } from "@shared/types";
 import type { DeskRagService } from "./deskrag-service.js";
 import type { SettingsStore } from "./settings.js";
 import type { McpExperienceServer } from "./mcp/server.js";
@@ -86,6 +87,37 @@ export function registerIpc(
    * the app can reach it, which is what keeps `ax-exec` unspawned.
    */
   ipcMain.handle(IPC.flowsGraph, () => service.flows());
+
+  // The first screen whose IPC WRITES. That is not a widening of the MCP
+  // promise: these handlers are reachable only from the renderer, and the MCP
+  // reader port declares no method that could call one — a tool structurally
+  // cannot accept, edit or forget a skill. Each returns the whole snapshot, so
+  // the screen cannot paint a half-applied edit.
+  ipcMain.handle(IPC.skillsList, () => service.skills());
+  ipcMain.handle(IPC.skillsAccept, async (_e, routeKey: string) => {
+    await service.acceptSkill(routeKey);
+    return service.skills();
+  });
+  ipcMain.handle(IPC.skillsDismiss, async (_e, routeKey: string) => {
+    await service.dismissSkill(routeKey);
+    return service.skills();
+  });
+  ipcMain.handle(IPC.skillsUpdate, async (_e, id: string, patch: SkillPatch) => {
+    await service.updateSkill(id, patch);
+    return service.skills();
+  });
+  ipcMain.handle(IPC.skillsGenerate, async (_e, id: string) => {
+    await service.generateSkill(id);
+    return service.skills();
+  });
+  ipcMain.handle(IPC.skillsRebind, async (_e, id: string, routeKey: string) => {
+    await service.rebindSkill(id, routeKey);
+    return service.skills();
+  });
+  ipcMain.handle(IPC.skillsRemove, async (_e, id: string) => {
+    await service.removeSkill(id);
+    return service.skills();
+  });
 
   /**
    * The MCP endpoint, reported to the window that hosts its settings.

@@ -70,11 +70,21 @@ import { buildStageGraph } from "./index-graph.js";
 import { SignalTally } from "./recording-activity.js";
 import { IndexWorker } from "./index-worker.js";
 import { frequentRoutes, toGraphDTO } from "./graph-view.js";
+import { flowApps } from "./flow-steps.js";
+import { bindSkill, unclaimedRoutes, type SkillBindingDoc } from "./skill-bind.js";
+import {
+  briefFor,
+  recordedBlocks,
+  renderSkillMarkdown,
+  slugify,
+  templateBody,
+} from "./skill-doc.js";
+import { OllamaSkillProseProvider } from "deskrag";
 import { ModelStore, type ModelDownloadProgress } from "./model-store.js";
 import { OnnxHost } from "./onnx-host.js";
 import { spawnOnnxWorker } from "./onnx-spawn.js";
 import { TRACK_BUCKETS } from "@shared/types";
-import type { IndexJobRow, SegmentRow, SegmentSummaryRow } from "deskrag";
+import type { IndexJobRow, SegmentRow, SegmentSummaryRow, SkillRow } from "deskrag";
 import type {
   Capabilities,
   FlowsDTO,
@@ -94,6 +104,12 @@ import type {
   SessionTracksDTO,
   SessionVideoDTO,
   SignalKind,
+  SkillBindingDTO,
+  SkillDTO,
+  SkillPatch,
+  SkillProposalDTO,
+  SkillState,
+  SkillsDTO,
 } from "@shared/types";
 import { request as requestPermission } from "./permissions.js";
 import { resolveWhisperBinary, whisperAvailable } from "./whisper.js";
@@ -1653,4 +1669,412 @@ export class DeskRagService {
       }),
     };
   }
+
+  // --- skills ---------------------------------------------------------------
+  //
+  // The first surface in this app whose writes are the user's own text rather
+  // than something derived from a recording. That is why the table is AUTHORED
+  // and why none of this is reachable from `mcp/`: the reader port declares only
+  // the read half, so a tool structurally cannot accept, edit or forget a skill.
+
+  /**
+   * The prose writer alone, and deliberately NOT `buildProviders()`.
+   *
+   * `buildProviders` resolves ONNX weights, opens the out-of-process host and
+   * can download half a gigabyte — for a call that needs a chat endpoint and
+   * nothing else. It also reuses the SUMMARY model rather than adding a second
+   * picker: naming a composed level and naming a recorded flow are the same act
+   * at two altitudes, and two model settings is two things to keep in step.
+   */
+  private buildProseWriter(): OllamaSkillProseProvider | null {
+    const p = this.settings.view().providers;
+    if (p.summaryProvider !== "ollama") return null;
+    return new OllamaSkillProseProvider({ host: p.ollamaHost, model: p.ollamaSummaryModel });
+  }
+
+  private proseStatus(): { available: boolean; model: string | null } {
+    const p = this.settings.view().providers;
+    return p.summaryProvider === "ollama"
+      ? { available: true, model: `ollama ${p.ollamaSummaryModel}` }
+      : { available: false, model: null };
+  }
+
+  private skillDocOf(row: SkillRow): StoredSkillDoc {
+    return JSON.parse(row.doc) as StoredSkillDoc;
+  }
+
+  /**
+   * One skill as the screen and the MCP tools see it: bound against the routes
+   * the graph has NOW, and rendered.
+   *
+   * The markdown is built HERE rather than in the renderer, so the clipboard
+   * button and `get_skill` hand out the same string. Two renderers of one file
+   * is the drift hazard `flow-steps.ts` exists to avoid one level down.
+   */
+  private toSkillDTO(row: SkillRow, flows: FlowsDTO | null): SkillDTO {
+    const doc = this.skillDocOf(row);
+    const routes = flows?.routes ?? [];
+    const bound = bindSkill(doc.binding, routes);
+
+    const binding: SkillBindingDTO = {
+      state: bound.state,
+      routeKey: doc.binding.routeKey,
+      liveRouteKey: bound.route?.id ?? null,
+      routeLabel: doc.binding.routeLabel,
+      boundAt: doc.binding.boundAt,
+      boundSessionIds: [...doc.binding.sessionIds],
+      overlap: bound.overlap,
+      lostSessionIds: bound.lostSessionIds,
+      gainedSessionIds: bound.gainedSessionIds,
+      // The LIVE count, from the route. Never derived from boundSessionIds.
+      recordings: bound.route?.count ?? 0,
+      candidates: bound.candidates,
+      note: bound.note,
+    };
+
+    const markdown =
+      flows !== null && bound.route !== null
+        ? renderSkillMarkdown({
+            flows,
+            route: bound.route,
+            slug: doc.slug,
+            title: doc.title,
+            description: doc.description,
+            body: doc.body,
+            bodySource: doc.bodySource,
+            bodyModel: doc.bodyModel,
+            showSamples: doc.showSamples,
+            skillId: row.id,
+          })
+        : // ORPHANED (or ambiguous): the live route is gone, so the record cannot
+          // be re-rendered. The snapshot taken when the skill was last written is
+          // printed instead, under a dated header saying it has not been
+          // re-checked. A skill whose whole body read "route unavailable" would
+          // be a broken artifact, and orphaning is routine rather than exotic.
+          renderOrphanedSkill(doc, row.id, bound.note);
+
+    return {
+      id: row.id,
+      state: row.state as SkillState,
+      pinned: row.pinned,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      slug: doc.slug,
+      title: doc.title,
+      description: doc.description,
+      body: doc.body,
+      bodySource: doc.bodySource,
+      bodyModel: doc.bodyModel,
+      edited: doc.edited,
+      showSamples: doc.showSamples,
+      generateNote: doc.generateNote,
+      markdown,
+      binding,
+    };
+  }
+
+  skills(): SkillsDTO {
+    const flows = this.flows();
+    const rows = this.store.listSkills();
+    const skills = rows.map((r) => this.toSkillDTO(r, flows));
+
+    // A dismissal is a real row carrying only its binding: a rejected proposal
+    // that is not persisted comes back on every load.
+    const claimed = rows.map((r) => this.skillDocOf(r).binding.routeKey);
+    const proposals: SkillProposalDTO[] = unclaimedRoutes(flows?.routes ?? [], claimed).map(
+      (route) => ({
+        routeKey: route.id,
+        name: route.name,
+        label: route.label,
+        count: route.count,
+        steps: route.edgeIds.length,
+        nameObservations: route.nameObservations,
+        sessionIds: [...route.sessionIds],
+        apps: flows === null ? [] : flowApps(flows, route),
+        // The record it WOULD produce, so Accept is never a blind act.
+        preview:
+          flows === null ? "" : recordedBlocks({ flows, route, showSamples: false }),
+      }),
+    );
+
+    return {
+      skills,
+      proposals,
+      graphPresent: flows !== null,
+      prose: this.proseStatus(),
+    };
+  }
+
+  /**
+   * Keep a proposal.
+   *
+   * Deliberately does NOT call the model: accepting must be instant, and a
+   * template body is a usable skill on its own. `generateSkill` is a separate,
+   * explicit act.
+   */
+  async acceptSkill(routeKey: string): Promise<void> {
+    const flows = this.flows();
+    const route = flows?.routes.find((r) => r.id === routeKey);
+    if (flows === null || route === undefined) return;
+
+    const prose = templateBody(flows, route);
+    const doc: StoredSkillDoc = {
+      binding: {
+        routeKey: route.id,
+        routeLabel: route.label,
+        sessionIds: [...route.sessionIds],
+        boundAt: Date.now(),
+      },
+      slug: slugify(prose.title),
+      title: prose.title,
+      description: prose.description,
+      body: `${prose.overview}\n\n## When to use\n\n${prose.whenToUse}`,
+      bodySource: "template",
+      bodyModel: null,
+      edited: false,
+      showSamples: false,
+      generateNote: null,
+      stepsSnapshot: recordedBlocks({ flows, route, showSamples: false }),
+      snapshotAt: Date.now(),
+    };
+    await this.store.putSkill({
+      id: ulid(),
+      state: "active",
+      pinned: false,
+      doc: JSON.stringify(doc),
+    });
+  }
+
+  /** Suppress a proposal, durably. */
+  async dismissSkill(routeKey: string): Promise<void> {
+    const flows = this.flows();
+    const route = flows?.routes.find((r) => r.id === routeKey);
+    if (route === undefined) return;
+    const doc: StoredSkillDoc = {
+      binding: {
+        routeKey: route.id,
+        routeLabel: route.label,
+        sessionIds: [...route.sessionIds],
+        boundAt: Date.now(),
+      },
+      slug: "",
+      title: route.name ?? route.label,
+      description: "",
+      body: "",
+      bodySource: "template",
+      bodyModel: null,
+      edited: false,
+      showSamples: false,
+      generateNote: null,
+      stepsSnapshot: "",
+      snapshotAt: Date.now(),
+    };
+    await this.store.putSkill({
+      id: ulid(),
+      state: "dismissed",
+      pinned: false,
+      doc: JSON.stringify(doc),
+    });
+  }
+
+  async updateSkill(id: string, patch: SkillPatch): Promise<void> {
+    const row = this.store.getSkill(id);
+    if (row === undefined) return;
+    const doc = this.skillDocOf(row);
+
+    // `edited` is what makes Regenerate ask before overwriting. Only the three
+    // prose fields set it — flipping a toggle or pinning is not writing.
+    const touchedProse =
+      (patch.title !== undefined && patch.title !== doc.title) ||
+      (patch.description !== undefined && patch.description !== doc.description) ||
+      (patch.body !== undefined && patch.body !== doc.body);
+
+    const next: StoredSkillDoc = {
+      ...doc,
+      ...(patch.title !== undefined ? { title: patch.title } : {}),
+      ...(patch.description !== undefined ? { description: patch.description } : {}),
+      ...(patch.slug !== undefined ? { slug: slugify(patch.slug) } : {}),
+      ...(patch.body !== undefined ? { body: patch.body } : {}),
+      ...(patch.showSamples !== undefined ? { showSamples: patch.showSamples } : {}),
+      edited: doc.edited || touchedProse,
+    };
+    this.refreshSnapshot(next);
+
+    await this.store.putSkill({
+      id: row.id,
+      state: patch.state ?? row.state,
+      pinned: patch.pinned ?? row.pinned,
+      doc: JSON.stringify(next),
+    });
+  }
+
+  /**
+   * Re-render the steps snapshot, at every moment the skill is written anyway.
+   *
+   * Never on a read: a snapshot that refreshed itself when looked at would be
+   * indistinguishable from a live render, which is exactly the distinction an
+   * orphaned skill has to make.
+   */
+  private refreshSnapshot(doc: StoredSkillDoc): void {
+    const flows = this.flows();
+    const bound = bindSkill(doc.binding, flows?.routes ?? []);
+    if (flows === null || bound.route === null) return;
+    doc.stepsSnapshot = recordedBlocks({
+      flows,
+      route: bound.route,
+      showSamples: doc.showSamples,
+    });
+    doc.snapshotAt = Date.now();
+  }
+
+  /**
+   * Ask the model for prose. ONE call, seconds — not an indexing stage and not
+   * the durable queue, which exists for hundreds-of-units work.
+   *
+   * It can never fail: an unreachable daemon degrades to the template body and
+   * SAYS SO in `generateNote`, the compose precedent.
+   */
+  async generateSkill(id: string): Promise<void> {
+    const row = this.store.getSkill(id);
+    if (row === undefined) return;
+    const doc = this.skillDocOf(row);
+    const flows = this.flows();
+    const bound = bindSkill(doc.binding, flows?.routes ?? []);
+    if (flows === null || bound.route === null) return;
+
+    const writer = this.buildProseWriter();
+    let prose = templateBody(flows, bound.route);
+    let source: "llm" | "template" = "template";
+    let model: string | null = null;
+    let note: string | null =
+      "No summary model is configured, so the template wrote this. Settings → Providers.";
+
+    if (writer !== null) {
+      try {
+        prose = await writer.write(briefFor(flows, bound.route, bound));
+        source = "llm";
+        model = `${writer.id} ${writer.model}`;
+        note = null;
+      } catch (err) {
+        note = `${writer.model} could not be reached, so the template wrote this — ${
+          err instanceof Error ? err.message : String(err)
+        }`;
+      }
+    }
+
+    const next: StoredSkillDoc = {
+      ...doc,
+      slug: doc.edited ? doc.slug : slugify(prose.title),
+      title: prose.title,
+      description: prose.description,
+      body: `${prose.overview}\n\n## When to use\n\n${prose.whenToUse}`,
+      bodySource: source,
+      bodyModel: model,
+      edited: false,
+      generateNote: note,
+    };
+    this.refreshSnapshot(next);
+
+    await this.store.putSkill({
+      id: row.id,
+      state: row.state,
+      pinned: row.pinned,
+      doc: JSON.stringify(next),
+    });
+  }
+
+  /**
+   * Confirm a DISCLOSED re-bind. The only thing that rewrites `routeKey`.
+   *
+   * `bindSkill` never does it, so a skill that moved says so until a person
+   * agrees — the record of where it came from stays falsifiable.
+   */
+  async rebindSkill(id: string, routeKey: string): Promise<void> {
+    const row = this.store.getSkill(id);
+    if (row === undefined) return;
+    const flows = this.flows();
+    const route = flows?.routes.find((r) => r.id === routeKey);
+    if (flows === null || route === undefined) return;
+
+    const doc = this.skillDocOf(row);
+    const next: StoredSkillDoc = {
+      ...doc,
+      binding: {
+        routeKey: route.id,
+        routeLabel: route.label,
+        sessionIds: [...route.sessionIds],
+        boundAt: Date.now(),
+      },
+    };
+    this.refreshSnapshot(next);
+
+    await this.store.putSkill({
+      id: row.id,
+      state: row.state,
+      pinned: row.pinned,
+      doc: JSON.stringify(next),
+    });
+  }
+
+  async removeSkill(id: string): Promise<void> {
+    await this.store.deleteSkill(id);
+  }
+}
+
+/**
+ * What a skill row's opaque `doc` column holds. App-side by construction — the
+ * store deliberately does not know any of this.
+ */
+export interface StoredSkillDoc {
+  binding: SkillBindingDoc;
+  slug: string;
+  title: string;
+  description: string;
+  body: string;
+  bodySource: "llm" | "template";
+  bodyModel: string | null;
+  edited: boolean;
+  showSamples: boolean;
+  generateNote: string | null;
+  /** The record as it last rendered. Printed when the live route is gone. */
+  stepsSnapshot: string;
+  snapshotAt: number;
+}
+
+/**
+ * A skill whose route is no longer in the graph.
+ *
+ * It still produces a usable file: the snapshot, under a header dating it and
+ * saying it has not been re-checked. Never blended with a live render — the
+ * whole point is that a reader can tell which one they are holding.
+ */
+function renderOrphanedSkill(doc: StoredSkillDoc, id: string, note: string | null): string {
+  const when = new Date(doc.snapshotAt).toISOString().slice(0, 10);
+  return [
+    "---",
+    `name: ${doc.slug}`,
+    `description: ${JSON.stringify(doc.description.replace(/\r?\n/g, " ").trim())}`,
+    "metadata:",
+    "  source: deskrag",
+    `  skill_id: ${id}`,
+    `  binding: orphaned`,
+    `  recorded_snapshot: ${when}`,
+    `  prose: ${doc.bodySource === "llm" ? `llm (${doc.bodyModel ?? "unknown model"})` : "template"}`,
+    "  steps: template",
+    `  route: ${JSON.stringify(doc.binding.routeKey)}`,
+    "---",
+    "",
+    `# ${doc.title}`,
+    "",
+    doc.body.trim(),
+    "",
+    `> The route this was written from is no longer in the trace graph. The steps below`,
+    `> are the copy taken on ${when} and have not been re-checked against it.`,
+    note === null ? "" : `> ${note}`,
+    "",
+    doc.stepsSnapshot,
+    "",
+  ]
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n");
 }

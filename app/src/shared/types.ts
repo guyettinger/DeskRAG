@@ -1324,6 +1324,33 @@ export interface DeskRagApi {
   flows: {
     graph(): Promise<FlowsDTO | null>;
   };
+  /**
+   * The SKILL.md library.
+   *
+   * Unlike `flows`, this one WRITES — a skill is authored, and the writes are
+   * what make an edit survive a trace-graph rebuild. It still touches nothing
+   * outside the `skill` table: it cannot record, index, or delete a recording,
+   * and no call here re-binds a skill without being asked to.
+   *
+   * Every call returns the whole `SkillsDTO`, the `settings.set` precedent, so
+   * the screen never re-fetches and cannot paint a half-applied edit.
+   */
+  skills: {
+    list(): Promise<SkillsDTO>;
+    /**
+     * Keep a proposal. Mints a ULID, records the binding, writes a TEMPLATE
+     * body — deliberately no model call, because accepting must be instant.
+     */
+    accept(routeKey: string): Promise<SkillsDTO>;
+    /** Suppress a proposal, durably, or it returns on the next load. */
+    dismiss(routeKey: string): Promise<SkillsDTO>;
+    update(id: string, patch: SkillPatch): Promise<SkillsDTO>;
+    /** One model call, seconds. Falls back to the template and says so. */
+    generate(id: string): Promise<SkillsDTO>;
+    /** Confirm a DISCLOSED re-bind. The only thing that rewrites `routeKey`. */
+    rebind(id: string, routeKey: string): Promise<SkillsDTO>;
+    remove(id: string): Promise<SkillsDTO>;
+  };
   models: {
     /** Fires while weights download; may start from a search, not just indexing. */
     onDownload(cb: (p: ModelDownloadProgress) => void): () => void;
@@ -1449,6 +1476,13 @@ export const IPC = {
   sessionsRemove: "sessions:remove",
   sessionsTracks: "sessions:tracks",
   flowsGraph: "flows:graph",
+  skillsList: "skills:list",
+  skillsAccept: "skills:accept",
+  skillsDismiss: "skills:dismiss",
+  skillsUpdate: "skills:update",
+  skillsGenerate: "skills:generate",
+  skillsRebind: "skills:rebind",
+  skillsRemove: "skills:remove",
   mcpStatus: "mcp:status",
   mcpLog: "mcp:log",
   mcpLogEvent: "mcp:log-event",

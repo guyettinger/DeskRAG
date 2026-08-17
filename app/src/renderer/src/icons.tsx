@@ -85,6 +85,15 @@ export const IconNextKeyframe = (p: P): React.JSX.Element => (
 /* One path that branches into two, with a node at each fork and each end —
    "the shapes your work takes". Deliberately NOT the old play-in-an-arc: this
    screen explores recorded behavior and never replays it. */
+/* A page with a turned corner and a spark — a written artifact, not a graph. */
+export const IconSkills = (p: P): React.JSX.Element => (
+  <svg {...base} {...p}>
+    <path d="M14 3H7a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V7z" />
+    <path d="M14 3v4h4" />
+    <path d="m10 13 1 2.2 2.2 1-2.2 1L10 19.4 9 17.2 6.8 16.2 9 15.2z" />
+  </svg>
+);
+
 export const IconFlows = (p: P): React.JSX.Element => (
   <svg {...base} {...p}>
     <circle cx="5" cy="6" r="2" />
