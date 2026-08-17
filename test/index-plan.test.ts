@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   INDEX_STAGES,
+  STAGE_PHASES,
   planStages,
   reindexPlan,
   stageOrderViolations,
+  stagePhaseViolations,
   type StageFacts,
   type StageId,
 } from "../app/src/main/index-plan.js";
@@ -218,6 +220,71 @@ describe("INDEX_STAGES", () => {
   it("tolerates failure in transcribing and nowhere else", () => {
     for (const s of INDEX_STAGES) {
       expect(s.tolerateFailure ?? false).toBe(s.id === "transcribe");
+    }
+  });
+});
+
+/**
+ * The bands the Indexing screen draws.
+ *
+ * Phases replaced a wire diagram that was measured and failed: twelve stages
+ * declare 21 `needs` edges, each routed down its own channel, and transitive
+ * reduction only reaches 14 because NINE of them fan out of `segment` and into
+ * `compose`. A hub cannot be drawn with parallel lines, so the structure is
+ * carried by named bands — and a band is only honest if its stages are ADJACENT
+ * in the run, which is what these assert.
+ */
+describe("stage phases", () => {
+  /**
+   * The load-bearing one. Row is execution order, so a phase appearing in two
+   * places would put a band head in the middle of another band's stages and the
+   * picture would claim a grouping the run does not have. Nothing else catches
+   * it: the ladder still renders, in order, looking entirely reasonable.
+   */
+  it("gives every phase ONE contiguous run of the table", () => {
+    expect(stagePhaseViolations()).toEqual([]);
+  });
+
+  it("declares no phase that has no stages, and uses no phase it did not declare", () => {
+    const declared = new Set(STAGE_PHASES.map((p) => p.id));
+    const used = new Set(INDEX_STAGES.map((s) => s.phase));
+    expect([...used].filter((p) => !declared.has(p))).toEqual([]);
+    expect([...declared].filter((p) => !used.has(p))).toEqual([]);
+  });
+
+  /**
+   * Bands are read top to bottom beside stages that are also read top to bottom.
+   * If the table's phase order disagreed with `STAGE_PHASES`, the heads would
+   * appear in one order and be listed in another.
+   */
+  it("meets the phases in the order STAGE_PHASES declares them", () => {
+    const firstSeen: string[] = [];
+    for (const s of INDEX_STAGES) {
+      if (!firstSeen.includes(s.phase)) firstSeen.push(s.phase);
+    }
+    expect(firstSeen).toEqual(STAGE_PHASES.map((p) => p.id));
+  });
+
+  /**
+   * The screen exists to explain the pipeline and used to show two-word labels
+   * from which nothing could be learned. Required with no default, so a new
+   * stage cannot decline to answer — the `reindex` precedent.
+   */
+  it("makes every stage say what it does, under every configuration", () => {
+    for (const f of allFacts()) {
+      for (const s of INDEX_STAGES) {
+        const text = s.describe(f);
+        expect(text.length).toBeGreaterThan(20);
+        // A sentence, not a restated label: it must not simply echo the name.
+        expect(text).not.toBe(s.label(f));
+      }
+    }
+  });
+
+  it("gives every phase a title and a purpose", () => {
+    for (const p of STAGE_PHASES) {
+      expect(p.title.length).toBeGreaterThan(0);
+      expect(p.purpose.length).toBeGreaterThan(20);
     }
   });
 });

@@ -22,6 +22,12 @@ export interface CaptionRepresenterOptions {
   blobStore: BlobStore;
   /** Keyframes sampled per segment for captioning. */
   maxFramesPerSegment?: number;
+  /**
+   * Called with the segments finished so far. A VLM call per segment is the
+   * slowest stage in the whole pipeline — measured at 14m 16s on a real
+   * recording — so this is the one that most needs surfacing.
+   */
+  onProgress?: (done: number, total: number) => void;
 }
 
 export interface CaptionRepresentResult {
@@ -35,6 +41,7 @@ export class CaptionRepresenter {
   private readonly captionEmbedder: EmbeddingProvider;
   private readonly blobStore: BlobStore;
   private readonly maxFrames: number;
+  private readonly onProgress: ((done: number, total: number) => void) | undefined;
   readonly namespace: string;
   private spaceReady = false;
 
@@ -46,6 +53,7 @@ export class CaptionRepresenter {
     this.captionEmbedder = opts.captionEmbedder;
     this.blobStore = opts.blobStore;
     this.maxFrames = opts.maxFramesPerSegment ?? 3;
+    this.onProgress = opts.onProgress;
     this.namespace = namespaceFor("caption", this.captionEmbedder);
   }
 
@@ -73,7 +81,12 @@ export class CaptionRepresenter {
 
     const captions: string[] = [];
     const segIds: string[] = [];
-    for (const seg of segments) {
+    // Reported at the TOP as "segments finished before this one", with one final
+    // call after the loop. Every other shape needs a call beside each `continue`
+    // — there are two here — and a third added later would silently stall the
+    // meter on the exact segments that were cheapest to skip.
+    for (const [i, seg] of segments.entries()) {
+      this.onProgress?.(i, segments.length);
       const inclusiveRight = seg.tMonoEnd === sessionEnd;
       const segFrames = frames.filter(
         (f) =>
@@ -96,6 +109,7 @@ export class CaptionRepresenter {
       captions.push(caption);
       segIds.push(seg.id);
     }
+    this.onProgress?.(segments.length, segments.length);
 
     if (captions.length > 0) {
       const vecs = await this.captionEmbedder.embed(captions);

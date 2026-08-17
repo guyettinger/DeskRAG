@@ -31,6 +31,7 @@ const world = {
 type Emitted =
   | { at: "begin"; id: StageId; label: string; index: number; total: number }
   | { at: "detail"; id: StageId; text: string }
+  | { at: "progress"; id: StageId; done: number; total: number; unit: string }
   | { at: "finish"; id: StageId; outcome: "done" | "failed"; detail: string | null };
 
 const recorder = (): { out: Emitted[]; reporter: Parameters<typeof runStages>[2] } => {
@@ -40,6 +41,7 @@ const recorder = (): { out: Emitted[]; reporter: Parameters<typeof runStages>[2]
     reporter: {
       begin: (id, label, index, total) => out.push({ at: "begin", id, label, index, total }),
       detail: (id, text) => out.push({ at: "detail", id, text }),
+      progress: (id, done, total, unit) => out.push({ at: "progress", id, done, total, unit }),
       finish: (id, outcome, detail) => out.push({ at: "finish", id, outcome, detail }),
     },
   };

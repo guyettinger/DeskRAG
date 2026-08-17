@@ -29,6 +29,8 @@ export interface RepresenterOptions {
    * the store. Omitted means a tally-only digest — never a guess.
    */
   digestContext?: DigestContext;
+  /** Called with the segments finished so far. */
+  onProgress?: (done: number, total: number) => void;
 }
 
 /** What was written, and into which namespaces. */
@@ -47,6 +49,7 @@ export class Representer {
   private readonly digestEmbedder: EmbeddingProvider;
   private readonly behavior: BehaviorFeatureExtractor;
   private readonly digestContext: DigestContext;
+  private readonly onProgress: ((done: number, total: number) => void) | undefined;
   readonly digestNamespace: string;
   readonly behaviorNamespace: string;
   private spacesReady = false;
@@ -58,6 +61,7 @@ export class Representer {
     this.digestEmbedder = opts.digestEmbedder;
     this.behavior = opts.behavior ?? new BehaviorFeatureExtractor();
     this.digestContext = opts.digestContext ?? {};
+    this.onProgress = opts.onProgress;
     this.digestNamespace = namespaceFor("digest", this.digestEmbedder);
     this.behaviorNamespace = namespaceFor("behavior", this.behavior);
   }
@@ -114,7 +118,8 @@ export class Representer {
     const digestSegIds: string[] = [];
     const behaviorRows: SegmentVectorInsert[] = [];
 
-    for (const seg of segments) {
+    for (const [i, seg] of segments.entries()) {
+      this.onProgress?.(i, segments.length);
       // Events in [start, end); the final segment includes an event sitting
       // exactly on the session end so nothing is dropped at the right edge.
       const inclusiveRight = seg.tMonoEnd === sessionEnd;
@@ -145,6 +150,7 @@ export class Representer {
         vector: bvec,
       });
     }
+    this.onProgress?.(segments.length, segments.length);
 
     // Batch-embed all digests, then write digest + behavior vectors to Lance.
     const digestVecs = await this.digestEmbedder.embed(digestTexts);

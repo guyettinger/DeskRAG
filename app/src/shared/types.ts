@@ -224,16 +224,108 @@ export type IndexStageState = "pending" | "running" | "done" | "skipped" | "fail
  * the shape. Deriving `row` from `needs` instead would be wrong in a way that is
  * easy to miss: `trace` is depth 2 but runs LAST.
  */
+/**
+ * How far through its own units a running stage is.
+ *
+ * Carried BESIDE `detail` rather than folded into it, because the two answer
+ * different questions and are drawn differently: `detail` is evidence prose that
+ * survives the run ("3 levels, 47 nodes"), this is a countable meter that is
+ * only true while the stage runs and is cleared when it ends.
+ *
+ * `unit` is the app's wording, never the library's — a representer reports
+ * `(done, total)` and this side decides whether those are frames, segments or
+ * audio clips.
+ */
+export interface StageProgress {
+  done: number;
+  total: number;
+  unit: string;
+  /**
+   * Wall clock when this count was OBSERVED.
+   *
+   * Present so a rate can be `done / (at - startedAt)` — a closed interval that
+   * changes only when the count does. Measuring against a live `now` instead is
+   * arithmetically true and practically a lie: it climbs for as long as the
+   * current unit takes and snaps back when the unit lands, so a stage at 2/4
+   * read "1.0s each" then "7.0s each" without a single thing having completed.
+   * Same defect as the rail's per-bucket rate, which reported 25 keys/s for one
+   * keystroke.
+   */
+  at: number;
+}
+
+/**
+ * Which band of the pipeline a stage is drawn in.
+ *
+ * Lives HERE rather than in `index-plan.ts` for the same reason `TrackGroup`
+ * does: it is a fixed enumeration that main assigns and the renderer draws, and
+ * two copies of a band table is exactly the two-readers-of-one-header drift that
+ * `ax-dump`/`ax-exec` already paid for. `index-plan.ts` imports it.
+ *
+ * The phases are CONTIGUOUS runs of `INDEX_STAGES` — `stagePhaseViolations()`
+ * asserts it, and that is what makes a band honest when row is execution order.
+ */
+export type StagePhase = "foundation" | "enrichment" | "consolidation" | "library";
+
+/** Band order and display text. The ladder renders bands in THIS order. */
+export const STAGE_PHASES: readonly {
+  id: StagePhase;
+  title: string;
+  purpose: string;
+}[] = [
+  {
+    id: "foundation",
+    title: "Foundation",
+    purpose: "Structural passes over what was captured. No model is involved and none can be off.",
+  },
+  {
+    id: "enrichment",
+    title: "Enrichment",
+    purpose:
+      "Independent passes, each reading Segmenting's output. These are the slow ones, and the ones a missing provider switches off.",
+  },
+  {
+    id: "consolidation",
+    title: "Consolidation",
+    purpose: "Gathering what the passes produced into one searchable index.",
+  },
+  {
+    id: "library",
+    title: "Library",
+    purpose: "Accretes across every recording, not just this one.",
+  },
+];
+
 export interface IndexStageDTO {
   /** The `StageId`. Opaque to the renderer, which only groups and keys by it. */
   id: string;
   label: string;
+  /** One sentence: what this stage does. Constant per stage, never null. */
+  describe: string;
+  /** Which band it is drawn in. Phases are contiguous in execution order. */
+  phase: StagePhase;
   state: IndexStageState;
   /**
    * The one line under the stage name: what it produced, why its gate said no,
    * or the message from a tolerated failure. Null while pending.
    */
   detail: string | null;
+  /**
+   * Null unless this stage is running AND can count its own units. A stage that
+   * cannot count draws an indeterminate meter, never a fabricated percentage —
+   * the same rule as drawing no highlight box at all on a grid disagreement.
+   */
+  progress: StageProgress | null;
+  /**
+   * Wall clock at which this stage began, or null if it has not.
+   *
+   * Carried BESIDE `elapsedMs` because the snapshot is only rebuilt on stage
+   * TRANSITIONS: a running stage's `elapsedMs` is computed once, at `begin`, and
+   * would then read ~0ms for the entire fourteen minutes the caption stage takes.
+   * The renderer ticks its own clock against this instead. `elapsedMs` stays
+   * authoritative for a stage that has ENDED, where it is a closed measurement.
+   */
+  startedAt: number | null;
   elapsedMs: number | null;
   row: number;
   col: number;
@@ -291,7 +383,9 @@ export interface IndexQueueDTO {
 export interface IndexTickDTO {
   jobId: string;
   stageId: string;
-  detail: string;
+  /** Null when this tick carries only progress — the two fire independently. */
+  detail: string | null;
+  progress: StageProgress | null;
 }
 
 // --- search / results --------------------------------------------------------

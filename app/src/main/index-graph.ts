@@ -83,8 +83,16 @@ export function buildStageGraph(stages: readonly StageRecord[]): IndexStageDTO[]
     return {
       id: rec.id,
       label: spec.label(LABEL_FACTS),
+      describe: spec.describe(LABEL_FACTS),
+      phase: spec.phase,
       state: rec.state as IndexStageState,
       detail: rec.detail,
+      // Only a RUNNING stage has a meter. A record can carry stale progress —
+      // a job that crashed mid-stage is re-queued with its `running` row intact
+      // — and a pending stage showing "118/289" would claim work that is not
+      // happening.
+      progress: rec.state === "running" ? rec.progress : null,
+      startedAt: rec.startedAt,
       elapsedMs: elapsed(rec),
       row,
       col: DEPTH.get(rec.id) ?? 0,

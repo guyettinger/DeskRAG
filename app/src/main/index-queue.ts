@@ -29,6 +29,11 @@ import {
   type StageId,
 } from "./index-plan.js";
 import type { IndexJobRow } from "deskrag";
+// Type-only, and `@shared/types` is mapped by BOTH the root tsconfig and
+// vitest.config, which is what keeps this module reachable from the root suite.
+import type { StageProgress } from "@shared/types";
+
+export type { StageProgress };
 
 /**
  * What a job is for.
@@ -57,6 +62,16 @@ export interface StageRecord {
    * while pending.
    */
   detail: string | null;
+  /**
+   * How far through its units this stage is, while it runs. Cleared when it
+   * begins and when it ends: a finished stage's meter is not a fact about it any
+   * more — its elapsed time and its evidence line are.
+   *
+   * Serialized with the rest of the record, but never a reason to write: like
+   * `detail`, it reaches the screen as a tick and reaches disk only when the
+   * stage finishes, by which point it is null again.
+   */
+  progress: StageProgress | null;
   startedAt: number | null;
   endedAt: number | null;
 }
@@ -91,6 +106,23 @@ export function decodePayload(raw: string): JobPayload {
   }
 }
 
+/**
+ * A progress record, or null if it is not one.
+ *
+ * `total` must be > 0: a meter over zero units has no honest width, and
+ * `done/total` would be NaN — which renders as a blank bar rather than an error.
+ */
+function validProgress(p: unknown): StageProgress | null {
+  if (typeof p !== "object" || p === null) return null;
+  const { done, total, unit, at } = p as Partial<StageProgress>;
+  if (typeof done !== "number" || typeof total !== "number" || typeof unit !== "string") return null;
+  if (!Number.isFinite(done) || !Number.isFinite(total) || total <= 0) return null;
+  // `at` post-dates the field itself, so a record from the build in between has
+  // a progress with no timestamp. 0 is the honest stand-in: it can never be
+  // after `startedAt`, so `stageRate` withholds rather than inventing one.
+  return { done, total, unit, at: typeof at === "number" && Number.isFinite(at) ? at : 0 };
+}
+
 export function encodeStages(stages: readonly StageRecord[]): string {
   return JSON.stringify(stages);
 }
@@ -106,7 +138,14 @@ export function decodeStages(raw: string | null): StageRecord[] {
     const v = JSON.parse(raw) as StageRecord[];
     if (!Array.isArray(v)) return [];
     const known = new Set<string>(INDEX_STAGES.map((s) => s.id));
-    return v.filter((s) => s && typeof s.id === "string" && known.has(s.id));
+    return v
+      .filter((s) => s && typeof s.id === "string" && known.has(s.id))
+      // `progress` post-dates every job already on disk, so it is normalised
+      // here rather than trusted. A record written by an older build has the
+      // field ABSENT — `undefined`, not `null` — and `stageMeter` distinguishes
+      // the two, so leaving it would draw a meter for a job that never measured
+      // one. Same tolerance rule as the id filter above.
+      .map((s) => ({ ...s, progress: validProgress(s.progress) }));
   } catch {
     return [];
   }
@@ -168,6 +207,7 @@ export function initialStages(kind: IndexJobKind, facts: StageFacts): StageRecor
     id: spec.id,
     state: planned.has(spec.id) ? ("pending" as const) : ("skipped" as const),
     detail: planned.has(spec.id) ? null : skipDetail(spec.id, facts),
+    progress: null,
     startedAt: null,
     endedAt: null,
   }));

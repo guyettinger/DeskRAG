@@ -179,8 +179,7 @@ export class IndexWorker {
     const kind: IndexJobKind = isIndexJobKind(job.kind) ? job.kind : "record";
     const world = await this.deps.stageWorld(job.sessionId ?? "", providers);
     const stages = initialStages(kind, world.facts);
-    this.persist(job.id, stages);
-    this.deps.emitQueue();
+    this.persistAndEmit(job.id, stages);
 
     try {
       // Derived from (kind, attempts), never read off a stored flag — so there
@@ -239,9 +238,9 @@ export class IndexWorker {
         s.state = "running";
         s.startedAt = Date.now();
         s.detail = null;
+        s.progress = null;
         this.deps.setRunningStage({ jobId: job.id, stageId: id, label });
-        this.persist(job.id, stages);
-        this.deps.emitQueue();
+        this.persistAndEmit(job.id, stages);
       },
       detail: (id, text) => {
         const s = at(id);
@@ -250,7 +249,23 @@ export class IndexWorker {
         // NOT persisted and NOT a queue snapshot: this fires per frame in the
         // patch stage. It reaches the screen as a tick and reaches disk when
         // the stage finishes.
-        this.deps.emitTick({ jobId: job.id, stageId: id, detail: text });
+        this.deps.emitTick({ jobId: job.id, stageId: id, detail: text, progress: null });
+      },
+      progress: (id, done, total, unit) => {
+        const s = at(id);
+        if (!s) return;
+        // Stamped HERE, where the count was observed — the renderer's clock
+        // cannot know when a unit actually landed.
+        s.progress = { done, total, unit, at: Date.now() };
+        // Same treatment as `detail`, and for the same reason: this fires once
+        // per frame or per segment, and re-serialising the whole queue at that
+        // rate is waste.
+        this.deps.emitTick({
+          jobId: job.id,
+          stageId: id,
+          detail: null,
+          progress: s.progress,
+        });
       },
       finish: (id, outcome, detail) => {
         const s = at(id);
@@ -258,17 +273,44 @@ export class IndexWorker {
         s.state = outcome;
         s.endedAt = Date.now();
         if (detail !== null) s.detail = detail;
-        this.persist(job.id, stages);
-        this.deps.emitQueue();
+        // A finished stage has no meter. What it measured is now its elapsed
+        // time and its evidence line; leaving "546/546" behind would draw a
+        // full bar under every completed stage and say nothing.
+        s.progress = null;
+        this.persistAndEmit(job.id, stages);
       },
     };
   }
 
-  private persist(jobId: string, stages: readonly StageRecord[]): void {
+  /**
+   * Write the ladder, and RESOLVE ONLY ONCE IT IS WRITTEN.
+   *
+   * The return value is what makes `persistAndEmit` possible, and that ordering
+   * is load-bearing: `indexQueue()` builds its snapshot by READING
+   * `store.listIndexJobs()`, so emitting before this write lands publishes the
+   * PREVIOUS state of the ladder.
+   *
+   * Measured by driving the app: the screen ran a whole stage behind the work.
+   * With the tick stream already reporting `captions` at 2/4, the DOM still had
+   * Frame patches marked running — so the progress folded into the captions row,
+   * which the snapshot still called `pending`, and the row that WAS drawn as
+   * running had no progress and fell back to the indeterminate meter. Every
+   * value was individually correct; only the ORDER was wrong.
+   *
+   * It was invisible before the meters existed, because a stage's `detail` is
+   * matched by `stageId` and does not care what state the snapshot claims.
+   */
+  private persist(jobId: string, stages: readonly StageRecord[]): Promise<unknown> {
     const snapshot = encodeStages(stages);
     this.writes = this.writes
       .then(() => this.deps.store.updateIndexJobProgress(jobId, snapshot))
       .catch((err) => console.error("[deskrag] could not record indexing progress:", err));
+    return this.writes;
+  }
+
+  /** Persist, THEN publish — never the other way round. See `persist`. */
+  private persistAndEmit(jobId: string, stages: readonly StageRecord[]): void {
+    void this.persist(jobId, stages).then(() => this.deps.emitQueue());
   }
 }
 

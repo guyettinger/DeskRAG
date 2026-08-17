@@ -28,6 +28,8 @@ export interface AppCaptionRepresenterOptions {
   cropper: RegionCropper;
   /** Keyframes sampled per segment for captioning. */
   maxFramesPerSegment?: number;
+  /** Called with the segments finished so far — a crop plus a VLM call each. */
+  onProgress?: (done: number, total: number) => void;
 }
 
 export interface AppCaptionRepresentResult {
@@ -42,6 +44,7 @@ export class AppCaptionRepresenter {
   private readonly blobStore: BlobStore;
   private readonly cropper: RegionCropper;
   private readonly maxFrames: number;
+  private readonly onProgress: ((done: number, total: number) => void) | undefined;
   readonly namespace: string;
   private spaceReady = false;
 
@@ -54,6 +57,7 @@ export class AppCaptionRepresenter {
     this.blobStore = opts.blobStore;
     this.cropper = opts.cropper;
     this.maxFrames = opts.maxFramesPerSegment ?? 3;
+    this.onProgress = opts.onProgress;
     this.namespace = namespaceFor("app_caption", this.captionEmbedder);
   }
 
@@ -84,7 +88,10 @@ export class AppCaptionRepresenter {
 
     const captions: string[] = [];
     const segIds: string[] = [];
-    for (const seg of segments) {
+    // Top-of-loop reporting, as in CaptionRepresenter: this body has three
+    // `continue`s and counting at each of them is the shape that goes stale.
+    for (const [i, seg] of segments.entries()) {
+      this.onProgress?.(i, segments.length);
       const inclusiveRight = seg.tMonoEnd === sessionEnd;
       const segFrames = frames.filter(
         (f) =>
@@ -115,6 +122,7 @@ export class AppCaptionRepresenter {
       captions.push(caption);
       segIds.push(seg.id);
     }
+    this.onProgress?.(segments.length, segments.length);
 
     if (captions.length > 0) {
       const vecs = await this.captionEmbedder.embed(captions);

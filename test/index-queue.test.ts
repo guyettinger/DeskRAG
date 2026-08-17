@@ -232,6 +232,7 @@ describe("jobProgress", () => {
     id: id as StageRecord["id"],
     state,
     detail: null,
+    progress: null,
     startedAt: null,
     endedAt: null,
   });

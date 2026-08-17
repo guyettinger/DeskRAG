@@ -220,7 +220,16 @@ export class DeskRagService {
         // Transcribing is otherwise indistinguishable from a hang.
         const at = this.runningStage;
         if (at && !p.done) {
-          this.emitTick({ jobId: at.jobId, stageId: at.stageId, detail: downloadLabel(p) });
+          // Detail, deliberately NOT progress: a download is not the stage's own
+          // units. Transcribing's meter counts audio clips, and letting 57MB of
+          // weights drive the same bar would make the stage appear to advance
+          // through work it has not started.
+          this.emitTick({
+            jobId: at.jobId,
+            stageId: at.stageId,
+            detail: downloadLabel(p),
+            progress: null,
+          });
         }
       },
     });

@@ -3531,42 +3531,173 @@ select {
 }
 
 /* ---- the stage ladder ---- */
-/* ROW IS EXECUTION ORDER, COLUMN IS DEPENDENCY DEPTH. runStages is a strictly
-   sequential loop, so top-to-bottom IS the run order; a free DAG layout would
-   put Captions, Transcribing and Frame patches side by side and assert a
-   concurrency this app does not have. Positions come from index-graph-view.ts. */
+/* ROW IS EXECUTION ORDER. runStages is a strictly sequential loop, so top to
+   bottom IS the run order, and a band never lays its stages out side by side —
+   that would assert a concurrency this app does not have.
+
+   THE WIRES ARE GONE, AND THEY WERE MEASURED BEFORE THEY WENT. Twelve stages
+   declare 21 `needs` edges; each got its own 9px channel, so the gutter was
+   ~110px of near-identical gray line beside every node. Transitive reduction
+   only reaches 14, because NINE of those fan out of `segment` and into
+   `compose` — the dependency structure is a hub, and parallel wires cannot draw
+   a hub. Named bands carry it in words instead, which is honest only because
+   phases are contiguous runs of the execution order. */
 .stagemap {
-  position: relative;
-  width: 100%;
-}
-.stagemap__wires {
-  position: absolute;
-  inset: 0;
-  /* Visible so a wire bowing into the gutter is not clipped by its own box,
-     and pointer-events: none so it never eats a click meant for a node. */
-  overflow: visible;
-  pointer-events: none;
-}
-/* SOLID and uniform. Dashes were tried and measured: twelve stages declare
-   twenty-one dependencies, and 16 of 21 landed in the "distant" style, so the
-   exception became the rule and the gutter read as static. Distinctness comes
-   from each wire having its own CHANNEL now, which is position — the one
-   encoding that cannot collide. */
-.stagewire {
-  fill: none;
-  stroke: var(--hairline);
-  stroke-width: 1.5;
-  stroke-linecap: round;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s5);
 }
 
+/* ---- where the time went ---- */
+/* Its total is the SUM of stage times and the wall clock sits BESIDE it, never
+   in place of it: the worker holds between stages while a recording runs, so a
+   job is routinely wall-clock longer than the work it did. Collapsing the two
+   would contradict the queue row's own "took …" in one glance. */
+.stagerollup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s3);
+  background: var(--panel);
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--radius-sm);
+}
+.stagerollup__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s3);
+  flex-wrap: wrap;
+}
+.stagerollup__totals {
+  font-size: var(--t-meta);
+  color: var(--muted);
+}
+.stagerollup__bar {
+  display: flex;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--sunken);
+}
+/* Each block is its share and NOTHING widens it. A stage at 0.0006% has no
+   honest width, so the small ones are folded into the tail and COUNTED — a
+   minimum-width block would be a bar widened to be seen, which the rail forbids.
+   A 1px ring in the surface colour keeps adjacent blocks apart at any width,
+   the same spacer rule .tracks__span uses. */
+/* Five DISTINCT slots, stated positionally and never via the default.
+   `--data-signal` IS `--data-4`, so a default plus an nth-child(3) of --data-4
+   painted blocks 1 and 3 the same azure — measured on a real job, Captions and
+   App captions were one colour with the legend claiming two.
+   --data-5 (green) and --data-7 (rose) are deliberately absent: they are
+   --data-ok and --data-alarm, and a share of the clock must never read as a
+   status. */
+.stagerollup__seg {
+  min-width: 0;
+  background: var(--data-4);
+  box-shadow: inset 0 0 0 1px var(--panel);
+}
+.stagerollup__seg:nth-child(2) {
+  background: var(--data-2);
+}
+.stagerollup__seg:nth-child(3) {
+  background: var(--data-0);
+}
+.stagerollup__seg:nth-child(4) {
+  background: var(--data-1);
+}
+.stagerollup__seg:nth-child(5) {
+  background: var(--data-3);
+}
+/* Doubled class to reach 0-2-0, because `:nth-child` above is 0-2-0 and would
+   otherwise WIN on specificity regardless of source order — the fold block was
+   drawing as --data-1 and this rule was dead. "The rest" is not a category and
+   must not be given a category's colour. */
+.stagerollup__seg--rest.stagerollup__seg--rest {
+  background: var(--hairline);
+}
+.stagerollup__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1) var(--s3);
+  font-size: var(--t-meta);
+  color: var(--muted);
+}
+.stagerollup__key {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+}
+/* The legend repeats the bar's slots EXACTLY — same order, same tokens. A
+   swatch that disagreed with its block is a legend that mislabels the picture. */
+.stagerollup__swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--data-4);
+}
+.stagerollup__key:nth-child(2) .stagerollup__swatch {
+  background: var(--data-2);
+}
+.stagerollup__key:nth-child(3) .stagerollup__swatch {
+  background: var(--data-0);
+}
+.stagerollup__key:nth-child(4) .stagerollup__swatch {
+  background: var(--data-1);
+}
+.stagerollup__key:nth-child(5) .stagerollup__swatch {
+  background: var(--data-3);
+}
+/* Doubled for the same specificity reason as the block above. */
+.stagerollup__key--rest.stagerollup__key--rest .stagerollup__swatch {
+  background: var(--hairline);
+}
+.stagerollup__held {
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* ---- one band ---- */
+.stageband {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+.stageband__head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.stageband__title {
+  font-size: var(--t-micro);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0;
+}
+.stageband__purpose {
+  font-size: var(--t-meta);
+  color: var(--muted);
+  max-width: 62ch;
+  margin: 0;
+}
+.stageband__rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+/* ---- one stage ---- */
+/* Full width and in normal flow. It was absolutely positioned at a per-row x
+   derived from dependency depth, which was a second and weaker encoding of the
+   same fact the wires carried, and it made every node a different width. */
 .stagenode {
-  position: absolute;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   gap: var(--s2);
-  align-items: center;
+  align-items: start;
   box-sizing: border-box;
-  padding: var(--s2) var(--s3);
+  padding: var(--s3);
   background: var(--panel);
   border: 1px solid var(--hairline-soft);
   border-left: 2px solid var(--tone, var(--hairline));
@@ -3590,6 +3721,9 @@ select {
   height: 8px;
   border-radius: 50%;
   background: var(--tone, var(--hairline));
+  /* Aligned to the first text line's optical centre rather than the box's, now
+     that a row is several lines tall. */
+  margin-top: 5px;
 }
 /* Pending has no tone of its own — it is the absence of an outcome, and giving
    it a colour would make "not yet" look like a result. */
@@ -3602,6 +3736,9 @@ select {
 }
 .stagenode__text {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
 }
 .stagenode__head {
   display: flex;
@@ -3618,13 +3755,98 @@ select {
   color: var(--muted);
   white-space: nowrap;
 }
-/* One line, and it does NOT ellipsize: a detail either fits or the box is too
-   narrow, and hiding that behind an ellipsis is how a broken layout survives.
-   The queue pane is clamped precisely so this one has room. */
-.stagenode__detail {
+/* WHAT THE STAGE DOES. The screen exists to explain the pipeline and used to
+   show only a two-word label. It WRAPS and never ellipsizes — nothing
+   truncates, and the ~110px the wire gutter used to take is what pays for it. */
+.stagerow__desc {
   font-size: var(--t-meta);
   color: var(--muted);
+  max-width: 68ch;
+  margin: 0;
+}
+/* One line, and it does NOT ellipsize: a detail either fits or the box is too
+   narrow, and hiding that behind an ellipsis is how a broken layout survives. */
+.stagenode__detail {
+  font-size: var(--t-meta);
+  color: var(--text);
   overflow-wrap: anywhere;
+}
+
+/* ---- the meter ---- */
+/* Only a RUNNING stage has one, and only a stage that can COUNT gets a
+   determinate one. Everything else shimmers and says why. A bar that snapped to
+   100% on an 8ms stage would assert a measurement nobody took. */
+.stagemeter {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+.stagemeter__track {
+  flex: 1;
+  min-width: 0;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--sunken);
+  overflow: hidden;
+}
+.stagemeter__fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.3s ease-out;
+}
+.stagemeter__count {
+  font-size: var(--t-nano);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.stagemeter--indeterminate .stagemeter__fill {
+  width: 35%;
+  transition: none;
+  animation: stage-sweep 1.6s ease-in-out infinite;
+}
+@keyframes stage-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(286%);
+  }
+}
+/* The global reduce rule is `* { animation: none !important }`, which would
+   leave this fill parked at 35% — indistinguishable from a DETERMINATE bar
+   stuck at 35%, i.e. a number the stage never reported. Fill the track instead:
+   with no motion available, "this is not a measurement" has to be said by the
+   shape. Declared here rather than in the block at the top of the sheet because
+   later source order is what lets it win without another !important. */
+@media (prefers-reduced-motion: reduce) {
+  .stagemeter--indeterminate .stagemeter__fill {
+    width: 100%;
+    opacity: 0.35;
+  }
+}
+
+/* ---- what a stage needs ---- */
+/* The transitive REDUCTION, as chips: `searchIndex` declares five needs and four
+   are implied by `compose` already needing them, so printing all five restates
+   the hub instead of describing the stage. The full list is in the row's
+   `title`, so nothing is hidden — it is just not the first thing read. */
+.stageneeds {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1);
+  font-size: var(--t-nano);
+  color: var(--muted);
+}
+.stageneeds__label {
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.stageneeds__chip {
+  padding: 1px var(--s2);
+  border: 1px solid var(--hairline-soft);
+  border-radius: 999px;
 }
 
 /* The handoff, named. Without a line here the recording appears to VANISH on

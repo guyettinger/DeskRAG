@@ -150,8 +150,9 @@ export function IndexingScreen({ queue }: { queue: IndexQueueDTO | null }): Reac
                     </p>
                   )}
                   <p className="jobs__legend">
-                    Top to bottom is the order stages RUN. The wires on the left are
-                    what each stage needs — every one points at something above it.
+                    Top to bottom is the order stages RUN — one at a time, never in
+                    parallel. The bands group them by what they are for; each band
+                    reads what the ones above it wrote.
                   </p>
                 </div>
                 {active.error !== null && (
@@ -159,7 +160,11 @@ export function IndexingScreen({ queue }: { queue: IndexQueueDTO | null }): Reac
                     <span className="led" /> {active.error}
                   </div>
                 )}
-                <StageGraph stages={withTick(active, tick)} />
+                <StageGraph
+                  stages={withTick(active, tick)}
+                  jobStartedAt={active.startedAt}
+                  jobEndedAt={active.endedAt}
+                />
               </>
             )}
           </div>
@@ -186,8 +191,16 @@ function JobRow({
 }): React.JSX.Element {
   const pct = job.total === 0 ? 0 : (job.done / job.total) * 100;
   const running = job.state === "running";
-  const live = tick && tick.jobId === job.id ? tick.detail : null;
   const stage = job.stages.find((s) => s.state === "running");
+  // `detail` and `progress` ride SEPARATE ticks, each null on the other's, so
+  // reading `tick.detail` alone made this line blink out on every progress
+  // update. Prefer the count while a stage is counting — "118/289 segments" is
+  // the more useful of the two — and fall back to whatever prose last arrived.
+  const at = tick && tick.jobId === job.id ? tick : null;
+  const live =
+    at?.progress != null
+      ? `${at.progress.done}/${at.progress.total} ${at.progress.unit}`
+      : (at?.detail ?? stage?.detail ?? null);
 
   return (
     <div className={`job${active ? " is-active" : ""}`} onClick={onSelect}>
@@ -284,10 +297,23 @@ function jobWhen(job: IndexJobDTO): string {
  * Fold the live tick into the ladder the DTO carried.
  *
  * The queue snapshot only fires on stage transitions, so without this the
- * running stage's detail would freeze at whatever it said when it began —
- * "Frame patches" with no count, for the several minutes that stage takes.
+ * running stage's meter and detail would freeze at whatever they said when it
+ * began — no count at all, for the several minutes the patch stage takes.
+ *
+ * `detail` and `progress` arrive on SEPARATE ticks and each is null on the
+ * other's, so neither may overwrite the other with null: a progress tick would
+ * otherwise erase the download line whisper had just written. Only the field the
+ * tick actually carries is applied.
  */
 function withTick(job: IndexJobDTO, tick: IndexTickDTO | null): IndexJobDTO["stages"] {
   if (!tick || tick.jobId !== job.id) return job.stages;
-  return job.stages.map((s) => (s.id === tick.stageId ? { ...s, detail: tick.detail } : s));
+  return job.stages.map((s) =>
+    s.id === tick.stageId
+      ? {
+          ...s,
+          ...(tick.detail !== null ? { detail: tick.detail } : {}),
+          ...(tick.progress !== null ? { progress: tick.progress } : {}),
+        }
+      : s,
+  );
 }
