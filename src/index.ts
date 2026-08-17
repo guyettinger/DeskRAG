@@ -45,6 +45,21 @@ export { FakeSummaryProvider } from "./embed/summary.js";
 export type { ComposeContext, SummaryProvider } from "./embed/summary.js";
 export { OllamaSummaryProvider, listSummaryModels } from "./embed/ollama-summary.js";
 export type { OllamaSummaryOptions } from "./embed/ollama-summary.js";
+/**
+ * Skill prose — the PROSE half of a SKILL.md, never the record. The four-field
+ * reply shape is what keeps a model from rewriting steps it did not observe.
+ * Barrel-safe: an interface, a deterministic fake, two pure functions, and an
+ * adapter that only calls `fetch`.
+ */
+export {
+  FakeSkillProseProvider,
+  parseSkillResponse,
+  skillPrompt,
+  SKILL_SYSTEM,
+} from "./embed/skill-prose.js";
+export type { SkillBrief, SkillProse, SkillProseProvider } from "./embed/skill-prose.js";
+export { OllamaSkillProseProvider } from "./embed/ollama-skill-prose.js";
+export type { OllamaSkillProseOptions } from "./embed/ollama-skill-prose.js";
 
 /**
  * store/ — the dual-store seam. SQLite is the relational source of truth and the
