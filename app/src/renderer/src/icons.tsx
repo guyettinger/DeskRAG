@@ -17,6 +17,19 @@ export const IconRecord = (p: P): React.JSX.Element => (
   </svg>
 );
 
+/**
+ * Indexing: a stack of layers being fed through. Deliberately NOT a spinner or
+ * an hourglass — the nav icon names a place you can go, and it is the same shape
+ * whether anything is running or not. Liveness is the topbar chip's job.
+ */
+export const IconIndexing = (p: P): React.JSX.Element => (
+  <svg {...base} {...p}>
+    <path d="M3.5 7.2 12 3.2l8.5 4-8.5 4z" />
+    <path d="M3.5 12 12 16l8.5-4" />
+    <path d="M3.5 16.6 12 20.6l8.5-4" />
+  </svg>
+);
+
 export const IconSearch = (p: P): React.JSX.Element => (
   <svg {...base} {...p}>
     <circle cx="11" cy="11" r="6.5" />

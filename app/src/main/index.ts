@@ -27,13 +27,20 @@ let quitting = false;
 /**
  * Wipes the app data dir and relaunches. `DualStore`/LanceDB are opened once at
  * startup and nothing else in the app re-opens them live, so a relaunch is the
- * safe way back to a clean process rather than re-opening in place. A recording
- * in progress is refused before anything is touched, the same guard
- * `reindexTraces`/`removeSession` use.
+ * safe way back to a clean process rather than re-opening in place.
+ *
+ * Refused while capture is running, and ALSO while a job is being indexed —
+ * that second guard arrived with the queue and is not optional. Indexing used to
+ * be a value of the recording state, so one check covered both; now the queue
+ * drains in the background and this would otherwise delete the store out from
+ * under a running stage mid-write.
  */
 async function resetApp(): Promise<void> {
   if (service.status().state !== "idle") {
     throw new Error("Stop the current recording before resetting.");
+  }
+  if (service.indexQueue().runningJobId !== null) {
+    throw new Error("Indexing is in progress — wait for the queue to finish before resetting.");
   }
   quitting = true;
   service.close();
@@ -114,18 +121,24 @@ function createWindow(): void {
   }
 }
 
+/**
+ * Recording wins the tray title over indexing, because only one of them is
+ * capturing something unrepeatable. Indexing still gets its own glyph: it now
+ * runs in the background for minutes at a time, and a tray that showed nothing
+ * would make the machine's fans the only evidence of it.
+ */
 function trayTitle(): string {
-  const s = service.status();
-  if (s.state === "recording") return "⏺ REC";
-  if (s.state === "indexing") return "⏳";
+  if (service.status().state === "recording") return "⏺ REC";
+  if (service.indexQueue().runningJobId !== null) return "⏳";
   return "◉";
 }
 
 function rebuildTray(): void {
   if (!tray) return;
   const s = service.status();
+  const indexing = service.indexQueue().runningJobId !== null;
   tray.setTitle(trayTitle());
-  tray.setToolTip(`DeskRAG — ${s.state}`);
+  tray.setToolTip(`DeskRAG — ${s.state}${indexing ? " · indexing" : ""}`);
   const menu = Menu.buildFromTemplate([
     { label: "Open DeskRAG", click: () => showWindow() },
     { type: "separator" },
@@ -208,10 +221,23 @@ app.on("window-all-closed", () => {
   // Stay alive in the tray; do not quit on macOS window close.
 });
 
-app.on("before-quit", () => {
+app.on("before-quit", (event) => {
   quitting = true;
-  // Closing the listener is fire-and-forget: `before-quit` is synchronous, and a
-  // socket the OS is about to reclaim anyway must not delay the quit.
+  // A STOP IN FLIGHT IS THE ONE THING WORTH DELAYING A QUIT FOR. `stopRecording`
+  // returns the UI to idle before it has shut the producers down, stamped
+  // `ended_at` and enqueued the job — that is what makes the record button live
+  // again immediately. Closing the store straight through that window loses all
+  // three: measured by driving the app, quitting ~150ms after pressing stop left
+  // a real recording with no end stamp and no indexing job. It settles in well
+  // under a second, and `app.quit()` re-fires this handler once it has.
+  const pending = service?.pendingStop();
+  if (pending) {
+    event.preventDefault();
+    void pending.catch(() => {}).then(() => app.quit());
+    return;
+  }
+  // Closing the listener is fire-and-forget: a socket the OS is about to reclaim
+  // anyway must not delay the quit.
   void mcp?.stop();
   service?.close();
 });

@@ -163,7 +163,20 @@ export interface Capabilities {
 
 // --- recording ---------------------------------------------------------------
 
-export type RecordingState = "idle" | "recording" | "indexing";
+/**
+ * TWO STATES, not three. `"indexing"` used to be one of them, and that single
+ * fact is what made recording and indexing mutually exclusive: `startRecording`
+ * refuses whenever the state is not `"idle"`, so the record button was dead for
+ * as long as the last recording took to index — measured at about ten minutes
+ * over 546 frames with an image provider configured.
+ *
+ * Indexing is now a QUEUE with its own status (`IndexQueueDTO`) and its own
+ * screen. Do not reintroduce a member here to represent it: the guards that read
+ * this state are about the CAPTURE device, and a queue draining in the
+ * background is not a reason to refuse a recording. It is the reason the queue
+ * exists.
+ */
+export type RecordingState = "idle" | "recording";
 
 export interface RecordingStatus {
   state: RecordingState;
@@ -173,11 +186,112 @@ export interface RecordingStatus {
   activeSignals: SignalKind[];
 }
 
-export interface IndexingProgress {
-  stage: string;
+// --- indexing queue ----------------------------------------------------------
+
+/**
+ * What a queued job is for.
+ *
+ * `record` and `reindex` differ only in whether derived rows are purged first,
+ * but they are separate kinds rather than a flag because jobs deduplicate by
+ * (kind, session): a manual re-index must be able to queue BEHIND the automatic
+ * job for the same recording instead of being folded into it and silently doing
+ * nothing.
+ */
+export type IndexJobKind = "record" | "reindex" | "trace-rebuild";
+
+export type IndexJobState = "queued" | "running" | "done" | "failed" | "cancelled";
+
+/**
+ * `skipped` is a first-class outcome, not an absence.
+ *
+ * A stage that simply never appeared is indistinguishable from one somebody
+ * forgot to implement — which is the exact shape of the bug that once let a
+ * default install return nothing at all for every text query, silently, because
+ * frame↔segment linking had been gated on an image provider. A skipped stage is
+ * drawn, and it states its reason.
+ */
+export type IndexStageState = "pending" | "running" | "done" | "skipped" | "failed";
+
+/**
+ * One node of the stage ladder.
+ *
+ * **`row` is EXECUTION ORDER and `col` is dependency depth**, and the split is
+ * load-bearing. `runStages` is a strictly sequential loop, so drawing the
+ * pipeline as a free-branching DAG would assert a concurrency the app does not
+ * have; but the dependency structure is real and worth seeing. So the vertical
+ * axis is the order things actually happen — monotonic, and every `needs` edge
+ * therefore points at a strictly smaller row — while the horizontal axis carries
+ * the shape. Deriving `row` from `needs` instead would be wrong in a way that is
+ * easy to miss: `trace` is depth 2 but runs LAST.
+ */
+export interface IndexStageDTO {
+  /** The `StageId`. Opaque to the renderer, which only groups and keys by it. */
+  id: string;
+  label: string;
+  state: IndexStageState;
+  /**
+   * The one line under the stage name: what it produced, why its gate said no,
+   * or the message from a tolerated failure. Null while pending.
+   */
+  detail: string | null;
+  elapsedMs: number | null;
+  row: number;
+  col: number;
+  /** Ids this stage declares it needs. Drawn as wires; always at a smaller row. */
+  needs: string[];
+}
+
+export interface IndexJobDTO {
+  id: string;
+  kind: IndexJobKind;
+  /** Null for library-scoped work — a trace graph belongs to no one recording. */
+  sessionId: string | null;
+  /** The recording's purpose, or its wall clock. Null when it has neither yet. */
+  sessionLabel: string | null;
+  posterUrl: string | null;
+  state: IndexJobState;
+  enqueuedAt: number;
+  startedAt: number | null;
+  endedAt: number | null;
+  error: string | null;
+  /** Groups the fan-out of one full-library re-index. */
+  batchId: string | null;
+  /** Every stage in this job's scope, including the ones that will not run. */
+  stages: IndexStageDTO[];
+  /**
+   * Over STAGES, and only stages. The number this replaced meant stages on the
+   * record path, recordings during a re-index, and frames inside the patch
+   * stage — all plotted on one bar, which therefore changed scale mid-run.
+   * Skipped stages count toward neither half: a job whose captioner is off is
+   * not part-finished before it starts.
+   */
   done: number;
   total: number;
-  message?: string;
+}
+
+/** Why the worker is running nothing. `null` means it is running something. */
+export type IndexHoldReason = "recording" | "empty";
+
+export interface IndexQueueDTO {
+  jobs: IndexJobDTO[];
+  runningJobId: string | null;
+  held: IndexHoldReason | null;
+  /** The sentence the screen shows while held, or null when there is nothing to say. */
+  heldMessage: string | null;
+}
+
+/**
+ * The fine-grained tick for the RUNNING stage only.
+ *
+ * Its own channel rather than a field on `IndexQueueDTO`, because the patch
+ * stage reports per frame and re-serialising the whole queue at that rate is
+ * waste — the same reasoning that made the rail smooth its per-bucket rate.
+ * The queue snapshot fires on state transitions; this fires in between.
+ */
+export interface IndexTickDTO {
+  jobId: string;
+  stageId: string;
+  detail: string;
 }
 
 // --- search / results --------------------------------------------------------
@@ -859,10 +973,50 @@ export interface DeskRagApi {
   };
   recording: {
     start(): Promise<RecordingStatus>;
+    /**
+     * Stop capture and hand the recording to the indexing queue.
+     *
+     * Returns as soon as the capture producers are down — it does NOT wait for
+     * indexing. It used to: this promise spanned the whole pipeline, so the
+     * `recording:stop` IPC call could take minutes and the record button stayed
+     * disabled for all of it.
+     */
     stop(): Promise<RecordingStatus>;
     status(): Promise<RecordingStatus>;
     onState(cb: (s: RecordingStatus) => void): () => void;
-    onIndexing(cb: (p: IndexingProgress) => void): () => void;
+  };
+  /**
+   * The indexing queue. Every mutating call here ENQUEUES and returns — none of
+   * them runs the pipeline inline, and none of them refuses because a recording
+   * is in progress. The worker yields to capture on its own, between stages.
+   */
+  indexing: {
+    queue(): Promise<IndexQueueDTO>;
+    /** Re-index one recording from raw capture. Purges its derived rows first. */
+    reindexSession(sessionId: string): Promise<void>;
+    /**
+     * DESTRUCTIVE. Fan out one job per recording plus a trace rebuild, under one
+     * batch.
+     *
+     * Every recording has everything the pipeline derived from it discarded —
+     * segments, regions, captions, transcripts, summaries, the lexical index and
+     * every vector — and rebuilt from raw capture, which is never touched. The
+     * cost the caller must disclose: it rebuilds with the providers configured
+     * **now**, so re-indexing with no captioner discards every caption and with
+     * no whisper binary every transcript. Both are recomputable from blobs still
+     * on disk, but only by a run that has the provider.
+     */
+    reindexAll(): Promise<void>;
+    /** Re-lift every recording into a fresh trace graph. One library-scoped job. */
+    rebuildTraces(): Promise<void>;
+    /** Drop a queued job. A running job is left alone — see the main-side guard. */
+    cancel(jobId: string): Promise<void>;
+    /** Re-queue a failed or cancelled job. It will purge before running. */
+    retry(jobId: string): Promise<void>;
+    /** Forget every terminal job. Never touches queued or running ones. */
+    clearFinished(): Promise<void>;
+    onQueue(cb: (q: IndexQueueDTO) => void): () => void;
+    onTick(cb: (t: IndexTickDTO) => void): () => void;
   };
   search: {
     query(input: SearchInput): Promise<SearchResultDTO>;
@@ -872,18 +1026,9 @@ export interface DeskRagApi {
     list(): Promise<SessionSummaryDTO[]>;
     detail(sessionId: string): Promise<SessionDetailDTO | null>;
     remove(sessionId: string): Promise<void>;
-    /**
-     * Re-lift every recording into a fresh trace graph. Progress arrives on the
-     * existing indexing channel, so `onIndexing` covers this too.
-     */
-    reindex(): Promise<ReindexResultDTO>;
-    /**
-     * DESTRUCTIVE. Discard everything the pipeline derived for every recording
-     * and index it all again from raw capture. Progress arrives on the same
-     * indexing channel. See `ReindexAllResultDTO` for what survives and what
-     * does not.
-     */
-    reindexAll(): Promise<ReindexAllResultDTO>;
+    // Re-indexing moved to `indexing.*`: it is queued work now, not a call that
+    // blocks until a library rebuild finishes. Keeping a second entry point here
+    // is exactly how the rebuild path went stale the first time.
     /** Every recorded signal, bucketed onto the session's own time axis. */
     tracks(sessionId: string): Promise<SessionTracksDTO | null>;
   };
@@ -938,46 +1083,14 @@ export interface DeskRagApi {
   };
 }
 
-/**
- * The outcome of re-lifting every recording into a fresh graph.
- *
- * It is a REBUILD, not a per-session re-lift: a graph accretes, so folding one
- * session into a graph that already contains it would count it twice and inflate
- * the `observations`/`outcomes` evidence that edge cost uses to pick a path.
- */
-export interface ReindexResultDTO {
-  /** Sessions that produced a trace and were merged. */
-  sessions: number;
-  /** Sessions with no events — correctly contributing no node. */
-  skipped: number;
-  nodes: number;
-  edges: number;
-  /** Slots with more than one recorded sample. */
-  variables: number;
-  actions: number;
-  /** At least one session had no keyboard layout, so its typed text was lost. */
-  missingKeymap: boolean;
-}
-
-/**
- * The outcome of re-indexing the whole library.
- *
- * This is a real re-index, not a patch-up: every recording has everything the
- * pipeline derived from it discarded — segments, regions, captions, transcripts,
- * summaries, the lexical index and every vector — and then rebuilt from raw
- * capture, which is never touched.
- *
- * The cost the caller has to disclose: a recording is rebuilt with the providers
- * configured NOW. Re-indexing with no captioner discards every caption for good;
- * with no whisper binary, every transcript. Both are recomputable from blobs
- * still on disk, but only by a run that has the provider.
- *
- * `segments` counts leaf actions, not the composed levels above them.
- */
-export interface ReindexAllResultDTO {
-  sessions: number;
-  segments: number;
-}
+// Re-indexing no longer RETURNS a result: `indexing.reindexAll()` enqueues and
+// comes back immediately, and the outcome is the queue itself — every job, its
+// stage ladder and its counts, on the Indexing screen. `ReindexResultDTO` and
+// `ReindexAllResultDTO` were deleted rather than left as shapes nothing fills,
+// which is what a stale second copy of the rebuild's knowledge looks like just
+// before it goes wrong. The DESTRUCTIVENESS those doc comments carried has not
+// gone anywhere — it moved to the Settings confirmation, which is where a user
+// can still act on it, and to `indexing.reindexAll()` above.
 
 /**
  * What the MCP endpoint is actually doing right now.
@@ -1031,14 +1144,22 @@ export const IPC = {
   recordingStop: "recording:stop",
   recordingStatus: "recording:status",
   recordingStateEvent: "recording:state-event",
-  recordingIndexingEvent: "recording:indexing-event",
+  indexingQueue: "indexing:queue",
+  indexingReindexSession: "indexing:reindex-session",
+  indexingReindexAll: "indexing:reindex-all",
+  indexingRebuildTraces: "indexing:rebuild-traces",
+  indexingCancel: "indexing:cancel",
+  indexingRetry: "indexing:retry",
+  indexingClearFinished: "indexing:clear-finished",
+  /** Full snapshot, on transitions only. */
+  indexingQueueEvent: "indexing:queue-event",
+  /** The running stage's detail line, which can fire per frame. */
+  indexingTickEvent: "indexing:tick-event",
   searchQuery: "search:query",
   searchDetail: "search:detail",
   sessionsList: "sessions:list",
   sessionsDetail: "sessions:detail",
   sessionsRemove: "sessions:remove",
-  sessionsReindex: "sessions:reindex",
-  sessionsReindexAll: "sessions:reindex-all",
   sessionsTracks: "sessions:tracks",
   flowsGraph: "flows:graph",
   mcpStatus: "mcp:status",

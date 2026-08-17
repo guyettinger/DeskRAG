@@ -68,6 +68,18 @@ export interface StageSpec {
   /** Whether this stage runs at all. */
   gate: (f: StageFacts) => boolean;
   /**
+   * Why the gate said no, in the words a reader needs — REQUIRED of every stage
+   * whose gate is not `always`, and enforced by a test rather than by comment.
+   *
+   * It sits beside the gate because that is the one place that knows which fact
+   * failed, and because the indexing screen states a skipped stage's reason
+   * instead of merely dimming it. A stage that dropped out with no explanation
+   * is indistinguishable from one that was forgotten — which is the whole class
+   * of bug the gates keep producing (a default install once returned nothing at
+   * all for every text query, silently, because `associateFrames` was gated).
+   */
+  skipReason?: (f: StageFacts) => string;
+  /**
    * How a full re-index runs it. No default, deliberately: every stage has to
    * say, so a new stage cannot be quietly left out of the rebuild the way
    * composing was.
@@ -140,6 +152,7 @@ export const INDEX_STAGES: readonly StageSpec[] = [
     label: () => "Frame patches",
     needs: ["segment"],
     gate: (f) => f.patchEmbedder,
+    skipReason: () => "no image model — visual search is off",
     reindex: "per-session",
   },
   {
@@ -147,6 +160,7 @@ export const INDEX_STAGES: readonly StageSpec[] = [
     label: () => "Captions",
     needs: ["segment"],
     gate: (f) => f.captioner,
+    skipReason: () => "no captioner configured",
     reindex: "per-session",
   },
   {
@@ -154,6 +168,7 @@ export const INDEX_STAGES: readonly StageSpec[] = [
     label: () => "App captions",
     needs: ["segment"],
     gate: (f) => f.captioner,
+    skipReason: () => "no captioner configured",
     reindex: "per-session",
   },
   {
@@ -164,6 +179,12 @@ export const INDEX_STAGES: readonly StageSpec[] = [
     label: () => "Transcribing",
     needs: ["segment"],
     gate: (f) => f.hasAudio && f.whisper,
+    // The two facts fail for completely different reasons and the fix differs:
+    // one is a property of the recording and cannot be changed after the fact,
+    // the other is a missing binary the reader can go and install. Collapsing
+    // them into one message would send half the readers to the wrong place.
+    skipReason: (f) =>
+      !f.hasAudio ? "no audio in this recording" : "whisper-cli not found on PATH",
     reindex: "per-session",
     // The ONLY stage allowed to fail without failing the run, and it has to be:
     // transcription is on by default and fetches its own weights, so a download,

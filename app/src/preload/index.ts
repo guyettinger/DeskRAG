@@ -8,7 +8,8 @@ import { contextBridge, ipcRenderer } from "electron";
 import {
   IPC,
   type DeskRagApi,
-  type IndexingProgress,
+  type IndexQueueDTO,
+  type IndexTickDTO,
   type McpLogEntryDTO,
   type ModelDownloadProgress,
   type PermissionKind,
@@ -39,7 +40,18 @@ const api: DeskRagApi = {
     stop: () => ipcRenderer.invoke(IPC.recordingStop),
     status: () => ipcRenderer.invoke(IPC.recordingStatus),
     onState: (cb: (s: RecordingStatus) => void) => subscribe(IPC.recordingStateEvent, cb),
-    onIndexing: (cb: (p: IndexingProgress) => void) => subscribe(IPC.recordingIndexingEvent, cb),
+  },
+  indexing: {
+    queue: () => ipcRenderer.invoke(IPC.indexingQueue),
+    reindexSession: (sessionId: string) =>
+      ipcRenderer.invoke(IPC.indexingReindexSession, sessionId),
+    reindexAll: () => ipcRenderer.invoke(IPC.indexingReindexAll),
+    rebuildTraces: () => ipcRenderer.invoke(IPC.indexingRebuildTraces),
+    cancel: (jobId: string) => ipcRenderer.invoke(IPC.indexingCancel, jobId),
+    retry: (jobId: string) => ipcRenderer.invoke(IPC.indexingRetry, jobId),
+    clearFinished: () => ipcRenderer.invoke(IPC.indexingClearFinished),
+    onQueue: (cb: (q: IndexQueueDTO) => void) => subscribe(IPC.indexingQueueEvent, cb),
+    onTick: (cb: (t: IndexTickDTO) => void) => subscribe(IPC.indexingTickEvent, cb),
   },
   search: {
     query: (input: SearchInput) => ipcRenderer.invoke(IPC.searchQuery, input),
@@ -49,8 +61,6 @@ const api: DeskRagApi = {
     list: () => ipcRenderer.invoke(IPC.sessionsList),
     detail: (sessionId: string) => ipcRenderer.invoke(IPC.sessionsDetail, sessionId),
     remove: (sessionId: string) => ipcRenderer.invoke(IPC.sessionsRemove, sessionId),
-    reindex: () => ipcRenderer.invoke(IPC.sessionsReindex),
-    reindexAll: () => ipcRenderer.invoke(IPC.sessionsReindexAll),
     tracks: (sessionId: string) => ipcRenderer.invoke(IPC.sessionsTracks, sessionId),
   },
   flows: {

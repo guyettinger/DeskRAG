@@ -91,17 +91,36 @@ export interface StageWorld {
 }
 
 export interface StageCtx extends StageWorld {
-  /** Progress WITHIN this stage, on its own scale — frames, not stages. */
-  progress(done: number, total: number, label: string): void;
-  /** Replace this stage's label now that it knows what it did. */
-  report(label: string): void;
+  /**
+   * This stage's one-line DETAIL — the evidence under its name, not a second
+   * progress bar.
+   *
+   * It replaced a `progress(done, total, label)` whose numbers were plotted on
+   * the SAME bar as the stage count, so the bar changed scale mid-run: `total`
+   * meant stages on the record path, recordings during a re-index, and frames
+   * inside this one stage. A per-frame count is evidence about one stage, so it
+   * is written as evidence — `"41/546 frames"` — and the bar counts stages only.
+   *
+   * Called freely, including per frame; the reporter decides how often to
+   * forward it.
+   */
+  detail(text: string): void;
 }
 
 export type StageRun = (ctx: StageCtx) => Promise<void>;
 
 export interface StageReporter {
   begin(id: StageId, label: string, index: number, total: number): void;
-  update(label: string, done: number, total: number): void;
+  /** The running stage's detail line changed. May fire hundreds of times. */
+  detail(id: StageId, text: string): void;
+  /**
+   * This stage reached a terminal state.
+   *
+   * `failed` here is always a TOLERATED failure — an untolerated one throws past
+   * the driver and the job as a whole fails. The distinction matters on screen:
+   * a session with no transcript is still a session.
+   */
+  finish(id: StageId, outcome: "done" | "failed", detail: string | null): void;
 }
 
 /**
@@ -159,7 +178,7 @@ export const STAGE_RUNNERS: Record<StageId, StageRun> = {
     await new FramePatchRepresenter(ctx.store, {
       patchEmbedder: ctx.providers.patchEmbedder!,
       blobStore: ctx.blobs,
-      onProgress: (done, total) => ctx.progress(done, total, `Frame patches ${done}/${total}`),
+      onProgress: (done, total) => ctx.detail(`${done}/${total} frames`),
     }).represent(ctx.sessionId);
   },
 
@@ -201,7 +220,7 @@ export const STAGE_RUNNERS: Record<StageId, StageRun> = {
     // Say WHICH path produced the tree: a structurally-composed hierarchy must
     // not read as a summarized one.
     const how = r.llmNodes === 0 ? "structural" : `${r.llmNodes} summarized`;
-    ctx.report(`Composing — ${r.levels} levels, ${r.nodes} nodes (${how})`);
+    ctx.detail(`${r.levels} levels, ${r.nodes} nodes (${how})`);
   },
 
   searchIndex: async (ctx) => {
@@ -211,14 +230,15 @@ export const STAGE_RUNNERS: Record<StageId, StageRun> = {
   trace: async (ctx) => {
     const r = await indexTrace(ctx.store, ctx.sessionId);
     if (r === undefined) return;
-    // The stage name is the only surface a trace has until the executor exists,
-    // so it carries the counts rather than a bare "Trace". The missing-keymap
-    // case is the one a user has to be told about: it means every keystroke was
-    // discarded, and nothing else would say so.
-    ctx.report(
+    // The stage's own line is the only surface a trace has until the executor
+    // exists, so it carries the counts. The missing-keymap case is the one a
+    // user has to be told about: it means every keystroke was discarded, and
+    // nothing else would say so. It survives the run now — the detail is kept
+    // on the stage record rather than only flashing past in a progress label.
+    ctx.detail(
       r.missingKeymap
-        ? `Trace — ${r.actions} actions (no keyboard layout: typed text not captured)`
-        : `Trace — ${r.actions} actions, graph ${r.nodes}/${r.edges}` +
+        ? `${r.actions} actions (no keyboard layout: typed text not captured)`
+        : `${r.actions} actions, graph ${r.nodes}/${r.edges}` +
           (r.variables > 0 ? `, ${r.variables} variables` : ""),
     );
     if (r.missingKeymap) {
@@ -230,39 +250,54 @@ export const STAGE_RUNNERS: Record<StageId, StageRun> = {
 /**
  * Walk a plan, announcing each stage and running it.
  *
- * The reporter is a parameter because the two callers count different things:
- * the record path is one recording and counts STAGES, while a re-index is a
- * library and counts RECORDINGS with the stage folded into the label. Neither
- * axis belongs in here.
+ * The reporter is a parameter because reporting is not this module's business:
+ * it does not know whether the caller is drawing a bar, writing a job row, or
+ * asserting in a test. `runners` is a parameter for the same reason — it is what
+ * lets the driver be tested with no store at all (`test/index-run.test.ts`).
  *
- * `runners` is a parameter so the driver can be tested without a store — see
- * `test/index-run.test.ts`.
+ * `gate` is awaited BETWEEN stages, never inside one, and that boundary is the
+ * whole safety of pausing. Indexing yields to recording because capture is
+ * real-time and unrepeatable — but a stage abandoned halfway leaves exactly the
+ * half-written derived rows the purge exists to avoid, and every stage APPENDS
+ * (`putRegions` mints a fresh ULID per region). So the pause waits for a clean
+ * seam. Default is a no-op, so a caller with nothing to yield to says nothing.
  */
 export async function runStages(
   ids: readonly StageId[],
   world: StageWorld,
   reporter: StageReporter,
   runners: Record<StageId, StageRun> = STAGE_RUNNERS,
+  gate: () => Promise<void> = async () => {},
 ): Promise<void> {
   const total = ids.length;
   for (let i = 0; i < total; i++) {
+    await gate();
+
     const id = ids[i]!;
     const spec = stageSpec(id);
     const label = spec.label(world.facts);
     reporter.begin(id, label, i, total);
 
+    // The last detail this stage reported, so `finish` can carry it. Without
+    // this the evidence a stage computed would be visible only while it ran —
+    // which is the bug that made Composing's "N levels, N nodes" line get
+    // computed on every run and survive none.
+    let last: string | null = null;
     const ctx: StageCtx = {
       ...world,
-      progress: (done: number, n: number, text: string) => reporter.update(text, done, n),
-      report: (text: string) => reporter.update(text, i, total),
+      detail: (text: string) => {
+        last = text;
+        reporter.detail(id, text);
+      },
     };
 
     try {
       await runners[id](ctx);
+      reporter.finish(id, "done", last);
     } catch (err) {
       if (!spec.tolerateFailure) throw err;
       console.error(`[deskrag] ${id} failed:`, err);
-      reporter.update(`${label} skipped — ${transcribeFailure(err)}`, i, total);
+      reporter.finish(id, "failed", `skipped — ${transcribeFailure(err)}`);
     }
   }
 }
