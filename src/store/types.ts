@@ -393,6 +393,43 @@ export interface IndexJobInput {
   payload: string;
 }
 
+/**
+ * One AUTHORED skill: a SKILL.md the user chose to keep, written from a route
+ * their recordings actually walked.
+ *
+ * **`state` and `doc` are opaque to the store**, the `IndexJobRow` seam. What a
+ * skill IS — frontmatter, prose, which route it was bound to, whether recorded
+ * values are printed — is an app concept, and `store/` must not learn it. This
+ * layer owns identity, lifecycle and ordering only.
+ *
+ * Unlike everything else here it is neither captured nor derived: no purge,
+ * re-index or trace rebuild may touch it, because nothing can recompute prose a
+ * person wrote. See `AUTHORED_TABLES`.
+ */
+export interface SkillRow {
+  id: string;
+  /** App-defined. Today: `active | archived | dismissed`. */
+  state: string;
+  pinned: boolean;
+  /** Wall-clock ms, stamped once and never moved again. */
+  createdAt: number;
+  updatedAt: number;
+  /** App-defined JSON. Parsed by the app, never by the store. */
+  doc: string;
+}
+
+/**
+ * A whole-row upsert. There is deliberately no partial update: two write paths
+ * into one row is how a screen comes to show a half-applied edit, and the caller
+ * already holds the whole document.
+ */
+export interface SkillInput {
+  id: string;
+  state: string;
+  pinned: boolean;
+  doc: string;
+}
+
 export interface BlobRow {
   id: string;
   sessionId: string;
@@ -657,6 +694,23 @@ export interface Store {
   listGraphs(): TraceGraphSummary[];
   /** Delete a graph; nodes, edges and slots cascade. */
   deleteGraph(id: string): Promise<void>;
+
+  // authored skills — SQLite only, no vector space, and never purged
+
+  /**
+   * Insert or replace a whole skill. Stamps `created_at` once and `updated_at`
+   * on every write.
+   *
+   * Nothing else in the system writes this table: it is not derived, so no
+   * indexing stage produces it, and `purgeDerived` and `deleteSession` both
+   * leave it alone. Every call here is a user's own act.
+   */
+  putSkill(input: SkillInput): Promise<SkillRow>;
+  /** Every skill, newest-touched first. States are the app's to filter. */
+  listSkills(): SkillRow[];
+  getSkill(id: string): SkillRow | undefined;
+  /** User-initiated forgetting, and the only path that loses authored text. */
+  deleteSkill(id: string): Promise<void>;
 
   // scoped search (retrieval tiers)
 

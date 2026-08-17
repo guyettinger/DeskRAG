@@ -31,6 +31,8 @@ import type {
   FrameRow,
   FrameScope,
   IndexJobInput,
+  SkillInput,
+  SkillRow,
   IndexJobRow,
   IndexJobState,
   MissingVector,
@@ -371,6 +373,26 @@ export class DualStore implements Store {
                ORDER BY enqueued_at DESC, rowid DESC LIMIT ?
             )`,
       ),
+      // --- authored skills ---------------------------------------------------
+      // Whole-row upsert. `created_at` is written only on insert: the excluded
+      // row carries the caller's "now" for both columns, and the DO UPDATE
+      // deliberately does not name created_at, so re-saving a skill cannot
+      // rewrite when it was kept.
+      upsertSkill: db.prepare(
+        `INSERT INTO skill (id, state, pinned, created_at, updated_at, doc)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           state = excluded.state,
+           pinned = excluded.pinned,
+           updated_at = excluded.updated_at,
+           doc = excluded.doc`,
+      ),
+      // Newest-touched first, so an edit moves a skill to the top of whatever
+      // band the app draws it in. rowid breaks a same-millisecond tie the way
+      // the job queue does.
+      selectSkills: db.prepare("SELECT * FROM skill ORDER BY updated_at DESC, rowid DESC"),
+      selectSkill: db.prepare("SELECT * FROM skill WHERE id = ?"),
+      deleteSkill: db.prepare("DELETE FROM skill WHERE id = ?"),
       selectEventsBySession: db.prepare(
         "SELECT * FROM event WHERE session_id = ? ORDER BY t_mono ASC",
       ),
@@ -1930,6 +1952,59 @@ export class DualStore implements Store {
     await this.mutex.run(async () => {
       // ON DELETE CASCADE clears node/edge/slot rows (PRAGMA foreign_keys = ON).
       this.stmts.deleteTraceGraph.run(id);
+    });
+  }
+
+  // --- authored skills -------------------------------------------------------
+  //
+  // SQLite only, and the one table in this class that is neither captured nor
+  // derived: `purgeDerived` and `deleteSession` both leave it alone, because no
+  // rebuild can reproduce prose a person wrote. See `AUTHORED_TABLES`.
+  //
+  // `state` and `doc` are opaque here, the `index_job` seam — what a skill IS
+  // belongs to the app.
+
+  private hydrateSkill(r: Record<string, unknown>): SkillRow {
+    return {
+      id: r.id as string,
+      state: r.state as string,
+      // SQLite has no boolean; the column is INTEGER 0/1.
+      pinned: (r.pinned as number) !== 0,
+      createdAt: r.created_at as number,
+      updatedAt: r.updated_at as number,
+      doc: r.doc as string,
+    };
+  }
+
+  async putSkill(input: SkillInput): Promise<SkillRow> {
+    return this.mutex.run(async () => {
+      const now = Date.now();
+      this.stmts.upsertSkill.run(
+        input.id,
+        input.state,
+        input.pinned ? 1 : 0,
+        now,
+        now,
+        input.doc,
+      );
+      return this.hydrateSkill(this.stmts.selectSkill.get(input.id) as Record<string, unknown>);
+    });
+  }
+
+  listSkills(): SkillRow[] {
+    return (this.stmts.selectSkills.all() as Record<string, unknown>[]).map((r) =>
+      this.hydrateSkill(r),
+    );
+  }
+
+  getSkill(id: string): SkillRow | undefined {
+    const r = this.stmts.selectSkill.get(id) as Record<string, unknown> | undefined;
+    return r ? this.hydrateSkill(r) : undefined;
+  }
+
+  async deleteSkill(id: string): Promise<void> {
+    await this.mutex.run(async () => {
+      this.stmts.deleteSkill.run(id);
     });
   }
 
