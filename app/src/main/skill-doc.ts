@@ -165,8 +165,13 @@ export function recordedBlocks(input: RecordedInput): string {
       out.push("   - (no actions recorded on this edge)");
     }
     for (const a of step.actions) {
-      const slot = a.slot === undefined ? "" : ` — slot \`${a.slot.name}\``;
-      out.push(`   - \`${a.action}\` — ${a.target}${slot}`);
+      // Two things NOT to print. `describeTarget` returns an em dash for an
+      // action with no target (a chord, a wait), and "`press cmd+v` — —" is
+      // noise; and for a `type` the target already reads "slot textarea", so
+      // appending the slot again said it twice. Both were only visible in a
+      // rendered file — the fixtures had neither shape.
+      const target = a.target === "—" || a.target === "" ? "" : ` — ${a.target}`;
+      out.push(`   - \`${a.action}\`${target}`);
     }
     const walked =
       step.observations === 1 ? "walked once" : `walked by ${step.observations} recordings`;
@@ -217,7 +222,7 @@ export function recordedBlocks(input: RecordedInput): string {
   const between =
     first === null || last === null
       ? ""
-      : first === last
+      : iso(first) === iso(last)
         ? ` on ${iso(first)}`
         : `, between ${iso(first)} and ${iso(last)}`;
   out.push(`Recorded ${times}${between}, on this machine.`);
@@ -271,7 +276,11 @@ export function renderSkillMarkdown(input: SkillDocInput): string {
     `  step_count: ${route.edgeIds.length}`,
   ];
   if (first !== null && last !== null) {
-    meta.push(`  recorded_between: ${iso(first)} / ${iso(last)}`);
+    meta.push(
+      iso(first) === iso(last)
+        ? `  recorded_on: ${iso(first)}`
+        : `  recorded_between: ${iso(first)} / ${iso(last)}`,
+    );
   }
   if (apps.length > 0) meta.push(`  apps: ${yamlString(apps.join(", "))}`);
   meta.push(
@@ -312,10 +321,13 @@ export function templateBody(flows: FlowsDTO, route: FlowRouteDTO): SkillProse {
   const { first, last } = span(steps);
   const apps = flowApps(flows, route);
   const name = route.name ?? route.label;
+  // By DATE, never by millisecond. Two steps of one recording are minutes
+  // apart, so an ms comparison is never equal and every single-day skill read
+  // "between 2026-08-17 and 2026-08-17".
   const when =
     first === null || last === null
       ? ""
-      : first === last
+      : iso(first) === iso(last)
         ? ` on ${iso(first)}`
         : ` between ${iso(first)} and ${iso(last)}`;
 
@@ -326,9 +338,16 @@ export function templateBody(flows: FlowsDTO, route: FlowRouteDTO): SkillProse {
       route.count === 1
         ? `Use when you need to ${name}. Recorded once, so this is one observation rather than an established habit.`
         : `Use when you need to ${name}. Recorded ${route.count} times${apps.length > 0 ? ` across ${apps.join(", ")}` : ""}.`,
+    // It says WHAT it is, never WHY. An earlier version claimed "no summary
+    // model was configured", which was false on a machine that had one —
+    // `acceptSkill` writes a template body deliberately, so that a keep is
+    // instant. Asserting a cause it cannot observe is the exact fabrication this
+    // file exists to avoid, and it was invisible until the probe printed a
+    // rendered skill beside the settings it was rendered under.
     overview:
-      `DeskRAG recorded this flow ${times}${when}. No summary model was configured when this was written, ` +
-      `so this description is generated from the recording rather than composed. The steps below are the record either way.`,
+      `DeskRAG recorded this flow ${times}${when}. This description is generated from the ` +
+      `recording rather than written by a model — press “Generate with model” for prose. ` +
+      `The steps below are the record either way.`,
     whenToUse:
       `The recordings passed through: ${route.label}.` +
       (apps.length > 0 ? ` Applications involved: ${apps.join(", ")}.` : ""),

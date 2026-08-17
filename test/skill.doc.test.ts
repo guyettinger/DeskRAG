@@ -192,6 +192,54 @@ describe("a model cannot reach the record", () => {
   });
 });
 
+/**
+ * Both found by rendering a REAL recording, and neither reachable from a
+ * fixture that did not happen to contain the shape.
+ */
+describe("action lines", () => {
+  it("omits an em-dash target rather than printing '— —'", () => {
+    const f = flows();
+    // `describeTarget` returns an em dash for an action with no target — a
+    // chord, a wait. "`press cmd+v` — —" is noise.
+    f.graph.edges[0]!.actions = [
+      { action: "press cmd+v", target: "—" },
+      { action: "wait until app(app=Electron)", target: "—" },
+    ];
+    const md = recordedBlocks({ flows: f, route: f.routes[0]!, showSamples: false });
+    expect(md).toMatch(/- `press cmd\+v`$/m);
+    expect(md).not.toMatch(/— —/);
+  });
+
+  it("does not name the slot twice", () => {
+    const f = flows();
+    // `describeTarget` already renders a `type` target as "slot textarea".
+    f.graph.edges[0]!.actions = [
+      { action: "type", target: "slot textarea", slot: { name: "textarea", samples: ["a"] } },
+    ];
+    const md = recordedBlocks({ flows: f, route: f.routes[0]!, showSamples: false });
+    expect(md).toMatch(/- `type` — slot textarea$/m);
+    expect(md).not.toMatch(/slot textarea — slot/);
+  });
+});
+
+describe("dates", () => {
+  /**
+   * By DATE, never by millisecond. Two steps of one recording are minutes
+   * apart, so an ms comparison is never equal — every single-day skill read
+   * "between 2026-08-17 and 2026-08-17".
+   */
+  it("says 'on <date>' when a route was walked within one day", () => {
+    const f = flows();
+    f.graph.edges[0]!.sources = [
+      { sessionId: "s1", startedAt: 1_754_000_000_000, atSec: 2, throughSec: 6 },
+      { sessionId: "s2", startedAt: 1_754_000_000_000, atSec: 900, throughSec: 950 },
+    ];
+    const md = recordedBlocks({ flows: f, route: f.routes[0]!, showSamples: false });
+    expect(md).not.toMatch(/between (\d{4}-\d{2}-\d{2}) and \1/);
+    expect(md).toMatch(/Recorded 2 times on \d{4}-\d{2}-\d{2}/);
+  });
+});
+
 describe("recorded values", () => {
   it("names slots and withholds the values by default", () => {
     const md = renderSkillMarkdown(docInput());
@@ -311,8 +359,24 @@ describe("templateBody", () => {
   it("says it was not composed, rather than passing as written prose", () => {
     const f = flows();
     const t = templateBody(f, f.routes[0]!);
-    expect(t.overview).toMatch(/No summary model was configured/);
-    expect(t.overview).toMatch(/generated from the recording rather than composed/);
+    expect(t.overview).toMatch(/generated from the recording rather than written by a model/);
+  });
+
+  /**
+   * It says WHAT it is and never WHY.
+   *
+   * An earlier version claimed "No summary model was configured when this was
+   * written", which was FALSE on a machine that had one — `acceptSkill` writes a
+   * template body deliberately, so that keeping a proposal is instant. Asserting
+   * a cause it cannot observe is the exact fabrication this file exists to
+   * avoid, and no fixture could show it: it took a rendered skill printed beside
+   * the settings it was rendered under.
+   */
+  it("does not claim WHY it is a template", () => {
+    const f = flows();
+    const t = templateBody(f, f.routes[0]!);
+    expect(t.overview).not.toMatch(/no summary model/i);
+    expect(t.overview).not.toMatch(/not configured|unavailable|could not/i);
   });
 
   it("is deterministic", () => {

@@ -16,6 +16,7 @@ import { laneText, scoresAreTied } from "@shared/evidence";
 import type { ExperienceReader } from "./reader.js";
 import { renderOutline, stamp } from "./outline.js";
 import { findRoute, renderFlow, renderFlowList } from "./flow-text.js";
+import { findSkill, renderSkillList } from "./skill-text.js";
 
 export interface ToolContent {
   type: "text" | "image";
@@ -62,7 +63,9 @@ past, never general knowledge.
 
 Start with search_experience for "when did I…", list_recordings for what exists, \
 get_recording_outline for what one recording was about, and list_flows/get_flow for a \
-task the user has performed more than once. get_moment returns the actual screenshot.
+task the user has performed more than once. get_moment returns the actual screenshot. \
+list_skills/get_skill return SKILL.md files the user has kept from their own recorded \
+flows — use one when you are about to repeat something they have done before.
 
 This server is read-only: it cannot record, delete, re-index, or control the desktop.`;
 
@@ -391,6 +394,48 @@ const getFlowTool: ToolDef = {
   },
 };
 
+const listSkillsTool: ToolDef = {
+  name: "list_skills",
+  title: "List kept skills",
+  description:
+    "SKILL.md files the user has kept from their own recorded flows. Use one when you are " +
+    "about to repeat something they have done before: it says how they actually did it, " +
+    "how many recordings agree, and what the evidence does not cover.",
+  inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  async run(reader) {
+    return text(renderSkillList(reader.skills(), NO_GRAPH));
+  },
+};
+
+const getSkillTool: ToolDef = {
+  name: "get_skill",
+  title: "Get one skill as SKILL.md",
+  description:
+    "One kept skill as a complete SKILL.md file: frontmatter, the prose, the recorded steps, " +
+    "what varies between runs, and what the evidence does not say. The steps are generated " +
+    "from the recording and are never model-written; `metadata.prose` says who wrote the rest.",
+  inputSchema: {
+    type: "object",
+    properties: { skillId: { type: "string", description: "A skill id from list_skills." } },
+    required: ["skillId"],
+    additionalProperties: false,
+  },
+  async run(reader, args) {
+    const skillId = str(args, "skillId");
+    if (skillId === null) return fail("`skillId` is required and must be a non-empty string.");
+    const skill = findSkill(reader.skills(), skillId);
+    if (skill === undefined) {
+      return fail(`No skill ${skillId}. Skill ids come from list_skills.`);
+    }
+    // The RAW file, with no preamble. The value of this tool is that its output
+    // IS a file: a friendly sentence in front of the `---` corrupts a
+    // paste-to-disk, and everything a client needs in order to weigh it is
+    // already inside the document (`metadata.prose`, `metadata.recordings`,
+    // `metadata.steps: template`).
+    return text(skill.markdown);
+  },
+};
+
 export const TOOLS: readonly ToolDef[] = [
   searchTool,
   momentTool,
@@ -398,6 +443,8 @@ export const TOOLS: readonly ToolDef[] = [
   outlineTool,
   listFlowsTool,
   getFlowTool,
+  listSkillsTool,
+  getSkillTool,
 ];
 
 export function toolByName(name: string): ToolDef | undefined {
