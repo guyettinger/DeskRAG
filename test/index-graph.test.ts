@@ -140,11 +140,17 @@ describe("buildStageGraph", () => {
   });
 
   it("draws whatever an older build stored, without back-filling", () => {
-    const partial: { id: StageId; state: "done"; detail: null; startedAt: null; endedAt: null }[] =
-      [
-        { id: "segment", state: "done", detail: null, startedAt: null, endedAt: null },
-        { id: "digest", state: "done", detail: null, startedAt: null, endedAt: null },
-      ];
+    const partial: {
+      id: StageId;
+      state: "done";
+      detail: null;
+      progress: null;
+      startedAt: null;
+      endedAt: null;
+    }[] = [
+      { id: "segment", state: "done", detail: null, progress: null, startedAt: null, endedAt: null },
+      { id: "digest", state: "done", detail: null, progress: null, startedAt: null, endedAt: null },
+    ];
     const nodes = buildStageGraph(partial);
     expect(nodes.map((n) => n.id)).toEqual(["segment", "digest"]);
     // `digest` needs segment AND regions; regions is not on this ladder.

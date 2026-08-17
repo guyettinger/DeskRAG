@@ -40,6 +40,16 @@ export interface TranscriptRepresenterOptions {
   blobStore: BlobStore;
   /** Language hint passed to the STT provider (default: provider's own default). */
   language?: string;
+  /**
+   * Called with the audio BLOBS finished so far, never the segments.
+   *
+   * Transcription is the expensive half and it happens once per blob; the
+   * per-segment pass below is string slicing over a cache and completes in
+   * milliseconds. Counting segments would show a bar that sat at zero for the
+   * whole whisper run and then filled instantly — a meter measuring the wrong
+   * loop is worse than none, because it looks like a stall.
+   */
+  onProgress?: (done: number, total: number) => void;
 }
 
 export interface TranscriptRepresentResult {
@@ -57,6 +67,7 @@ export class TranscriptRepresenter {
   private readonly embedder: EmbeddingProvider;
   private readonly blobStore: BlobStore;
   private readonly language: string | undefined;
+  private readonly onProgress: ((done: number, total: number) => void) | undefined;
   readonly namespace: string;
   private spaceReady = false;
 
@@ -68,6 +79,7 @@ export class TranscriptRepresenter {
     this.embedder = opts.transcriptEmbedder;
     this.blobStore = opts.blobStore;
     this.language = opts.language;
+    this.onProgress = opts.onProgress;
     this.namespace = namespaceFor("transcript", this.embedder);
   }
 
@@ -98,7 +110,8 @@ export class TranscriptRepresenter {
     // Transcribe each audio blob once; cache the full result (text + optional
     // per-clip timestamps) by blob id.
     const resultByBlob = new Map<string, TranscriptionResult>();
-    for (const b of audioBlobs) {
+    for (const [i, b] of audioBlobs.entries()) {
+      this.onProgress?.(i, audioBlobs.length);
       const bytes = await this.blobStore.read(b);
       const r = await this.transcriber.transcribe(
         bytes,
@@ -108,6 +121,7 @@ export class TranscriptRepresenter {
       if (!trimmed) continue;
       resultByBlob.set(b.id, { text: trimmed, ...(r.segments ? { segments: r.segments } : {}) });
     }
+    this.onProgress?.(audioBlobs.length, audioBlobs.length);
 
     // Utterance extent, persisted. These are the same offsets the per-segment
     // slicing below uses — the difference is that a clip keeps them, so the

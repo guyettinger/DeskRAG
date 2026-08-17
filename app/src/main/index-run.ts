@@ -105,6 +105,22 @@ export interface StageCtx extends StageWorld {
    * forward it.
    */
   detail(text: string): void;
+
+  /**
+   * How far through its own units this stage is.
+   *
+   * Separate from `detail` because the two are different kinds of claim.
+   * `detail` is EVIDENCE — prose the stage computed, which survives the run and
+   * is what the reader sees afterwards. This is a MEASURE, true only while the
+   * stage runs, and it is cleared the moment it ends.
+   *
+   * A stage calls this only when it can genuinely count. Composing deliberately
+   * does not: its expensive work is inside `composeLadder`, whose total number
+   * of model calls is not known until each level's frontier is built, so any
+   * total it could report would be invented. It draws an indeterminate meter
+   * instead — the case that state exists for.
+   */
+  progress(done: number, total: number, unit: string): void;
 }
 
 export type StageRun = (ctx: StageCtx) => Promise<void>;
@@ -113,6 +129,8 @@ export interface StageReporter {
   begin(id: StageId, label: string, index: number, total: number): void;
   /** The running stage's detail line changed. May fire hundreds of times. */
   detail(id: StageId, text: string): void;
+  /** The running stage's unit count advanced. Fires at least as often. */
+  progress(id: StageId, done: number, total: number, unit: string): void;
   /**
    * This stage reached a terminal state.
    *
@@ -160,6 +178,7 @@ export const STAGE_RUNNERS: Record<StageId, StageRun> = {
     // `Anchor.visual` read, and none of that needs a model.
     await new RegionRepresenter(ctx.store, {
       axProvider: new StoredAxProvider(ctx.store).provide,
+      onProgress: (done, total) => ctx.progress(done, total, "frames"),
     }).represent(ctx.sessionId);
   },
 
@@ -171,23 +190,31 @@ export const STAGE_RUNNERS: Record<StageId, StageRun> = {
       // keymap and the regions the stage above just wrote. Absent either, the
       // digest degrades to tallies rather than guessing.
       digestContext: digestContextFor(ctx.store, ctx.sessionId),
+      onProgress: (done, total) => ctx.progress(done, total, "segments"),
     }).represent(ctx.sessionId);
   },
 
   framePatches: async (ctx) => {
-    await new FramePatchRepresenter(ctx.store, {
+    // The count moved from `detail` to `progress`: it is a measure, not
+    // evidence. What the stage leaves BEHIND is the result — how many frames
+    // actually got a vector, which is not the same as how many were walked (a
+    // frame with no blob is processed and embeds nothing).
+    const r = await new FramePatchRepresenter(ctx.store, {
       patchEmbedder: ctx.providers.patchEmbedder!,
       blobStore: ctx.blobs,
-      onProgress: (done, total) => ctx.detail(`${done}/${total} frames`),
+      onProgress: (done, total) => ctx.progress(done, total, "frames"),
     }).represent(ctx.sessionId);
+    ctx.detail(`${r.embeddedCount} of ${r.frameCount} frames embedded`);
   },
 
   captions: async (ctx) => {
-    await new CaptionRepresenter(ctx.store, {
+    const r = await new CaptionRepresenter(ctx.store, {
       captioner: ctx.providers.captioner!,
       captionEmbedder: ctx.providers.textEmbedder,
       blobStore: ctx.blobs,
+      onProgress: (done, total) => ctx.progress(done, total, "segments"),
     }).represent(ctx.sessionId);
+    ctx.detail(`${r.captionedCount} of ${r.segmentCount} segments captioned`);
   },
 
   appCaptions: async (ctx) => {
@@ -195,20 +222,27 @@ export const STAGE_RUNNERS: Record<StageId, StageRun> = {
     // entirely rather than write nothing useful when it's unavailable.
     const cropper = await ctx.loadCropper();
     if (!cropper) return;
-    await new AppCaptionRepresenter(ctx.store, {
+    const r = await new AppCaptionRepresenter(ctx.store, {
       captioner: ctx.providers.captioner!,
       captionEmbedder: ctx.providers.textEmbedder,
       blobStore: ctx.blobs,
       cropper,
+      onProgress: (done, total) => ctx.progress(done, total, "segments"),
     }).represent(ctx.sessionId);
+    ctx.detail(`${r.captionedCount} of ${r.segmentCount} focused windows captioned`);
   },
 
   transcribe: async (ctx) => {
-    await new TranscriptRepresenter(ctx.store, {
+    // Counted in audio CLIPS, because that is the loop whisper actually spends
+    // its time in — the per-segment pass afterwards is string slicing over a
+    // cache. A meter over segments would sit at zero for the whole run.
+    const r = await new TranscriptRepresenter(ctx.store, {
       transcriber: await ctx.buildTranscriber(),
       transcriptEmbedder: ctx.providers.textEmbedder,
       blobStore: ctx.blobs,
+      onProgress: (done, total) => ctx.progress(done, total, "audio clips"),
     }).represent(ctx.sessionId);
+    ctx.detail(`${r.transcribedCount} of ${r.segmentCount} segments have speech`);
   },
 
   compose: async (ctx) => {
@@ -288,6 +322,12 @@ export async function runStages(
       detail: (text: string) => {
         last = text;
         reporter.detail(id, text);
+      },
+      // NOT captured into `last`: progress is not evidence, and a finished stage
+      // reporting "546/546 frames" where its digest line belongs would replace
+      // what it actually computed with a restatement of the fact that it ended.
+      progress: (done: number, total: number, unit: string) => {
+        reporter.progress(id, done, total, unit);
       },
     };
 

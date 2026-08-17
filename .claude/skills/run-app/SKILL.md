@@ -146,8 +146,15 @@ continues.
 - `scripts/decimate-probe.mjs` is the read-only harness for keyframe thresholds
   and needs no app at all.
 - `scripts/indexing-report.mjs` measures the Indexing screen's stage ladder —
-  node geometry, wire routing, truncation, and that the record button is not
-  disabled. Read-only.
+  bands, row geometry, truncation, the time rollup (including its COMPUTED block
+  colours, because a palette collision is invisible to a structural assertion),
+  and that the record button is not disabled. Read-only.
+- `scripts/stage-meter-probe.mjs` is the only check that sees a meter MOVE. It
+  records briefly, then samples the running row: that the fill actually grew,
+  that the count names a unit, that the clock advances, and that a stage which
+  cannot count says so rather than showing a stalled bar. Everything else on the
+  Indexing screen can be checked against a finished job, where no meter exists —
+  which is exactly how three ordering bugs survived a green suite here.
 - `scripts/queue-handoff-probe.mjs` is the one that RECORDS: it proves a second
   recording can start while the first indexes, and that the queue yields to it.
   Two short real captures land in the library.

@@ -29,6 +29,8 @@ export interface RegionRepresenterOptions {
   /** Accessibility-tree source for a frame (the macOS AX addon plugs in here).
    *  Best-effort: returns [] when unavailable, and hotspots + grid stand alone. */
   axProvider?: (frame: FrameRow) => UIElement[] | Promise<UIElement[]>;
+  /** Called with the frames finished so far. */
+  onProgress?: (done: number, total: number) => void;
 }
 
 export interface RegionRepresentResult {
@@ -39,6 +41,7 @@ export interface RegionRepresentResult {
 export class RegionRepresenter {
   private readonly proposer: FusedRegionProposer;
   private readonly axProvider: RegionRepresenterOptions["axProvider"];
+  private readonly onProgress: ((done: number, total: number) => void) | undefined;
 
   constructor(
     private readonly store: Store,
@@ -46,6 +49,7 @@ export class RegionRepresenter {
   ) {
     this.proposer = opts.proposer ?? new FusedRegionProposer(opts.proposerOptions);
     this.axProvider = opts.axProvider;
+    this.onProgress = opts.onProgress;
   }
 
   async represent(sessionId: string): Promise<RegionRepresentResult> {
@@ -65,7 +69,8 @@ export class RegionRepresenter {
       });
 
     const rows: RegionInsert[] = [];
-    for (const frame of frames) {
+    for (const [i, frame] of frames.entries()) {
+      this.onProgress?.(i, frames.length);
       // Nothing here reads the image, so a frame with no blob at all still gets
       // regions — their geometry is what anchors an action.
       const segs = containing(frame);
@@ -99,6 +104,7 @@ export class RegionRepresenter {
         });
       }
     }
+    this.onProgress?.(frames.length, frames.length);
 
     if (rows.length > 0) await this.store.putRegions(rows);
     return { frameCount: frames.length, regionCount: rows.length };
