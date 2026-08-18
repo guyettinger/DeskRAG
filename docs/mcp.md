@@ -21,7 +21,7 @@ Any MCP client that speaks Streamable HTTP works; the transport is stateless, so
 there is nothing to reconnect after DeskRAG restarts. DeskRAGApp must be running
 — it owns the store and the models — but it can be closed to the tray.
 
-## The six tools
+## The eight tools
 
 ### `search_experience`
 
@@ -153,6 +153,52 @@ you have never done as a habit — so a graph with no provenance yields no route
 and the tool points you at **Rebuild trace graph** instead of returning an empty
 list.
 
+### `list_skills` and `get_skill`
+
+SKILL.md files you have kept from your own recorded flows, ready for an agent to
+load. `list_skills` is the catalogue:
+
+```
+record-calculation-and-document-result
+  id: 01M0922J6YZ9ESJB7AHTN8G24M
+  Use when you need to perform a simple arithmetic calculation in Calculator and
+  capture the result for documentation.
+  1 recording · prose: llm
+  RECORDED ONCE — one observation, not an established habit.
+  route: Electron — localhost → Calculator → TextEdit → Electron
+```
+
+The two disclosures that would change an agent's mind about fetching are in the
+**list**, not only in the file: a skill built from one recording, and a skill
+whose route has left the graph so its steps are a stored copy that has not been
+re-checked.
+
+`get_skill` returns the file itself, raw, with no preamble before the `---`. The
+point of the tool is that its output *is* a SKILL.md — a friendly sentence in
+front of the frontmatter would corrupt a paste to disk, and everything a client
+needs in order to weigh it is already inside the document.
+
+Every skill has two halves written by different things, and the file says which
+is which. Above `## Recorded steps` is prose — a local model's, or a template's,
+declared as `prose: llm (...)` or `prose: template` in the frontmatter. From that
+heading down is the **record**, rendered from the trace graph, and
+`steps: template` says so on every skill because a model never writes it. That is
+structural rather than a promise: the function that renders the record takes the
+route and nothing else, so there is no path by which model output could reach it.
+
+Two things a skill will not do. It does not print what you typed — a slot is
+named and counted (`` `title` — 2 recorded values, varies between recordings ``)
+unless you turn recorded values on for that skill, and even then the model is
+never shown a sample. And it never claims a step succeeded or failed: nothing in
+DeskRAG observes a failure, because passive recording only sees what you did. In
+place of a success rate it carries **What this evidence does not say** — which
+steps fewer recordings walked, which states can be confirmed but not located,
+what lifting could not resolve, and whether one recording is being read as a
+habit.
+
+Skills are kept, renamed and edited in DeskRAG → Skills; this endpoint only
+reads them.
+
 ## Read-only, by construction
 
 The server cannot record, delete, re-index, or control your desktop. That is not
@@ -219,5 +265,9 @@ To exercise the whole surface against your real store, from the repo root:
 npm run probe:mcp
 ```
 
-It drives the built app, calls all six tools, and runs the three guard checks. It
-is read-only — every tool it calls is a read.
+It drives the built app, calls all eight tools, and runs the three guard checks.
+It is read-only — every tool it calls is a read.
+
+`npm run probe:skills` does the same for the two skill tools, and additionally
+keeps one proposal so there is a file to check. That one write is disclosed in
+its output; it deletes nothing and re-indexes nothing.

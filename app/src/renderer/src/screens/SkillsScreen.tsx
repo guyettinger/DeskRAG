@@ -394,50 +394,50 @@ function SkillEditor({
 
       {skill.generateNote !== null && <p className="banner">{skill.generateNote}</p>}
 
-      <label className="field">
-        <span className="field__label">Title</span>
+      <label className="skilledit__field">
+        <span className="skilledit__label">Title</span>
         <input
-          className="field__text"
+          type="text"
           value={skill.title}
           onChange={(e) => onPatch({ title: e.target.value })}
         />
       </label>
 
-      <label className="field">
-        <span className="field__label">
-          Description — how an agent decides whether to load this at all
+      <label className="skilledit__field">
+        <span className="skilledit__label">Description</span>
+        <span className="skilledit__hint">
+          How an agent decides whether to load this file at all.
         </span>
         <textarea
-          className="field__text"
           rows={2}
           value={skill.description}
           onChange={(e) => onPatch({ description: e.target.value })}
         />
       </label>
 
-      <label className="field">
-        <span className="field__label">Name (frontmatter)</span>
+      <label className="skilledit__field">
+        <span className="skilledit__label">Name</span>
+        <span className="skilledit__hint">The frontmatter <code>name:</code>, and the folder it would live in.</span>
         <input
-          className="field__text mono"
+          type="text"
+          className="mono"
           value={skill.slug}
           onChange={(e) => onPatch({ slug: e.target.value })}
         />
       </label>
 
-      <label className="field">
-        <span className="field__label">
-          Prose — yours or the model&rsquo;s. Everything below is generated from the recording
-          and cannot be edited here.
+      <label className="skilledit__field">
+        <span className="skilledit__label">Prose</span>
+        <span className="skilledit__hint">
+          Yours or the model&rsquo;s. Everything below is generated from the recording and
+          cannot be edited here.
         </span>
         <textarea
-          className="field__text"
-          rows={8}
+          rows={10}
           value={skill.body}
           onChange={(e) => onPatch({ body: e.target.value })}
         />
       </label>
-
-      <pre className="skilledit__record mono">{record}</pre>
 
       <div className="skilledit__actions">
         {confirmRegen ? (
@@ -477,6 +477,14 @@ function SkillEditor({
           Forget
         </button>
       </div>
+
+      {/* The record LAST, because it is the tallest thing here and the actions
+          must not sit below it — Copy SKILL.md was entirely off-screen at
+          1180x800, which only the screenshot showed. */}
+      <div className="skilledit__recordhead">
+        <span className="eyebrow">The record — generated, and not editable</span>
+      </div>
+      <pre className="skilledit__record mono">{record}</pre>
 
       {/* The reason in WORDS, not a greyed control with no explanation. */}
       {proseNote !== null && <p className="muted">{proseNote}</p>}

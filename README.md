@@ -30,6 +30,12 @@ often you took them, one click from any state to the moment it happened. Recordi
 twice is what reveals it as a flow, so what shows up is what you did rather than what a
 model inferred.
 
+A flow worth repeating becomes a **skill**: a `SKILL.md` an agent can load, written from
+the route you actually walked. The prose is a local model's or yours; the steps beneath it
+are the recording, and nothing model-written can reach them. It says what the evidence
+does not cover — which steps fewer recordings took, which states can be confirmed but not
+found — and it never prints what you typed unless you ask it to.
+
 An agent can read your memory too. DeskRAG serves it over **[MCP](./docs/mcp.md)**, so a
 coding assistant can ask what you actually did instead of guessing. The surface is
 read-only and loopback-only, and *read-only* is enforced by a test rather than promised.
@@ -55,6 +61,10 @@ permissions, and how it's wired.
 <tr>
 <td width="50%"><img src="docs/images/detail.png" alt="Detail view"><br><strong>Detail</strong> — why a frame came back, what matched on it, and a loupe to read the pixels.</td>
 <td width="50%"><img src="docs/images/flows.png" alt="Flows screen"><br><strong>Flows</strong> — the paths you take, and one click back to the recording.</td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/images/skills.png" alt="Skills screen"><br><strong>Skills</strong> — a repeated flow as a SKILL.md, with the record beneath the prose.</td>
+<td width="50%"></td>
 </tr>
 </table>
 

@@ -1939,6 +1939,11 @@ a:focus-visible {
 input[type="text"],
 input[type="password"],
 input[type="number"],
+/* `textarea` was NOT here, and nothing in the app had one until Skills. An
+   unstyled textarea takes the UA's own light-mode chrome and reads as disabled
+   against this panel — invisible to every DOM assertion, obvious in the first
+   screenshot. */
+textarea,
 select {
   width: 100%;
   background: var(--ink);
@@ -4066,7 +4071,16 @@ select {
   white-space: pre-wrap; overflow-wrap: anywhere;
   max-height: 420px; overflow-y: auto;
 }
+.skilledit__field { display: flex; flex-direction: column; gap: var(--s1); }
+.skilledit__label {
+  font-size: var(--t-meta); letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--muted);
+}
+/* The sentence a label was trying to be. Uppercasing a whole clause made two
+   shouty wrapped lines; the label names the field and the hint explains it. */
+.skilledit__hint { font-size: var(--t-meta); color: var(--muted); line-height: 1.45; }
 .skilledit__actions { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; }
+.skilledit__recordhead { display: flex; align-items: baseline; gap: var(--s2); }
 .skilledit__toggle {
   display: flex; gap: var(--s2); align-items: flex-start;
   font-size: var(--t-meta); color: var(--muted); line-height: 1.45;
