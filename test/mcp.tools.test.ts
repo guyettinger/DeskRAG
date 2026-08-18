@@ -2,7 +2,13 @@ import { describe, expect, it } from "vitest";
 import { SERVER_INSTRUCTIONS, TOOLS, callTool, toolByName } from "../app/src/main/mcp/tools.js";
 import type { ExperienceReader } from "../app/src/main/mcp/reader.js";
 import { buildOutline } from "../app/src/main/mcp/outline.js";
-import type { FlowsDTO, ResultDetailDTO, SearchResultDTO } from "@shared/types";
+import type {
+  FlowsDTO,
+  ResultDetailDTO,
+  SearchResultDTO,
+  SkillDTO,
+  SkillsDTO,
+} from "@shared/types";
 
 const EPOCH = 1_754_000_000_000; // 2025-07-31T22:13:20Z
 
@@ -109,8 +115,16 @@ const flows = (): FlowsDTO => ({
   ],
 });
 
+const noSkills = (): SkillsDTO => ({
+  skills: [],
+  proposals: [],
+  graphPresent: true,
+  prose: { available: false, model: null },
+});
+
 function fakeReader(over: Partial<ExperienceReader> = {}): ExperienceReader {
   return {
+    skills: () => noSkills(),
     search: async () => oneHit(),
     moment: () => detail(),
     frameImage: async () => ({ base64: "AAAA", mimeType: "image/jpeg" }),
@@ -152,13 +166,15 @@ const textOf = (r: { content: { type: string; text?: string }[] }): string =>
     .join("\n");
 
 describe("the tool surface", () => {
-  it("exposes exactly the six read-only tools", () => {
+  it("exposes exactly the eight read-only tools", () => {
     expect(TOOLS.map((t) => t.name).sort()).toEqual([
       "get_flow",
       "get_moment",
       "get_recording_outline",
+      "get_skill",
       "list_flows",
       "list_recordings",
+      "list_skills",
       "search_experience",
     ]);
   });
@@ -472,5 +488,163 @@ describe("toolByName", () => {
   it("finds a tool and returns undefined otherwise", () => {
     expect(toolByName("get_flow")?.name).toBe("get_flow");
     expect(toolByName("nope")).toBeUndefined();
+  });
+});
+
+/**
+ * The skill catalogue and the file.
+ *
+ * `list_skills` is a chooser: an agent decides from it whether to fetch, so the
+ * two disclosures that would change that decision — one observation, and steps
+ * that have not been re-checked — are in the LIST, not only in the file.
+ *
+ * `get_skill` returns the SKILL.md raw. That is the whole point of it.
+ */
+
+const skill = (over: Partial<SkillDTO> = {}): SkillDTO => ({
+  id: "01K3W8QF5T3M2Q7V6N0X4C1B8D",
+  state: "active",
+  pinned: false,
+  createdAt: EPOCH,
+  updatedAt: EPOCH,
+  slug: "file-a-bug-report",
+  title: "File a bug report",
+  description: "Use when filing a GitHub issue on a repo you already have open.",
+  body: "prose",
+  bodySource: "llm",
+  bodyModel: "ollama qwen3:4b",
+  edited: false,
+  showSamples: false,
+  generateNote: null,
+  markdown: "---\nname: file-a-bug-report\n---\n\n# File a bug report\n",
+  binding: {
+    state: "exact",
+    routeKey: "Ghostty → Google Chrome",
+    liveRouteKey: "Ghostty → Google Chrome",
+    routeLabel: "Ghostty → Google Chrome",
+    boundAt: EPOCH,
+    boundSessionIds: ["s1", "s2", "s3", "s4"],
+    overlap: 4,
+    lostSessionIds: [],
+    gainedSessionIds: [],
+    recordings: 4,
+    candidates: [],
+    note: null,
+  },
+  ...over,
+});
+
+const withSkills = (s: SkillsDTO): ExperienceReader => fakeReader({ skills: () => s });
+
+describe("list_skills", () => {
+  it("lists a kept skill with its id, evidence and route", async () => {
+    const out = await callTool(
+      withSkills({ ...noSkills(), skills: [skill()] }),
+      "list_skills",
+      {},
+    );
+    const text = out.content[0]!.text!;
+    expect(text).toMatch(/file-a-bug-report/);
+    expect(text).toMatch(/id: 01K3W8QF5T3M2Q7V6N0X4C1B8D/);
+    expect(text).toMatch(/4 recordings · prose: llm/);
+    expect(text).toMatch(/route: Ghostty → Google Chrome/);
+  });
+
+  it("says RECORDED ONCE in the list, where the decision to fetch is made", async () => {
+    const one = skill({
+      binding: { ...skill().binding, recordings: 1, boundSessionIds: ["s1"] },
+    });
+    const out = await callTool(withSkills({ ...noSkills(), skills: [one] }), "list_skills", {});
+    expect(out.content[0]!.text).toMatch(/RECORDED ONCE — one observation, not an established habit/);
+  });
+
+  it("says ORPHANED, and that the steps have not been re-checked", async () => {
+    const orphan = skill({ binding: { ...skill().binding, state: "orphaned", recordings: 0 } });
+    const out = await callTool(withSkills({ ...noSkills(), skills: [orphan] }), "list_skills", {});
+    expect(out.content[0]!.text).toMatch(/ORPHANED/);
+    expect(out.content[0]!.text).toMatch(/have not been re-checked/);
+  });
+
+  it("hides a dismissal — a suppressed proposal is not a skill", async () => {
+    const out = await callTool(
+      withSkills({ ...noSkills(), skills: [skill({ state: "dismissed" })] }),
+      "list_skills",
+      {},
+    );
+    expect(out.content[0]!.text).not.toMatch(/file-a-bug-report/);
+  });
+
+  // THREE empty states, never one — the `search_experience` rule. Each names a
+  // different remedy, and an agent handed a bare empty list reports the wrong one.
+  it("distinguishes no graph from no routes from nothing kept", async () => {
+    const noGraph = await callTool(
+      withSkills({ ...noSkills(), graphPresent: false }),
+      "list_skills",
+      {},
+    );
+    expect(noGraph.content[0]!.text).toMatch(/No trace graph has been built/);
+
+    const noRoutes = await callTool(withSkills(noSkills()), "list_skills", {});
+    expect(noRoutes.content[0]!.text).toMatch(/carries no provenance/);
+    expect(noRoutes.content[0]!.text).toMatch(/Rebuild trace graph/);
+
+    const nothingKept = await callTool(
+      withSkills({
+        ...noSkills(),
+        proposals: [
+          {
+            routeKey: "A → B",
+            name: null,
+            label: "A → B",
+            count: 2,
+            steps: 3,
+            nameObservations: 0,
+            sessionIds: ["s1", "s2"],
+            apps: [],
+            preview: "",
+          },
+        ],
+      }),
+      "list_skills",
+      {},
+    );
+    // Naming the number is the actionable half.
+    expect(nothingKept.content[0]!.text).toMatch(/1 route it could propose from/);
+    expect(nothingKept.content[0]!.text).toMatch(/list_flows/);
+  });
+});
+
+describe("get_skill", () => {
+  it("returns the SKILL.md RAW, with no preamble before the frontmatter", async () => {
+    const out = await callTool(
+      withSkills({ ...noSkills(), skills: [skill()] }),
+      "get_skill",
+      { skillId: skill().id },
+    );
+    // The value of this tool is that its output IS a file: a friendly sentence
+    // in front of the `---` corrupts a paste-to-disk.
+    expect(out.content).toHaveLength(1);
+    expect(out.content[0]!.text).toBe(skill().markdown);
+    expect(out.content[0]!.text!.startsWith("---")).toBe(true);
+  });
+
+  it("names the remedy for an unknown id", async () => {
+    const out = await callTool(withSkills(noSkills()), "get_skill", { skillId: "nope" });
+    expect(out.isError).toBe(true);
+    expect(out.content[0]!.text).toMatch(/Skill ids come from list_skills/);
+  });
+
+  it("requires a skillId", async () => {
+    const out = await callTool(withSkills(noSkills()), "get_skill", {});
+    expect(out.isError).toBe(true);
+  });
+
+  it("will not serve a dismissed row", async () => {
+    const out = await callTool(
+      withSkills({ ...noSkills(), skills: [skill({ state: "dismissed" })] }),
+      "get_skill",
+      { skillId: skill().id },
+    );
+    expect(out.isError).toBe(true);
   });
 });

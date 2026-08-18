@@ -101,6 +101,18 @@ const SHOTS = [
     pick: ".gnode:not(.is-unlocatable):has(.gnode__shot:not(.gnode__shot--none))",
   },
   {
+    id: "skills",
+    nav: "Skills",
+    // `.skills` is the screen either way; with no routes it renders the empty
+    // state, which is legitimate rather than a failure.
+    settle: ".skills",
+    ready: ".skills__stage, .skills .empty",
+    // Select the first row so the editor is populated. The list alone does not
+    // show what the screen is FOR, which is the file it produces — and the
+    // editor is where the prose sits above the record it cannot edit.
+    pick: ".skill",
+  },
+  {
     id: "search",
     nav: "Search",
     settle: ".searchbar",

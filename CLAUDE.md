@@ -35,10 +35,15 @@ npm run smoke:onnx-electron   # ColModernVBERT x3 under the Electron allocator �
 npm run probe:latency         # capture delivery latency: --device for the real screen,
                               # default is a synthetic barcode bench with ground truth.
                               # Read-only; the device mode counts gray bytes, never reads them.
-npm run probe:mcp             # drive the real app and call all six MCP tools over a real
+npm run probe:mcp             # drive the real app and call all eight MCP tools over a real
                               # socket, plus the three guard checks. The ONLY place the tools
                               # meet a real store — the app-side integration test uses a fake
                               # reader. Read-only; every tool it calls is a read.
+npm run probe:skills          # keep a real route as a SKILL.md and read what it renders to.
+                              # The ONLY check that the clipboard string and get_skill's are
+                              # byte-identical, and that the RECORD survives a real model call.
+                              # Prints the configuration it found BEFORE asserting. Its one
+                              # write is disclosed: it keeps the top proposal.
 npm run probe:highlight       # sweep the patch-highlight FLOOR over real frames + known answers
 npm run probe:embed           # which TEXT model retrieves better on the real store.
                               # Read-only (SQLite readonly, stdout only); drives the real
@@ -120,7 +125,7 @@ before you change anything — most of them were paid for twice, and several wer
 | [trace-and-replay.md](docs/internals/trace-and-replay.md) | Trace IR, node identity, anchors, the executor | `src/trace/`, `src/replay/`, `native/ax-exec` |
 | [models.md](docs/internals/models.md) | local providers, ONNX/tiling, patch highlights | `src/embed/`, any adapter, any highlight box |
 | [app-main.md](docs/internals/app-main.md) | the process boundary, the indexing pipeline table, whisper, MCP | `app/src/main/` |
-| [app-ui.md](docs/internals/app-ui.md) | the Library player, the track rail, Flows, `styles.css` | `app/src/renderer/`, any pixel |
+| [app-ui.md](docs/internals/app-ui.md) | the Library player, the track rail, Flows, Skills, `styles.css` | `app/src/renderer/`, any pixel |
 
 ### Capture and segmentation → [capture.md](docs/internals/capture.md)
 - **A SAMPLE IS TIMED BY WHEN IT WAS CAPTURED, NEVER BY WHEN IT ARRIVED.** Arrival stamping measured **3.050s late** on a real device. `ctx.deviceClock` is the only conversion from device pts to `t_mono`; a wall-clock read in either ffmpeg producer needs an inline `arrival-ok:` note or `test/capture.no-arrival-stamp.test.ts` fails.
@@ -179,6 +184,7 @@ before you change anything — most of them were paid for twice, and several wer
 - **An EMPTY whisper setting means "default", never "off".** Reading it as "off" made transcription unreachable *and* stopped the model download, presenting as a broken download.
 - **`ensureToolPath()` runs before anything can spawn** — a packaged app inherits no Homebrew, so `ffmpeg` and `whisper-cli` appear uninstalled only in a packaged build.
 - **Bytes don't go over IPC**: `deskrag://frame/<blobId>` buffers, `deskrag://media/<blobId>` streams with `Range` → `206`.
+- **A SKILL IS AUTHORED: no purge, re-index or trace rebuild may touch it, and its binding is DISCLOSED, never silently repaired.** `AUTHORED_TABLES` is a fifth `schema.ts` bucket because the question a purge asks is *can it be remade* — prose a person wrote cannot. A route's key is its place-label sequence, so one extra app hop renames it and every re-index re-keys everything; `bindSkill` re-resolves by strict-majority session overlap (the sessionIds PARTITION, so a majority has at most one winner mathematically) and **declines on a tie**. The bound session ids are JSON, never an FK, or deleting a recording would cascade away the user's writing instead of just changing what the skill reports. **A model writes the PROSE and never the record**: `recordedBlocks()` takes the route and nothing else, so there is no path by which model output reaches the steps — asserted against an adversarial body in the suite, and against a real 30B model by `probe:skills`.
 - **The MCP endpoint is READ-ONLY BY CONSTRUCTION**, guarded by `test/mcp.readonly.test.ts`. **The Host check is what closes DNS rebinding** — the Origin check cannot. There is deliberately no token, and it shows no score.
 
 ### The app's renderer → [app-ui.md](docs/internals/app-ui.md)

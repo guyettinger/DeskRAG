@@ -68,6 +68,15 @@ const api: DeskRagApi = {
   flows: {
     graph: () => ipcRenderer.invoke(IPC.flowsGraph),
   },
+  skills: {
+    list: () => ipcRenderer.invoke(IPC.skillsList),
+    accept: (routeKey) => ipcRenderer.invoke(IPC.skillsAccept, routeKey),
+    dismiss: (routeKey) => ipcRenderer.invoke(IPC.skillsDismiss, routeKey),
+    update: (id, patch) => ipcRenderer.invoke(IPC.skillsUpdate, id, patch),
+    generate: (id) => ipcRenderer.invoke(IPC.skillsGenerate, id),
+    rebind: (id, routeKey) => ipcRenderer.invoke(IPC.skillsRebind, id, routeKey),
+    remove: (id) => ipcRenderer.invoke(IPC.skillsRemove, id),
+  },
   mcp: {
     status: () => ipcRenderer.invoke(IPC.mcpStatus),
     log: () => ipcRenderer.invoke(IPC.mcpLog),

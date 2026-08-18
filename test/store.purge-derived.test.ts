@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ulid } from "ulid";
 import { DualStore } from "../src/store/store.js";
 import {
+  AUTHORED_TABLES,
   CAPTURED_TABLES,
   DERIVED_LIBRARY_TABLES,
   DERIVED_SESSION_TABLES,
@@ -291,7 +292,7 @@ describe("DualStore.purgeDerived", () => {
  * decision about whether the rebuild has to clear it.
  */
 describe("table classification", () => {
-  it("classifies every table in the schema as captured or derived", async () => {
+  it("classifies every table in the schema into exactly one bucket", async () => {
     const dir = mkdtempSync(join(tmpdir(), "erag-tables-"));
     const store = await DualStore.open(join(dir, "app.db"), join(dir, "lance"));
     const sql = new Database(join(dir, "app.db"), { readonly: true });
@@ -301,6 +302,7 @@ describe("table classification", () => {
         ...DERIVED_SESSION_TABLES,
         ...DERIVED_LIBRARY_TABLES,
         ...OPERATIONAL_TABLES,
+        ...AUTHORED_TABLES,
       ]);
       // FTS5 keeps its own shadow tables beside each virtual table; they are an
       // implementation detail of a table that IS classified.

@@ -34,6 +34,7 @@
     "probe:decimate": "node scripts/decimate-probe.mjs",
     "probe:latency": "node scripts/capture-latency-probe.mjs",
     "probe:mcp": "npm run app:build && node scripts/mcp-probe.mjs",
+    "probe:skills": "npm run app:build && node scripts/skills-probe.mjs",
     "probe:highlight": "node scripts/highlight-probe.mjs",
     "probe:patchgeom": "node scripts/patch-geometry-probe.mjs",
     "gen:brand": "tsx scripts/brand/index.ts",

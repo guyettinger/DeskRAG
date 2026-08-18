@@ -56,6 +56,12 @@ const reader: ExperienceReader = {
   recordings: () => [],
   outline: () => null,
   flows: () => null,
+  skills: () => ({
+    skills: [],
+    proposals: [],
+    graphPresent: false,
+    prose: { available: false, model: null },
+  }),
 };
 
 const log: McpLogEntryDTO[] = [];
@@ -154,7 +160,7 @@ describe("the endpoint", () => {
     expect(json.result.instructions).toMatch(/recording/i);
   });
 
-  it("lists the six tools, marked read-only", async () => {
+  it("lists the eight tools, marked read-only", async () => {
     await rpc(init);
     const { json } = await rpc({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
     const names = json.result.tools.map((t: { name: string }) => t.name).sort();
@@ -162,8 +168,10 @@ describe("the endpoint", () => {
       "get_flow",
       "get_moment",
       "get_recording_outline",
+      "get_skill",
       "list_flows",
       "list_recordings",
+      "list_skills",
       "search_experience",
     ]);
     for (const t of json.result.tools) {

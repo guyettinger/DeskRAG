@@ -4,6 +4,7 @@ import { api } from "./api.js";
 import { GhostMark } from "./brand/GhostMark.js";
 import {
   IconFlows,
+  IconSkills,
   IconIndexing,
   IconLibrary,
   IconRecord,
@@ -16,8 +17,9 @@ import { RecordScreen } from "./screens/RecordScreen.js";
 import { FlowsScreen } from "./screens/FlowsScreen.js";
 import { SearchScreen } from "./screens/SearchScreen.js";
 import { SettingsScreen } from "./screens/SettingsScreen.js";
+import { SkillsScreen } from "./screens/SkillsScreen.js";
 
-type Route = "record" | "indexing" | "library" | "flows" | "search" | "settings";
+type Route = "record" | "indexing" | "library" | "flows" | "skills" | "search" | "settings";
 
 // Between Record and Library, which is the order the work actually happens in:
 // a recording is captured, then indexed, then watched.
@@ -26,6 +28,8 @@ const NAV: { id: Route; label: string; Icon: typeof IconRecord }[] = [
   { id: "indexing", label: "Indexing", Icon: IconIndexing },
   { id: "library", label: "Library", Icon: IconLibrary },
   { id: "flows", label: "Flows", Icon: IconFlows },
+  // After Flows: a skill is made FROM a flow, which is the order the work happens in.
+  { id: "skills", label: "Skills", Icon: IconSkills },
   { id: "search", label: "Search", Icon: IconSearch },
   { id: "settings", label: "Settings", Icon: IconSettings },
 ];
@@ -35,6 +39,7 @@ const TITLES: Record<Route, string> = {
   indexing: "Indexing",
   library: "Library",
   flows: "Flows",
+  skills: "Skills",
   search: "Experience Search",
   settings: "Settings",
 };
@@ -175,6 +180,7 @@ export function App(): React.JSX.Element {
             <LibraryScreen openAt={openAt} onOpened={() => setOpenAt(null)} />
           )}
           {route === "flows" && <FlowsScreen onOpenRecording={openRecording} />}
+          {route === "skills" && <SkillsScreen />}
           {route === "search" && <SearchScreen onOpenRecording={openRecording} />}
           {route === "settings" && <SettingsScreen onEnv={setEnv} />}
         </main>

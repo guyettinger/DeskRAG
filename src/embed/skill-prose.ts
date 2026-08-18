@@ -1,0 +1,242 @@
+/**
+ * The prose half of a SKILL.md, and only the prose half.
+ *
+ * A skill file has two parts and they are written by different things. The
+ * RECORD — the steps, what varies, the cautions, the evidence — is rendered from
+ * the trace graph by a template and is never model-written. The PROSE — a title,
+ * a description, an overview, and when to use it — is what a model is for,
+ * because the frontmatter `description` is what decides whether an agent ever
+ * LOADS the skill, and the alternative is a mechanical join of route labels.
+ * (`nameRoute` cannot fill that gap: it votes by exact string match, so four
+ * recordings agreeing semantically about what a task was report as 1-of-4.)
+ *
+ * This module is the seam between the two, and it is drawn so the model
+ * physically cannot cross it: `SkillProse` has four string fields and none of
+ * them is a step. A provider that wanted to rewrite the record has nowhere to
+ * put it.
+ *
+ * `SummaryProvider.compose` is NOT the right shape to reuse. It partitions a
+ * list and names the parts — one act, deliberately — where this takes a whole
+ * brief and returns prose about it. Bending one into the other would give the
+ * composer a second reply shape to validate.
+ *
+ * Barrel-safe: an interface, a deterministic fake, and two pure functions. The
+ * Ollama adapter in `ollama-skill-prose.ts` is barrel-safe too (plain fetch).
+ */
+
+/**
+ * What the model is told about a route.
+ *
+ * **Slot NAMES and counts only — never a sample.** Recorded typing is verbatim
+ * and unredacted by design (`Slot.secret` is `false` by construction), and a
+ * skill is a document that gets pasted elsewhere, which makes it a different
+ * exposure from a search result the user is looking at. Whether the RENDERED
+ * file prints recorded values is a per-skill toggle; whether the MODEL sees them
+ * is not a toggle, it is never. One fewer place a typed password can travel, and
+ * `test/skill.prose.test.ts` asserts it.
+ */
+export interface SkillBrief {
+  /** The route's place sequence — "Ghostty → Google Chrome → github.com/…". */
+  routeLabel: string;
+  /** What the composed hierarchy called it, or null when no level qualified. */
+  routeName: string | null;
+  /** How many recordings walked this exact route. One is not a habit. */
+  recordings: number;
+  /** ISO dates, for "recorded between". Equal when there is only one. */
+  firstRecorded: string;
+  lastRecorded: string;
+  /** The applications involved, in the order they were reached. */
+  apps: string[];
+  /** The recorded steps as plain lines — the record, for context only. */
+  steps: string[];
+  /** Discovered variables. `samples` is a COUNT, never the values. */
+  variables: { name: string; samples: number }[];
+  /** What the evidence does not say, already in words. */
+  cautions: string[];
+}
+
+/**
+ * What comes back. Four fields, and none of them is a step.
+ *
+ * `title` and `description` become the frontmatter an agent matches on;
+ * `overview` and `whenToUse` become the two prose sections. Everything else in
+ * the file is rendered from the graph.
+ */
+export interface SkillProse {
+  title: string;
+  description: string;
+  overview: string;
+  whenToUse: string;
+}
+
+export interface SkillProseProvider {
+  readonly id: string;
+  readonly model: string;
+  /**
+   * May return anything. Implementations THROW rather than guess when the daemon
+   * is unreachable or the reply is torn; the caller catches and takes the
+   * template path, exactly as the composer does. Same split as
+   * `SummaryProvider.compose`.
+   */
+  write(brief: SkillBrief): Promise<SkillProse>;
+}
+
+export const SKILL_SYSTEM =
+  "You write the prose for a SKILL.md file describing something this user has " +
+  "actually done on their own computer, recorded and replayed back to you as a " +
+  "list of steps. You are writing for another AI agent that may carry the task " +
+  "out later.\n" +
+  "Write about what the steps SHOW. Do not add a step, a keyboard shortcut, a " +
+  "menu, a URL or a tool that is not in the list you are given — the steps are " +
+  "the record and are published beside your text, where anything you invented " +
+  "will be visible. If the record is thin, say less.\n" +
+  "Never guess what a variable contained: you are given names and counts on " +
+  "purpose, and the values are withheld.\n" +
+  'Reply with JSON only: {"title":"...","description":"...","overview":"...",' +
+  '"whenToUse":"..."}. `title` is a short noun phrase naming the task. ' +
+  "`description` is ONE sentence beginning \"Use when\" — it is how an agent " +
+  "decides whether to load this file at all, so it must say the situation, not " +
+  "the mechanics. `overview` is two or three sentences on what this accomplishes. " +
+  "`whenToUse` is a short paragraph on the conditions that make it the right " +
+  "move, and anything about the recorded route worth knowing first. No preamble.";
+
+/** The brief as the user turn. Deterministic, so a test can pin it exactly. */
+export function skillPrompt(b: SkillBrief): string {
+  const out: string[] = [];
+  out.push(
+    b.recordings === 1
+      ? "Recorded ONCE. This is a single observation, not an established habit — say so rather than describing it as something the user routinely does."
+      : `Recorded ${b.recordings} times, between ${b.firstRecorded} and ${b.lastRecorded}.`,
+  );
+  if (b.routeName !== null) out.push(`The recordings were composed under the name: ${b.routeName}`);
+  out.push(`States passed through: ${b.routeLabel}`);
+  if (b.apps.length > 0) out.push(`Applications: ${b.apps.join(", ")}`);
+
+  out.push("", "Steps:");
+  b.steps.forEach((s, i) => out.push(`${i + 1}. ${s}`));
+
+  if (b.variables.length > 0) {
+    out.push("", "Variables (names and how many distinct values were recorded; the values themselves are withheld):");
+    // The count IS the evidence: two or more samples is a discovered variable,
+    // which is what recording a task twice produces. One is a value that
+    // happened to be typed, and calling it a variable would overstate it.
+    for (const v of b.variables) {
+      out.push(
+        v.samples >= 2
+          ? `- ${v.name}: ${v.samples} distinct values — varies between recordings`
+          : `- ${v.name}: 1 value, typed once — not established as a variable`,
+      );
+    }
+  }
+
+  if (b.cautions.length > 0) {
+    out.push("", "What this evidence does not say:");
+    for (const c of b.cautions) out.push(`- ${c}`);
+  }
+
+  return out.join("\n");
+}
+
+interface RawProse {
+  title?: unknown;
+  description?: unknown;
+  overview?: unknown;
+  whenToUse?: unknown;
+  [k: string]: unknown;
+}
+
+const FIELDS = ["title", "description", "overview", "whenToUse"] as const;
+
+/**
+ * Parse a reply, or reject it WHOLESALE.
+ *
+ * No partial acceptance and no repair — the malformed-partition rule. A reply
+ * missing any of the four fields is not a nearly-right skill, it is a reply from
+ * a model that did not do the task, and filling the gap with a template string
+ * would produce a document half-written by each with nothing saying which half.
+ *
+ * A reply carrying a `steps` or `recorded` key is rejected outright even if the
+ * four fields are present: the model was told the record is not its to write,
+ * and one that returned one anyway has misunderstood the job badly enough that
+ * its prose should not be trusted either.
+ */
+export function parseSkillResponse(text: string): SkillProse | undefined {
+  const obj = extractObject(text);
+  if (obj === undefined) return undefined;
+
+  for (const forbidden of ["steps", "recorded", "recordedSteps"]) {
+    if (forbidden in obj) return undefined;
+  }
+
+  const out: Record<string, string> = {};
+  for (const f of FIELDS) {
+    const v = obj[f];
+    if (typeof v !== "string" || v.trim().length === 0) return undefined;
+    out[f] = v.trim();
+  }
+  return out as unknown as SkillProse;
+}
+
+/**
+ * The first JSON object in a string.
+ *
+ * `format: "json"` is a request, not a guarantee, and models still wrap a reply
+ * in a fence or a sentence. Brace-matching from the first `{` rather than a
+ * regex, so a nested object does not truncate the scan.
+ */
+function extractObject(text: string): RawProse | undefined {
+  const start = text.indexOf("{");
+  if (start < 0) return undefined;
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let i = start; i < text.length; i += 1) {
+    const c = text[i]!;
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === "{") depth += 1;
+    else if (c === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        try {
+          const parsed: unknown = JSON.parse(text.slice(start, i + 1));
+          if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+            return undefined;
+          }
+          return parsed as RawProse;
+        } catch {
+          return undefined;
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * A deterministic stand-in: the brief's own facts, rearranged.
+ *
+ * Deterministic input -> deterministic output is what lets a test assert an
+ * exact document, the same contract `FakeSummaryProvider` and the fake embedder
+ * hold. It invents nothing, which also makes it a usable example of the floor
+ * this seam is meant to guarantee.
+ */
+export class FakeSkillProseProvider implements SkillProseProvider {
+  readonly id = "fake";
+  readonly model = "fake-skill-prose";
+
+  async write(brief: SkillBrief): Promise<SkillProse> {
+    const name = brief.routeName ?? brief.routeLabel;
+    return {
+      title: name,
+      description: `Use when you need to ${name}.`,
+      overview: `Recorded ${brief.recordings} time(s) across ${brief.apps.length} application(s).`,
+      whenToUse: `States passed through: ${brief.routeLabel}`,
+    };
+  }
+}

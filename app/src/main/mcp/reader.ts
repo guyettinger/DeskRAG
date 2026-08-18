@@ -15,6 +15,7 @@ import type {
   ResultDetailDTO,
   SearchResultDTO,
   SessionSummaryDTO,
+  SkillsDTO,
 } from "@shared/types";
 import type { BlobRow, SegmentRow, SegmentSummaryRow } from "deskrag";
 import { buildOutline, type Outline } from "./outline.js";
@@ -40,6 +41,15 @@ export interface ExperienceReader {
   outline(sessionId: string): Outline | null;
   /** Null when no trace graph has been built at all. */
   flows(): FlowsDTO | null;
+  /**
+   * The SKILL.md files the user chose to keep, plus what could be proposed.
+   *
+   * READ ONLY, like everything else here. Keeping, editing and forgetting a
+   * skill all go through `DeskRagService` and IPC, and deliberately appear on
+   * neither this interface nor `ServiceReads` — so a tool cannot author one even
+   * though the app can.
+   */
+  skills(): SkillsDTO;
 }
 
 /**
@@ -71,6 +81,7 @@ export interface ServiceReads {
     laneOrigin: number;
   } | null;
   flows(): FlowsDTO | null;
+  skills(): SkillsDTO;
 }
 
 /**
@@ -125,5 +136,9 @@ export class ServiceExperienceReader implements ExperienceReader {
 
   flows(): FlowsDTO | null {
     return this.service.flows();
+  }
+
+  skills(): SkillsDTO {
+    return this.service.skills();
   }
 }
