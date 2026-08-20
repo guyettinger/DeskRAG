@@ -8,6 +8,7 @@
 
 import React from "react";
 import type { FlowRouteDTO } from "@shared/types";
+import { routeStepSummary } from "../routes-view.js";
 
 interface Props {
   routes: FlowRouteDTO[];
@@ -74,9 +75,9 @@ export function RouteList({
                 ) : (
                   <span className="routes__label">{r.label}</span>
                 )}
-                <span className="routes__steps mono">
-                  {r.edgeIds.length} step{r.edgeIds.length === 1 ? "" : "s"}
-                </span>
+                {/* NOT `edgeIds.length` — that is the highlight union, and it
+                    counts steps no single recording walked. */}
+                <span className="routes__steps mono">{routeStepSummary(r)}</span>
               </button>
             </li>
           ))}

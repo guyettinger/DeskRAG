@@ -1,5 +1,5 @@
 /**
- * One walk of a recorded route, as data rather than as text.
+ * The walks of a recorded route, as data rather than as text.
  *
  * `renderFlow` walked a route and formatted it in the same pass. A SKILL.md
  * needs the same walk in markdown, and two readers of one structure is the
@@ -13,6 +13,23 @@
  * It reads the projection the Flows screen already has — `EdgeActionDTO.action`
  * is already "3× click" and `target` is already `Button "Send"`, because
  * `graph-view.ts` put them in a reader's words.
+ *
+ * **It reads `route.walks`, never `route.edgeIds`.** `edgeIds` is the UNION of
+ * what every recording in the group walked and exists for the canvas highlight.
+ * Numbering it asserts an order no recording walked: measured on the real store,
+ * two recordings walked 8 edges each, shared 2, and rendered as a numbered
+ * 14-step procedure — 75% longer than either walk, with the step numbers falling
+ * out of `Map` iteration over `graph.edges`. The prose model then described the
+ * artifact accurately ("a second variant repeats the entry and copy steps"),
+ * which is worse than a hallucination: the model was right about a defect one
+ * layer down.
+ *
+ * So a route yields VARIANTS, not one list. Identical walks collapse — a route
+ * walked five times the same way is still one numbered procedure, byte for byte
+ * what it was before — and distinct walks are shown as distinct, because two
+ * recordings that key to one route can genuinely have done two different things.
+ * Nothing here picks a winner between them; `bindSkill` declines on a tie for the
+ * same reason.
  */
 
 import type { EdgeActionDTO, FlowRouteDTO, FlowsDTO } from "@shared/types";
@@ -79,18 +96,80 @@ const toAction = (a: EdgeActionDTO): FlowStepAction => ({
 });
 
 /**
- * The route's edges in order, resolved against the graph.
+ * One recording's distinct path through a route, with the recordings that took it.
  *
- * `route.count` is passed through to decide `everyRecording`; a route with no
- * count (zero) leaves every step marked as walked by all of them, which is the
- * only reading that does not invent a shortfall.
+ * `index` exists so a formatter can label variants without knowing how they were
+ * ordered. A route walked one way has exactly one of these, and that is the case
+ * every healthy route is in.
  */
-export function flowSteps(flows: FlowsDTO, route: FlowRouteDTO): FlowStep[] {
+export interface FlowWalk {
+  index: number;
+  /** Recordings that walked this exact edge sequence. Most-walked variant first. */
+  sessionIds: string[];
+  steps: FlowStep[];
+}
+
+/**
+ * The route's DISTINCT walks, most-walked first.
+ *
+ * Grouping happens here rather than in `graph-view.ts` so both formatters group
+ * once and identically — the `ax-dump`/`ax-exec` drift hazard by name. Ties break
+ * on first appearance, so the order is stable across reloads.
+ *
+ * A route with NO walks — which `frequentRoutes` cannot produce, since a route
+ * exists because a session walked it, but a hand-built fixture can — falls back
+ * to the union as a single walk. That is the old behaviour exactly, for the one
+ * input that cannot distinguish the two: degrading, not guessing.
+ */
+export function flowWalks(flows: FlowsDTO, route: FlowRouteDTO): FlowWalk[] {
+  const raw =
+    route.walks.length > 0
+      ? route.walks
+      : [{ sessionId: route.sessionIds[0] ?? "", edgeIds: route.edgeIds }];
+
+  // A NUL delimiter, for the reason `store.ts` uses one: an edge id cannot
+  // contain it, so the joined key cannot collide across different sequences.
+  const byPath = new Map<string, { sessionIds: string[]; edgeIds: string[] }>();
+  for (const walk of raw) {
+    const key = walk.edgeIds.join("\0");
+    const seen = byPath.get(key);
+    if (seen === undefined) byPath.set(key, { sessionIds: [walk.sessionId], edgeIds: walk.edgeIds });
+    else seen.sessionIds.push(walk.sessionId);
+  }
+
+  return [...byPath.values()]
+    .sort((a, b) => b.sessionIds.length - a.sessionIds.length)
+    .map((g, index) => ({
+      index,
+      sessionIds: g.sessionIds,
+      steps: stepsFor(flows, g.edgeIds, route.count),
+    }));
+}
+
+/** Every step of every variant, flattened — for slot gathering, never for display. */
+export function allSteps(walks: readonly FlowWalk[]): FlowStep[] {
+  return walks.flatMap((w) => w.steps);
+}
+
+/**
+ * An explicit edge list, in order, resolved against the graph.
+ *
+ * `recordings` is the ROUTE's count, not the variant's, and decides
+ * `everyRecording`: the interesting fact about a step is whether every recording
+ * of the route took it, which stays true across variants. A route with no count
+ * (zero) leaves every step marked as walked by all of them, the only reading that
+ * does not invent a shortfall.
+ */
+export function stepsFor(
+  flows: FlowsDTO,
+  edgeIds: readonly string[],
+  recordings: number,
+): FlowStep[] {
   const nodeById = new Map(flows.graph.nodes.map((n) => [n.id, n]));
   const edgeById = new Map(flows.graph.edges.map((e) => [e.id, e]));
   const labelOf = (id: string): string => nodeById.get(id)?.label ?? `${id} (unknown state)`;
 
-  return route.edgeIds.map((edgeId, index) => {
+  return edgeIds.map((edgeId, index) => {
     const edge = edgeById.get(edgeId);
     if (edge === undefined) {
       return {
@@ -115,7 +194,7 @@ export function flowSteps(flows: FlowsDTO, route: FlowRouteDTO): FlowStep[] {
       to: labelOf(edge.to),
       actions: edge.actions.map(toAction),
       observations: edge.observations,
-      everyRecording: route.count <= 0 || edge.observations >= route.count,
+      everyRecording: recordings <= 0 || edge.observations >= recordings,
       firstAt: first === undefined ? null : { startedAt: first.startedAt, atSec: first.atSec },
       sourcesBelowObservations: edge.sources.length < edge.observations,
       liftWarnings: [...(edge.liftWarnings ?? [])],

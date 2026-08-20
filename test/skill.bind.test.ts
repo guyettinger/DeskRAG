@@ -22,6 +22,7 @@ const route = (id: string, sessionIds: string[]): FlowRouteDTO => ({
   nodeIds: [],
   edgeIds: [],
   sessionIds,
+  walks: sessionIds.map((sessionId) => ({ sessionId, edgeIds: [] })),
 });
 
 const doc = (routeKey: string, sessionIds: string[]): SkillBindingDoc => ({

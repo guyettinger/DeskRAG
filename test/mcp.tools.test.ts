@@ -111,6 +111,10 @@ const flows = (): FlowsDTO => ({
       nodeIds: ["n0", "n1"],
       edgeIds: ["e0"],
       sessionIds: ["s1", "s2"],
+      walks: [
+        { sessionId: "s1", edgeIds: ["e0"] },
+        { sessionId: "s2", edgeIds: ["e0"] },
+      ],
     },
   ],
 });

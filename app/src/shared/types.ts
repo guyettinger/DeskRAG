@@ -1111,10 +1111,38 @@ export interface FlowRouteDTO {
    * dominant name winning is not the same as unanimity.
    */
   nameObservations: number;
-  /** For highlighting the route on the canvas. */
+  /**
+   * For highlighting the route on the canvas — a SET, in first-walked order.
+   *
+   * The UNION of what every recording in this group walked, which is right for a
+   * highlight (a canvas has to light up everywhere they went) and WRONG as a
+   * procedure. Two recordings that share this route's key can share almost none
+   * of their edges, because equivalent states across recordings do not merge
+   * into one node (see `id` above) — measured on the real store at 8 edges each,
+   * 2 in common, 14 in the union. Numbering that union produced a 14-step
+   * "procedure" no recording ever walked.
+   *
+   * Anything that renders STEPS reads `walks`, never this.
+   */
   nodeIds: string[];
   edgeIds: string[];
   sessionIds: string[];
+  /**
+   * What each recording ACTUALLY walked, in the order it walked it.
+   *
+   * One entry per session in `sessionIds`, same order. This is the source for
+   * every step rendering; `edgeIds` above is its union and exists only for the
+   * canvas. Kept raw here — grouping identical walks into variants is
+   * `flowWalks` in `flow-steps.ts`, so both formatters group the same way once.
+   */
+  walks: RouteWalkDTO[];
+}
+
+/** One recording's own path through a route. */
+export interface RouteWalkDTO {
+  sessionId: string;
+  /** The edges it walked, ordered by the moment it walked each. */
+  edgeIds: string[];
 }
 
 export interface FlowsDTO {

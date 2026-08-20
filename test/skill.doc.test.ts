@@ -8,7 +8,7 @@ import {
   templateBody,
   type SkillDocInput,
 } from "../app/src/main/skill-doc.js";
-import { flowSteps } from "../app/src/main/flow-steps.js";
+import { flowWalks } from "../app/src/main/flow-steps.js";
 import type { FlowsDTO, GraphEdgeDTO, GraphNodeDTO } from "@shared/types";
 
 /**
@@ -93,6 +93,10 @@ function flows(): FlowsDTO {
         nodeIds: ["n0", "n1"],
         edgeIds: ["e0"],
         sessionIds: ["s1", "s2"],
+        walks: [
+          { sessionId: "s1", edgeIds: ["e0"] },
+          { sessionId: "s2", edgeIds: ["e0"] },
+        ],
       },
     ],
   };
@@ -277,7 +281,7 @@ describe("what this evidence does not say", () => {
   it("leads with 'recorded once' for a single walk", () => {
     const f = flows();
     f.routes[0]!.count = 1;
-    const c = cautionsFor(f, f.routes[0]!, flowSteps(f, f.routes[0]!));
+    const c = cautionsFor(f, f.routes[0]!, flowWalks(f, f.routes[0]!));
     expect(c[0]).toMatch(/Recorded once/);
     expect(c[0]).toMatch(/not an established habit/);
   });
@@ -286,7 +290,7 @@ describe("what this evidence does not say", () => {
     const f = flows();
     f.routes[0]!.count = 4;
     f.routes[0]!.nameObservations = 2;
-    expect(cautionsFor(f, f.routes[0]!, flowSteps(f, f.routes[0]!)).join("\n")).toMatch(
+    expect(cautionsFor(f, f.routes[0]!, flowWalks(f, f.routes[0]!)).join("\n")).toMatch(
       /only 2 of those recordings agreed/,
     );
   });
@@ -295,7 +299,7 @@ describe("what this evidence does not say", () => {
     const f = flows();
     f.routes[0]!.count = 5;
     f.graph.edges[0]!.observations = 4;
-    expect(cautionsFor(f, f.routes[0]!, flowSteps(f, f.routes[0]!)).join("\n")).toMatch(
+    expect(cautionsFor(f, f.routes[0]!, flowWalks(f, f.routes[0]!)).join("\n")).toMatch(
       /Step 1 was in 4 of the 5 recordings/,
     );
   });
@@ -303,7 +307,7 @@ describe("what this evidence does not say", () => {
   it("reports a state that can be verified but never located", () => {
     const f = flows();
     f.graph.nodes[1]!.locatable = false;
-    expect(cautionsFor(f, f.routes[0]!, flowSteps(f, f.routes[0]!)).join("\n")).toMatch(
+    expect(cautionsFor(f, f.routes[0]!, flowWalks(f, f.routes[0]!)).join("\n")).toMatch(
       /identified only by which application was in front/,
     );
   });
@@ -311,7 +315,7 @@ describe("what this evidence does not say", () => {
   it("carries a lifting note through verbatim", () => {
     const f = flows();
     f.graph.edges[0]!.liftWarnings = ["dropped a wait whose predicate was already true"];
-    expect(cautionsFor(f, f.routes[0]!, flowSteps(f, f.routes[0]!)).join("\n")).toMatch(
+    expect(cautionsFor(f, f.routes[0]!, flowWalks(f, f.routes[0]!)).join("\n")).toMatch(
       /dropped a wait whose predicate was already true/,
     );
   });
@@ -323,7 +327,7 @@ describe("what this evidence does not say", () => {
       { sessionId: "s1", startedAt: 1_754_000_000_000, atSec: 2, throughSec: 6 },
     ];
     f.routes[0]!.count = 3;
-    expect(cautionsFor(f, f.routes[0]!, flowSteps(f, f.routes[0]!)).join("\n")).toMatch(
+    expect(cautionsFor(f, f.routes[0]!, flowWalks(f, f.routes[0]!)).join("\n")).toMatch(
       /a recording it came from has been deleted/,
     );
   });
@@ -345,10 +349,81 @@ describe("what this evidence does not say", () => {
   });
 });
 
+/**
+ * The defect: `route.edgeIds` is the UNION of every recording's walk, documented
+ * as the canvas highlight, and the renderer numbered it into a procedure.
+ *
+ * Measured on the real store: two recordings walked 8 edges each, shared 2, and
+ * the file published a 14-step numbered list that neither recording ever walked.
+ * The prose model then described the artifact accurately — "a second variant
+ * repeats the entry and copy steps" — which is a true sentence about a bug.
+ */
+describe("recordings that did NOT take the same path", () => {
+  /** Two walks sharing only their first edge, the real store's shape in little. */
+  function diverged(): FlowsDTO {
+    const f = flows();
+    f.graph.nodes.push(node("n2", "TextEdit", { app: "TextEdit" }));
+    f.graph.edges.push(
+      edge("e1", "n1", "n2", { actions: [{ action: "click", target: 'Button "Save"' }] }),
+      edge("e2", "n1", "n2", { actions: [{ action: "press cmd+s", target: "—" }] }),
+    );
+    const r = f.routes[0]!;
+    r.edgeIds = ["e0", "e1", "e2"];
+    r.walks = [
+      { sessionId: "s1", edgeIds: ["e0", "e1"] },
+      { sessionId: "s2", edgeIds: ["e0", "e2"] },
+    ];
+    return f;
+  }
+
+  it("renders each way separately instead of numbering the union", () => {
+    const f = diverged();
+    const md = recordedBlocks({ flows: f, route: f.routes[0]!, showSamples: false });
+    expect(md).toMatch(/### Way A — 2 steps, 1 recording/);
+    expect(md).toMatch(/### Way B — 2 steps, 1 recording/);
+    // The union has three edges; NO way is three steps long, so no "3." exists.
+    expect(md).not.toMatch(/^3\. /m);
+    // Each way restarts at 1 — they are alternatives, not a continued sequence.
+    expect(md.match(/^1\. /gm)).toHaveLength(2);
+  });
+
+  it("tells the reader to follow ONE way, not all of them in sequence", () => {
+    const f = diverged();
+    const md = recordedBlocks({ flows: f, route: f.routes[0]!, showSamples: false });
+    expect(md).toMatch(/follow one of them, not all of them in sequence/i);
+  });
+
+  it("states the disagreement ONCE rather than once per step", () => {
+    const f = diverged();
+    const md = recordedBlocks({ flows: f, route: f.routes[0]!, showSamples: false });
+    const cautions = md.split("## What this evidence does not say")[1] ?? "";
+    // The bullet this replaces fired per-step: on the real store it printed
+    // "Step N was in 1 of the 2 recordings" TWELVE times in eighteen bullets.
+    expect(cautions).not.toMatch(/was in 1 of the 2 recordings/);
+    expect(cautions).toMatch(/did NOT do this the same way/);
+  });
+
+  it("collapses recordings that DID walk the same path into one way", () => {
+    // The healthy case, and the one every well-behaved route is in: no variant
+    // heading at all, exactly what the file looked like before variants existed.
+    const md = recordedBlocks({ flows: flows(), route: flows().routes[0]!, showSamples: false });
+    expect(md).not.toMatch(/### Way /);
+    expect(md).not.toMatch(/follow one of them/i);
+  });
+
+  it("gathers slots across every way, since a slot IS the disagreement", () => {
+    const f = diverged();
+    const md = recordedBlocks({ flows: f, route: f.routes[0]!, showSamples: false });
+    expect(md).toMatch(/`issue_title` — 2 recorded values/);
+  });
+});
+
 describe("a missing edge", () => {
   it("is printed rather than skipped, in both the steps and the cautions", () => {
     const f = flows();
-    f.routes[0]!.edgeIds = ["e0", "nope"];
+    // Into the WALKS, which is what renders steps. `edgeIds` is the canvas
+    // highlight and no longer reaches a step list.
+    for (const w of f.routes[0]!.walks) w.edgeIds = ["e0", "nope"];
     const md = recordedBlocks({ flows: f, route: f.routes[0]!, showSamples: false });
     expect(md).toMatch(/edge `nope` is not in the graph/);
     expect(md).toMatch(/index defect/);

@@ -15,6 +15,7 @@ import {
   type GraphEdgeDTO,
   type GraphNodeDTO,
   type NodeSourceDTO,
+  type RouteWalkDTO,
 } from "@shared/types";
 import { isLocatable } from "deskrag";
 import type { Action, Anchor, EdgeSource, Graph, NodeSource, Predicate, TraceNode } from "deskrag";
@@ -494,8 +495,11 @@ export function frequentRoutes(
   interface Group {
     places: string[];
     nodeIds: string[];
+    /** The UNION, for the canvas highlight. Never rendered as steps. */
     edgeIds: string[];
     sessionIds: string[];
+    /** What each recording actually walked. Parallel to `sessionIds`. */
+    walks: RouteWalkDTO[];
     /** One stretch per recording — what the route's name is derived from. */
     spans: RouteSpan[];
   }
@@ -536,12 +540,25 @@ export function frequentRoutes(
     const key = places.join(" → ");
     const existing = byKey.get(key);
     if (existing === undefined) {
-      byKey.set(key, { places, nodeIds, edgeIds, sessionIds: [sessionId], spans: [span] });
+      byKey.set(key, {
+        places,
+        nodeIds,
+        edgeIds,
+        sessionIds: [sessionId],
+        walks: [{ sessionId, edgeIds: [...edgeIds] }],
+        spans: [span],
+      });
       continue;
     }
     // The union, in first-walked order: these recordings share a shape, not a
-    // path, so the highlight has to show everywhere they actually went.
+    // path, so the HIGHLIGHT has to show everywhere they actually went.
+    //
+    // The per-recording walk is kept BESIDE it rather than thrown away, because
+    // the union is not a path and numbering it asserts an order no recording
+    // walked. `edgeIds` answers "what should light up"; `walks` answers "what
+    // did this recording do", and only the second can become a step list.
     existing.sessionIds.push(sessionId);
+    existing.walks.push({ sessionId, edgeIds: [...edgeIds] });
     existing.spans.push(span);
     for (const id of nodeIds) if (!existing.nodeIds.includes(id)) existing.nodeIds.push(id);
     for (const id of edgeIds) if (!existing.edgeIds.includes(id)) existing.edgeIds.push(id);
@@ -561,6 +578,7 @@ export function frequentRoutes(
     nodeIds: g.nodeIds,
     edgeIds: g.edgeIds,
     sessionIds: g.sessionIds,
+    walks: g.walks,
     };
   });
 
