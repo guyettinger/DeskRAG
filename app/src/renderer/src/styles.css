@@ -2144,7 +2144,16 @@ select {
    (12px inset + 1px border + a 92px gutter). */
 .player {
   --bar-pad: 12px; /* horizontal inset of BOTH the control bar and the rail */
-  --transport-btn: 38px; /* .vds-button's own size */
+  /* THE BUTTON SIZE, SET BY US — it is no longer Vidstack's own 38px default.
+     `--media-button-size` on `.vds-video-layout` reads this, so ONE number sizes
+     both a control and the gutter six of them tile, and the two can never drift.
+     Measured at 38: the bar stood 54px tall over a 396px frame with 26.6px
+     icons, which is chrome for a floating player, not for a docked inspection
+     strip. At 30 the bar is 39px and the frame 411px — the whole 15px goes to
+     the pixels being inspected, since the frame row is the only one that gives.
+     The floor is the tail's hit target, not the icon: 30px still clears the 24px
+     minimum, and this is a pointer-only surface. */
+  --transport-btn: 30px;
   /* THE CONTROL GUTTER IS THE RAIL'S TITLE COLUMN, and it holds SIX buttons:
      the transport (play, previous keyframe, next keyframe) packed left, and the
      tail (speed, settings, inspect) packed right against the axis.
@@ -2156,7 +2165,13 @@ select {
      to prevent. Everything that is not the axis lives in the gutter.
 
      Adding a seventh control means raising this multiplier; the two clusters
-     tile the gutter exactly and would otherwise overlap. */
+     tile the gutter exactly and would otherwise overlap.
+
+     Shrinking a button therefore narrows the RAIL as well — 228px to 180px —
+     and a lane title that no longer fits would ellipsize, which is the one
+     thing this rail does not do. Checked on the real store rather than assumed:
+     the widest `.tracks__title` measures 65px including its depth indent, so
+     nothing came close. Re-measure that before shrinking this further. */
   --bar-gutter: calc(var(--transport-btn) * 6);
   /* ZERO, and measured rather than assumed. Vidstack gives .vds-slider
      `margin: 0 calc(var(--thumb-size) / 2)` to stop the thumb flowing out — but
@@ -2249,7 +2264,7 @@ select {
   width: 100%;
   height: 100%;
   flex: 1;
-  /* Explicit floor: ~214px of frame plus the now-single 46px control row. It
+  /* Explicit floor: ~221px of frame plus the single 39px control row. It
      cannot be left to the flex default — `min-height: auto` resolves to the
      content-based minimum only while overflow is visible, and this box sets
      overflow: hidden (for the rounded corners), which makes that automatic
@@ -2432,6 +2447,23 @@ select {
 .player__media .vds-time-slider {
   min-width: 0;
 }
+/* THE SCRUBBER IS WHAT SIZED THE BAR, not the buttons — and this token has to
+   be set HERE, on the slider itself. Vidstack declares
+
+     :where(.vds-video-layout .vds-time-slider) { --media-slider-height: 45px }
+
+   on the element, so the same declaration up on `.vds-video-layout` beside every
+   other --media-* token silently loses to it (a nearer declaration wins over an
+   ancestor's, whatever the specificity) — measured: buttons went 38 -> 30 and
+   the bar stayed at exactly 54px, because the 45px slider was still the tallest
+   thing in the row. The same trap the --video-* tokens on `.player` document.
+
+   Sized to the transport button so the scrub target is the full height of the
+   row it shares — the slider is the one control you drag, and it costs nothing
+   to make it the tallest thing in the bar rather than the shortest. */
+.player__media .vds-time-slider {
+  --media-slider-height: var(--transport-btn);
+}
 .player__media .vds-slider-chapter-title {
   max-width: 260px;
   white-space: normal;
@@ -2452,6 +2484,11 @@ select {
   --video-slider-thumbnail-border: 1px solid var(--hairline);
   --video-slider-thumbnail-border-radius: 6px;
 
+  /* ONE NUMBER, declared on `.player` and inherited down to here: a control and
+     the gutter that holds six of them are the same measurement, so they cannot
+     drift apart. The icon stays at Vidstack's 70% (21px at 30) — pinning it in
+     px would make the ring around it change thickness with the button. */
+  --media-button-size: var(--transport-btn);
   --media-button-hover-bg: color-mix(in srgb, var(--accent) 18%, transparent);
   --media-slider-track-bg: var(--hairline);
   --media-slider-track-fill-bg: var(--accent);
@@ -2459,7 +2496,10 @@ select {
   /* Pinned, not defaulted (15px): the slider's own margin is half of this, and
      `--axis-inset` on .player has to be the same number for the rail's plot to
      start where the slider's track does. An odd size would half-pixel it. */
-  --media-slider-thumb-size: 14px;
+  --media-slider-thumb-size: 12px;
+  /* 4, not the default 5, so the track reads as a rule rather than a bar next
+     to a 2px chapter divider. */
+  --media-slider-track-height: 4px;
   --media-slider-thumb-bg: var(--accent);
   --media-slider-thumb-border: 1px solid var(--ink);
   --media-slider-preview-bg: var(--panel);
