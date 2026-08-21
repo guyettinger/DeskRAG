@@ -165,6 +165,24 @@ describe("unclaimedRoutes", () => {
     const routes = [route("A", ["s1"])];
     expect(unclaimedRoutes(routes, [])).toEqual(routes);
   });
+
+  it("a REBOUND skill claims the route it moved to, not only the one it left", () => {
+    // A route's key is its place-label sequence, so a change to what a place is
+    // called re-keys every route. `bindSkill` re-resolves by session overlap and
+    // the caller passes BOTH keys — without the live one, a kept skill's own
+    // route is offered straight back as something to keep. Measured on the real
+    // store: one skill, correctly rebound to `Calculator → TextEdit`, with that
+    // same route sitting in the proposals list beneath it.
+    const routes = [route("Calculator → TextEdit", ["s1"]), route("B", ["s2"])];
+    const stale = "Electron — localhost → Calculator → TextEdit → Electron";
+    expect(unclaimedRoutes(routes, [stale]).map((r) => r.id)).toEqual([
+      "Calculator → TextEdit",
+      "B",
+    ]);
+    expect(unclaimedRoutes(routes, [stale, "Calculator → TextEdit"]).map((r) => r.id)).toEqual([
+      "B",
+    ]);
+  });
 });
 
 describe("duplicateSkills", () => {

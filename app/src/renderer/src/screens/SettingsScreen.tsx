@@ -41,6 +41,8 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
   const [visionModels, setVisionModels] = useState<string[]>([]);
   const [chatModels, setChatModels] = useState<string[]>([]);
   const [download, setDownload] = useState<ModelDownloadProgress | null>(null);
+  /** In-flight text of the flows exclusion list; null while not editing. */
+  const [excludeDraft, setExcludeDraft] = useState<string | null>(null);
   const [reindexing, setReindexing] = useState(false);
   const [reindexingAll, setReindexingAll] = useState(false);
   const [reindexAllConfirming, setReindexAllConfirming] = useState(false);
@@ -114,6 +116,25 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
    * guarding on. The work is the same; where you watch it is the Indexing
    * screen, and a recording can now start while it runs.
    */
+  /**
+   * The exclusion list as TEXT while it is being edited.
+   *
+   * `null` means "not editing" and the field renders the stored list. A draft is
+   * kept because the stored value is a string ARRAY and the field is one line of
+   * comma-separated text: re-joining a split-on-every-keystroke value would eat
+   * the separator the user is in the middle of typing.
+   */
+  const commitExcluded = async (): Promise<void> => {
+    if (excludeDraft === null) return;
+    const excludeApps = excludeDraft
+      .split(",")
+      .map((a) => a.trim())
+      .filter((a) => a.length > 0);
+    setExcludeDraft(null);
+    setS(await api.settings.set({ flows: { excludeApps } }));
+    flash();
+  };
+
   const reindex = async (): Promise<void> => {
     setReindexing(true);
     setReindexError(null);
@@ -603,6 +624,34 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
             >
               {reindexingAll ? "Re-indexing…" : "Re-index library"}
             </button>
+          </div>
+
+          {/* Beside the rebuild button on purpose: this list only takes effect
+              when the graph is re-lifted, so the setting and the action that
+              applies it have to be readable in one glance. */}
+          <div className="form-row">
+            <div>
+              <label>Excluded from flows</label>
+              <div className="desc">
+                App names or bundle ids the trace graph leaves out, comma separated. DeskRAG
+                itself is listed by default: a recording is started and stopped from this window,
+                so it would otherwise open and close every route. Nothing is deleted — the
+                recordings still hold every frame, event and transcript, and clearing this box
+                and rebuilding puts the states back.
+              </div>
+            </div>
+            <input
+              className="mono"
+              type="text"
+              value={excludeDraft ?? s.flows.excludeApps.join(", ")}
+              onChange={(e) => setExcludeDraft(e.target.value)}
+              // COMMITTED ON BLUR, following the MCP port rather than the
+              // whisper path: splitting on every keystroke turns "DeskRAG, Elec"
+              // into a live entry, and a typist would be fighting the parser
+              // mid-word.
+              onBlur={() => void commitExcluded()}
+              placeholder="DeskRAG, Electron"
+            />
           </div>
 
           <div className="form-row">

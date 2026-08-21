@@ -37,6 +37,7 @@ import {
   type Reranker,
   type SummaryProvider as LibSummaryProvider,
   type TranscriptRepresenterOptions,
+  excludedByName,
 } from "deskrag";
 import { stageSpec, type StageFacts, type StageId } from "./index-plan.js";
 import { digestContextFor } from "./digest-context.js";
@@ -98,6 +99,12 @@ export interface StageWorld {
   store: DualStore;
   blobs: BlobStore;
   providers: Providers;
+  /**
+   * Applications the trace graph treats as instrumentation rather than as work —
+   * the recorder itself, by default. A SETTING rather than a fact, and it
+   * reaches only the `trace` stage: nothing else in the pipeline drops anything.
+   */
+  excludeApps: readonly string[];
   loadCropper(): Promise<RegionCropper | null>;
   buildTranscriber(): Promise<TranscriptRepresenterOptions["transcriber"]>;
 }
@@ -341,18 +348,29 @@ export const STAGE_RUNNERS: Record<StageId, StageRun> = {
   },
 
   trace: async (ctx) => {
-    const r = await indexTrace(ctx.store, ctx.sessionId);
-    if (r === undefined) return;
+    const r = await indexTrace(ctx.store, ctx.sessionId, excludedByName(ctx.excludeApps));
+    if (r === undefined) {
+      // Not silence: a recording that lifted to nothing is either empty or was
+      // spent entirely in the recorder, and both are worth saying out loud.
+      ctx.detail("no states outside the excluded apps");
+      return;
+    }
     // The stage's own line is the only surface a trace has until the executor
     // exists, so it carries the counts. The missing-keymap case is the one a
     // user has to be told about: it means every keystroke was discarded, and
     // nothing else would say so. It survives the run now — the detail is kept
     // on the stage record rather than only flashing past in a progress label.
+    // The excluded stretches are named, not merely subtracted: a reader who
+    // wonders where their own app went should find the answer on the stage that
+    // removed it.
+    const excluded =
+      r.excludedApps.length > 0 ? `, ${r.excludedApps.join(", ")} excluded` : "";
     ctx.detail(
       r.missingKeymap
-        ? `${r.actions} actions (no keyboard layout: typed text not captured)`
+        ? `${r.actions} actions (no keyboard layout: typed text not captured)${excluded}`
         : `${r.actions} actions, graph ${r.nodes}/${r.edges}` +
-          (r.variables > 0 ? `, ${r.variables} variables` : ""),
+          (r.variables > 0 ? `, ${r.variables} variables` : "") +
+          excluded,
     );
     if (r.missingKeymap) {
       console.warn("[deskrag] no keymap captured for this session — typed text was not lifted");

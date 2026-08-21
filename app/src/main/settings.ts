@@ -15,6 +15,7 @@ import type {
   SettingsPatch,
   SignalConfig,
   McpSettings,
+  FlowsSettings,
   ProviderSettingsView,
 } from "@shared/types";
 import { DEFAULT_AUDIO_INPUT } from "deskrag";
@@ -24,6 +25,7 @@ interface PersistedSettings {
   providers: ProviderSettingsView;
   signals: SignalConfig;
   mcp: McpSettings;
+  flows: FlowsSettings;
 }
 
 /**
@@ -34,6 +36,25 @@ interface PersistedSettings {
  * breaks a connection the user already made.
  */
 export const DEFAULT_MCP_PORT = 41777;
+
+/**
+ * DeskRAG itself, in both spellings of both builds.
+ *
+ * `active-win` reports `owner.name` `"Electron"` and bundle `com.github.Electron`
+ * from a dev checkout, and `"DeskRAG"` / `com.deskrag.app` from a signed bundle —
+ * and the consumer has no way to know which it is holding, so all four are
+ * listed. Recordings taken since `focus_change` started carrying `recorder: true`
+ * do not need any of them; this is what reaches everything recorded before that.
+ *
+ * Seeded, not hardcoded: the user can clear it, and a rebuild puts their own app
+ * back in its own graph.
+ */
+export const DEFAULT_EXCLUDED_APPS = [
+  "DeskRAG",
+  "Electron",
+  "com.deskrag.app",
+  "com.github.Electron",
+] as const;
 
 const DEFAULTS: PersistedSettings = {
   providers: {
@@ -69,6 +90,7 @@ const DEFAULTS: PersistedSettings = {
     ax: { enabled: false },
   },
   mcp: { enabled: true, port: DEFAULT_MCP_PORT },
+  flows: { excludeApps: [...DEFAULT_EXCLUDED_APPS] },
 };
 
 /**
@@ -253,6 +275,15 @@ export class SettingsStore {
           ...raw.mcp,
           port: mcpPortFor(raw.mcp?.port),
         },
+        // An ARRAY, so a spread would not merge it usefully: a persisted list is
+        // taken whole or not at all. An empty one is a real answer — "put my own
+        // app back in its graph" — and must survive, which is why the check is
+        // `Array.isArray` and not truthiness.
+        flows: {
+          excludeApps: Array.isArray(raw.flows?.excludeApps)
+            ? raw.flows.excludeApps.filter((a): a is string => typeof a === "string")
+            : [...DEFAULT_EXCLUDED_APPS],
+        },
       };
     } catch {
       return structuredClone(DEFAULTS);
@@ -268,6 +299,7 @@ export class SettingsStore {
       providers: this.settings.providers,
       signals: this.settings.signals,
       mcp: this.settings.mcp,
+      flows: this.settings.flows,
     };
   }
 
@@ -312,6 +344,11 @@ export class SettingsStore {
         ...patch.mcp,
         port: mcpPortFor(patch.mcp.port ?? this.settings.mcp.port),
       };
+    }
+    if (patch.flows?.excludeApps !== undefined) {
+      // Replaced wholesale for the reason above: there is no partial edit of a
+      // list that a merge could express.
+      this.settings.flows = { excludeApps: [...patch.flows.excludeApps] };
     }
     this.persist();
     return this.view();

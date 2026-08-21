@@ -67,6 +67,7 @@ function flows(): FlowsDTO {
         { name: "unrelated", samples: ["x", "y"] },
       ],
     },
+    excludedApps: [],
     routes: [
       {
         id: "TextEdit → Google Chrome — github.com",

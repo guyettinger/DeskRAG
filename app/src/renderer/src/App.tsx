@@ -179,7 +179,12 @@ export function App(): React.JSX.Element {
           {route === "library" && (
             <LibraryScreen openAt={openAt} onOpened={() => setOpenAt(null)} />
           )}
-          {route === "flows" && <FlowsScreen onOpenRecording={openRecording} />}
+          {route === "flows" && (
+            <FlowsScreen
+              onOpenRecording={openRecording}
+              onOpenSettings={() => setRoute("settings")}
+            />
+          )}
           {route === "skills" && <SkillsScreen />}
           {route === "search" && <SearchScreen onOpenRecording={openRecording} />}
           {route === "settings" && <SettingsScreen onEnv={setEnv} />}

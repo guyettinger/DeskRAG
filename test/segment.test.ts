@@ -17,6 +17,42 @@ import type { EventInsert } from "../src/store/types.js";
 
 const ev = (tMono: number, kind: string): { tMono: number; kind: string } => ({ tMono, kind });
 
+/**
+ * `startTMono` exists for LIFTING, which runs over an event stream the recorder's
+ * own stretches have been filtered out of (`trace/exclude.ts`). Segmentation
+ * never moves it: a recording's video starts at zero and the lanes must cover it.
+ */
+describe("computeBoundaries start", () => {
+  it("defaults to zero, so segmentation is unchanged", () => {
+    const events = [ev(0, "mouse_move"), ev(4000, "focus_change")];
+    expect(computeBoundaries(events, 6000, 3000)).toEqual(
+      computeBoundaries(events, 6000, 3000, undefined, [], 0),
+    );
+  });
+
+  it("moves the session_start boundary off zero", () => {
+    const b = computeBoundaries([ev(4000, "focus_change")], 6000, 3000, undefined, [], 4000);
+    expect(b[0]).toEqual({ tMono: 4000, reason: "session_start" });
+    // session_start outranks focus_change on the same t_mono — PRIORITY 100 vs
+    // 20 — and the node's predicates come from the focus context either way.
+    expect(b.map((x) => x.tMono)).toEqual([4000, 6000]);
+  });
+
+  it("drops anything before the start rather than treating it as early", () => {
+    // A bookmark inside a stretch the caller filtered out would otherwise reopen
+    // the boundary the filter closed.
+    const b = computeBoundaries(
+      [ev(1000, "bookmark"), ev(4000, "focus_change")],
+      6000,
+      3000,
+      undefined,
+      [2000],
+      4000,
+    );
+    expect(b.map((x) => x.tMono)).toEqual([4000, 6000]);
+  });
+});
+
 describe("computeBoundaries", () => {
   it("brackets with session_start/end and cuts at focus changes", () => {
     const b = computeBoundaries(

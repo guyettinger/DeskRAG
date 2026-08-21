@@ -65,6 +65,7 @@ function flows(): FlowsDTO {
       ],
       slots: [{ name: "note", samples: ["hello there", "second run"] }],
     },
+    excludedApps: [],
     routes: [
       {
         id: "e0|e1",
