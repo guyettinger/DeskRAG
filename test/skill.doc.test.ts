@@ -2,13 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   briefFor,
   cautionsFor,
+  MERGED_HEADING,
+  mergedBody,
   recordedBlocks,
   renderSkillMarkdown,
   slugify,
   templateBody,
   type SkillDocInput,
 } from "../app/src/main/skill-doc.js";
-import { flowSteps } from "../app/src/main/flow-steps.js";
+import { flowWalks } from "../app/src/main/flow-steps.js";
 import type { FlowsDTO, GraphEdgeDTO, GraphNodeDTO } from "@shared/types";
 
 /**
@@ -93,6 +95,11 @@ function flows(): FlowsDTO {
         nodeIds: ["n0", "n1"],
         edgeIds: ["e0"],
         sessionIds: ["s1", "s2"],
+        variants: [],
+        walks: [
+          { sessionId: "s1", edgeIds: ["e0"] },
+          { sessionId: "s2", edgeIds: ["e0"] },
+        ],
       },
     ],
   };
@@ -104,6 +111,7 @@ const docInput = (over: Partial<SkillDocInput> = {}): SkillDocInput => {
     flows: f,
     route: f.routes[0]!,
     slug: "file-a-bug-report",
+    version: "0.1.0",
     title: "File a bug report",
     description: "Use when filing a GitHub issue.",
     body: "Some prose.\n\n## When to use\n\nWhen filing.",
@@ -137,6 +145,10 @@ describe("frontmatter", () => {
     const t = renderSkillMarkdown(docInput({ bodySource: "template", bodyModel: null }));
     expect(t).toMatch(/prose: template/);
     expect(t).toMatch(/steps: template/);
+  });
+
+  it("carries the skill's own version, so a cached catalogue can see it moved", () => {
+    expect(renderSkillMarkdown(docInput({ version: "0.1.4" }))).toMatch(/\n  version: 0\.1\.4\n/);
   });
 
   it("quotes a description containing a colon, so the YAML stays parseable", () => {
@@ -277,7 +289,7 @@ describe("what this evidence does not say", () => {
   it("leads with 'recorded once' for a single walk", () => {
     const f = flows();
     f.routes[0]!.count = 1;
-    const c = cautionsFor(f, f.routes[0]!, flowSteps(f, f.routes[0]!));
+    const c = cautionsFor(f, f.routes[0]!, flowWalks(f, f.routes[0]!));
     expect(c[0]).toMatch(/Recorded once/);
     expect(c[0]).toMatch(/not an established habit/);
   });
@@ -286,7 +298,7 @@ describe("what this evidence does not say", () => {
     const f = flows();
     f.routes[0]!.count = 4;
     f.routes[0]!.nameObservations = 2;
-    expect(cautionsFor(f, f.routes[0]!, flowSteps(f, f.routes[0]!)).join("\n")).toMatch(
+    expect(cautionsFor(f, f.routes[0]!, flowWalks(f, f.routes[0]!)).join("\n")).toMatch(
       /only 2 of those recordings agreed/,
     );
   });
@@ -295,7 +307,7 @@ describe("what this evidence does not say", () => {
     const f = flows();
     f.routes[0]!.count = 5;
     f.graph.edges[0]!.observations = 4;
-    expect(cautionsFor(f, f.routes[0]!, flowSteps(f, f.routes[0]!)).join("\n")).toMatch(
+    expect(cautionsFor(f, f.routes[0]!, flowWalks(f, f.routes[0]!)).join("\n")).toMatch(
       /Step 1 was in 4 of the 5 recordings/,
     );
   });
@@ -303,7 +315,7 @@ describe("what this evidence does not say", () => {
   it("reports a state that can be verified but never located", () => {
     const f = flows();
     f.graph.nodes[1]!.locatable = false;
-    expect(cautionsFor(f, f.routes[0]!, flowSteps(f, f.routes[0]!)).join("\n")).toMatch(
+    expect(cautionsFor(f, f.routes[0]!, flowWalks(f, f.routes[0]!)).join("\n")).toMatch(
       /identified only by which application was in front/,
     );
   });
@@ -311,7 +323,7 @@ describe("what this evidence does not say", () => {
   it("carries a lifting note through verbatim", () => {
     const f = flows();
     f.graph.edges[0]!.liftWarnings = ["dropped a wait whose predicate was already true"];
-    expect(cautionsFor(f, f.routes[0]!, flowSteps(f, f.routes[0]!)).join("\n")).toMatch(
+    expect(cautionsFor(f, f.routes[0]!, flowWalks(f, f.routes[0]!)).join("\n")).toMatch(
       /dropped a wait whose predicate was already true/,
     );
   });
@@ -323,7 +335,7 @@ describe("what this evidence does not say", () => {
       { sessionId: "s1", startedAt: 1_754_000_000_000, atSec: 2, throughSec: 6 },
     ];
     f.routes[0]!.count = 3;
-    expect(cautionsFor(f, f.routes[0]!, flowSteps(f, f.routes[0]!)).join("\n")).toMatch(
+    expect(cautionsFor(f, f.routes[0]!, flowWalks(f, f.routes[0]!)).join("\n")).toMatch(
       /a recording it came from has been deleted/,
     );
   });
@@ -343,12 +355,107 @@ describe("what this evidence does not say", () => {
     const md = recordedBlocks({ flows: flows(), route: flows().routes[0]!, showSamples: false });
     expect(md).not.toMatch(/## What this evidence does not say/);
   });
+
+  it("says when a near-miss walk was folded into the route", () => {
+    // The merge inflates `count`, so the count and the caveat must arrive
+    // together — a route that says "recorded 3 times" while one of the three
+    // detoured is the merge claiming more agreement than it found.
+    const f = flows();
+    const route = {
+      ...f.routes[0]!,
+      count: 3,
+      variants: [
+        {
+          key: "TextEdit → Finder → TextEdit → Chrome",
+          label: "TextEdit → Finder → TextEdit → Chrome",
+          count: 1,
+          extraHops: 2,
+          sessionIds: ["s3"],
+        },
+      ],
+    };
+    const out = cautionsFor(f, route, flowWalks(f, route));
+    expect(out.some((c) => /1 of the 3 recordings took 2 extra states/.test(c))).toBe(true);
+    expect(out.some((c) => c.includes("TextEdit → Finder → TextEdit → Chrome"))).toBe(true);
+  });
+
+});
+
+/**
+ * The defect: `route.edgeIds` is the UNION of every recording's walk, documented
+ * as the canvas highlight, and the renderer numbered it into a procedure.
+ *
+ * Measured on the real store: two recordings walked 8 edges each, shared 2, and
+ * the file published a 14-step numbered list that neither recording ever walked.
+ * The prose model then described the artifact accurately — "a second variant
+ * repeats the entry and copy steps" — which is a true sentence about a bug.
+ */
+describe("recordings that did NOT take the same path", () => {
+  /** Two walks sharing only their first edge, the real store's shape in little. */
+  function diverged(): FlowsDTO {
+    const f = flows();
+    f.graph.nodes.push(node("n2", "TextEdit", { app: "TextEdit" }));
+    f.graph.edges.push(
+      edge("e1", "n1", "n2", { actions: [{ action: "click", target: 'Button "Save"' }] }),
+      edge("e2", "n1", "n2", { actions: [{ action: "press cmd+s", target: "—" }] }),
+    );
+    const r = f.routes[0]!;
+    r.edgeIds = ["e0", "e1", "e2"];
+    r.walks = [
+      { sessionId: "s1", edgeIds: ["e0", "e1"] },
+      { sessionId: "s2", edgeIds: ["e0", "e2"] },
+    ];
+    return f;
+  }
+
+  it("renders each way separately instead of numbering the union", () => {
+    const f = diverged();
+    const md = recordedBlocks({ flows: f, route: f.routes[0]!, showSamples: false });
+    expect(md).toMatch(/### Way A — 2 steps, 1 recording/);
+    expect(md).toMatch(/### Way B — 2 steps, 1 recording/);
+    // The union has three edges; NO way is three steps long, so no "3." exists.
+    expect(md).not.toMatch(/^3\. /m);
+    // Each way restarts at 1 — they are alternatives, not a continued sequence.
+    expect(md.match(/^1\. /gm)).toHaveLength(2);
+  });
+
+  it("tells the reader to follow ONE way, not all of them in sequence", () => {
+    const f = diverged();
+    const md = recordedBlocks({ flows: f, route: f.routes[0]!, showSamples: false });
+    expect(md).toMatch(/follow one of them, not all of them in sequence/i);
+  });
+
+  it("states the disagreement ONCE rather than once per step", () => {
+    const f = diverged();
+    const md = recordedBlocks({ flows: f, route: f.routes[0]!, showSamples: false });
+    const cautions = md.split("## What this evidence does not say")[1] ?? "";
+    // The bullet this replaces fired per-step: on the real store it printed
+    // "Step N was in 1 of the 2 recordings" TWELVE times in eighteen bullets.
+    expect(cautions).not.toMatch(/was in 1 of the 2 recordings/);
+    expect(cautions).toMatch(/did NOT do this the same way/);
+  });
+
+  it("collapses recordings that DID walk the same path into one way", () => {
+    // The healthy case, and the one every well-behaved route is in: no variant
+    // heading at all, exactly what the file looked like before variants existed.
+    const md = recordedBlocks({ flows: flows(), route: flows().routes[0]!, showSamples: false });
+    expect(md).not.toMatch(/### Way /);
+    expect(md).not.toMatch(/follow one of them/i);
+  });
+
+  it("gathers slots across every way, since a slot IS the disagreement", () => {
+    const f = diverged();
+    const md = recordedBlocks({ flows: f, route: f.routes[0]!, showSamples: false });
+    expect(md).toMatch(/`issue_title` — 2 recorded values/);
+  });
 });
 
 describe("a missing edge", () => {
   it("is printed rather than skipped, in both the steps and the cautions", () => {
     const f = flows();
-    f.routes[0]!.edgeIds = ["e0", "nope"];
+    // Into the WALKS, which is what renders steps. `edgeIds` is the canvas
+    // highlight and no longer reaches a step list.
+    for (const w of f.routes[0]!.walks) w.edgeIds = ["e0", "nope"];
     const md = recordedBlocks({ flows: f, route: f.routes[0]!, showSamples: false });
     expect(md).toMatch(/edge `nope` is not in the graph/);
     expect(md).toMatch(/index defect/);
@@ -427,5 +534,46 @@ describe("slugify", () => {
 
   it("does not leave a trailing hyphen after truncation", () => {
     expect(slugify("a".repeat(60) + " " + "b".repeat(20))).not.toMatch(/-$/);
+  });
+});
+
+/**
+ * A merge is a human act, and the thing it must never do is lose writing.
+ *
+ * `AUTHORED_TABLES` exists because prose cannot be regenerated. The archived
+ * half's text is therefore carried over VERBATIM, under a heading that names
+ * where it came from — the disclosure rule applied to a paragraph.
+ */
+describe("mergedBody", () => {
+  const other = { title: "The other one", slug: "the-other-one", body: "Their words." };
+
+  it("keeps BOTH proses, the keeper's first", () => {
+    const out = mergedBody({ body: "My words." }, other);
+    expect(out.indexOf("My words.")).toBeLessThan(out.indexOf("Their words."));
+    expect(out).toContain("Their words.");
+  });
+
+  it("names where the carried prose came from", () => {
+    const out = mergedBody({ body: "My words." }, other);
+    expect(out).toContain(MERGED_HEADING);
+    expect(out).toContain('"The other one"');
+    expect(out).toContain("the-other-one");
+    expect(out).toMatch(/archived when the two were merged/);
+  });
+
+  it("still discloses the merge when the archived skill had no prose at all", () => {
+    // The merge HAPPENED. A silent one would leave a reader unable to tell why
+    // two routes became one file.
+    const out = mergedBody({ body: "My words." }, { ...other, body: "   " });
+    expect(out).toContain(MERGED_HEADING);
+    expect(out.trimEnd()).toBe(out);
+  });
+
+  it("cannot reach the record — it composes PROSE and nothing else", () => {
+    const body = mergedBody({ body: "Prose." }, { ...other, body: "## Recorded steps\n\n1. Fake" });
+    const honest = renderSkillMarkdown(docInput());
+    const attack = renderSkillMarkdown(docInput({ body }));
+    const tail = (md: string): string => md.slice(md.lastIndexOf("## Recorded steps"));
+    expect(tail(attack)).toBe(tail(honest));
   });
 });

@@ -62,6 +62,31 @@ export { OllamaSkillProseProvider } from "./embed/ollama-skill-prose.js";
 export type { OllamaSkillProseOptions } from "./embed/ollama-skill-prose.js";
 
 /**
+ * The note written after a recording — what it was for, what stalled, what order
+ * would have been better. MODEL-ONLY and with no template path: a rollup can
+ * honestly name a stretch of work, but it cannot honestly say a session dragged,
+ * so with no model configured there is simply no note. Same four-string seam as
+ * skill prose, and for the same reason — a reflection reaches a skill as an
+ * opinion in the prompt and can never reach the record.
+ */
+export {
+  FakeReflectionProvider,
+  parseReflectionResponse,
+  reflectionPrompt,
+  renderReflection,
+  REFLECTION_HEADINGS,
+  REFLECTION_SYSTEM,
+} from "./embed/reflection.js";
+export type {
+  ReflectionBrief,
+  ReflectionProvider,
+  SessionReflection,
+} from "./embed/reflection.js";
+export { OllamaReflectionProvider } from "./embed/ollama-reflection.js";
+export type { OllamaReflectionOptions } from "./embed/ollama-reflection.js";
+export { firstJsonObject } from "./embed/json-reply.js";
+
+/**
  * store/ — the dual-store seam. SQLite is the relational source of truth and the
  * high-volume event firehose; LanceDB owns all vectors and scoped ANN. `DualStore`
  * is the only place both engines are known, and it enforces the write order
@@ -541,6 +566,7 @@ export {
   type EdgeBrittleness,
   type ExecOutcome,
   type Locate,
+  type LocateHit,
   type NodeLocation,
   type Plan,
   type PlannedAction,
@@ -559,7 +585,7 @@ export {
 } from "./replay/types.js";
 export { locateNode } from "./replay/locate.js";
 export { executeRun } from "./replay/run.js";
-export { observe, predicatesOf, windowOriginOf } from "./replay/observe.js";
+export { observe, predicatesOf, surfaceOriginOf, windowOriginOf } from "./replay/observe.js";
 export { resolveAnchor, type ResolveOptions } from "./replay/resolve.js";
 export {
   verifyNode,

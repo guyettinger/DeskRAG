@@ -138,11 +138,19 @@ export async function resolveAnchor(
   // Compare in window space when BOTH origins are known — a window that merely
   // moved then agrees perfectly, and only a real layout change reduces trust.
   const recOrigin = recordedWindowOrigin(anchor);
-  const liveOrigin = opts.windowOrigin;
-  const relative = recOrigin !== undefined && liveOrigin !== undefined;
-  const judge = (live: Rect): number | undefined => {
+  /**
+   * The hit's own surface WINS over the caller's window origin.
+   *
+   * The caller supplies one origin for the whole observation, chosen before
+   * anything has been located — so it cannot know that a rung is about to land
+   * inside a menu, which the OS called a window when the anchor was recorded.
+   * Only the hit knows what it is in. `opts.windowOrigin` remains the answer
+   * for every resolver that cannot see an ancestor chain.
+   */
+  const judge = (live: Rect, hitOrigin: Vec2 | undefined): number | undefined => {
     if (recordedBox === undefined) return undefined; // nothing to disagree with
-    return relative
+    const liveOrigin = hitOrigin ?? opts.windowOrigin;
+    return recOrigin !== undefined && liveOrigin !== undefined
       ? agreement(relativeTo(recordedBox, recOrigin), relativeTo(live, liveOrigin))
       : agreement(recordedBox, live);
   };
@@ -156,7 +164,7 @@ export async function resolveAnchor(
       }
       // With no recorded box there is nothing to disagree with, so the rung
       // keeps its ceiling: absence of evidence is not evidence of mismatch.
-      const agreed = judge(hit.bounds);
+      const agreed = judge(hit.bounds, hit.surfaceOrigin);
       const confidence = agreed !== undefined ? rung.ceiling * agreed : rung.ceiling;
       if (confidence < minConfidence) {
         attempts.push({

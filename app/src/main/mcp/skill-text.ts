@@ -28,6 +28,7 @@ function lines(s: SkillDTO): string[] {
   if (s.description !== "") out.push(`  ${s.description}`);
 
   const bits = [
+    `v${s.version}`,
     `${b.recordings} recording${b.recordings === 1 ? "" : "s"}`,
     `prose: ${s.bodySource}`,
   ];
@@ -47,6 +48,14 @@ function lines(s: SkillDTO): string[] {
     );
   } else if (b.state === "rebound") {
     out.push("  RE-BOUND — the states this flow passes through changed since it was kept.");
+  }
+  // Two files describing one procedure. Said in the list because an agent that
+  // fetches both and finds them near-identical cannot tell whether that is a
+  // duplicate or two genuinely different ways of doing the same work.
+  if (s.duplicates.length > 0) {
+    out.push(
+      `  ALSO DESCRIBED BY — ${s.duplicates.join(", ")}. These skills answer to the same recorded route; nobody has merged them.`,
+    );
   }
 
   out.push(`  route: ${b.routeKey}`);

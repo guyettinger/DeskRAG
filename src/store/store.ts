@@ -47,6 +47,8 @@ import type {
   SegmentSummaryInsert,
   SegmentSummaryRow,
   SegmentTreeInsert,
+  SessionReflectionInsert,
+  SessionReflectionRow,
   SummarySource,
   TranscriptClipInsert,
   TranscriptClipRow,
@@ -265,6 +267,19 @@ export class DualStore implements Store {
         `SELECT ss.segment_id AS segment_id, ss.text AS text, ss.source AS source
            FROM segment_summary ss
            JOIN segment s ON s.id = ss.segment_id
+          WHERE s.session_id = ?`,
+      ),
+      upsertSessionReflection: db.prepare(
+        `INSERT INTO session_reflection(segment_id, text, source) VALUES (?, ?, ?)
+         ON CONFLICT(segment_id) DO UPDATE SET text = excluded.text, source = excluded.source`,
+      ),
+      selectSessionReflection: db.prepare(
+        "SELECT segment_id, text, source FROM session_reflection WHERE segment_id = ?",
+      ),
+      selectSessionReflectionsBySession: db.prepare(
+        `SELECT sr.segment_id AS segment_id, sr.text AS text, sr.source AS source
+           FROM session_reflection sr
+           JOIN segment s ON s.id = sr.segment_id
           WHERE s.session_id = ?`,
       ),
       deleteSegmentRow: db.prepare("DELETE FROM segment WHERE id = ?"),
@@ -868,6 +883,29 @@ export class DualStore implements Store {
       text: r.text,
       source: r.source as SummarySource,
     }));
+  }
+
+  async putSessionReflection(row: SessionReflectionInsert): Promise<void> {
+    await this.mutex.run(async () => {
+      this.stmts.upsertSessionReflection.run(row.segmentId, row.text, row.source);
+    });
+  }
+
+  getSessionReflection(segmentId: string): SessionReflectionRow | undefined {
+    const row = this.stmts.selectSessionReflection.get(segmentId) as
+      | { segment_id: string; text: string; source: string }
+      | undefined;
+    if (row === undefined) return undefined;
+    return { segmentId: row.segment_id, text: row.text, source: row.source };
+  }
+
+  getSessionReflectionsBySession(sessionId: string): SessionReflectionRow[] {
+    const rows = this.stmts.selectSessionReflectionsBySession.all(sessionId) as {
+      segment_id: string;
+      text: string;
+      source: string;
+    }[];
+    return rows.map((r) => ({ segmentId: r.segment_id, text: r.text, source: r.source }));
   }
 
   async deleteSegments(ids: readonly string[]): Promise<void> {

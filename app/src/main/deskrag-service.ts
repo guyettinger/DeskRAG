@@ -45,6 +45,7 @@ import {
   type CaptionProvider as LibCaptionProvider,
   type SummaryProvider as LibSummaryProvider,
   type BlobRow,
+  type ReflectionProvider,
   type Reranker,
   type ViewSearcher,
   type Graph,
@@ -71,19 +72,31 @@ import { SignalTally } from "./recording-activity.js";
 import { IndexWorker } from "./index-worker.js";
 import { frequentRoutes, toGraphDTO } from "./graph-view.js";
 import { flowApps } from "./flow-steps.js";
-import { bindSkill, unclaimedRoutes, type SkillBindingDoc } from "./skill-bind.js";
+import {
+  bindSkill,
+  duplicateSkills,
+  unclaimedRoutes,
+  type SkillBindingDoc,
+} from "./skill-bind.js";
+import {
+  INITIAL_VERSION,
+  bumpVersion,
+  type SkillRevision,
+} from "./skill-version.js";
 import {
   briefFor,
+  mergedBody,
   recordedBlocks,
   renderSkillMarkdown,
   slugify,
   templateBody,
 } from "./skill-doc.js";
-import { OllamaSkillProseProvider } from "deskrag";
+import { OllamaReflectionProvider, OllamaSkillProseProvider } from "deskrag";
 import { ModelStore, type ModelDownloadProgress } from "./model-store.js";
 import { OnnxHost } from "./onnx-host.js";
 import { spawnOnnxWorker } from "./onnx-spawn.js";
 import { TRACK_BUCKETS } from "@shared/types";
+import { routeStepSummary, routeWayLengths } from "@shared/route-ways";
 import type { IndexJobRow, SegmentRow, SegmentSummaryRow, SkillRow } from "deskrag";
 import type {
   Capabilities,
@@ -465,8 +478,20 @@ export class DeskRagService {
 
     // --- summarizer (composes and NAMES levels; absence costs prose, not shape)
     let summarizer: LibSummaryProvider | null = null;
+    // --- reflector (writes the per-session note; absence costs the whole note)
+    //
+    // ONE switch, two objects: the two take different briefs and return
+    // different shapes, so they cannot be one provider, but they must be null
+    // together or `StageFacts.summarizer` would be answering about the wrong
+    // one. Built here rather than lazily because it is a plain `fetch` wrapper
+    // — no weights, no session, nothing to defer.
+    let reflector: ReflectionProvider | null = null;
     if (p.summaryProvider === "ollama") {
       summarizer = new OllamaSummaryProvider({
+        host: p.ollamaHost,
+        model: p.ollamaSummaryModel,
+      });
+      reflector = new OllamaReflectionProvider({
         host: p.ollamaHost,
         model: p.ollamaSummaryModel,
       });
@@ -498,6 +523,7 @@ export class DeskRagService {
       patchEmbedder,
       captioner,
       summarizer,
+      reflector,
       reranker,
     };
   }
@@ -778,6 +804,11 @@ export class DeskRagService {
         .getBlobsBySession(sessionId)
         .some((b) => b.media === "mic" || b.media === "desktop_audio"),
       whisper: whisperAvailable(this.settings.view().providers.whisper.binaryPath),
+      // The REFLECTOR, not the summarizer, even though the fact is named for the
+      // setting they share. This gates one stage and that stage uses this
+      // object; a gate that passes on a different object's presence is how a
+      // stage runs with a null provider and writes nothing at all.
+      summarizer: providers.reflector !== null,
     };
     return {
       sessionId,
@@ -1400,6 +1431,7 @@ export class DeskRagService {
           .getBlobsBySession(sessionId)
           .some((b) => b.media === "mic" || b.media === "desktop_audio"),
       whisper: whisperAvailable(providers.whisper.binaryPath),
+      summarizer: providers.summaryProvider !== "none",
     };
   }
 
@@ -1700,7 +1732,22 @@ export class DeskRagService {
   }
 
   private skillDocOf(row: SkillRow): StoredSkillDoc {
-    return JSON.parse(row.doc) as StoredSkillDoc;
+    const doc = JSON.parse(row.doc) as StoredSkillDoc;
+    // A doc written before versioning has neither field, and it is given the
+    // INITIAL version rather than a fabricated history: it has changed zero
+    // times as far as anything can know, and inventing revisions for edits
+    // nobody recorded would make the history lie on its first line.
+    return {
+      ...doc,
+      version: doc.version ?? INITIAL_VERSION,
+      history: doc.history ?? [],
+    };
+  }
+
+  /** Apply a version bump to a doc about to be written. Never on a read. */
+  private versioned(doc: StoredSkillDoc, what: string): StoredSkillDoc {
+    const next = bumpVersion(doc.version, doc.history, what, Date.now());
+    return { ...doc, version: next.version, history: next.history };
   }
 
   /**
@@ -1745,6 +1792,7 @@ export class DeskRagService {
             bodyModel: doc.bodyModel,
             showSamples: doc.showSamples,
             skillId: row.id,
+            version: doc.version ?? INITIAL_VERSION,
           })
         : // ORPHANED (or ambiguous): the live route is gone, so the record cannot
           // be re-rendered. The snapshot taken when the skill was last written is
@@ -1768,6 +1816,12 @@ export class DeskRagService {
       edited: doc.edited,
       showSamples: doc.showSamples,
       generateNote: doc.generateNote,
+      version: doc.version ?? INITIAL_VERSION,
+      history: [...(doc.history ?? [])],
+      // Filled by `skills()`, which is the only caller that sees the whole set.
+      // A duplicate is a relation between two skills and cannot be computed
+      // from one, so this is empty here rather than guessed.
+      duplicates: [],
       markdown,
       binding,
     };
@@ -1776,7 +1830,18 @@ export class DeskRagService {
   skills(): SkillsDTO {
     const flows = this.flows();
     const rows = this.store.listSkills();
-    const skills = rows.map((r) => this.toSkillDTO(r, flows));
+    const rendered = rows.map((r) => this.toSkillDTO(r, flows));
+
+    // Duplicates are a relation over the whole set, so they are resolved here
+    // and disclosed on both members. ACTIVE only: an archived skill is already
+    // the losing half of a merge somebody performed, and reporting it as a
+    // duplicate forever would make the disclosure permanent noise.
+    const dupes = duplicateSkills(
+      rendered
+        .filter((s) => s.state === "active")
+        .map((s) => ({ id: s.id, liveRouteKey: s.binding.liveRouteKey })),
+    );
+    const skills = rendered.map((s) => ({ ...s, duplicates: dupes.get(s.id) ?? [] }));
 
     // A dismissal is a real row carrying only its binding: a rejected proposal
     // that is not persisted comes back on every load.
@@ -1787,7 +1852,12 @@ export class DeskRagService {
         name: route.name,
         label: route.label,
         count: route.count,
-        steps: route.edgeIds.length,
+        // NOT `edgeIds.length` — that is the union of every recording's walk,
+        // and numbering it publishes a path nobody took. Same function the
+        // route list uses, so the two surfaces cannot disagree.
+        steps: routeWayLengths(route)[0] ?? 0,
+        stepSummary: routeStepSummary(route),
+        variants: route.variants.length,
         nameObservations: route.nameObservations,
         sessionIds: [...route.sessionIds],
         apps: flows === null ? [] : flowApps(flows, route),
@@ -1898,13 +1968,28 @@ export class DeskRagService {
       ...(patch.showSamples !== undefined ? { showSamples: patch.showSamples } : {}),
       edited: doc.edited || touchedProse,
     };
-    this.refreshSnapshot(next);
+    const moved = this.refreshSnapshot(next);
+
+    // Only what changes the FILE. Pinning and archiving change how the app
+    // lists a skill and not a byte of what it hands an agent, so versioning
+    // them would make the number stop meaning "this artifact moved".
+    const rewritten =
+      patch.title !== undefined ||
+      patch.description !== undefined ||
+      patch.slug !== undefined ||
+      patch.body !== undefined ||
+      patch.showSamples !== undefined;
+    const written = rewritten
+      ? this.versioned(next, "edited by hand")
+      : moved
+        ? this.versioned(next, "the recorded steps changed")
+        : next;
 
     await this.store.putSkill({
       id: row.id,
       state: patch.state ?? row.state,
       pinned: patch.pinned ?? row.pinned,
-      doc: JSON.stringify(next),
+      doc: JSON.stringify(written),
     });
   }
 
@@ -1915,16 +2000,47 @@ export class DeskRagService {
    * indistinguishable from a live render, which is exactly the distinction an
    * orphaned skill has to make.
    */
-  private refreshSnapshot(doc: StoredSkillDoc): void {
+  private refreshSnapshot(doc: StoredSkillDoc): boolean {
     const flows = this.flows();
     const bound = bindSkill(doc.binding, flows?.routes ?? []);
-    if (flows === null || bound.route === null) return;
-    doc.stepsSnapshot = recordedBlocks({
+    if (flows === null || bound.route === null) return false;
+    const next = recordedBlocks({
       flows,
       route: bound.route,
       showSamples: doc.showSamples,
     });
+    // Whether the RECORD moved, which is the one change a person did not make.
+    // A re-index can rewrite the steps under a kept skill, and that is worth a
+    // version of its own — an agent holding last week's file has no other way
+    // to notice it now describes something else.
+    const moved = next !== doc.stepsSnapshot;
+    doc.stepsSnapshot = next;
     doc.snapshotAt = Date.now();
+    return moved;
+  }
+
+  /**
+   * The reflections written after the recordings a route was built from.
+   *
+   * Ordered by recording so a reader of the prompt sees them chronologically,
+   * and SILENTLY short: a session with no reflection contributes nothing rather
+   * than a placeholder saying so, because "no note was written" is a fact about
+   * the indexing configuration and telling a model about it invites prose about
+   * the tool instead of about the work.
+   *
+   * Keyed through the composed root, which is where a reflection hangs. A
+   * recording that has not been composed has none, by construction.
+   */
+  private reflectionsFor(sessionIds: readonly string[]): string[] {
+    const out: { at: number; text: string }[] = [];
+    for (const id of sessionIds) {
+      const session = this.store.getSession(id);
+      if (session === undefined) continue;
+      for (const r of this.store.getSessionReflectionsBySession(id)) {
+        out.push({ at: session.startedAt, text: r.text });
+      }
+    }
+    return out.sort((a, b) => a.at - b.at).map((r) => r.text);
   }
 
   /**
@@ -1951,7 +2067,9 @@ export class DeskRagService {
 
     if (writer !== null) {
       try {
-        prose = await writer.write(briefFor(flows, bound.route, bound));
+        prose = await writer.write(
+          briefFor(flows, bound.route, bound, this.reflectionsFor(bound.route.sessionIds)),
+        );
         source = "llm";
         model = `${writer.id} ${writer.model}`;
         note = null;
@@ -1974,12 +2092,16 @@ export class DeskRagService {
       generateNote: note,
     };
     this.refreshSnapshot(next);
+    const written = this.versioned(
+      next,
+      source === "llm" ? `prose regenerated by ${model}` : "prose regenerated from the template",
+    );
 
     await this.store.putSkill({
       id: row.id,
       state: row.state,
       pinned: row.pinned,
-      doc: JSON.stringify(next),
+      doc: JSON.stringify(written),
     });
   }
 
@@ -2007,12 +2129,75 @@ export class DeskRagService {
       },
     };
     this.refreshSnapshot(next);
+    const written = this.versioned(
+      next,
+      `re-bound from ${JSON.stringify(doc.binding.routeKey)} to ${JSON.stringify(route.id)}`,
+    );
 
     await this.store.putSkill({
       id: row.id,
       state: row.state,
       pinned: row.pinned,
-      doc: JSON.stringify(next),
+      doc: JSON.stringify(written),
+    });
+  }
+
+  /**
+   * Merge two skills that answer to the same live route. A HUMAN act.
+   *
+   * Nothing auto-merges: `duplicateSkills` only discloses, because choosing
+   * which of two descriptions of one procedure to keep is a judgement about
+   * prose. This is the confirmation of that judgement.
+   *
+   * The loser is ARCHIVED, never deleted, and its prose is carried into the
+   * keeper first — two independent guarantees that the merge destroys no
+   * writing. It refuses unless both are active and both bind to the same live
+   * route: merging skills about different work would be a data loss the app
+   * performed on its own reading of a screen.
+   */
+  async mergeSkills(keepId: string, mergeId: string): Promise<void> {
+    if (keepId === mergeId) return;
+    const keepRow = this.store.getSkill(keepId);
+    const otherRow = this.store.getSkill(mergeId);
+    if (keepRow === undefined || otherRow === undefined) return;
+    if (keepRow.state !== "active" || otherRow.state !== "active") return;
+
+    const flows = this.flows();
+    const routes = flows?.routes ?? [];
+    const keepDoc = this.skillDocOf(keepRow);
+    const otherDoc = this.skillDocOf(otherRow);
+    // The LIVE route, the same key `duplicateSkills` groups on. Comparing the
+    // STORED routeKey would refuse exactly the interesting case: two skills
+    // bound at different times to keys that have since merged.
+    const keepLive = bindSkill(keepDoc.binding, routes).route?.id ?? null;
+    const otherLive = bindSkill(otherDoc.binding, routes).route?.id ?? null;
+    if (keepLive === null || keepLive !== otherLive) return;
+
+    const merged: StoredSkillDoc = {
+      ...keepDoc,
+      body: mergedBody(keepDoc, otherDoc),
+      // A merge is prose a person decided on, so the keeper is edited from here
+      // — regenerating it would silently discard what was just carried over,
+      // and `edited` is what makes that warn.
+      edited: true,
+    };
+    this.refreshSnapshot(merged);
+    await this.store.putSkill({
+      id: keepRow.id,
+      state: keepRow.state,
+      pinned: keepRow.pinned,
+      doc: JSON.stringify(
+        this.versioned(merged, `merged ${JSON.stringify(otherDoc.title)} (${otherRow.id}) in`),
+      ),
+    });
+
+    await this.store.putSkill({
+      id: otherRow.id,
+      state: "archived",
+      pinned: false,
+      doc: JSON.stringify(
+        this.versioned(otherDoc, `merged into ${JSON.stringify(keepDoc.title)} (${keepRow.id})`),
+      ),
     });
   }
 
@@ -2039,6 +2224,14 @@ export interface StoredSkillDoc {
   /** The record as it last rendered. Printed when the live route is gone. */
   stepsSnapshot: string;
   snapshotAt: number;
+  /**
+   * `0.1.N`. Absent on a doc written before versioning — see `skillDocOf`.
+   *
+   * In the JSON rather than a column because `schema.ts` has no migration step.
+   */
+  version?: string;
+  /** What moved it, newest last, bounded by `MAX_HISTORY`. */
+  history?: SkillRevision[];
 }
 
 /**
@@ -2057,6 +2250,7 @@ function renderOrphanedSkill(doc: StoredSkillDoc, id: string, note: string | nul
     "metadata:",
     "  source: deskrag",
     `  skill_id: ${id}`,
+    `  version: ${doc.version ?? INITIAL_VERSION}`,
     `  binding: orphaned`,
     `  recorded_snapshot: ${when}`,
     `  prose: ${doc.bodySource === "llm" ? `llm (${doc.bodyModel ?? "unknown model"})` : "template"}`,

@@ -1111,10 +1111,72 @@ export interface FlowRouteDTO {
    * dominant name winning is not the same as unanimity.
    */
   nameObservations: number;
-  /** For highlighting the route on the canvas. */
+  /**
+   * For highlighting the route on the canvas — a SET, in first-walked order.
+   *
+   * The UNION of what every recording in this group walked, which is right for a
+   * highlight (a canvas has to light up everywhere they went) and WRONG as a
+   * procedure. Two recordings that share this route's key can share almost none
+   * of their edges, because equivalent states across recordings do not merge
+   * into one node (see `id` above) — measured on the real store at 8 edges each,
+   * 2 in common, 14 in the union. Numbering that union produced a 14-step
+   * "procedure" no recording ever walked.
+   *
+   * Anything that renders STEPS reads `walks`, never this.
+   */
   nodeIds: string[];
   edgeIds: string[];
   sessionIds: string[];
+  /**
+   * What each recording ACTUALLY walked, in the order it walked it.
+   *
+   * One entry per session in `sessionIds`, same order. This is the source for
+   * every step rendering; `edgeIds` above is its union and exists only for the
+   * canvas. Kept raw here — grouping identical walks into variants is
+   * `flowWalks` in `flow-steps.ts`, so both formatters group the same way once.
+   */
+  walks: RouteWalkDTO[];
+  /**
+   * The near-miss walks folded into this route. Empty when nothing was merged,
+   * which is the common case and reads exactly as it did before clustering.
+   */
+  variants: RouteVariantDTO[];
+}
+
+/**
+ * A walk that was folded into this route because it is the same work.
+ *
+ * Routes group by their place-label sequence, and a side trip renames the key —
+ * so the same task recorded once more through Finder lands as a separate route
+ * of ×1. `route-cluster.ts` merges those; this is what it merged, and it is
+ * carried rather than smoothed away. A merge that hid the disagreement would be
+ * asserting that N recordings agree when some of them did something else, which
+ * is the failure the "NOTHING TRUNCATES" rule exists to prevent one layer down.
+ */
+export interface RouteVariantDTO {
+  /** The variant's own place-label key, before it was folded in. */
+  key: string;
+  /** The same sequence, for display. Never elided — see above. */
+  label: string;
+  /** Recordings that walked this variant rather than the canonical way. */
+  count: number;
+  /**
+   * How many places this walk added to the canonical one.
+   *
+   * A DETOUR COSTS TWO — you leave and you come back — so +2 is the ordinary
+   * near-miss, not an outlier. `-1` means the rule that merged them was not a
+   * containment rule and there is no honest hop count to give; it is never
+   * rendered as a number.
+   */
+  extraHops: number;
+  sessionIds: string[];
+}
+
+/** One recording's own path through a route. */
+export interface RouteWalkDTO {
+  sessionId: string;
+  /** The edges it walked, ordered by the moment it walked each. */
+  edgeIds: string[];
 }
 
 export interface FlowsDTO {
@@ -1161,6 +1223,15 @@ export interface SkillBindingDTO {
   note: string | null;
 }
 
+/** One entry in a skill's version history. */
+export interface SkillRevisionDTO {
+  /** Wall-clock, and only for display — a version history is a human record. */
+  at: number;
+  version: string;
+  /** What moved it, in words. */
+  what: string;
+}
+
 export interface SkillDTO {
   id: string;
   state: SkillState;
@@ -1186,6 +1257,21 @@ export interface SkillDTO {
   /** Why the last generate produced what it did. Null when nothing needs saying. */
   generateNote: string | null;
   /**
+   * The artifact's own version, `major.minor.patch`. Only the patch position
+   * moves: nothing here computes what a breaking change to a skill would be.
+   * It bumps when the FILE moves, never on a read.
+   */
+  version: string;
+  /** Newest last, bounded. What moved this skill, and when. */
+  history: SkillRevisionDTO[];
+  /**
+   * OTHER active skills that now answer to the same LIVE route.
+   *
+   * Empty is the common case. Non-empty is a disclosure, never an action: a
+   * merge is a human act, because prose is the one thing nothing can remake.
+   */
+  duplicates: string[];
+  /**
    * The whole SKILL.md.
    *
    * Rendered in MAIN and handed out verbatim: the clipboard button and
@@ -1205,7 +1291,12 @@ export interface SkillProposalDTO {
   name: string | null;
   label: string;
   count: number;
+  /** The LONGEST way's step count. Never the union — see `@shared/route-ways`. */
   steps: number;
+  /** "12 steps", or "2 ways · 8/8 steps". What the row prints. */
+  stepSummary: string;
+  /** Near-miss walks folded into this route. The row says so when non-zero. */
+  variants: number;
   nameObservations: number;
   sessionIds: string[];
   apps: string[];
@@ -1349,6 +1440,11 @@ export interface DeskRagApi {
     generate(id: string): Promise<SkillsDTO>;
     /** Confirm a DISCLOSED re-bind. The only thing that rewrites `routeKey`. */
     rebind(id: string, routeKey: string): Promise<SkillsDTO>;
+    /**
+     * Merge two skills answering to the same live route. The keeper survives
+     * with the other's prose appended; the other is ARCHIVED, never deleted.
+     */
+    merge(keepId: string, mergeId: string): Promise<SkillsDTO>;
     remove(id: string): Promise<SkillsDTO>;
   };
   models: {
@@ -1482,6 +1578,7 @@ export const IPC = {
   skillsUpdate: "skills:update",
   skillsGenerate: "skills:generate",
   skillsRebind: "skills:rebind",
+  skillsMerge: "skills:merge",
   skillsRemove: "skills:remove",
   mcpStatus: "mcp:status",
   mcpLog: "mcp:log",

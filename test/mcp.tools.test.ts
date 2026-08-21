@@ -111,6 +111,11 @@ const flows = (): FlowsDTO => ({
       nodeIds: ["n0", "n1"],
       edgeIds: ["e0"],
       sessionIds: ["s1", "s2"],
+      variants: [],
+      walks: [
+        { sessionId: "s1", edgeIds: ["e0"] },
+        { sessionId: "s2", edgeIds: ["e0"] },
+      ],
     },
   ],
 });
@@ -507,6 +512,9 @@ const skill = (over: Partial<SkillDTO> = {}): SkillDTO => ({
   pinned: false,
   createdAt: EPOCH,
   updatedAt: EPOCH,
+  version: "0.1.0",
+  history: [],
+  duplicates: [],
   slug: "file-a-bug-report",
   title: "File a bug report",
   description: "Use when filing a GitHub issue on a repo you already have open.",
@@ -558,6 +566,28 @@ describe("list_skills", () => {
     expect(out.content[0]!.text).toMatch(/RECORDED ONCE — one observation, not an established habit/);
   });
 
+  it("prints the version, so an agent that cached this file can see it moved", async () => {
+    const out = await callTool(
+      withSkills({ ...noSkills(), skills: [skill({ version: "0.1.7" })] }),
+      "list_skills",
+      {},
+    );
+    expect(out.content[0]!.text).toMatch(/v0\.1\.7/);
+  });
+
+  // Two files describing one procedure. An agent that fetches both and finds
+  // them near-identical cannot tell whether that is a duplicate or two genuinely
+  // different ways of doing the same work — so the LIST says which.
+  it("discloses that another skill describes the same route", async () => {
+    const out = await callTool(
+      withSkills({ ...noSkills(), skills: [skill({ duplicates: ["01OTHERSKILLID"] })] }),
+      "list_skills",
+      {},
+    );
+    expect(out.content[0]!.text).toMatch(/ALSO DESCRIBED BY — 01OTHERSKILLID/);
+    expect(out.content[0]!.text).toMatch(/nobody has merged them/);
+  });
+
   it("says ORPHANED, and that the steps have not been re-checked", async () => {
     const orphan = skill({ binding: { ...skill().binding, state: "orphaned", recordings: 0 } });
     const out = await callTool(withSkills({ ...noSkills(), skills: [orphan] }), "list_skills", {});
@@ -598,6 +628,8 @@ describe("list_skills", () => {
             label: "A → B",
             count: 2,
             steps: 3,
+            stepSummary: "2 steps",
+            variants: 0,
             nameObservations: 0,
             sessionIds: ["s1", "s2"],
             apps: [],

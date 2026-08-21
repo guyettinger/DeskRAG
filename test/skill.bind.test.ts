@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bindSkill, unclaimedRoutes, type SkillBindingDoc } from "../app/src/main/skill-bind.js";
+import { bindSkill, duplicateSkills, unclaimedRoutes, type SkillBindingDoc } from "../app/src/main/skill-bind.js";
 import type { FlowRouteDTO } from "@shared/types";
 
 /**
@@ -22,6 +22,8 @@ const route = (id: string, sessionIds: string[]): FlowRouteDTO => ({
   nodeIds: [],
   edgeIds: [],
   sessionIds,
+  walks: sessionIds.map((sessionId) => ({ sessionId, edgeIds: [] })),
+  variants: [],
 });
 
 const doc = (routeKey: string, sessionIds: string[]): SkillBindingDoc => ({
@@ -162,5 +164,44 @@ describe("unclaimedRoutes", () => {
   it("proposes everything when nothing has been answered about", () => {
     const routes = [route("A", ["s1"])];
     expect(unclaimedRoutes(routes, [])).toEqual(routes);
+  });
+});
+
+describe("duplicateSkills", () => {
+  const s = (id: string, liveRouteKey: string | null) => ({ id, liveRouteKey });
+
+  it("reports nothing when every skill answers to its own route", () => {
+    expect(duplicateSkills([s("a", "R1"), s("b", "R2")]).size).toBe(0);
+  });
+
+  it("pairs two skills that now answer to ONE route", () => {
+    const out = duplicateSkills([s("a", "R1"), s("b", "R1")]);
+    expect(out.get("a")).toEqual(["b"]);
+    expect(out.get("b")).toEqual(["a"]);
+  });
+
+  it("names every other member when three collide", () => {
+    const out = duplicateSkills([s("a", "R1"), s("b", "R1"), s("c", "R1")]);
+    expect(out.get("b")).toEqual(["a", "c"]);
+  });
+
+  it("never groups ORPHANS together", () => {
+    // They answer to no route, so they duplicate nothing. Grouping them would
+    // report every unbindable skill as a duplicate of every other.
+    expect(duplicateSkills([s("a", null), s("b", null)]).size).toBe(0);
+  });
+
+  it("keys on the LIVE route, not on what each was bound to", () => {
+    // The interesting case: two skills bound at different times to keys that
+    // have since merged. Comparing stored keys would miss exactly this one.
+    const out = duplicateSkills([s("old", "MERGED"), s("new", "MERGED")]);
+    expect(out.get("old")).toEqual(["new"]);
+  });
+
+  it("does not mutate its input", () => {
+    const input = [s("a", "R1"), s("b", "R1")];
+    const snapshot = JSON.stringify(input);
+    duplicateSkills(input);
+    expect(JSON.stringify(input)).toBe(snapshot);
   });
 });

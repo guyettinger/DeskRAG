@@ -212,6 +212,11 @@ export function SkillsScreen(): React.JSX.Element {
                 });
               }}
               onRebind={(routeKey) => run(api.skills.rebind(skill.id, routeKey))}
+              duplicates={skill.duplicates.flatMap((id) => {
+                const other = data.skills.find((s) => s.id === id);
+                return other === undefined ? [] : [other];
+              })}
+              onMerge={(mergeId) => run(api.skills.merge(skill.id, mergeId))}
               onRemove={() => {
                 setSelected(null);
                 run(api.skills.remove(skill.id));
@@ -296,7 +301,8 @@ function ProposalRow({
         <span className="skill__title">{proposal.name ?? proposal.label}</span>
         {proposal.name !== null && <span className="skill__slug mono">{proposal.label}</span>}
         <span className="skill__meta mono">
-          {proposal.steps} step{proposal.steps === 1 ? "" : "s"}
+          {proposal.stepSummary}
+          {proposal.variants > 0 && " · merged"}
           {proposal.count === 1 && " · recorded once"}
         </span>
       </button>
@@ -352,6 +358,8 @@ function SkillEditor({
   onPatch,
   onCopy,
   onRebind,
+  duplicates,
+  onMerge,
   onRemove,
 }: {
   skill: SkillDTO;
@@ -365,9 +373,15 @@ function SkillEditor({
   onPatch: (p: SkillPatch) => void;
   onCopy: () => void;
   onRebind: (routeKey: string) => void;
+  /** The OTHER active skills on this same live route. Usually empty. */
+  duplicates: SkillDTO[];
+  onMerge: (mergeId: string) => void;
   onRemove: () => void;
 }): React.JSX.Element {
   const b = skill.binding;
+  // Merging archives somebody else's skill, so it is confirmed. The state holds
+  // WHICH one, because a skill can duplicate more than one at a time.
+  const [confirmMerge, setConfirmMerge] = useState<string | null>(null);
   // The record is not editable here, and the file says the same thing. Splitting
   // the document at the heading is how the screen shows which half is which.
   const cut = skill.markdown.lastIndexOf("## Recorded steps");
@@ -389,6 +403,48 @@ function SkillEditor({
                 Re-bind to {c}
               </button>
             ))}
+        </div>
+      )}
+
+      {duplicates.length > 0 && (
+        <div className="banner skilledit__bind">
+          <p>
+            {duplicates.length === 1 ? "Another skill describes" : "Other skills describe"} this
+            same recorded route: {duplicates.map((d) => d.title).join(", ")}. Merging keeps this
+            one and appends the other&rsquo;s prose to it; the other is archived, not deleted.
+          </p>
+          {duplicates.map((d) =>
+            confirmMerge === d.id ? (
+              <div className="confirm" key={d.id}>
+                <p>
+                  {d.title} is archived, and its prose is appended below yours under a heading.
+                  Nothing it wrote is discarded.
+                </p>
+                <button
+                  className="btn"
+                  disabled={busy}
+                  onClick={() => {
+                    setConfirmMerge(null);
+                    onMerge(d.id);
+                  }}
+                >
+                  Merge it in
+                </button>
+                <button className="btn" onClick={() => setConfirmMerge(null)}>
+                  Leave both
+                </button>
+              </div>
+            ) : (
+              <button
+                key={d.id}
+                className="btn"
+                disabled={busy}
+                onClick={() => setConfirmMerge(d.id)}
+              >
+                Merge in {d.title}
+              </button>
+            ),
+          )}
         </div>
       )}
 
@@ -438,6 +494,16 @@ function SkillEditor({
           onChange={(e) => onPatch({ body: e.target.value })}
         />
       </label>
+
+      {/* The frontmatter is not on screen — the well below starts at the record —
+          so the version this file carries is stated here or nowhere. */}
+      <p className="muted mono">
+        v{skill.version}
+        {skill.history.length > 0 &&
+          ` · ${skill.history[skill.history.length - 1]!.what}, ${new Date(
+            skill.history[skill.history.length - 1]!.at,
+          ).toLocaleDateString()}`}
+      </p>
 
       <div className="skilledit__actions">
         {confirmRegen ? (

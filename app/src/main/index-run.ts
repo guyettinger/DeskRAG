@@ -25,12 +25,14 @@ import {
   associateFrameAx,
   associateFrames,
   indexSegmentText,
+  renderReflection,
   type BehaviorFeatureExtractor,
   type BlobStore,
   type CaptionProvider as LibCaptionProvider,
   type DualStore,
   type EmbeddingProvider,
   type MultiVectorProvider,
+  type ReflectionProvider,
   type RegionCropper,
   type Reranker,
   type SummaryProvider as LibSummaryProvider,
@@ -38,6 +40,7 @@ import {
 } from "deskrag";
 import { stageSpec, type StageFacts, type StageId } from "./index-plan.js";
 import { digestContextFor } from "./digest-context.js";
+import { composedRoot, reflectionBriefFor } from "./reflection-brief.js";
 import { indexTrace } from "./trace-index.js";
 import { ModelFilesMissingError } from "./model-store.js";
 import { MODELS } from "./models.js";
@@ -63,6 +66,15 @@ export interface Providers {
    * rollup. This only upgrades the prose.
    */
   summarizer: LibSummaryProvider | null;
+  /**
+   * Writes the per-session reflection. Built from the SAME setting as
+   * `summarizer` and therefore null exactly when it is — two objects, one
+   * switch, because the two take different briefs and return different shapes.
+   *
+   * Unlike `summarizer`, null here means the artefact does not exist at all: a
+   * reflection is a judgement and nothing templates one.
+   */
+  reflector: ReflectionProvider | null;
   reranker: Reranker | null;
 }
 
@@ -255,6 +267,73 @@ export const STAGE_RUNNERS: Record<StageId, StageRun> = {
     // not read as a summarized one.
     const how = r.llmNodes === 0 ? "structural" : `${r.llmNodes} summarized`;
     ctx.detail(`${r.levels} levels, ${r.nodes} nodes (${how})`);
+  },
+
+  reflect: async (ctx) => {
+    const writer = ctx.providers.reflector;
+    // The gate reads the same object, so null here is a wiring fault rather than
+    // a configuration one. Say so instead of writing nothing quietly — a stage
+    // that passed its gate and did nothing is the exact shape of the bug the
+    // skipReason discipline exists to make impossible.
+    if (writer === null) {
+      ctx.detail("no reflection model was built for this run");
+      return;
+    }
+
+    const session = ctx.store.getSession(ctx.sessionId);
+    if (session === undefined) return;
+    const segments = ctx.store.getSegmentsBySession(ctx.sessionId);
+    // ONE reader for the root: the note hangs off it and the brief is written
+    // over its children, and two ways of finding it would agree right up until
+    // the day the granularity changed.
+    const root = composedRoot(segments);
+    if (root === undefined) {
+      ctx.detail("nothing to reflect on — this recording has no composed hierarchy");
+      return;
+    }
+    const brief = reflectionBriefFor({
+      segments,
+      summaries: new Map(
+        ctx.store.getSegmentSummariesBySession(ctx.sessionId).map((r) => [r.segmentId, r.text]),
+      ),
+      childrenOf: (id) => ctx.store.getSegmentChildren(id),
+      leavesOf: (id) => ctx.store.getDescendantLeaves(id),
+      events: ctx.store.getEventsBySession(ctx.sessionId),
+      recordedAt: session.startedAt,
+    });
+
+    // Null is a real answer, not a failure: a session composed into one step
+    // gives a note that can only restate it.
+    if (brief === null) {
+      ctx.detail("nothing to reflect on — this recording composed into fewer than two steps");
+      return;
+    }
+
+    // Caught HERE rather than tolerated by the driver. `tolerateFailure` is for
+    // transcribing, which downloads its own weights and can fail for reasons the
+    // machine cannot fix mid-run; a reflection is one chat call whose whole
+    // artefact is optional, and a run that failed over a missing opinion would
+    // take Search index and Trace down with it. The stage still SAYS what
+    // happened — the detail survives on the stage record.
+    let note;
+    try {
+      note = await writer.write(brief);
+    } catch (err) {
+      ctx.detail(
+        `no reflection written — ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return;
+    }
+
+    await ctx.store.putSessionReflection({
+      segmentId: root.id,
+      text: renderReflection(note),
+      // WHICH model, not "llm": the note is an opinion and its author is the
+      // whole of its weight. There is no template path for it to be confused
+      // with.
+      source: `${writer.id} ${writer.model}`,
+    });
+    ctx.detail(`${brief.steps.length} steps read, note written by ${writer.model}`);
   },
 
   searchIndex: async (ctx) => {

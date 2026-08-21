@@ -24,12 +24,14 @@ const ALL_ON: StageFacts = {
   captioner: true,
   hasAudio: true,
   whisper: true,
+  summarizer: true,
 };
 const DEFAULT_INSTALL: StageFacts = {
   patchEmbedder: false,
   captioner: false,
   hasAudio: true,
   whisper: true,
+  summarizer: false,
 };
 
 const ladder = (facts: StageFacts = ALL_ON) => buildStageGraph(initialStages("record", facts));
@@ -99,6 +101,7 @@ describe("buildStageGraph", () => {
       "framePatches",
       "captions",
       "appCaptions",
+      "reflect",
     ]);
   });
 

@@ -451,6 +451,63 @@ describe("frequentRoutes", () => {
   });
 
   /**
+   * THE ACCEPTANCE TEST FOR NEAR-MISS MINING, and the shape came off the real
+   * corpus rather than out of the air (`npm run probe:routes`): the same task
+   * recorded three times, once with a side trip through Finder, keyed as
+   *
+   *     ×2   … → Calculator → TextEdit → Electron
+   *     ×1   … → Calculator → TextEdit → Finder → TextEdit → Electron
+   *
+   * — two routes, both of which read as barely-walked. A DETOUR COSTS TWO
+   * INSERTIONS, because the walk comes back.
+   */
+  it("folds a DETOUR into the route it detoured from, and discloses it", () => {
+    const g = graph(
+      [
+        node("n0", [app("TextEdit")]),
+        node("n1", [app("Google Chrome")]),
+        node("nD", [app("Finder")]),
+        node("n1b", [app("Google Chrome")]),
+      ],
+      [
+        sourcedEdge("a0", "n0", "n1", [{ sessionId: "s1", tMonoStart: 0, tMonoEnd: 100 }]),
+        sourcedEdge("b0", "n0", "n1b", [{ sessionId: "s2", tMonoStart: 0, tMonoEnd: 100 }]),
+        // s2 went to Finder and came BACK — two extra places, not one.
+        sourcedEdge("b1", "n1b", "nD", [{ sessionId: "s2", tMonoStart: 100, tMonoEnd: 200 }]),
+        sourcedEdge("b2", "nD", "n1", [{ sessionId: "s2", tMonoStart: 200, tMonoEnd: 300 }]),
+      ],
+    );
+    const routes = frequentRoutes(g);
+    expect(routes).toHaveLength(1);
+    expect(routes[0]?.count).toBe(2);
+    // Named after the walk WITHOUT the detour: the detour is the variant.
+    expect(routes[0]?.label).toBe("TextEdit → Google Chrome");
+    expect(routes[0]?.variants).toEqual([
+      {
+        key: "TextEdit → Google Chrome → Finder → Google Chrome",
+        label: "TextEdit → Google Chrome → Finder → Google Chrome",
+        count: 1,
+        extraHops: 2,
+        sessionIds: ["s2"],
+      },
+    ]);
+    // The union still lights up everywhere they went, detour included.
+    expect(routes[0]?.edgeIds).toEqual(["a0", "b0", "b1", "b2"]);
+  });
+
+  it("never folds in a recording that merely STOPPED EARLY", () => {
+    // A prefix is contained in the longer walk, but it did not take a side
+    // trip — it did not finish. Two walks that end somewhere different did not
+    // do the same work, and claiming otherwise inflates the recording count.
+    const routes = frequentRoutes(chain({ s1: ["e0", "e1"], s2: ["e0", "e1"], s3: ["e0"] }));
+    expect(routes.map((r) => [r.count, r.label])).toEqual([
+      [2, "TextEdit → Google Chrome → Finder"],
+      [1, "TextEdit → Google Chrome"],
+    ]);
+    expect(routes.every((r) => r.variants.length === 0)).toBe(true);
+  });
+
+  /**
    * The whole reason routes are not a traversal. A graph with no provenance
    * cannot say what was walked, so it says nothing — the screen then points at
    * the rebuild instead of showing invented paths.

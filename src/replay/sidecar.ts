@@ -15,7 +15,7 @@ import type {
   Actuator,
   AxDescriptor,
   AxObservation,
-  Rect,
+  LocateHit,
   UIElement,
   Vec2,
 } from "./types.js";
@@ -118,6 +118,7 @@ export class AxExecSidecar implements Actuator {
       elements: r?.elements ?? [],
       ...(r?.app !== undefined ? { app: r.app } : {}),
       ...(r?.windowTitle !== undefined ? { windowTitle: r.windowTitle } : {}),
+      ...(r?.url !== undefined ? { url: r.url } : {}),
     };
   }
 
@@ -133,9 +134,17 @@ export class AxExecSidecar implements Actuator {
     return r?.outcome === "activated" || r?.outcome === "launched" ? r.outcome : "not-running";
   }
 
-  async locate(d: AxDescriptor): Promise<{ handle: number; bounds: Rect } | null> {
-    const r = await this.send<{ handle: number; bounds: Rect } | null>("locate", { ...d });
-    return r ?? null;
+  async locate(d: AxDescriptor): Promise<LocateHit | null> {
+    const r = await this.send<LocateHit | null>("locate", { ...d });
+    if (r === null || r === undefined) return null;
+    // A STALE binary emits no `surfaceOrigin`, and the absence is meaningful:
+    // the caller's `windowOrigin` then stands, which is the behaviour that
+    // preceded it. Degrading beats throwing mid-plan.
+    return {
+      handle: r.handle,
+      bounds: r.bounds,
+      ...(r.surfaceOrigin !== undefined ? { surfaceOrigin: r.surfaceOrigin } : {}),
+    };
   }
 
   async moveTo(p: Vec2): Promise<void> {

@@ -40,9 +40,10 @@ function useNow(active: boolean): number {
  *
  * ## This REPLACED a wire diagram, and the wires were measured before they went.
  *
- * Twelve stages declare 21 `needs` edges, each routed down its own 9px channel:
- * ~110px of near-identical gray line beside every node, and reduction only
- * reaches 14 because nine of them fan out of `segment` and into `compose`. The
+ * Twelve stages declared 21 `needs` edges then (thirteen and 22 now), each
+ * routed down its own 9px channel: ~110px of near-identical gray line beside
+ * every node, and reduction only reached 14 because nine of them fanned out of
+ * `segment` and into `compose`. The
  * structure is a hub, and parallel wires cannot draw a hub. It is carried by
  * NAMED BANDS now, which is honest only because phases are contiguous runs of
  * the execution order (`stagePhaseViolations()` asserts it).

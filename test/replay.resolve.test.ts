@@ -180,3 +180,90 @@ describe("window-relative agreement", () => {
     expect(r.layer).toBe("point");
   });
 });
+
+/**
+ * A MENU IS A WINDOW TO THE OS AND A CHILD TO ACCESSIBILITY.
+ *
+ * macOS reports an open context menu as the FOCUSED WINDOW, so `focus_change`
+ * carries the menu's frame and `buildAnchor` computes `windowRelative` against
+ * it. The AX tree nests `Menu` UNDER the app window and contains no `Window`
+ * element for it, so the live side offers the app window instead. The two
+ * origins then differ by the menu's offset inside the window, agreement
+ * collapses to zero, and identifier, label AND path are each vetoed as below
+ * the floor — having all three FOUND the element. The ladder drops to `point`,
+ * which is the outcome `windowOrigin` exists to prevent.
+ *
+ * Every number below is measured, from `npm run probe:transfer --why` over a
+ * real six-recording corpus: the Calculator window at 230x408, its context menu
+ * reported at 86x58, and the same "Copy" item recorded at one and replayed at
+ * the other. The AX `Menu` element's frame was byte-identical to the OS menu
+ * window in all three recordings, which is what makes the fix possible at all.
+ */
+describe("resolveAnchor across a menu, whose surface is not a Window", () => {
+  // RECORDED: menu at {317,351}, the item at {317,356} — offset {0,5} in it.
+  const recordedMenuOrigin = { x: 317, y: 351 };
+  const item = { x: 317, y: 356, w: 86, h: 24 };
+  const copy: Anchor = {
+    ax: {
+      role: "MenuItem",
+      label: "Copy",
+      identifier: "_NS:23",
+      path: "Window[0]>Group[0]>ScrollArea[1]>Menu[0]>MenuItem[0]",
+    },
+    visual: { regionId: "r9", framePhash: "cafe", bbox: item },
+    point: {
+      x: 330,
+      y: 367,
+      displayId: "180",
+      windowRelative: { x: 330 - recordedMenuOrigin.x, y: 367 - recordedMenuOrigin.y },
+    },
+  };
+
+  // LIVE: the app window sits at {133,242}; the menu opened at {336,335}, so the
+  // item is at {336,340} — the SAME {0,5} inside its own menu.
+  const liveAppWindow = { x: 133, y: 242 };
+  const liveMenuOrigin = { x: 336, y: 335 };
+  const liveItem = { x: 336, y: 340, w: 86, h: 24 };
+  const found: Locate = async () => ({ handle: 9, bounds: liveItem });
+
+  it("is vetoed when the live origin is the APP WINDOW — the measured defect", async () => {
+    const r = await resolveAnchor(copy, found, { windowOrigin: liveAppWindow });
+    expect(r.layer).toBe("point");
+    // Found by the rung and thrown away on geometry, which is the whole problem:
+    // the fallback clicks where the element is NOT.
+    expect(r.attempts[0]!.rejected).toMatch(/confidence/i);
+  });
+
+  it("resolves when the hit reports the SURFACE it actually sits in", async () => {
+    const withSurface: Locate = async () => ({
+      handle: 9,
+      bounds: liveItem,
+      surfaceOrigin: liveMenuOrigin,
+    });
+    const r = await resolveAnchor(copy, withSurface, { windowOrigin: liveAppWindow });
+    expect(r.layer).toBe("identifier");
+    expect(r.confidence).toBeCloseTo(1, 5);
+  });
+
+  it("the hit's surface WINS over the caller's window origin", async () => {
+    // The caller cannot know which surface a rung will land in — it has not
+    // located anything yet — so the hit is the only thing that can be right.
+    const withSurface: Locate = async () => ({
+      handle: 9,
+      bounds: liveItem,
+      surfaceOrigin: liveMenuOrigin,
+    });
+    const r = await resolveAnchor(copy, withSurface, { windowOrigin: { x: -9999, y: -9999 } });
+    expect(r.layer).toBe("identifier");
+  });
+
+  it("still rejects a genuinely different element inside the right surface", async () => {
+    const elsewhere: Locate = async () => ({
+      handle: 9,
+      bounds: { x: liveMenuOrigin.x + 40, y: liveMenuOrigin.y + 300, w: 12, h: 12 },
+      surfaceOrigin: liveMenuOrigin,
+    });
+    const r = await resolveAnchor(copy, elsewhere, { windowOrigin: liveAppWindow });
+    expect(r.layer).toBe("point");
+  });
+});

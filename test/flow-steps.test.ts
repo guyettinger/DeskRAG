@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { flowApps, flowSteps, flowVariables } from "../app/src/main/flow-steps.js";
+import { allSteps, flowApps, flowVariables, flowWalks } from "../app/src/main/flow-steps.js";
 import type { FlowsDTO, GraphEdgeDTO, GraphNodeDTO } from "@shared/types";
 
 /**
@@ -77,15 +77,23 @@ function flows(): FlowsDTO {
         nodeIds: ["n0", "n1", "n2"],
         edgeIds: ["e0", "e1"],
         sessionIds: ["s1", "s2", "s3"],
+        // All three walked the SAME path: one way, and the rendering is
+        // unchanged from before variants existed.
+        variants: [],
+        walks: [
+          { sessionId: "s1", edgeIds: ["e0", "e1"] },
+          { sessionId: "s2", edgeIds: ["e0", "e1"] },
+          { sessionId: "s3", edgeIds: ["e0", "e1"] },
+        ],
       },
     ],
   };
 }
 
-describe("flowSteps", () => {
+describe("flowWalks", () => {
   it("resolves each edge to its state labels, in route order", () => {
-    const s = flowSteps(flows(), flows().routes[0]!);
-    expect(s.map((x) => x.index)).toEqual([0, 1]);
+    const s = allSteps(flowWalks(flows(), flows().routes[0]!));
+    expect(s.map((x: { index: number }) => x.index)).toEqual([0, 1]);
     expect(s[0]!.from).toBe("TextEdit");
     expect(s[0]!.to).toBe("Google Chrome — github.com");
     expect(s[1]!.to).toBe("Google Chrome — github.com/issues");
@@ -94,17 +102,56 @@ describe("flowSteps", () => {
   it("labels an unknown node rather than dropping the step", () => {
     const f = flows();
     f.graph.edges[0]!.from = "ghost";
-    expect(flowSteps(f, f.routes[0]!)[0]!.from).toBe("ghost (unknown state)");
+    expect(allSteps(flowWalks(f, f.routes[0]!))[0]!.from).toBe("ghost (unknown state)");
   });
 
   it("CARRIES a missing edge rather than skipping it", () => {
     // A step that vanished would make the flow read as shorter than it was.
     const f = flows();
-    f.routes[0]!.edgeIds = ["e0", "nope"];
-    const s = flowSteps(f, f.routes[0]!);
+    for (const w of f.routes[0]!.walks) w.edgeIds = ["e0", "nope"];
+    const s = allSteps(flowWalks(f, f.routes[0]!));
     expect(s).toHaveLength(2);
     expect(s[1]!.missing).toBe(true);
     expect(s[1]!.edgeId).toBe("nope");
+  });
+
+  /**
+   * The defect this function exists to fix. `edgeIds` is the UNION of every
+   * recording's walk and is documented as the canvas highlight; on the real
+   * store two recordings walked 8 edges each, shared 2, and the old renderer
+   * numbered the 14-edge union into a "procedure" no recording ever took.
+   */
+  it("reads the per-recording WALKS, never the union in edgeIds", () => {
+    const f = flows();
+    f.routes[0]!.edgeIds = ["e0", "e1", "nope-a", "nope-b"];
+    const walks = flowWalks(f, f.routes[0]!);
+    expect(walks).toHaveLength(1);
+    expect(walks[0]!.steps.map((st) => st.edgeId)).toEqual(["e0", "e1"]);
+  });
+
+  it("groups identical walks into ONE way, and keeps distinct ones apart", () => {
+    const f = flows();
+    // s1 and s2 did the same thing; s3 went another way through the same apps.
+    f.routes[0]!.walks = [
+      { sessionId: "s1", edgeIds: ["e0", "e1"] },
+      { sessionId: "s2", edgeIds: ["e0", "e1"] },
+      { sessionId: "s3", edgeIds: ["e1", "e0"] },
+    ];
+    const walks = flowWalks(f, f.routes[0]!);
+    expect(walks).toHaveLength(2);
+    // Most-walked first, and the letter comes from the index.
+    expect(walks[0]!.sessionIds).toEqual(["s1", "s2"]);
+    expect(walks[0]!.index).toBe(0);
+    expect(walks[1]!.sessionIds).toEqual(["s3"]);
+    expect(walks[1]!.steps.map((st) => st.edgeId)).toEqual(["e1", "e0"]);
+  });
+
+  it("falls back to the union only when a route carries no walks at all", () => {
+    const f = flows();
+    f.routes[0]!.walks = [];
+    const walks = flowWalks(f, f.routes[0]!);
+    expect(walks).toHaveLength(1);
+    expect(walks[0]!.steps.map((st) => st.edgeId)).toEqual(["e0", "e1"]);
   });
 
   /**
@@ -115,7 +162,7 @@ describe("flowSteps", () => {
   it("marks a step fewer recordings walked than walked the route", () => {
     const f = flows();
     f.graph.edges[0]!.observations = 2;
-    const s = flowSteps(f, f.routes[0]!);
+    const s = allSteps(flowWalks(f, f.routes[0]!));
     expect(s[0]!.everyRecording).toBe(false);
     expect(s[1]!.everyRecording).toBe(true);
   });
@@ -123,11 +170,11 @@ describe("flowSteps", () => {
   it("does not invent a shortfall when the route has no count", () => {
     const f = flows();
     f.routes[0]!.count = 0;
-    expect(flowSteps(f, f.routes[0]!).every((s) => s.everyRecording)).toBe(true);
+    expect(allSteps(flowWalks(f, f.routes[0]!)).every((s: { everyRecording: boolean }) => s.everyRecording)).toBe(true);
   });
 
   it("reports sources shorter than observations without deriving one from the other", () => {
-    const s = flowSteps(flows(), flows().routes[0]!);
+    const s = allSteps(flowWalks(flows(), flows().routes[0]!));
     // e0: 3 observations, 1 source — a recording deleted since.
     expect(s[0]!.observations).toBe(3);
     expect(s[0]!.sourcesBelowObservations).toBe(true);
@@ -139,7 +186,7 @@ describe("flowSteps", () => {
 
   it("copies actions and slots rather than aliasing the DTO", () => {
     const f = flows();
-    const s = flowSteps(f, f.routes[0]!);
+    const s = allSteps(flowWalks(f, f.routes[0]!));
     s[0]!.actions[1]!.slot!.samples.push("mutated");
     expect(f.graph.edges[0]!.actions[1]!.slot!.samples).toEqual(["a", "b"]);
   });
@@ -153,7 +200,7 @@ describe("flowVariables", () => {
    */
   it("takes only the slots on this route's steps", () => {
     const f = flows();
-    const vars = flowVariables(flowSteps(f, f.routes[0]!));
+    const vars = flowVariables(allSteps(flowWalks(f, f.routes[0]!)));
     expect(vars.map((v) => v.name)).toEqual(["q"]);
     expect(vars[0]!.samples).toEqual(["a", "b"]);
   });
@@ -163,13 +210,13 @@ describe("flowVariables", () => {
     f.graph.edges[1]!.actions = [
       { action: "type", target: "T", slot: { name: "q", samples: ["b", "c"] } },
     ];
-    expect(flowVariables(flowSteps(f, f.routes[0]!))[0]!.samples).toEqual(["a", "b", "c"]);
+    expect(flowVariables(allSteps(flowWalks(f, f.routes[0]!)))[0]!.samples).toEqual(["a", "b", "c"]);
   });
 
   it("is empty when nothing was typed", () => {
     const f = flows();
     f.graph.edges[0]!.actions = [{ action: "click", target: "B" }];
-    expect(flowVariables(flowSteps(f, f.routes[0]!))).toEqual([]);
+    expect(flowVariables(allSteps(flowWalks(f, f.routes[0]!)))).toEqual([]);
   });
 });
 

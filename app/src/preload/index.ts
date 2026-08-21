@@ -75,6 +75,7 @@ const api: DeskRagApi = {
     update: (id, patch) => ipcRenderer.invoke(IPC.skillsUpdate, id, patch),
     generate: (id) => ipcRenderer.invoke(IPC.skillsGenerate, id),
     rebind: (id, routeKey) => ipcRenderer.invoke(IPC.skillsRebind, id, routeKey),
+    merge: (keepId, mergeId) => ipcRenderer.invoke(IPC.skillsMerge, keepId, mergeId),
     remove: (id) => ipcRenderer.invoke(IPC.skillsRemove, id),
   },
   mcp: {

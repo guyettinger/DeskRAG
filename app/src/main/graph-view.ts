@@ -15,12 +15,21 @@ import {
   type GraphEdgeDTO,
   type GraphNodeDTO,
   type NodeSourceDTO,
+  type RouteVariantDTO,
+  type RouteWalkDTO,
 } from "@shared/types";
 import { isLocatable } from "deskrag";
 import type { Action, Anchor, EdgeSource, Graph, NodeSource, Predicate, TraceNode } from "deskrag";
 // One definition of what a moment is, shared with the track rail and the
 // keyframe markers. Both modules are pure and root-tested.
 import { laneSec } from "./session-tracks.js";
+// The one implementation of "these two are the same work", shared with
+// `npm run probe:routes`, which is what chose its rule.
+import {
+  clusterRoutes,
+  DEFAULT_CLUSTER_RULE,
+  type ClusterRule,
+} from "./route-cluster.js";
 
 /**
  * Roles whose label names a STATE rather than a document. `Sheet` and `Dialog`
@@ -470,6 +479,14 @@ export function frequentRoutes(
    * `DeskRagService.flows()` is the only thing that reads the store.
    */
   covering: (span: RouteSpan) => CoveringSummary[] = () => [],
+  /**
+   * When two routes are the same work. Parameterised for ONE reason:
+   * `npm run probe:routes` compares rules by calling this function with each of
+   * them, so what it measures is what actually ships. A probe that re-grouped
+   * the keys itself would be measuring a second implementation — the
+   * `ax-dump`/`ax-exec` drift hazard, in the instrument rather than the code.
+   */
+  rule: ClusterRule = DEFAULT_CLUSTER_RULE,
 ): FlowRouteDTO[] {
   const nodeById = new Map(graph.nodes.map((n) => [n.id, n]));
   /** Undefined for a node that describes no state, which names no place. */
@@ -494,8 +511,11 @@ export function frequentRoutes(
   interface Group {
     places: string[];
     nodeIds: string[];
+    /** The UNION, for the canvas highlight. Never rendered as steps. */
     edgeIds: string[];
     sessionIds: string[];
+    /** What each recording actually walked. Parallel to `sessionIds`. */
+    walks: RouteWalkDTO[];
     /** One stretch per recording — what the route's name is derived from. */
     spans: RouteSpan[];
   }
@@ -536,21 +556,97 @@ export function frequentRoutes(
     const key = places.join(" → ");
     const existing = byKey.get(key);
     if (existing === undefined) {
-      byKey.set(key, { places, nodeIds, edgeIds, sessionIds: [sessionId], spans: [span] });
+      byKey.set(key, {
+        places,
+        nodeIds,
+        edgeIds,
+        sessionIds: [sessionId],
+        walks: [{ sessionId, edgeIds: [...edgeIds] }],
+        spans: [span],
+      });
       continue;
     }
     // The union, in first-walked order: these recordings share a shape, not a
-    // path, so the highlight has to show everywhere they actually went.
+    // path, so the HIGHLIGHT has to show everywhere they actually went.
+    //
+    // The per-recording walk is kept BESIDE it rather than thrown away, because
+    // the union is not a path and numbering it asserts an order no recording
+    // walked. `edgeIds` answers "what should light up"; `walks` answers "what
+    // did this recording do", and only the second can become a step list.
     existing.sessionIds.push(sessionId);
+    existing.walks.push({ sessionId, edgeIds: [...edgeIds] });
     existing.spans.push(span);
     for (const id of nodeIds) if (!existing.nodeIds.includes(id)) existing.nodeIds.push(id);
     for (const id of edgeIds) if (!existing.edgeIds.includes(id)) existing.edgeIds.push(id);
   }
 
-  const routes: FlowRouteDTO[] = [...byKey].map(([id, g]) => {
+  // --- the same work, walked slightly differently -------------------------
+  //
+  // Everything above groups by EXACT equality of the place sequence, which is
+  // right about what a route IS and wrong about when two of them are one: a
+  // side trip through Finder renames the key, and identical work lands as two
+  // routes of ×1 that never look like a habit. `route-cluster.ts` merges those,
+  // and merges WHOLE groups so the session ids still partition — which is what
+  // keeps `bindSkill`'s strict majority a proof rather than a threshold.
+  //
+  // Most-walked first, then SHORTEST, so a cluster is named after the walk most
+  // recordings took and — between two walked equally often — the one without
+  // the detour. The detour is the variant; naming the route after it would
+  // publish a procedure with a side trip in the middle of it.
+  const ordered = [...byKey].sort(
+    ([ka, a], [kb, b]) =>
+      b.sessionIds.length - a.sessionIds.length ||
+      a.places.length - b.places.length ||
+      ka.localeCompare(kb),
+  );
+  const clusters = clusterRoutes(
+    ordered.map(([key, g]) => ({ key, places: g.places, count: g.sessionIds.length })),
+    rule,
+  );
+  const groupOf = new Map(ordered);
+
+  const merged: { key: string; group: Group; variants: RouteVariantDTO[] }[] = clusters.map(
+    (cluster) => {
+      const canonical = groupOf.get(cluster.canonical.key)!;
+      // The canonical group's own arrays are never mutated — a merge builds a
+      // new one, so running this twice over one `byKey` gives one answer.
+      const group: Group = {
+        places: canonical.places,
+        nodeIds: [...canonical.nodeIds],
+        edgeIds: [...canonical.edgeIds],
+        sessionIds: [...canonical.sessionIds],
+        walks: [...canonical.walks],
+        spans: [...canonical.spans],
+      };
+      const variants: RouteVariantDTO[] = [];
+      for (const member of cluster.members) {
+        if (member.key === cluster.canonical.key) continue;
+        const g = groupOf.get(member.key)!;
+        group.sessionIds.push(...g.sessionIds);
+        group.walks.push(...g.walks);
+        group.spans.push(...g.spans);
+        // The UNION again, and for the same reason: the highlight has to light
+        // up everywhere the recordings actually went, including the detour.
+        for (const id of g.nodeIds) if (!group.nodeIds.includes(id)) group.nodeIds.push(id);
+        for (const id of g.edgeIds) if (!group.edgeIds.includes(id)) group.edgeIds.push(id);
+        const v = cluster.variants.find((x) => x.key === member.key);
+        variants.push({
+          key: member.key,
+          label: member.places.join(" → "),
+          count: g.sessionIds.length,
+          extraHops: v?.extraHops ?? -1,
+          sessionIds: [...g.sessionIds],
+        });
+      }
+      return { key: cluster.canonical.key, group, variants };
+    },
+  );
+
+  const routes: FlowRouteDTO[] = merged.map(({ key: id, group: g, variants }) => {
     const named = nameRoute(g.spans, covering);
     return {
     id,
+    variants,
     count: g.sessionIds.length,
     name: named.name,
     nameObservations: named.observations,
@@ -561,6 +657,7 @@ export function frequentRoutes(
     nodeIds: g.nodeIds,
     edgeIds: g.edgeIds,
     sessionIds: g.sessionIds,
+    walks: g.walks,
     };
   });
 

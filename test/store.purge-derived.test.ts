@@ -123,6 +123,14 @@ async function seed(store: DualStore): Promise<Seeded> {
   await store.updateSegmentAppCaption(segmentId, "TextEdit window");
   await store.putSegmentTree([{ sessionId, parentId, childId: segmentId }]);
   await store.putSegmentSummaries([{ segmentId: parentId, text: "save the file", source: "llm" }]);
+  // Model-only and hangs off the composed root, so it purges through
+  // `deleteSegmentsBySession` for free — which is exactly the claim this file
+  // exists to check rather than assume.
+  await store.putSessionReflection({
+    segmentId: parentId,
+    text: "Goal: save the file.",
+    source: "ollama fake",
+  });
   await store.putTranscriptClips([
     { id: ulid(), sessionId, tMonoStart: 5, tMonoEnd: 9, text: "hello" },
   ]);

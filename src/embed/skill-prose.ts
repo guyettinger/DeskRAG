@@ -24,6 +24,8 @@
  * Ollama adapter in `ollama-skill-prose.ts` is barrel-safe too (plain fetch).
  */
 
+import { firstJsonObject } from "./json-reply.js";
+
 /**
  * What the model is told about a route.
  *
@@ -53,6 +55,18 @@ export interface SkillBrief {
   variables: { name: string; samples: number }[];
   /** What the evidence does not say, already in words. */
   cautions: string[];
+  /**
+   * The reflection written after each recording this route was built from —
+   * what the session was for, what stalled, what order would have been better.
+   *
+   * Model-written text, fed back to a model, which is why it arrives in its own
+   * field and is labelled as an opinion in the prompt rather than mixed into
+   * `steps`. It exists so the prose can say what went WRONG: the steps record
+   * what happened and are silent about whether it went well, so without this a
+   * skill can only ever describe a task as though it went smoothly. Empty on a
+   * default install, and on any recording indexed before reflections existed.
+   */
+  reflections: string[];
 }
 
 /**
@@ -134,15 +148,20 @@ export function skillPrompt(b: SkillBrief): string {
     for (const c of b.cautions) out.push(`- ${c}`);
   }
 
-  return out.join("\n");
-}
+  // LAST, and labelled twice over. These notes are themselves model output, so
+  // they are an opinion about the recording and not part of the record — a
+  // reflection that hallucinated a step must not be able to launder it into the
+  // steps list by sitting next to it. Naming them as such is also what lets the
+  // prose repeat a warning: the steps say what happened, never how it went.
+  if (b.reflections.length > 0) {
+    out.push(
+      "",
+      "Notes written by a model after watching each recording. These are readings of how the session went, NOT part of the record — do not treat anything here as a step, and do not repeat a claim from a note that the steps above do not show:",
+    );
+    for (const r of b.reflections) out.push("", r.trim());
+  }
 
-interface RawProse {
-  title?: unknown;
-  description?: unknown;
-  overview?: unknown;
-  whenToUse?: unknown;
-  [k: string]: unknown;
+  return out.join("\n");
 }
 
 const FIELDS = ["title", "description", "overview", "whenToUse"] as const;
@@ -161,7 +180,7 @@ const FIELDS = ["title", "description", "overview", "whenToUse"] as const;
  * its prose should not be trusted either.
  */
 export function parseSkillResponse(text: string): SkillProse | undefined {
-  const obj = extractObject(text);
+  const obj = firstJsonObject(text);
   if (obj === undefined) return undefined;
 
   for (const forbidden of ["steps", "recorded", "recordedSteps"]) {
@@ -175,47 +194,6 @@ export function parseSkillResponse(text: string): SkillProse | undefined {
     out[f] = v.trim();
   }
   return out as unknown as SkillProse;
-}
-
-/**
- * The first JSON object in a string.
- *
- * `format: "json"` is a request, not a guarantee, and models still wrap a reply
- * in a fence or a sentence. Brace-matching from the first `{` rather than a
- * regex, so a nested object does not truncate the scan.
- */
-function extractObject(text: string): RawProse | undefined {
-  const start = text.indexOf("{");
-  if (start < 0) return undefined;
-  let depth = 0;
-  let inStr = false;
-  let esc = false;
-  for (let i = start; i < text.length; i += 1) {
-    const c = text[i]!;
-    if (inStr) {
-      if (esc) esc = false;
-      else if (c === "\\") esc = true;
-      else if (c === '"') inStr = false;
-      continue;
-    }
-    if (c === '"') inStr = true;
-    else if (c === "{") depth += 1;
-    else if (c === "}") {
-      depth -= 1;
-      if (depth === 0) {
-        try {
-          const parsed: unknown = JSON.parse(text.slice(start, i + 1));
-          if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-            return undefined;
-          }
-          return parsed as RawProse;
-        } catch {
-          return undefined;
-        }
-      }
-    }
-  }
-  return undefined;
 }
 
 /**

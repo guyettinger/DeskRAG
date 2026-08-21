@@ -116,4 +116,5 @@ const LABEL_FACTS: StageFacts = {
   captioner: true,
   hasAudio: true,
   whisper: true,
+  summarizer: true,
 };

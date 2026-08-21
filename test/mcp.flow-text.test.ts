@@ -75,6 +75,11 @@ function flows(): FlowsDTO {
         nodeIds: ["n0", "n1", "n2"],
         edgeIds: ["e0", "e1"],
         sessionIds: ["s1", "s2"],
+        variants: [],
+        walks: [
+          { sessionId: "s1", edgeIds: ["e0", "e1"] },
+          { sessionId: "s2", edgeIds: ["e0", "e1"] },
+        ],
       },
     ],
   };
@@ -130,7 +135,9 @@ describe("renderFlow", () => {
 
   it("names a missing edge instead of skipping it silently", () => {
     const f = flows();
-    f.routes[0]!.edgeIds = ["e0", "nope"];
+    // Into the WALKS, which is what renders steps. `edgeIds` is the canvas
+    // highlight and no longer reaches a step list.
+    for (const w of f.routes[0]!.walks) w.edgeIds = ["e0", "nope"];
     const text = renderFlow(f, f.routes[0]!);
     // A step that vanished would make the flow read as shorter than it was.
     expect(text).toMatch(/nope/);

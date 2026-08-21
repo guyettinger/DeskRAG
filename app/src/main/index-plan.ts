@@ -40,6 +40,7 @@ export type StageId =
   | "appCaptions"
   | "transcribe"
   | "compose"
+  | "reflect"
   | "searchIndex"
   | "trace";
 
@@ -57,6 +58,17 @@ export interface StageFacts {
   captioner: boolean;
   hasAudio: boolean;
   whisper: boolean;
+  /**
+   * A chat model is configured for summarising — which is the SAME setting the
+   * reflection is written by, and deliberately one fact rather than two.
+   *
+   * Named for the setting rather than for the stage because that is what both
+   * derivations read: `stageWorld` asks the provider it built, `plannedFacts`
+   * asks `summaryProvider !== "none"`, and the two have to agree. Composing does
+   * NOT gate on it — the hierarchy is always built and a missing model costs
+   * prose, not shape. A reflection has no such structural half, so it does.
+   */
+  summarizer: boolean;
 }
 
 export interface StageSpec {
@@ -257,6 +269,31 @@ export const INDEX_STAGES: readonly StageSpec[] = [
     describe: () => "Gathers actions into tasks and a session, each named by what it was for.",
     needs: ["digest", "captions", "appCaptions", "transcribe"],
     gate: always,
+    reindex: "per-session",
+  },
+  {
+    // The one MODEL-ONLY stage, and the only one whose absence costs a whole
+    // artefact rather than its prose. A reflection is a judgement about how a
+    // session went — what dragged, what order would have been better — and every
+    // other derived row in this pipeline is silent about that by construction: a
+    // digest names a gesture, a caption describes a screen, a rollup names a
+    // stretch of work. None of them can say a session stalled, so there is no
+    // structural fallback to write and none is invented; with no model there is
+    // simply no note, and the ladder says so.
+    //
+    // AFTER Composing and not before it: the note is written over the composed
+    // steps and their durations, which do not exist until that stage has run.
+    // Before Search index only because the table's order is the run's order and
+    // the note is not indexed — it reaches a reader through a skill's prompt,
+    // never through a query.
+    id: "reflect",
+    label: () => "Reflecting",
+    phase: "consolidation",
+    describe: () =>
+      "Writes a short note on how this session went — what it was for, what stalled, what order would have been better.",
+    needs: ["compose"],
+    gate: (f) => f.summarizer,
+    skipReason: () => "no summary model configured — a reflection is a judgement, and nothing templates one",
     reindex: "per-session",
   },
   {

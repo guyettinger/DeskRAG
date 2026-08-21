@@ -101,6 +101,34 @@ CREATE TABLE IF NOT EXISTS segment_summary (
   source     TEXT NOT NULL          -- 'llm' | 'template'
 );
 
+-- The note written after a recording: what it was for, what stalled, what order
+-- would have been better. Keyed on the session's COMPOSED ROOT segment.
+--
+-- Keyed on a segment rather than on a session for two reasons that point the
+-- same way. The root is what a reflection is ABOUT — it exists only after
+-- composing, because the note is a judgement over the composed steps and there
+-- is nothing to judge before them — and ON DELETE CASCADE off segment(id) is
+-- what makes deleteSegmentsBySession purge this for free, so a re-index
+-- rewrites the note with the providers configured now rather than leaving a
+-- stale opinion attached to a rebuilt hierarchy.
+--
+-- It therefore carries NO timestamp of its own: a reflection inherits its
+-- session's t_mono through the root segment it hangs off. A wall-clock "written
+-- at" would be the one number in this table that describes the indexing run
+-- rather than the recording, and would drift by a re-index.
+--
+-- source is the MODEL that wrote it — "ollama qwen3:30b" — not the
+-- 'llm' | 'template' of segment_summary. There is no template path here (a
+-- structural rollup can name a group of actions; it cannot say a session
+-- stalled), so 'llm' would carry no information at all. What a reader needs is
+-- WHICH model, because a reflection is an opinion and its author is the whole of
+-- its weight.
+CREATE TABLE IF NOT EXISTS session_reflection (
+  segment_id TEXT PRIMARY KEY REFERENCES segment(id) ON DELETE CASCADE,
+  text       TEXT NOT NULL,
+  source     TEXT NOT NULL          -- the writer, e.g. 'ollama qwen3:30b'
+);
+
 -- Utterance-level speech, with the timings whisper.cpp's -oj output actually
 -- reports. The segment-level segment.transcript column stays as it is: it is
 -- what the Tier-1 transcript vector view embeds. These rows are the finer
@@ -440,6 +468,7 @@ export const DERIVED_SESSION_TABLES = [
   "segment_app_caption",
   "segment_tree",
   "segment_summary",
+  "session_reflection",
   "segment_fts",
   "transcript_clip",
   "frame_segment",

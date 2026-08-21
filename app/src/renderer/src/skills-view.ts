@@ -21,6 +21,11 @@ const NEEDS_ATTENTION: readonly SkillBindState[] = ["rebound", "ambiguous", "orp
 
 export function bandOf(skill: SkillDTO): SkillBand {
   if (skill.state === "archived") return "archived";
+  // A duplicate needs attention for the same reason a re-bind does: something
+  // about this skill is unresolved and only a person can resolve it. It is not
+  // a binding STATE — the binding is exact and correct on both halves — so it
+  // is checked separately rather than folded into `SkillBindState`.
+  if (skill.duplicates.length > 0) return "attention";
   return NEEDS_ATTENTION.includes(skill.binding.state) ? "attention" : "mine";
 }
 
@@ -60,6 +65,10 @@ export function bandSkills(skills: readonly SkillDTO[]): SkillBands {
  */
 export function bindingChip(skill: SkillDTO): string | null {
   const b = skill.binding;
+  // Said FIRST: a duplicate is the one thing here that another skill also
+  // claims, and a row reading "re-bound" while two files describe one route
+  // points at the smaller of the two problems.
+  if (skill.duplicates.length > 0) return "duplicated";
   switch (b.state) {
     case "rebound":
       return "re-bound";

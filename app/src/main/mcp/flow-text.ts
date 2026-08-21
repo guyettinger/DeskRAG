@@ -9,7 +9,7 @@
  */
 
 import type { FlowRouteDTO, FlowsDTO } from "@shared/types";
-import { flowSteps, type FlowStep, type FlowStepAction } from "../flow-steps.js";
+import { flowWalks, type FlowStep, type FlowStepAction } from "../flow-steps.js";
 
 /** A route by its id, or undefined — the caller reports the miss. */
 export function findRoute(flows: FlowsDTO, routeId: string): FlowRouteDTO | undefined {
@@ -76,15 +76,41 @@ export function renderFlow(flows: FlowsDTO, route: FlowRouteDTO): string {
             ? ` ${route.nameObservations} of ${route.count} recordings agreed on that name.`
             : ""),
   );
+
+  // The DISTINCT walks, never the union of `route.edgeIds`. The union is the
+  // canvas highlight; numbering it here would answer "how did I do this last
+  // time" with a path no recording took. One way renders exactly as it always
+  // did — the heading appears only when the recordings actually disagreed.
+  const walks = flowWalks(flows, route);
+  const many = walks.length > 1;
+  if (many) {
+    out.push(
+      `These recordings did NOT take the same path. ${walks.length} distinct ways are shown ` +
+        `below; follow one of them, not all of them in sequence.`,
+    );
+  }
   out.push("");
 
-  for (const step of flowSteps(flows, route)) {
-    if (step.missing) {
-      // Skipping it would make the flow read as shorter than it was.
-      out.push(`Step ${step.index + 1} — edge ${step.edgeId} is not in the graph (index defect)`, "");
-      continue;
+  for (const walk of walks) {
+    if (many) {
+      const n = walk.sessionIds.length;
+      out.push(
+        `Way ${String.fromCharCode(65 + walk.index)} — ${walk.steps.length} steps, ` +
+          `${n === 1 ? "1 recording" : `${n} recordings`}`,
+        "",
+      );
     }
-    out.push(...stepLines(step), "");
+    for (const step of walk.steps) {
+      if (step.missing) {
+        // Skipping it would make the flow read as shorter than it was.
+        out.push(
+          `Step ${step.index + 1} — edge ${step.edgeId} is not in the graph (index defect)`,
+          "",
+        );
+        continue;
+      }
+      out.push(...stepLines(step), "");
+    }
   }
 
   return out.join("\n").trimEnd();
@@ -105,7 +131,15 @@ export function renderFlowList(flows: FlowsDTO): string {
   return flows.routes
     .map((r) => {
       const times = r.count === 1 ? "1 recording" : `${r.count} recordings`;
-      return `${r.name ?? r.label}\n  id: ${r.id}\n  ${times} · ${r.edgeIds.length} step(s)\n  states: ${r.label}`;
+      // NOT `edgeIds.length`, which is the union and counts steps no single
+      // recording walked. Distinct walks, so a route the recordings disagreed
+      // about says so in the list rather than only in the detail.
+      const ways = flowWalks(flows, r);
+      const shape =
+        ways.length === 1
+          ? `${ways[0]?.steps.length ?? 0} step(s)`
+          : `${ways.length} different ways of ${ways.map((w) => w.steps.length).join("/")} step(s)`;
+      return `${r.name ?? r.label}\n  id: ${r.id}\n  ${times} · ${shape}\n  states: ${r.label}`;
     })
     .join("\n\n");
 }

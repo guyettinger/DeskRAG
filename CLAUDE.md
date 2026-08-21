@@ -44,6 +44,26 @@ npm run probe:skills          # keep a real route as a SKILL.md and read what it
                               # byte-identical, and that the RECORD survives a real model call.
                               # Prints the configuration it found BEFORE asserting. Its one
                               # write is disclosed: it keeps the top proposal.
+npm run probe:merge           # the skill WRITE paths in the real app: what moves a version
+                              # and what deliberately does not, the duplicate disclosure, and
+                              # a merge. `deskrag-service.ts` imports electron, so the root
+                              # suite CANNOT construct it -- the pure halves are unit-tested
+                              # and this is the only check on the wiring between them. It
+                              # writes, so it writes to a COPY: the real <userData> is cloned
+                              # (APFS copy-on-write) and the app is launched against the clone,
+                              # which is deleted at the end. The real store is opened once, by
+                              # `cp`, and never by the app.
+npm run probe:reflect         # does a REAL model write a reflection into a real store, and
+                              # does the note stay OUT of the record. `deskrag-service.ts`
+                              # imports electron, so the root suite cannot construct the
+                              # stage -- the pure halves are unit-tested and this is the only
+                              # check on the wiring. It WRITES, so it writes to a COPY: the
+                              # real <userData> is cloned (APFS copy-on-write), the app is
+                              # launched against the clone, and the clone is deleted. It also
+                              # turns CAPTIONS and FRAME PATCHES off in the clone and says so
+                              # -- measured, they are essentially the whole cost of a re-index
+                              # (51m + 50m + minutes) and Reflecting reads none of them.
+                              # Prints the configuration BEFORE asserting, and prints the note.
 npm run probe:highlight       # sweep the patch-highlight FLOOR over real frames + known answers
 npm run probe:embed           # which TEXT model retrieves better on the real store.
                               # Read-only (SQLite readonly, stdout only); drives the real
@@ -52,6 +72,37 @@ npm run probe:embed           # which TEXT model retrieves better on the real st
                               # -- a desktop digest corpus is mostly repeats (LIB-14: 750
                               # digests, 144 distinct), so scoring by segment id caps top-1
                               # at 1/85 and measures noise. See docs/internals/models.md.
+npm run probe:routes          # which mining rule turns many recordings into the right
+                              # number of routes. Read-only: launches the real app, reads
+                              # flows.graph() over IPC, compares exact / insertions / lcs /
+                              # jaccard grouping over the route keys the app already
+                              # computed. PRINTS THE CORPUS FIRST and says so when it is
+                              # too small to be a measurement -- the numbers quoted in
+                              # graph-view.ts came from a 9-recording store that is gone.
+npm run probe:transfer        # does a kept skill still resolve against a recording it was
+                              # NOT built from -- the decisive question, and the one nothing
+                              # else answers. Verifies each route state against the held-out
+                              # recording's own AX moments (monotone forward scan), then
+                              # resolves each edge anchor. ALWAYS runs a CONTROL against
+                              # different work: a transfer test that can only say yes measures
+                              # nothing. Zero-predicate states are disclosed, never counted --
+                              # an empty set is a subset of every observation. Read-only twice
+                              # over (SQLite readonly, no DualStore, no executeRun, plus the
+                              # replay-probe read-only proxy). It also reports the EVAL:
+                              # coverage of the RECURRING routes (a route walked once is an
+                              # observation, not a habit; a dismissal is an ANSWER and counts as
+                              # covered), and an aggregate transfer rate printed BESIDE ITS
+                              # CONTROL -- a rate quoted without its control is not evidence.
+npm run probe:stability       # does the library MOVE. A route's key is its place-label
+                              # sequence and `rebuildGraph` replays the whole graph, so if the
+                              # keys drift every stored routeKey is stale. Three full
+                              # re-index + re-mine cycles, comparing the route key set and how
+                              # every kept skill binds. The keys are PREDICTED not to move at
+                              # all -- trace-index reads events, AX and regions, all
+                              # deterministic -- so any drift is a finding, not noise. Names DO
+                              # move (a model composes them) and are printed, never counted --
+                              # measured, 12 of 12 renamed while 0 of 4 keys moved.
+                              # It WRITES: clones <userData>, re-indexes the CLONE, deletes it.
 npm run probe:patchgeom       # is the patch->box map DISPLACED? paints a marker at a known cell,
                               # re-embeds, and reports signed delta in cells. Read-only (SQLite
                               # readonly, writes only PNGs). Run this BEFORE touching geometry.ts.
@@ -184,13 +235,14 @@ before you change anything — most of them were paid for twice, and several wer
 - **An EMPTY whisper setting means "default", never "off".** Reading it as "off" made transcription unreachable *and* stopped the model download, presenting as a broken download.
 - **`ensureToolPath()` runs before anything can spawn** — a packaged app inherits no Homebrew, so `ffmpeg` and `whisper-cli` appear uninstalled only in a packaged build.
 - **Bytes don't go over IPC**: `deskrag://frame/<blobId>` buffers, `deskrag://media/<blobId>` streams with `Range` → `206`.
+- **REFLECTING IS THE ONE MODEL-ONLY STAGE, and the only one whose absence costs a whole artefact rather than its prose.** Every other derived row is a measurement and *none of them can say a session went badly* — a skill built from them alone can only describe a task as though it went smoothly. So a reflection is a judgement, and nothing templates one: with no summary model there is no note, and the ladder draws the stage skipped with its reason. It runs after `compose` and reads the composed ROOT's own children as the steps; **fewer than two steps and there is no note**, because one step can only be restated. `session_reflection` hangs off `segment(id) ON DELETE CASCADE` so a purge reaches it for free, carries **no timestamp** (it inherits the session's `t_mono` through the root), and its `source` is the MODEL that wrote it, not `'llm' | 'template'` — there being no template path, `'llm'` would say nothing. A note reaches a skill only as an **opinion** in `skillPrompt`, labelled *not part of the record*; `recordedBlocks()` still takes the route and nothing else.
 - **A SKILL IS AUTHORED: no purge, re-index or trace rebuild may touch it, and its binding is DISCLOSED, never silently repaired.** `AUTHORED_TABLES` is a fifth `schema.ts` bucket because the question a purge asks is *can it be remade* — prose a person wrote cannot. A route's key is its place-label sequence, so one extra app hop renames it and every re-index re-keys everything; `bindSkill` re-resolves by strict-majority session overlap (the sessionIds PARTITION, so a majority has at most one winner mathematically) and **declines on a tie**. The bound session ids are JSON, never an FK, or deleting a recording would cascade away the user's writing instead of just changing what the skill reports. **A model writes the PROSE and never the record**: `recordedBlocks()` takes the route and nothing else, so there is no path by which model output reaches the steps — asserted against an adversarial body in the suite, and against a real 30B model by `probe:skills`.
 - **The MCP endpoint is READ-ONLY BY CONSTRUCTION**, guarded by `test/mcp.readonly.test.ts`. **The Host check is what closes DNS rebinding** — the Origin check cannot. There is deliberately no token, and it shows no score.
 
 ### The app's renderer → [app-ui.md](docs/internals/app-ui.md)
 - **NOTHING TRUNCATES.** A label either fits or is withheld (`labelFits`), because an ellipsis hides a broken layout. There is no `text-overflow: ellipsis` in the rail.
 - **A RECORD-SCREEN SIGNAL CARD SAYS WHAT IT CAPTURES AND WHAT IT HAS CAPTURED, and its lamp means ATTACHED, not configured.** `describe` is required (the `StageSpec.describe` precedent); the well always answers, in words when there is no figure. Green was derived from Settings plus permission while `activeSignals` sat unread, so a screen producer that found no display showed green. Digital silence (peak exactly 0) is called out — that is the −91 dB microphone that left a perfectly healthy-looking store.
-- **The Indexing ladder's ROW is execution order**, because `runStages` is a strictly sequential loop and a free DAG layout would assert a concurrency the app does not have. **The dependency WIRES ARE GONE and the shape is carried by NAMED BANDS** (`StagePhase`): twelve stages declare 21 `needs` edges, and transitive reduction only reaches 14 because NINE of them fan out of `segment` and into `compose` — a hub cannot be drawn with parallel lines, and the 12-channel gutter was ~110px of thicket that every DOM assertion passed. A band is legal ONLY because phases are contiguous runs of the table; `stagePhaseViolations()` asserts it, and a split phase would put a band head mid-run with nothing failing.
+- **The Indexing ladder's ROW is execution order**, because `runStages` is a strictly sequential loop and a free DAG layout would assert a concurrency the app does not have. **The dependency WIRES ARE GONE and the shape is carried by NAMED BANDS** (`StagePhase`): twelve stages declared 21 `needs` edges when it was measured — thirteen and 22 now — and transitive reduction only reached 14 because nine of them fanned out of `segment` and into `compose` — a hub cannot be drawn with parallel lines, and the 12-channel gutter was ~110px of thicket that every DOM assertion passed. A band is legal ONLY because phases are contiguous runs of the table; `stagePhaseViolations()` asserts it, and a split phase would put a band head mid-run with nothing failing.
 - **A stage meter is DETERMINATE only where the stage counts its own units; everything else shimmers and SAYS SO.** `StageProgress` is threaded from `onProgress` hooks in `src/represent/*`, and Composing deliberately has none — its cost is inside `composeLadder`, whose model-call total is unknown until each frontier exists, so any total would be invented. The rate is measured against `StageProgress.at`, the clock the count was OBSERVED at: against a live clock a stage at 2/4 climbed "1.0s each" → "7.0s each" with nothing completing. There is no ETA.
 - **The rollup's total is Σ STAGE TIME and the wall clock sits beside it**, because the worker holds between stages — collapsing them would contradict the queue row's own "took …" in one glance. A sliver is folded and COUNTED, never widened, and at most `MAX_SHARE_SEGMENTS` blocks draw because that is the size of the palette.
 - **The queue snapshot must be emitted AFTER its write lands** (`persistAndEmit`): `indexQueue()` reads `store.listIndexJobs()`, so emitting first publishes the previous ladder. Measured — the screen ran a whole stage behind, with `captions` at 2/4 while the DOM still marked Frame patches running.

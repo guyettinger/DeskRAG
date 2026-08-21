@@ -26,9 +26,10 @@ const NOTHING: StageFacts = {
   captioner: false,
   hasAudio: false,
   whisper: false,
+  summarizer: false,
 };
 
-/** Every combination of the four facts — 16 of them. */
+/** Every combination of the five facts — 32 of them. */
 const allFacts = (): StageFacts[] => {
   const keys = Object.keys(NOTHING) as (keyof StageFacts)[];
   const out: StageFacts[] = [];
@@ -75,6 +76,21 @@ describe("planStages", () => {
     expect(INDEX_STAGES.filter((s) => s.gate({ ...NOTHING, patchEmbedder: true })).length).toBe(
       INDEX_STAGES.filter((s) => s.gate(NOTHING)).length + 1,
     );
+  });
+
+  /**
+   * The ONE model-only stage. Composing is always on because the hierarchy has a
+   * structural half; a reflection has none — a rollup can name a group of
+   * actions but cannot say a session dragged — so with no model there is no
+   * note at all rather than an invented one.
+   */
+  it("gates reflecting on the summary model, and puts it after composing", () => {
+    expect(planStages(NOTHING)).not.toContain("reflect");
+    const plan = planStages({ ...NOTHING, summarizer: true });
+    expect(plan).toContain("reflect");
+    expect(plan.indexOf("reflect")).toBeGreaterThan(plan.indexOf("compose"));
+    // Composing itself never gates on it: a default install still gets a tree.
+    expect(planStages(NOTHING)).toContain("compose");
   });
 
   it("adds both caption stages from the one captioner gate", () => {
@@ -206,6 +222,12 @@ describe("INDEX_STAGES", () => {
    * discard the graph and replay every session — which makes trace the one stage
    * a per-session loop must skip.
    */
+  /**
+   * Re-checked when Reflecting was added, deliberately rather than incidentally.
+   * A reflection is written over ONE recording's composed steps, so it is
+   * per-session like everything else; only the trace graph accretes across the
+   * library. Nothing here changed, and that is the answer, not an omission.
+   */
   it("marks trace as the library finisher and everything else per-session", () => {
     for (const s of INDEX_STAGES) {
       expect(s.reindex).toBe(s.id === "trace" ? "library-finisher" : "per-session");
@@ -216,6 +238,15 @@ describe("INDEX_STAGES", () => {
    * Transcription is the only stage that downloads on the indexing path, and
    * Trace runs after it. A session with no transcript is still a session; a
    * session with no graph is one the executor cannot use.
+   */
+  /**
+   * Also re-checked when Reflecting was added. Reflecting CAN fail — it is a
+   * chat call to a daemon that may be down — but it catches its own failure and
+   * reports it as the stage's detail, so the driver never sees one. That is a
+   * different mechanism from `tolerateFailure`, which exists for transcribing
+   * because transcribing downloads its own weights mid-run and its failures are
+   * not the caller's to swallow. Widening this list would have let a missing
+   * opinion take Search index and Trace down with it.
    */
   it("tolerates failure in transcribing and nowhere else", () => {
     for (const s of INDEX_STAGES) {
@@ -228,9 +259,9 @@ describe("INDEX_STAGES", () => {
  * The bands the Indexing screen draws.
  *
  * Phases replaced a wire diagram that was measured and failed: twelve stages
- * declare 21 `needs` edges, each routed down its own channel, and transitive
- * reduction only reaches 14 because NINE of them fan out of `segment` and into
- * `compose`. A hub cannot be drawn with parallel lines, so the structure is
+ * declared 21 `needs` edges at the time (thirteen and 22 now), each routed down
+ * its own channel, and transitive reduction only reached 14 because NINE of them
+ * fanned out of `segment` and into `compose`. A hub cannot be drawn with parallel lines, so the structure is
  * carried by named bands — and a band is only honest if its stages are ADJACENT
  * in the run, which is what these assert.
  */

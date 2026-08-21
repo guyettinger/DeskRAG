@@ -162,6 +162,49 @@ try {
     console.log("screenshot: /tmp/skills-screen.png");
   }
 
+  // --- a route is a PATH, not a union --------------------------------------
+  //
+  // `FlowRouteDTO.edgeIds` is the union of every recording's walk and exists for
+  // the canvas highlight. Rendering it as a numbered procedure published a
+  // 14-step list on this store that neither of its two recordings walked — they
+  // walked 8 edges each and shared 2. Nothing in `npm test` can see this: the
+  // suite's fixtures are hand-built, and a fixture agrees with whatever the code
+  // assumes. Only a real graph has recordings that disagree.
+  const routes = await page.evaluate(async () => {
+    const flows = await window.deskrag.flows.graph();
+    return (flows?.routes ?? []).map((r) => ({
+      id: r.id,
+      count: r.count,
+      union: r.edgeIds.length,
+      walks: (r.walks ?? []).map((w) => w.edgeIds.join("\u0000")),
+    }));
+  });
+
+  console.log("\nRoutes — ways vs union");
+  for (const r of routes) {
+    const ways = [...new Set(r.walks)];
+    const sizes = ways.map((w) => (w === "" ? 0 : w.split("\u0000").length));
+    console.log(
+      `  ${r.count}x  union ${String(r.union).padStart(3)}  ways ${ways.length} of ${sizes.join("/")}  ${r.id}`,
+    );
+    // Every recording contributes a walk, or a way was invented from nothing.
+    ok(`walks cover every recording — ${r.id.slice(0, 40)}`, r.walks.length === r.count);
+    // The union is exactly what the ways cover: no more (a highlight showing an
+    // edge nobody walked) and no less (a walk missing from the highlight).
+    const covered = new Set(ways.flatMap((w) => (w === "" ? [] : w.split("\u0000"))));
+    ok(`the union is exactly the ways' edges — ${r.id.slice(0, 40)}`, covered.size === r.union,
+       `${covered.size} vs ${r.union}`);
+    // THE DEFECT: when the recordings disagreed, no way may be as long as the
+    // union — a way that long IS the union, numbered.
+    if (ways.length > 1) {
+      ok(
+        `no way is the whole union — ${r.id.slice(0, 40)}`,
+        Math.max(...sizes) < r.union,
+        `longest way ${Math.max(...sizes)}, union ${r.union}`,
+      );
+    }
+  }
+
   // --- geometry, which a screenshot cannot answer --------------------------
   const geo = await page.evaluate(() => {
     const page_ = document.querySelector(".page.skills");

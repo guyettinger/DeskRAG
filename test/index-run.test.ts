@@ -24,6 +24,7 @@ const world = {
     captioner: false,
     hasAudio: false,
     whisper: false,
+    summarizer: false,
   },
 } as unknown as StageWorld;
 
