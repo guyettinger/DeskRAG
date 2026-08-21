@@ -79,6 +79,7 @@ function flows(): FlowsDTO {
         sessionIds: ["s1", "s2", "s3"],
         // All three walked the SAME path: one way, and the rendering is
         // unchanged from before variants existed.
+        variants: [],
         walks: [
           { sessionId: "s1", edgeIds: ["e0", "e1"] },
           { sessionId: "s2", edgeIds: ["e0", "e1"] },

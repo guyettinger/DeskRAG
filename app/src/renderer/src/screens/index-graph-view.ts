@@ -11,7 +11,7 @@
  *
  * This module used to place twelve absolutely-positioned nodes and route their
  * `needs` edges down a gutter of 9px channels. It was measured and it failed:
- * twelve stages declare **21** edges, so the gutter was ~110px of near-identical
+ * twelve stages declared **21** edges when it was measured, so the gutter was ~110px of near-identical
  * gray line beside every node, and transitive reduction only reaches **14**
  * because NINE of those are fan-out from `segment` (5 out-edges) and fan-in to
  * `compose` (4 in-edges). The dependency structure is hub-shaped, and parallel

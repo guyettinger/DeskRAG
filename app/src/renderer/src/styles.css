@@ -3655,10 +3655,10 @@ select {
    that would assert a concurrency this app does not have.
 
    THE WIRES ARE GONE, AND THEY WERE MEASURED BEFORE THEY WENT. Twelve stages
-   declare 21 `needs` edges; each got its own 9px channel, so the gutter was
-   ~110px of near-identical gray line beside every node. Transitive reduction
-   only reaches 14, because NINE of those fan out of `segment` and into
-   `compose` — the dependency structure is a hub, and parallel wires cannot draw
+   declared 21 `needs` edges then (thirteen and 22 now); each got its own 9px
+   channel, so the gutter was ~110px of near-identical gray line beside every
+   node. Transitive reduction only reached 14, because NINE of those fanned out
+   of `segment` and into `compose` — the dependency structure is a hub, and parallel wires cannot draw
    a hub. Named bands carry it in words instead, which is honest only because
    phases are contiguous runs of the execution order. */
 .stagemap {

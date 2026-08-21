@@ -37,6 +37,7 @@
     "paths": {
       "@shared/types": ["./app/src/shared/types.ts"],
       "@shared/evidence": ["./app/src/shared/evidence.ts"],
+      "@shared/route-ways": ["./app/src/shared/route-ways.ts"],
       "deskrag": ["./src/index.ts"]
     }
   },

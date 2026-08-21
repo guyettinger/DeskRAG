@@ -199,6 +199,24 @@ export interface SegmentSummaryInsert {
 
 export type SegmentSummaryRow = SegmentSummaryInsert;
 
+/**
+ * The note written after a recording, keyed on its composed ROOT segment.
+ *
+ * `source` is the model that wrote it ("ollama qwen3:30b"), NOT the
+ * `SummarySource` discriminator: there is no template path — a reflection is a
+ * judgement and only a model makes one — so "llm" would say nothing. Which model
+ * is the disclosure that matters, because the note is an opinion.
+ *
+ * No timestamp: it inherits its session's `t_mono` through the root segment.
+ */
+export interface SessionReflectionInsert {
+  segmentId: string;
+  text: string;
+  source: string;
+}
+
+export type SessionReflectionRow = SessionReflectionInsert;
+
 /** Patch the text columns of an already-persisted segment (represent/ fills these). */
 export interface SegmentPatch {
   digest?: string;
@@ -533,6 +551,20 @@ export interface Store {
   getSegmentSummary(segmentId: string): SegmentSummaryRow | undefined;
   /** Every composed summary in a session. */
   getSegmentSummariesBySession(sessionId: string): SegmentSummaryRow[];
+  /**
+   * Write the reflection for a session's composed root, replacing any existing
+   * one. Model-only, so there is nothing to write when no model ran.
+   */
+  putSessionReflection(row: SessionReflectionInsert): Promise<void>;
+  /** The reflection hanging off one segment, or undefined. */
+  getSessionReflection(segmentId: string): SessionReflectionRow | undefined;
+  /**
+   * Every reflection in a session — at most one in practice, since composing
+   * deletes the previous root, but returned as a list for the same reason
+   * `getSegmentSummariesBySession` is: the join is by segment, and asserting
+   * uniqueness here would be asserting it in the wrong place.
+   */
+  getSessionReflectionsBySession(sessionId: string): SessionReflectionRow[];
   /**
    * Delete segments by id — Lance vectors first, then the SQLite rows, the same
    * order `deleteSession` uses.

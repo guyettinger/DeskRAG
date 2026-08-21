@@ -62,6 +62,8 @@ The fixed three-level ladder above `action` — what each level asks, when a lev
 
 **`source` is disclosure, not bookkeeping.** `llm` vs `template` is what stops a structurally-composed hierarchy masquerading as a summarized one: the rail sets a lane `warning`, the Library dims a rollup. Composing **cannot fail the run** — every provider error degrades that block to the structural path, or to nothing at all for a model-only level.
 
+**A REFLECTION IS NOT A FOURTH LEVEL, and must not be added as one.** The ladder answers "what was this a part of" at three altitudes and every rung is a PARTITION of the rung below — that is what makes a level a level, and what `validatePartition` checks. A reflection asks a different question entirely ("how did this go"), partitions nothing, and would have exactly one member, so a level holding it would be elided by the very rule that exists to stop a node restating its only child. It lives beside the root instead, in `session_reflection`, keyed on the root segment — see [app-main.md](./app-main.md). The other reason it cannot be a level: every rung here has a structural fallback and composing can never fail the run, whereas a rollup can name a group of actions but cannot say a session dragged, so a reflection is model-only or absent.
+
 ---
 
 See also: [represent-and-retrieve.md](./represent-and-retrieve.md) · [app-main.md](./app-main.md) (stage position) · `../../CLAUDE.md`

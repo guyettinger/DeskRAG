@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   briefFor,
   cautionsFor,
+  MERGED_HEADING,
+  mergedBody,
   recordedBlocks,
   renderSkillMarkdown,
   slugify,
@@ -93,6 +95,7 @@ function flows(): FlowsDTO {
         nodeIds: ["n0", "n1"],
         edgeIds: ["e0"],
         sessionIds: ["s1", "s2"],
+        variants: [],
         walks: [
           { sessionId: "s1", edgeIds: ["e0"] },
           { sessionId: "s2", edgeIds: ["e0"] },
@@ -108,6 +111,7 @@ const docInput = (over: Partial<SkillDocInput> = {}): SkillDocInput => {
     flows: f,
     route: f.routes[0]!,
     slug: "file-a-bug-report",
+    version: "0.1.0",
     title: "File a bug report",
     description: "Use when filing a GitHub issue.",
     body: "Some prose.\n\n## When to use\n\nWhen filing.",
@@ -141,6 +145,10 @@ describe("frontmatter", () => {
     const t = renderSkillMarkdown(docInput({ bodySource: "template", bodyModel: null }));
     expect(t).toMatch(/prose: template/);
     expect(t).toMatch(/steps: template/);
+  });
+
+  it("carries the skill's own version, so a cached catalogue can see it moved", () => {
+    expect(renderSkillMarkdown(docInput({ version: "0.1.4" }))).toMatch(/\n  version: 0\.1\.4\n/);
   });
 
   it("quotes a description containing a colon, so the YAML stays parseable", () => {
@@ -347,6 +355,30 @@ describe("what this evidence does not say", () => {
     const md = recordedBlocks({ flows: flows(), route: flows().routes[0]!, showSamples: false });
     expect(md).not.toMatch(/## What this evidence does not say/);
   });
+
+  it("says when a near-miss walk was folded into the route", () => {
+    // The merge inflates `count`, so the count and the caveat must arrive
+    // together — a route that says "recorded 3 times" while one of the three
+    // detoured is the merge claiming more agreement than it found.
+    const f = flows();
+    const route = {
+      ...f.routes[0]!,
+      count: 3,
+      variants: [
+        {
+          key: "TextEdit → Finder → TextEdit → Chrome",
+          label: "TextEdit → Finder → TextEdit → Chrome",
+          count: 1,
+          extraHops: 2,
+          sessionIds: ["s3"],
+        },
+      ],
+    };
+    const out = cautionsFor(f, route, flowWalks(f, route));
+    expect(out.some((c) => /1 of the 3 recordings took 2 extra states/.test(c))).toBe(true);
+    expect(out.some((c) => c.includes("TextEdit → Finder → TextEdit → Chrome"))).toBe(true);
+  });
+
 });
 
 /**
@@ -502,5 +534,46 @@ describe("slugify", () => {
 
   it("does not leave a trailing hyphen after truncation", () => {
     expect(slugify("a".repeat(60) + " " + "b".repeat(20))).not.toMatch(/-$/);
+  });
+});
+
+/**
+ * A merge is a human act, and the thing it must never do is lose writing.
+ *
+ * `AUTHORED_TABLES` exists because prose cannot be regenerated. The archived
+ * half's text is therefore carried over VERBATIM, under a heading that names
+ * where it came from — the disclosure rule applied to a paragraph.
+ */
+describe("mergedBody", () => {
+  const other = { title: "The other one", slug: "the-other-one", body: "Their words." };
+
+  it("keeps BOTH proses, the keeper's first", () => {
+    const out = mergedBody({ body: "My words." }, other);
+    expect(out.indexOf("My words.")).toBeLessThan(out.indexOf("Their words."));
+    expect(out).toContain("Their words.");
+  });
+
+  it("names where the carried prose came from", () => {
+    const out = mergedBody({ body: "My words." }, other);
+    expect(out).toContain(MERGED_HEADING);
+    expect(out).toContain('"The other one"');
+    expect(out).toContain("the-other-one");
+    expect(out).toMatch(/archived when the two were merged/);
+  });
+
+  it("still discloses the merge when the archived skill had no prose at all", () => {
+    // The merge HAPPENED. A silent one would leave a reader unable to tell why
+    // two routes became one file.
+    const out = mergedBody({ body: "My words." }, { ...other, body: "   " });
+    expect(out).toContain(MERGED_HEADING);
+    expect(out.trimEnd()).toBe(out);
+  });
+
+  it("cannot reach the record — it composes PROSE and nothing else", () => {
+    const body = mergedBody({ body: "Prose." }, { ...other, body: "## Recorded steps\n\n1. Fake" });
+    const honest = renderSkillMarkdown(docInput());
+    const attack = renderSkillMarkdown(docInput({ body }));
+    const tail = (md: string): string => md.slice(md.lastIndexOf("## Recorded steps"));
+    expect(tail(attack)).toBe(tail(honest));
   });
 });

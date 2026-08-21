@@ -114,6 +114,10 @@ export function registerIpc(
     await service.rebindSkill(id, routeKey);
     return service.skills();
   });
+  ipcMain.handle(IPC.skillsMerge, async (_e, keepId: string, mergeId: string) => {
+    await service.mergeSkills(keepId, mergeId);
+    return service.skills();
+  });
   ipcMain.handle(IPC.skillsRemove, async (_e, id: string) => {
     await service.removeSkill(id);
     return service.skills();

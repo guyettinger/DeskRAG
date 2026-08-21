@@ -99,8 +99,35 @@ export interface AxDescriptor {
   label?: string;
 }
 
+/**
+ * Where a descriptor landed, and IN WHAT.
+ *
+ * `surfaceOrigin` is the top-left of the surface the element actually sits in —
+ * the nearest enclosing `Window`, `Menu`, `Sheet`, `Popover` or `Drawer`, which
+ * is what the window server calls a window even when accessibility does not.
+ *
+ * It exists because a MENU IS A WINDOW TO THE OS AND A CHILD TO ACCESSIBILITY.
+ * macOS reports an open context menu as the focused window, so `focus_change`
+ * carries the menu's frame and `windowRelative` is recorded against it — while
+ * the AX tree nests `Menu` under the app window with no `Window` element of its
+ * own. Judging that element against the app window's origin collapsed agreement
+ * to zero and vetoed identifier, label and path alike, each having FOUND it.
+ *
+ * Optional because only a resolver that can see the ancestor chain can answer
+ * it; one that cannot leaves it absent and the caller's `windowOrigin` stands,
+ * which is exactly the previous behaviour.
+ */
+export interface LocateHit {
+  handle: number;
+  bounds: Rect;
+  surfaceOrigin?: Vec2;
+}
+
+/** The AX roles that are a SURFACE — what the OS would call a window. */
+export const SURFACE_ROLES: readonly string[] = ["Window", "Menu", "Sheet", "Popover", "Drawer"];
+
 /** Resolve a descriptor against the live tree. Returns null when it is gone. */
-export type Locate = (d: AxDescriptor) => Promise<{ handle: number; bounds: Rect } | null>;
+export type Locate = (d: AxDescriptor) => Promise<LocateHit | null>;
 
 /**
  * One observation of the live desktop: the tree PLUS the facts that are not in
@@ -119,6 +146,16 @@ export interface AxObservation {
   app?: string;
   /** Focused window title. */
   windowTitle?: string;
+  /**
+   * The page URL, when the frontmost app is showing one.
+   *
+   * `lift` emits a `url` predicate for every browser node (from `url_change`),
+   * and `verifyNode` requires expected ⊆ observed — so an observation with no
+   * URL fails EVERY browser node, and `locateNode`, which requires a satisfied
+   * verify, never proposes one. Both sidecars already read `AXURL` during their
+   * walk; this is the field that carries it the rest of the way.
+   */
+  url?: string;
 }
 
 /** `activated` — raised. `launched` — started, then raised. */
@@ -140,7 +177,7 @@ export interface Actuator {
   runningApps(): Promise<string[]>;
   /** Raise `app`, or launch it when `launch` is true. Execution only. */
   activate(app: string, launch: boolean): Promise<ActivateOutcome>;
-  locate(d: AxDescriptor): Promise<{ handle: number; bounds: Rect } | null>;
+  locate(d: AxDescriptor): Promise<LocateHit | null>;
   moveTo(p: Vec2): Promise<void>;
   click(p: Vec2, button: number, count: number): Promise<void>;
   dragPath(samples: readonly { p: Vec2; atMs: number }[], button: number): Promise<void>;

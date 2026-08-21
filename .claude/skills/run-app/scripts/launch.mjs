@@ -27,7 +27,7 @@ export const SCREENS = ["Record", "Library", "Flows", "Search", "Settings"];
  * silently exercises the PREVIOUS version of whatever you are checking, which
  * looks like success.
  */
-export async function launchApp({ width = 1400, height = 1000 } = {}) {
+export async function launchApp({ width = 1400, height = 1000, userDataDir = null } = {}) {
   const out = join(ROOT, "app", "out", "main", "index.js");
   if (!existsSync(out)) {
     throw new Error(
@@ -47,7 +47,13 @@ export async function launchApp({ width = 1400, height = 1000 } = {}) {
     // opens an EMPTY ~/Library/Application Support/Electron instead of the real
     // DeskRAG data dir. No error, just a working app with no recordings.
     executablePath: appRequire("electron"),
-    args: [join(ROOT, "app")],
+    // `--user-data-dir` moves <userData> wholesale, which is the ONLY way to
+    // drive a check that writes without writing the user's own library. The
+    // app still resolves its data dir as <userData>/DeskRAG, so a probe using
+    // this must place the copied app.db and lance/ inside that subdirectory.
+    // Omitted by default: a read-only check wants the REAL store, because a
+    // fixture agrees with whatever the code assumes.
+    args: [...(userDataDir === null ? [] : [`--user-data-dir=${userDataDir}`]), join(ROOT, "app")],
     cwd: join(ROOT, "app"),
   });
 

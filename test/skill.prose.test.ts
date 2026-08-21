@@ -35,6 +35,7 @@ const brief: SkillBrief = {
     { name: "command", samples: 1 },
   ],
   cautions: ["Step 3 was in 4 of the 5 recordings."],
+  reflections: [],
 };
 
 describe("skillPrompt", () => {
@@ -53,6 +54,29 @@ describe("skillPrompt", () => {
     const text = skillPrompt(brief);
     expect(text).toContain("issue_title: 4 distinct values — varies between recordings");
     expect(text).toContain("command: 1 value, typed once — not established as a variable");
+  });
+
+  /**
+   * A reflection is model output being fed back to a model, so the prompt has to
+   * say what it is. Without the label the notes sit in the same wall of text as
+   * the steps, and a note that hallucinated a keyboard shortcut would be
+   * laundered into the prose as though the recording showed it.
+   */
+  it("labels reflections as opinion, and keeps them out of the step list", () => {
+    const text = skillPrompt({
+      ...brief,
+      reflections: ["Goal: file a bug.\nWhat stalled: finding the repo took half the session."],
+    });
+    expect(text).toContain("finding the repo took half the session");
+    expect(text).toContain("NOT part of the record");
+    // After the steps, never inside them: the step list is numbered and this is
+    // not one of the numbers.
+    expect(text.indexOf("finding the repo")).toBeGreaterThan(text.indexOf("Steps:"));
+    expect(text).not.toMatch(/^\d+\. Goal:/m);
+  });
+
+  it("says nothing at all when no reflection was written", () => {
+    expect(skillPrompt(brief)).not.toContain("Notes written by a model");
   });
 
   it("leads with 'recorded once' rather than a date range for a single walk", () => {

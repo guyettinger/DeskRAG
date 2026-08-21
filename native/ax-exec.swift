@@ -156,6 +156,13 @@ func childrenOf(_ el: AXUIElement) -> [AXUIElement] {
 /// Roles are emitted WITHOUT the "AX" prefix, matching ax-dump. Agreeing at the
 /// source is what keeps the two comparable — a mismatch here once meant no
 /// recording ever produced an AX predicate.
+/// The AX roles that are a SURFACE — what the OS would call a window.
+///
+/// Prefix-free, because `roleOf` strips "AX" from every role it emits. Mirrors
+/// `SURFACE_ROLES` in `src/replay/types.ts`; two readers of one tree must agree
+/// about what a surface is, or a menu item resolves under one and not the other.
+let SURFACE_ROLES: Set<String> = ["Window", "Menu", "Sheet", "Popover", "Drawer"]
+
 func roleOf(_ el: AXUIElement) -> String {
     let raw = str(el, kAXRoleAttribute as String) ?? "Unknown"
     return raw.hasPrefix("AX") ? String(raw.dropFirst(2)) : raw
@@ -214,6 +221,8 @@ func rootElement(pid: pid_t) -> AXUIElement? {
 struct Walked {
     var elements: [ElementOut] = []
     var refs: [AXUIElement] = []
+    /// The page's URL, when the tree contains a WebArea. See `visit` below.
+    var url: String?
 }
 
 func walk(_ root: AXUIElement, maxNodes: Int = 4000, maxDepth: Int = 64) -> Walked {
@@ -223,8 +232,22 @@ func walk(_ root: AXUIElement, maxNodes: Int = 4000, maxDepth: Int = 64) -> Walk
         if depth > maxDepth || out.elements.count >= maxNodes { return }
         let index = out.elements.count
         let f = frameOf(el)
+        let role = roleOf(el)
+        // The page's URL, read DURING the walk and with the same rule
+        // `ax-dump.swift` uses — first WebArea wins, `URL` before `String`, an
+        // empty string treated as absent. The two binaries reading one tree is a
+        // standing drift hazard, and this is the attribute where it would cost
+        // the most: a recorded `url` predicate that never verifies makes every
+        // browser node permanently unlocatable, with nothing failing anywhere.
+        if role == "WebArea", out.url == nil {
+            var urlValue: CFTypeRef?
+            if AXUIElementCopyAttributeValue(el, "AXURL" as CFString, &urlValue) == .success {
+                if let u = urlValue as? URL { out.url = u.absoluteString }
+                else if let str = urlValue as? String, !str.isEmpty { out.url = str }
+            }
+        }
         out.elements.append(ElementOut(
-            role: roleOf(el),
+            role: role,
             label: str(el, kAXTitleAttribute as String) ?? str(el, kAXDescriptionAttribute as String),
             identifier: str(el, kAXIdentifierAttribute as String),
             x: f.origin.x, y: f.origin.y, w: f.size.width, h: f.size.height,
@@ -336,9 +359,11 @@ while let line = readLine(strippingNewline: true) {
         let front = frontmostApp()
         var elements: [[String: Any]] = []
         var windowTitle: String?
+        var pageUrl: String?
         if trusted, let pid = front?.processIdentifier, let root = rootElement(pid: pid) {
             let walked = walk(root)
             elements = walked.elements.map { $0.json }
+            pageUrl = walked.url
             // The focused window's title, from the root of the walk.
             windowTitle = walked.elements.first(where: { $0.role == "Window" })?.label
                 ?? walked.elements.first?.label
@@ -349,6 +374,12 @@ while let line = readLine(strippingNewline: true) {
         var result: [String: Any] = ["elements": elements]
         if let a = appName { result["app"] = a }
         if let w = windowTitle { result["windowTitle"] = w }
+        // The third fact that is not in the tree. `lift` emits a `url`
+        // predicate for every browser node from `url_change`; without this the
+        // observation can never carry one, `verifyNode`'s expected-⊆-observed
+        // check fails on every one of them, and `locateNode` — which requires a
+        // satisfied verify — never proposes a browser node at all.
+        if let u = pageUrl { result["url"] = u }
         emit(req.id, ok: true, result: result)
 
     case "locate":
@@ -381,10 +412,29 @@ while let line = readLine(strippingNewline: true) {
         nextHandle += 1
         handles[handle] = walked.refs[index]
         let e = walked.elements[index]
-        emit(req.id, ok: true, result: [
+        // The SURFACE this element sits in — the nearest enclosing Window, Menu,
+        // Sheet, Popover or Drawer, itself included. A menu is a window to the
+        // window server and a child to accessibility, so `focus_change` records
+        // `windowRelative` against the MENU while this tree hangs it under the
+        // app window. Judging one against the other collapsed agreement to zero
+        // and vetoed identifier, label and path alike, each having FOUND the
+        // element — measured on a real recording. `windowOriginOf` on the
+        // TypeScript side answers the same question the same way.
+        var surface: ElementOut? = nil
+        var walk: Int? = index
+        var steps = 0
+        while let j = walk, steps <= 128 {
+            let cand = walked.elements[j]
+            if SURFACE_ROLES.contains(cand.role) { surface = cand; break }
+            walk = cand.parent
+            steps += 1
+        }
+        var result: [String: Any] = [
             "handle": handle,
             "bounds": ["x": e.x, "y": e.y, "w": e.w, "h": e.h],
-        ])
+        ]
+        if let s = surface { result["surfaceOrigin"] = ["x": s.x, "y": s.y] }
+        emit(req.id, ok: true, result: result)
 
     case "move":
         guard let x = req.x, let y = req.y else {

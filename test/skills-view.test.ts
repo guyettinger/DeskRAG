@@ -38,6 +38,9 @@ const skill = (over: Partial<SkillDTO> = {}): SkillDTO => ({
   pinned: false,
   createdAt: 1,
   updatedAt: 1,
+  version: "0.1.0",
+  history: [],
+  duplicates: [],
   slug: "a-skill",
   title: "A skill",
   description: "Use when.",
@@ -61,6 +64,15 @@ describe("bandOf", () => {
 
   it("leaves an intact skill in Mine", () => {
     expect(bandOf(skill())).toBe("mine");
+  });
+
+  /**
+   * A duplicate's BINDING is exact and correct on both halves — nothing moved.
+   * What is unresolved is that two files claim one route, and only a person can
+   * resolve it, which is what Needs attention means.
+   */
+  it("puts a duplicated skill into Needs attention even though its binding is exact", () => {
+    expect(bandOf(skill({ duplicates: ["k2"] }))).toBe("attention");
   });
 
   it("keeps archived out of the way even when its binding moved", () => {
@@ -107,6 +119,13 @@ describe("bindingChip", () => {
   it("flags an intact key that lost evidence", () => {
     expect(bindingChip(skill({ binding: binding({ lostSessionIds: ["s2"], recordings: 1 }) }))).toBe(
       "evidence changed",
+    );
+  });
+
+  it("says `duplicated` FIRST — it is the larger problem, and another skill's too", () => {
+    expect(bindingChip(skill({ duplicates: ["k2"] }))).toBe("duplicated");
+    expect(bindingChip(skill({ duplicates: ["k2"], binding: binding({ state: "rebound" }) }))).toBe(
+      "duplicated",
     );
   });
 

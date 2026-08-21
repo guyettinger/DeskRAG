@@ -283,8 +283,19 @@ function buildNode(id: string, tMono: number, events: readonly TraceEvent[], inp
   };
 }
 
-/** The most recent `focus_change` at or before `tMono` supplies app/window. */
-function focusContext(tMono: number, events: readonly TraceEvent[]): PredicateContext {
+/**
+ * The most recent `focus_change` at or before `tMono` supplies app/window.
+ *
+ * EXPORTED so that anything reconstructing a past moment uses the function that
+ * built the node, rather than its own copy. `ax_snapshot` stores elements and
+ * nothing else — no app name, no URL — so a stored observation is only
+ * comparable to a node's predicates if it resolves those two facts by exactly
+ * this rule, including the part that is easy to miss: a `focus_change` RESETS
+ * the url. A hand-rolled "latest of each" would carry a browser's page onto a
+ * text editor's state and produce observations that verify nothing, with
+ * nothing failing to say why.
+ */
+export function focusContext(tMono: number, events: readonly TraceEvent[]): PredicateContext {
   let app: string | undefined;
   let windowTitle: string | undefined;
   let url: string | undefined;

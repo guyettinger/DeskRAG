@@ -77,7 +77,11 @@ export function RouteList({
                 )}
                 {/* NOT `edgeIds.length` — that is the highlight union, and it
                     counts steps no single recording walked. */}
-                <span className="routes__steps mono">{routeStepSummary(r)}</span>
+                <span className="routes__steps mono">
+                  {routeStepSummary(r)}
+                  {r.variants.length > 0 &&
+                    ` · +${r.variants.reduce((n, v) => n + v.count, 0)} merged`}
+                </span>
               </button>
             </li>
           ))}

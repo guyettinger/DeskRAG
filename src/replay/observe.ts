@@ -17,7 +17,11 @@
  */
 
 import { extractPredicates } from "../trace/predicates.js";
-import type { Actuator, AxObservation, Predicate, Vec2 } from "./types.js";
+// Pure tree nesting, the same helper `trace/anchors.ts` uses to walk a chain.
+// A type-only import away from anything native, so `replay/` stays a leaf.
+import { nestAxElements } from "../capture/ax/tree.js";
+import type { UIElement } from "../embed/types.js";
+import { SURFACE_ROLES, type Actuator, type AxObservation, type Predicate, type Vec2 } from "./types.js";
 
 /**
  * Express ONE observation as predicates — the dump-free half of `observe`.
@@ -32,12 +36,46 @@ export function predicatesOf(o: AxObservation): Predicate[] {
     ...(o.windowTitle !== undefined && o.windowTitle.length > 0
       ? { windowTitle: o.windowTitle }
       : {}),
+    // `extractPredicates` decides what a URL is worth — `urlPrefix` returns
+    // undefined for anything naming no site, so a `file:` or `about:` page
+    // contributes nothing rather than a junk identity. Passing it raw keeps that
+    // decision in the one place that already makes it.
+    ...(o.url !== undefined && o.url.length > 0 ? { url: o.url } : {}),
   });
 }
 
 /** Dump the live state and express it as predicates. */
 export async function observe(actuator: Actuator): Promise<Predicate[]> {
   return predicatesOf(await actuator.dump());
+}
+
+/**
+ * Top-left of the SURFACE containing `index` — what the OS calls a window.
+ *
+ * Walks the ancestor chain to the nearest `Window`/`Menu`/`Sheet`/`Popover`/
+ * `Drawer`, the element itself included. A menu is a window to the window
+ * server and a child to accessibility, and `windowRelative` is recorded against
+ * the former — so judging a menu item against the app window's origin is
+ * comparing two different coordinate systems.
+ *
+ * Undefined when nothing in the chain is a surface, which leaves the caller's
+ * `windowOrigin` in force rather than inventing an origin.
+ */
+export function surfaceOriginOf(
+  elements: readonly UIElement[],
+  index: number,
+): Vec2 | undefined {
+  const nested = nestAxElements(elements);
+  let i: number | undefined = index;
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
+  // Bounded like `axPathOf`: a malformed parent cycle must not hang a replay.
+  for (let steps = 0; i !== undefined && steps <= 128; steps += 1) {
+    const el: UIElement | undefined = nested[i];
+    if (el === undefined) return undefined;
+    if (SURFACE_ROLES.includes(el.role)) return { x: el.x, y: el.y };
+    i = el.parent;
+  }
+  return undefined;
 }
 
 /**

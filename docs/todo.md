@@ -1,0 +1,4 @@
+- "Process" should probably be renamed to "Phase"
+- Add support for computer audio signal
+- "Skill" might not be the best name for a concept that represents a set of actions or behaviors that can be performed by an agent
+  - Reduce the size of the video playback controls

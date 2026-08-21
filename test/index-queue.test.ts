@@ -27,12 +27,19 @@ import {
  * a recording, and no assertion over the schema would notice.
  */
 
-const ALL_ON = { patchEmbedder: true, captioner: true, hasAudio: true, whisper: true };
+const ALL_ON = {
+  patchEmbedder: true,
+  captioner: true,
+  hasAudio: true,
+  whisper: true,
+  summarizer: true,
+};
 const DEFAULT_INSTALL = {
   patchEmbedder: false,
   captioner: false,
   hasAudio: true,
   whisper: true,
+  summarizer: false,
 };
 
 const job = (over: Partial<IndexJobRow> = {}): IndexJobRow => ({
@@ -306,7 +313,13 @@ describe("payload and stage codecs", () => {
  * indistinguishable from a stage somebody forgot to implement.
  */
 describe("every gated stage explains itself", () => {
-  const NOTHING = { patchEmbedder: false, captioner: false, hasAudio: false, whisper: false };
+  const NOTHING = {
+    patchEmbedder: false,
+    captioner: false,
+    hasAudio: false,
+    whisper: false,
+    summarizer: false,
+  };
 
   it("declares a skipReason wherever a gate can reject", () => {
     for (const spec of INDEX_STAGES) {

@@ -75,6 +75,7 @@ function flows(): FlowsDTO {
         nodeIds: ["n0", "n1", "n2"],
         edgeIds: ["e0", "e1"],
         sessionIds: ["s1", "s2"],
+        variants: [],
         walks: [
           { sessionId: "s1", edgeIds: ["e0", "e1"] },
           { sessionId: "s2", edgeIds: ["e0", "e1"] },

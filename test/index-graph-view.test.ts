@@ -29,7 +29,13 @@ import { STAGE_PHASES } from "../app/src/shared/types.js";
  * suite only because the module is `.ts` and imports nothing from `api.ts`.
  */
 
-const ALL_ON = { patchEmbedder: true, captioner: true, hasAudio: true, whisper: true };
+const ALL_ON = {
+  patchEmbedder: true,
+  captioner: true,
+  hasAudio: true,
+  whisper: true,
+  summarizer: true,
+};
 const ladder = (): IndexStageDTO[] => buildStageGraph(initialStages("record", ALL_ON));
 
 const at = (stages: IndexStageDTO[], id: string): IndexStageDTO =>

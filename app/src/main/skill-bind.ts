@@ -167,6 +167,50 @@ export function bindSkill(
  * row for exactly this reason — a rejected proposal that is not persisted comes
  * back on every load.
  */
+/**
+ * Active skills that now answer to the SAME live route.
+ *
+ * Two skills can arrive at one route without anybody doing anything wrong: a
+ * re-index re-keys every route, near-miss clustering merges two of them, and a
+ * disclosed re-bind is confirmed. The result is two files describing one
+ * procedure, which is the duplicate explosion that makes a skill library stop
+ * being worth reading.
+ *
+ * It DISCLOSES and never merges. Each skill holds prose a person may have
+ * written and edited, and prose is the one thing in this repo that nothing can
+ * remake — `AUTHORED_TABLES` exists to say so. Choosing which of two to keep is
+ * therefore a judgement, and the same ethic as `bindSkill` declining on a tie:
+ * the app says what it found and stops.
+ *
+ * Keyed on the LIVE route, not on the stored `routeKey`: two skills bound at
+ * different times to keys that have since merged are the interesting case, and
+ * comparing what they were bound to would miss exactly that one.
+ *
+ * Returns, for each skill id, the OTHER ids sharing its route. Absent from the
+ * map means it is alone, which is the common case.
+ */
+export function duplicateSkills(
+  skills: readonly { id: string; liveRouteKey: string | null }[],
+): Map<string, string[]> {
+  const byRoute = new Map<string, string[]>();
+  for (const s of skills) {
+    // An orphan answers to no route, so it cannot duplicate one. Grouping the
+    // orphans together would report every unbindable skill as a duplicate of
+    // every other, which is the opposite of informative.
+    if (s.liveRouteKey === null) continue;
+    const list = byRoute.get(s.liveRouteKey);
+    if (list === undefined) byRoute.set(s.liveRouteKey, [s.id]);
+    else list.push(s.id);
+  }
+
+  const out = new Map<string, string[]>();
+  for (const ids of byRoute.values()) {
+    if (ids.length < 2) continue;
+    for (const id of ids) out.set(id, ids.filter((other) => other !== id));
+  }
+  return out;
+}
+
 export function unclaimedRoutes(
   routes: readonly FlowRouteDTO[],
   claimed: readonly string[],

@@ -100,6 +100,23 @@ export function cautionsFor(
     );
   }
 
+  // A merged near-miss is a claim about the recording count, so it is stated
+  // wherever that count is. `route.count` includes the variants' recordings —
+  // saying "recorded 3 times" without saying that one of the three took a
+  // different path would be the merge asserting more agreement than it found.
+  for (const v of route.variants) {
+    const hops =
+      v.extraHops < 0
+        ? "a different path through the same places"
+        : `${v.extraHops} extra ${v.extraHops === 1 ? "state" : "states"}`;
+    out.push(
+      `${v.count} of the ${route.count} recordings took ${hops} and were folded into this route: ` +
+        `${v.label}. They are counted here because they start and end in the same place and pass ` +
+        `through everything below in order — not because anything checked that the detour was ` +
+        `incidental.`,
+    );
+  }
+
   // The headline when a route is not one procedure. It replaces a per-step
   // bullet that fired on nearly every step of every variant: on the real store,
   // "Step N was in 1 of the 2 recordings" appeared TWELVE times in an
@@ -343,6 +360,8 @@ export interface SkillDocInput {
   bodyModel: string | null;
   showSamples: boolean;
   skillId: string;
+  /** `0.1.0` on a doc written before versioning. Rendered, never computed here. */
+  version: string;
 }
 
 /** YAML-safe scalar: quoted, with embedded quotes and newlines neutralised. */
@@ -368,6 +387,10 @@ export function renderSkillMarkdown(input: SkillDocInput): string {
     "metadata:",
     "  source: deskrag",
     `  skill_id: ${input.skillId}`,
+    // The artifact's own version. It moves when the FILE moves — an edit, a
+    // regeneration, a re-bind, or the record changing underneath it — so an
+    // agent that cached this catalogue can see that it did.
+    `  version: ${input.version}`,
     `  recordings: ${route.count}`,
     // The union's length is not a step count — it is the size of a highlight
     // set. When the recordings walked one path it is the same number; when they
@@ -406,6 +429,42 @@ export function renderSkillMarkdown(input: SkillDocInput): string {
     "",
   ];
   return out.join("\n");
+}
+
+/** The heading a merged skill's prose is appended under. Named once. */
+export const MERGED_HEADING = "## Also written for this route";
+
+/**
+ * The keeper's prose after a merge, with the archived skill's appended.
+ *
+ * A merge NEVER discards prose. `AUTHORED_TABLES` exists because a person's
+ * writing is the one thing in this repo nothing can regenerate, so the losing
+ * half is carried over verbatim under a heading naming where it came from,
+ * and the skill it came from is archived rather than deleted.
+ *
+ * Prose only, and only the prose HALF: the record below `## Recorded steps` is
+ * re-rendered from the live route either way, and both skills answer to the
+ * same route — which is what made them duplicates.
+ */
+export function mergedBody(
+  keep: { readonly body: string },
+  other: { readonly title: string; readonly slug: string; readonly body: string },
+): string {
+  const provenance =
+    `The text below was written for a separate skill, ${JSON.stringify(other.title)} ` +
+    `(\`${other.slug}\`), which described this same recorded route. That skill was ` +
+    `archived when the two were merged; nothing here has been re-checked.`;
+  const carried = other.body.trim();
+  return [
+    keep.body.trim(),
+    "",
+    MERGED_HEADING,
+    "",
+    provenance,
+    ...(carried === "" ? [] : ["", carried]),
+  ]
+    .join("\n")
+    .trimEnd();
 }
 
 /**
@@ -466,6 +525,15 @@ export function briefFor(
   flows: FlowsDTO,
   route: FlowRouteDTO,
   binding?: SkillBinding,
+  /**
+   * The reflection written after each recording this route was built from.
+   *
+   * Passed IN rather than read here, because this module is pure and a
+   * reflection lives in the store. Empty is the normal case: on a default
+   * install nothing writes one, and no recording indexed before the stage
+   * existed has one either.
+   */
+  reflections: readonly string[] = [],
 ): SkillBrief {
   const walks = flowWalks(flows, route);
   const many = walks.length > 1;
@@ -499,5 +567,6 @@ export function briefFor(
       samples: v.samples.length,
     })),
     cautions,
+    reflections: [...reflections],
   };
 }
