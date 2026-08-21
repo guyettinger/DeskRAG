@@ -2,6 +2,13 @@
  * Main entry: opens the store-backed service, registers the deskrag:// protocol
  * and IPC, creates the window, and wires a menu-bar tray with recording status.
  * Closing the window hides to the tray (recording keeps running); Quit exits.
+ *
+ * IT ALSO HIDES ITSELF WHILE RECORDING, and the tray is the control surface for
+ * the duration. Not for tidiness: the window producer polls the frontmost
+ * application, so an app left on screen while it records films its own UI and
+ * ends up bracketing every route it captures. That is fixed properly at lift
+ * time (`trace/exclude.ts` — which also repairs recordings already taken); this
+ * just stops producing the problem in the first place.
  */
 
 import { app, BrowserWindow, Tray, Menu, nativeImage } from "electron";
@@ -167,6 +174,37 @@ function showWindow(): void {
   win?.focus();
 }
 
+/**
+ * True while the window is hidden BECAUSE a recording is running, as opposed to
+ * hidden because the user closed it to the tray.
+ *
+ * Without the distinction, stopping a recording would yank a window back onto
+ * the screen that the user had deliberately put away.
+ */
+let hiddenForRecording = false;
+
+/**
+ * Hide for the duration of a recording, and come back when it ends.
+ *
+ * Coming back is the deliberate half. A window that vanishes on Record and never
+ * returns is the worse failure of the two, and the moment a recording stops is
+ * exactly when there is something to show — the recording has just been handed
+ * to the indexing queue. Re-showing focuses this app and can emit one last
+ * `focus_change` inside `stopRecording`'s tail; the lift filter drops it, which
+ * is that filter working rather than a leak.
+ */
+function hideForRecording(): void {
+  if (!win || !win.isVisible()) return;
+  hiddenForRecording = true;
+  win.hide();
+}
+
+function restoreAfterRecording(): void {
+  if (!hiddenForRecording) return;
+  hiddenForRecording = false;
+  showWindow();
+}
+
 function createTray(): void {
   // A template image is black + alpha; macOS inverts it for the menu bar, so
   // one asset covers light and dark. Falls back to an empty image rather than
@@ -200,7 +238,14 @@ app.whenReady().then(async () => {
   if (settings.view().mcp.enabled) await mcp.start();
 
   registerIpc(service, settings, () => win, resetApp, mcp);
-  service.onState(() => rebuildTray());
+  // Hiding runs from the HOOK, not from here: `onState` fires once every
+  // producer is up, by which point the first 500ms window poll has already seen
+  // this app frontmost. Restoring has no such race and belongs on the state.
+  service.onRecordingWillStart = hideForRecording;
+  service.onState((s) => {
+    rebuildTray();
+    if (s.state === "idle") restoreAfterRecording();
+  });
 
   // An unpackaged macOS dev run shows Electron's own dock icon otherwise.
   if (process.platform === "darwin" && app.dock) {

@@ -54,9 +54,11 @@ function FlowsHead({ children }: { children?: React.ReactNode }): React.JSX.Elem
 interface Props {
   /** Jump to the Library, at this moment of this recording. */
   onOpenRecording: (sessionId: string, atSec: number) => void;
+  /** Where the exclusion list lives, and the only place it can be changed. */
+  onOpenSettings: () => void;
 }
 
-export function FlowsScreen({ onOpenRecording }: Props): React.JSX.Element {
+export function FlowsScreen({ onOpenRecording, onOpenSettings }: Props): React.JSX.Element {
   const [flows, setFlows] = useState<FlowsDTO | null | undefined>(undefined);
   const [selected, setSelected] = useState<Selection | null>(null);
   const [routeId, setRouteId] = useState<string | null>(null);
@@ -104,7 +106,7 @@ export function FlowsScreen({ onOpenRecording }: Props): React.JSX.Element {
     );
   }
 
-  const { graph, routes } = flows;
+  const { graph, routes, excludedApps } = flows;
 
   /**
    * A graph whose states were observed but whose provenance is empty was built
@@ -142,6 +144,24 @@ export function FlowsScreen({ onOpenRecording }: Props): React.JSX.Element {
           {appFilter !== undefined && (
             <button className="flows__route" onClick={() => setAppFilter(undefined)}>
               {appFilter} only — clear
+            </button>
+          )}
+          {/* SOME APPLICATIONS ARE DELIBERATELY MISSING FROM THIS GRAPH AND THE
+              SCREEN HAS TO SAY SO. A recording is bracketed by whatever it was
+              started from, and that gets filtered out at lift time — a reader
+              who notices their own app absent should not have to guess whether
+              it is a setting or a bug.
+
+              A COUNT rather than the names, and a button rather than a label,
+              for the same reason the indexing chip is one: the list is four
+              entries by default (two spellings of two builds), which is a
+              sentence rather than a chip, and it is EDITABLE — so the honest
+              place for its full text is the screen that owns it. Nothing is
+              truncated: the chip states a number it can state completely. */}
+          {excludedApps.length > 0 && (
+            <button className="chip chip--go" onClick={onOpenSettings}>
+              <span className="dot" /> {excludedApps.length} app
+              {excludedApps.length === 1 ? "" : "s"} excluded
             </button>
           )}
         </div>

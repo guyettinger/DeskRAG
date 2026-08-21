@@ -21,6 +21,8 @@ export interface WindowSnapshot {
   app: string;
   title: string;
   windowId: number;
+  /** The focused application's process id, for the `recorder` comparison. */
+  pid?: number;
   bundleId?: string;
   url?: string;
   bounds?: { x: number; y: number; w: number; h: number };
@@ -31,6 +33,17 @@ export interface ActiveWindowOptions {
   pollMs?: number;
   /** When set, the producer also tracks display topology. */
   displaySource?: DisplaySource;
+  /**
+   * The process id of whatever is DOING the recording, so a `focus_change` onto
+   * it can say so. Defaults to this process, which is the answer whenever
+   * capture runs inside the recorder's own application.
+   *
+   * A pid rather than a name because a name is a guess: the same build reports
+   * `Electron` from a dev checkout and its product name from a signed bundle,
+   * and a mismatch fails SILENTLY by excluding nothing. The frontmost window of
+   * an Electron app belongs to its main process, which is this one.
+   */
+  selfPid?: number;
 }
 
 export class ActiveWindowProducer implements Producer {
@@ -41,22 +54,27 @@ export class ActiveWindowProducer implements Producer {
   private displays: DisplayInfo[] = [];
   private readonly pollMs: number;
   private readonly displaySource: DisplaySource | undefined;
+  private readonly selfPid: number;
 
   constructor(opts: ActiveWindowOptions = {}) {
     this.pollMs = opts.pollMs ?? 500;
     this.displaySource = opts.displaySource;
+    this.selfPid = opts.selfPid ?? process.pid;
   }
 
   /** The native query, isolated so tests can subclass and script it. */
   protected async queryWindow(): Promise<WindowSnapshot | undefined> {
     const win = await activeWindow();
     if (!win) return undefined;
-    const owner = win.owner as { name?: string; bundleId?: string } | undefined;
+    const owner = win.owner as
+      | { name?: string; bundleId?: string; processId?: number }
+      | undefined;
     const url = (win as { url?: unknown }).url;
     return {
       app: owner?.name ?? "unknown",
       title: win.title,
       windowId: win.id,
+      ...(typeof owner?.processId === "number" ? { pid: owner.processId } : {}),
       ...(typeof owner?.bundleId === "string" ? { bundleId: owner.bundleId } : {}),
       ...(typeof url === "string" ? { url } : {}),
       ...(win.bounds !== undefined
@@ -98,6 +116,12 @@ export class ActiveWindowProducer implements Producer {
           app: win.app,
           title: win.title,
           windowId: win.windowId,
+          // Stamped at CAPTURE time, because only the capturing process knows
+          // its own pid. Consumers that want to drop the recorder's own
+          // stretches read this; recordings taken before it existed carry no
+          // flag, which is why `excludedByName` also matches on name.
+          ...(win.pid !== undefined ? { pid: win.pid } : {}),
+          ...(win.pid === this.selfPid ? { recorder: true } : {}),
           ...(win.bundleId !== undefined ? { bundleId: win.bundleId } : {}),
           ...(win.url !== undefined ? { url: win.url } : {}),
           ...(win.bounds !== undefined ? { bounds: win.bounds } : {}),

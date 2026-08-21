@@ -514,3 +514,92 @@ describe("liftTrace — provenance", () => {
     for (const n of lifted().nodes) expect(n.sources).toHaveLength(1);
   });
 });
+
+/**
+ * `startTMono` and `visualAt` — the two inputs that exist because a trace is
+ * lifted from a FILTERED event stream (`trace/exclude.ts`), where the timeline's
+ * left edge is no longer zero and a node's keyframe is no longer behind it.
+ */
+describe("startTMono", () => {
+  const events = [
+    ev(4000, "focus_change", undefined, undefined, { app: "Calculator", title: "Calculator" }),
+    ev(4200, "mouse_down", 10, 10),
+    ev(4300, "mouse_up", 10, 10),
+  ];
+
+  it("puts the session_start boundary at the first real moment, not at zero", () => {
+    const lifted = liftTrace({ sessionId: "s", events, endTMono: 4300, startTMono: 4000 });
+    expect(lifted.nodes[0]!.id).toBe("s:n0");
+    expect(lifted.nodes.length).toBe(2);
+  });
+
+  it("defaults to zero, so every existing caller is unchanged", () => {
+    const withDefault = liftTrace({ sessionId: "s", events, endTMono: 4300 });
+    // A third node appears: the manufactured left edge, with nothing behind it.
+    expect(withDefault.nodes.length).toBe(3);
+    expect(withDefault.nodes[0]!.predicates).toEqual([]);
+  });
+
+  it("drops a boundary that falls before the start", () => {
+    // The bookmark belongs to a stretch the caller filtered out; honouring it
+    // would reopen the boundary the filter closed.
+    const withEarly = [ev(1000, "bookmark"), ...events];
+    const lifted = liftTrace({ sessionId: "s", events: withEarly, endTMono: 4300, startTMono: 4000 });
+    expect(lifted.nodes.length).toBe(2);
+  });
+});
+
+describe("node visual", () => {
+  const events = [
+    ev(1000, "focus_change", undefined, undefined, { app: "Calculator", title: "Calculator" }),
+    ev(1200, "mouse_down", 10, 10),
+    ev(1300, "mouse_up", 10, 10),
+  ];
+  const regionsAt = (): { frameId: string; framePhash: string; regions: [] } => ({
+    frameId: "f_before",
+    framePhash: "aaaa",
+    regions: [],
+  });
+
+  it("prefers visualAt over the at-or-before regions frame", () => {
+    // A node is the settled state AFTER its boundary; `regionsAt` is anchored
+    // at-or-before because a click landed on the screen as it was. For a focus
+    // change that frame is the OUTGOING application's screen.
+    const lifted = liftTrace({
+      sessionId: "s",
+      events,
+      endTMono: 1300,
+      regionsAt,
+      visualAt: () => ({ frameId: "f_after", framePhash: "bbbb" }),
+    });
+    expect(lifted.nodes[0]!.visual).toEqual({ frameBlobId: "f_after", phash: "bbbb" });
+  });
+
+  it("falls back to regionsAt when visualAt is absent", () => {
+    const lifted = liftTrace({ sessionId: "s", events, endTMono: 1300, regionsAt });
+    expect(lifted.nodes[0]!.visual).toEqual({ frameBlobId: "f_before", phash: "aaaa" });
+  });
+
+  it("falls back to regionsAt when visualAt finds nothing", () => {
+    const lifted = liftTrace({
+      sessionId: "s",
+      events,
+      endTMono: 1300,
+      regionsAt,
+      visualAt: () => undefined,
+    });
+    expect(lifted.nodes[0]!.visual).toEqual({ frameBlobId: "f_before", phash: "aaaa" });
+  });
+
+  it("still prefers the snapshot's own frame over both", () => {
+    const lifted = liftTrace({
+      sessionId: "s",
+      events,
+      endTMono: 1300,
+      axAt: () => ({ elements: [], frameId: "f_snap", framePhash: "cccc" }),
+      regionsAt,
+      visualAt: () => ({ frameId: "f_after", framePhash: "bbbb" }),
+    });
+    expect(lifted.nodes[0]!.visual).toEqual({ frameBlobId: "f_snap", phash: "cccc" });
+  });
+});

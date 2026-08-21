@@ -43,6 +43,14 @@
 import { existsSync } from "node:fs";
 import Database from "better-sqlite3";
 import { frequentRoutes } from "../app/src/main/graph-view.js";
+// THE SAME re-resolution the app performs, never a second copy of it. A route's
+// key is its place-label sequence, so every rebuild re-keys everything and a
+// skill's STORED key goes stale by design — `bindSkill` finds it again by
+// strict-majority session overlap. Matching the raw key here reported every kept
+// skill as orphaned the first time a rebuild moved the keys, which reads as the
+// skill being broken rather than as this probe not asking the question the app
+// asks.
+import { bindSkill } from "../app/src/main/skill-bind.js";
 import { StoredActuator } from "../app/src/main/stored-actuator.js";
 import { focusContext } from "../src/trace/lift.js";
 import { verifyNode } from "../src/replay/verify.js";
@@ -323,7 +331,10 @@ try {
   interface SkillRow {
     id: string;
     state: string;
-    doc: { slug: string; binding: { routeKey: string; sessionIds: string[] } };
+    doc: {
+      slug: string;
+      binding: { routeKey: string; routeLabel: string; sessionIds: string[]; boundAt: number };
+    };
   }
   const allSkills: SkillRow[] = (
     db.prepare("SELECT id, state, doc FROM skill ORDER BY updated_at DESC").all() as {
@@ -353,8 +364,14 @@ try {
   // A DISMISSED route is an ANSWERED route. Leaving dismissals out would report
   // a route the user looked at and declined as a hole in the library.
   {
+    // Keyed by the route each skill answers for NOW. A skill still answers for
+    // its route after a rebuild moved the key; counting only the stored key
+    // would report answered work as an unanswered gap.
     const answered = new Map<string, string>();
-    for (const s of allSkills) answered.set(s.doc.binding.routeKey, s.state);
+    for (const s of allSkills) {
+      const live = bindSkill(s.doc.binding, routes).route;
+      answered.set(live?.id ?? s.doc.binding.routeKey, s.state);
+    }
     const recurring = routes.filter((r) => r.count >= 2);
     const held = recurring.filter((r) => answered.get(r.id) === "active");
     const declined = recurring.filter((r) => answered.get(r.id) === "dismissed");
@@ -384,11 +401,18 @@ try {
   }
 
   for (const skill of skills) {
-    const route = routes.find((r) => r.id === skill.doc.binding.routeKey);
+    const binding = bindSkill(skill.doc.binding, routes);
+    const route = binding.route;
     console.log(`\n=== ${skill.doc.slug} ===`);
-    if (route === undefined) {
-      console.log("  route is orphaned — nothing to replay. Re-bind it first.");
+    if (route === null) {
+      console.log(`  ${binding.state} — nothing to replay. ${binding.note ?? ""}`.trimEnd());
       continue;
+    }
+    // Disclosed, never silently adopted: the app holds the same line, and a
+    // measurement taken against a route the skill has not been re-bound to has
+    // to say which route it used.
+    if (binding.state !== "exact") {
+      console.log(`  ${binding.state}: reading “${route.id}” — ${binding.note ?? ""}`.trimEnd());
     }
 
     const bound = new Set(skill.doc.binding.sessionIds);

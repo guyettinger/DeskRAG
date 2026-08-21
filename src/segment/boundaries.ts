@@ -16,6 +16,15 @@
  * When several reasons land on the same t_mono, the most specific wins
  * (bookmark > focus_change > scene_change > dwell_gap > burst_gap); the
  * endpoints always stay session_start / session_end.
+ *
+ * `startTMono` moves the LEFT EDGE off zero. Segmentation never does — a
+ * recording's video starts at zero and the lanes must cover it — but LIFTING
+ * does, because the events belonging to the recorder are filtered out before it
+ * runs (`trace/exclude.ts`) and the first surviving event is several seconds in.
+ * Pinning session_start at 0 there manufactured a boundary with no focus, no AX
+ * snapshot and no keyframe behind it, which lifted to a node with ZERO
+ * predicates: the `n0 — no state` card, an artifact of the axis rather than a
+ * state anyone was ever in.
  */
 
 import type { Boundary, BoundaryReason, SegEvent } from "./types.js";
@@ -51,17 +60,21 @@ export function computeBoundaries(
   dwellGapMs: number = DEFAULT_DWELL_GAP_MS,
   burstGapMs: number = DEFAULT_BURST_GAP_MS,
   sceneTMonos: readonly number[] = [],
+  startTMono = 0,
 ): Boundary[] {
   const best = new Map<number, BoundaryReason>();
   const add = (tMono: number, reason: BoundaryReason) => {
-    if (tMono < 0 || tMono > endTMono) return;
+    // Anything before the start is outside this timeline, not merely early: a
+    // scene time or an event from a filtered-out stretch would otherwise open a
+    // boundary the caller deliberately excluded.
+    if (tMono < startTMono || tMono > endTMono) return;
     const existing = best.get(tMono);
     if (existing === undefined || PRIORITY[reason] > PRIORITY[existing]) {
       best.set(tMono, reason);
     }
   };
 
-  add(0, "session_start");
+  add(startTMono, "session_start");
   let lastT: number | undefined;
   let lastMeaningfulT: number | undefined;
   for (const ev of events) {

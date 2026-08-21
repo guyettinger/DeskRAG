@@ -25,6 +25,7 @@
  * rows the purge above exists to clean up.
  */
 
+import { excludedByName } from "deskrag";
 import type { DualStore, IndexJobRow } from "deskrag";
 import type { IndexTickDTO } from "@shared/types";
 import { rebuildGraph } from "./trace-index.js";
@@ -329,12 +330,18 @@ function runnersFor(kind: IndexJobKind): Record<StageId, StageRun> {
   return {
     ...STAGE_RUNNERS,
     trace: async (ctx) => {
-      const r = await rebuildGraph(ctx.store, (done, total) =>
-        ctx.detail(`${done}/${total} recordings re-lifted`),
+      const r = await rebuildGraph(
+        ctx.store,
+        (done, total) => ctx.detail(`${done}/${total} recordings re-lifted`),
+        // The SAME predicate the per-session stage uses. A rebuild that excluded
+        // a different set would produce a graph no incremental lift could extend
+        // consistently.
+        excludedByName(ctx.excludeApps),
       );
       ctx.detail(
         `${r.sessions} recordings, graph ${r.nodes}/${r.edges}` +
           (r.variables > 0 ? `, ${r.variables} variables` : "") +
+          (r.excludedApps.length > 0 ? `, ${r.excludedApps.join(", ")} excluded` : "") +
           (r.missingKeymap ? " (a recording had no keyboard layout)" : ""),
       );
     },

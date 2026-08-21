@@ -86,6 +86,26 @@ export interface LiftInput {
   gestures?: GestureOptions;
   /** Defaults to `sessionId`. Ids are `${prefix}:n0`, `${prefix}:e0`, ... */
   idPrefix?: string;
+  /**
+   * Where this trace's timeline begins, defaulting to 0.
+   *
+   * Exists for one caller: `events` may have had the recorder's own stretches
+   * filtered out before it got here, in which case the first real moment is
+   * seconds in and a session_start pinned at 0 would build a node from a moment
+   * with no focus, no AX and no frame behind it. Segmentation keeps 0.
+   */
+  startTMono?: number;
+  /**
+   * The keyframe that best SHOWS the state at `tMono`, for a node's card.
+   *
+   * Deliberately separate from `regionsAt`, which resolves latest-at-or-before
+   * because a click landed on the screen as it was. A NODE is the settled state
+   * AFTER its boundary, so at-or-before hands it the outgoing application's
+   * screen — the same off-by-one that made boundary AX snapshots describe the
+   * previous app until `getAxForBoundary` was introduced. Falls back to
+   * `regionsAt` when absent, so a caller that supplies neither is unchanged.
+   */
+  visualAt?(tMono: number): { frameId: string; framePhash: string } | undefined;
 }
 
 const MIN_WAIT_TIMEOUT_MS = 3000;
@@ -142,6 +162,10 @@ export function liftTrace(input: LiftInput): Trace {
     input.endTMono,
     input.dwellGapMs,
     input.burstGapMs ?? Number.POSITIVE_INFINITY,
+    // Trace takes no scene times — see the burstGapMs note above for why this
+    // layer keeps only dwell_gap / focus_change / bookmark as real boundaries.
+    [],
+    input.startTMono ?? 0,
   );
 
   const nodes: TraceNode[] = boundaries.map((b, i) =>
@@ -264,13 +288,21 @@ function buildNode(id: string, tMono: number, events: readonly TraceEvent[], inp
   // Prefer the snapshot's own frame; fall back to the nearest frame, since a
   // boundary snapshot has none and a settled screen is exactly what the last
   // keyframe shows. Identity stays predicate-primary — visual only corroborates.
-  const at = input.regionsAt?.(tMono);
+  //
+  // `visualAt` is asked FIRST because a node is the state after its boundary,
+  // and `regionsAt` is anchored at-or-before on purpose (a click landed on the
+  // screen as it was). `regionsAt` remains the fallback so a caller supplying
+  // only it behaves exactly as before.
+  const near = input.visualAt?.(tMono);
+  const at = near === undefined ? input.regionsAt?.(tMono) : undefined;
   const visual =
     snap?.frameId !== undefined && snap.framePhash !== undefined
       ? { frameBlobId: snap.frameId, phash: snap.framePhash }
-      : at !== undefined
-        ? { frameBlobId: at.frameId, phash: at.framePhash }
-        : undefined;
+      : near !== undefined
+        ? { frameBlobId: near.frameId, phash: near.framePhash }
+        : at !== undefined
+          ? { frameBlobId: at.frameId, phash: at.framePhash }
+          : undefined;
   return {
     id,
     predicates,

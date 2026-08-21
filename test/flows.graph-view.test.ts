@@ -142,6 +142,40 @@ describe("rankNodes", () => {
     const g = graph([node("n0"), node("n9")], []);
     expect(rankNodes(g).get("n9")).toBe(0);
   });
+
+  it("ranks EVERY root's chain, not only the declared entry's", () => {
+    // A graph accretes across sessions, and two recordings that opened in
+    // different applications share no starting state — so an install has as many
+    // roots as it has distinct openings. Walking from the entry alone left every
+    // other chain flat at rank 0: measured on the real store, 15 of 22 nodes in
+    // one row. It was masked until then by a stateless first node, which merged
+    // every recording under one fake universal root.
+    const g = graph(
+      [node("n0"), node("n1"), node("m0"), node("m1"), node("m2")],
+      [
+        edge("e0", "n0", "n1"),
+        edge("e1", "m0", "m1"),
+        edge("e2", "m1", "m2"),
+      ],
+    );
+    const ranks = rankNodes(g);
+    expect(ranks.get("m0")).toBe(0);
+    expect(ranks.get("m1")).toBe(1);
+    expect(ranks.get("m2")).toBe(2);
+    // and the entry's own chain is untouched
+    expect(ranks.get("n0")).toBe(0);
+    expect(ranks.get("n1")).toBe(1);
+  });
+
+  it("a node in a cycle that no root reaches still ranks rather than vanishing", () => {
+    const g = graph(
+      [node("n0"), node("c1"), node("c2")],
+      [edge("e0", "c1", "c2"), edge("e1", "c2", "c1")],
+    );
+    const ranks = rankNodes(g);
+    expect(ranks.get("c1")).toBe(0);
+    expect(ranks.get("c2")).toBe(0);
+  });
 });
 
 describe("toGraphDTO", () => {

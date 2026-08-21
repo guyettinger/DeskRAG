@@ -162,9 +162,16 @@ export function RecordScreen({ status, env, onOpenIndexing }: Props): React.JSX.
       <div className="page__head">
         <span className="eyebrow">Session recorder</span>
         <h1>Capture an experience</h1>
+        {/* THE WINDOW DISAPPEARS ON RECORD AND THAT HAS TO BE SAID HERE.
+            DeskRAG hides itself while capturing, because the window producer
+            polls the frontmost application and an app left on screen films its
+            own UI into every route it records. Unannounced, pressing the button
+            looks like the app quitting — and the control that stops it is in a
+            place the user has no reason to look. */}
         <p>
-          Record your screen, input, and audio into a searchable memory. Recording keeps running
-          if you close the window to the tray.
+          Record your screen, input, and audio into a searchable memory. DeskRAG hides while it
+          records so it stays out of your flows — stop from the menu bar, and the window comes
+          back. Recording also keeps running if you close the window to the tray.
         </p>
       </div>
 
@@ -187,7 +194,7 @@ export function RecordScreen({ status, env, onOpenIndexing }: Props): React.JSX.
             <span className="recbtn__core" />
           </button>
           <div className="transport__hint">
-            {live ? "Click to stop" : "Click to start recording"}
+            {live ? "Click to stop, or use the menu bar" : "Click to start — the window will hide"}
           </div>
           {/* The handoff, named. Without this the recording appears to vanish
               on stop: nothing on this screen says where it went. */}

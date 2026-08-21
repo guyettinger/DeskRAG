@@ -574,8 +574,31 @@ export class DeskRagService {
 
   // --- recording ------------------------------------------------------------
 
+  /**
+   * Called at the top of `startRecording`, BEFORE any producer starts.
+   *
+   * The app hides its window here. Before rather than after, and a hook rather
+   * than an `onState` listener, because `onState` fires once the device clock
+   * and every producer are up — by which point the window producer's first
+   * 500ms poll has almost certainly already recorded the recorder as frontmost.
+   * Both the IPC path and the tray menu go through `startRecording`, so one hook
+   * covers both.
+   *
+   * This is a convenience, never the mechanism: what actually keeps the recorder
+   * out of the graph is the lift-time filter, which also repairs recordings
+   * already taken. Wrapped and swallowed for the reason `onActivity` is — a
+   * recording is real-time and unrepeatable, and a window that failed to hide
+   * must not be able to stop one.
+   */
+  onRecordingWillStart?: () => void;
+
   async startRecording(): Promise<RecordingStatus> {
     if (this.state.state !== "idle") return this.state;
+    try {
+      this.onRecordingWillStart?.();
+    } catch (err) {
+      console.error("[deskrag] could not hide the window before recording:", err);
+    }
     const v = this.settings.view();
     const sig = v.signals;
     const active: SignalKind[] = [];
@@ -640,7 +663,12 @@ export class DeskRagService {
       const p = await this.loadNativeProducer(
         "deskrag/capture/producers/active-window",
         "ActiveWindowProducer",
-        { displaySource: new SwiftDisplaySource() },
+        // `selfPid` is what lets a `focus_change` say the RECORDER was frontmost,
+        // which is exact where a name is a guess: the same build reports
+        // `Electron` from a dev checkout and its product name from a signed
+        // bundle. This is the main process, and an Electron app's frontmost
+        // window belongs to it.
+        { displaySource: new SwiftDisplaySource(), selfPid: process.pid },
       );
       if (p) {
         session.addProducer(p);
@@ -814,6 +842,10 @@ export class DeskRagService {
       sessionId,
       facts,
       providers,
+      // Read per run, like `providers`: the list can change between recordings,
+      // and a run must use the list as it stands now rather than one captured
+      // when the service was constructed.
+      excludeApps: this.settings.view().flows.excludeApps,
       store: this.store,
       blobs: this.blobs,
       loadCropper: () => this.loadCropper(),
@@ -1699,6 +1731,11 @@ export class DeskRagService {
         }
         return out;
       }),
+      // The list as it stands NOW, which is not necessarily what the graph on
+      // disk was built with — it only takes effect on a rebuild. The screen says
+      // which applications are meant to be missing; a reader who finds their own
+      // app gone is entitled to that answer without opening Settings.
+      excludedApps: [...this.settings.view().flows.excludeApps],
     };
   }
 
@@ -1845,7 +1882,24 @@ export class DeskRagService {
 
     // A dismissal is a real row carrying only its binding: a rejected proposal
     // that is not persisted comes back on every load.
-    const claimed = rows.map((r) => this.skillDocOf(r).binding.routeKey);
+    //
+    // BOTH KEYS CLAIM, and the live one is the half that matters. A route's key
+    // is its place-label sequence, so any change to what a place is called
+    // re-keys every route on the next rebuild — and a skill whose STORED key
+    // went stale would have its own route offered straight back as something to
+    // keep, which is how a person ends up with two skills for one flow. That is
+    // exactly what `binding.liveRouteKey` is for, and `duplicateSkills` above
+    // already reads it. Measured on the real store while removing the recorder
+    // from the graph: one kept skill, correctly rebound to `Calculator →
+    // TextEdit`, and that same route sitting in the proposals list beneath it.
+    //
+    // The stored key keeps claiming too, because it is still right whenever the
+    // graph has not moved, and an unbindable skill has no live key at all.
+    const claimed = rendered.flatMap((s) =>
+      s.binding.liveRouteKey === null
+        ? [s.binding.routeKey]
+        : [s.binding.routeKey, s.binding.liveRouteKey],
+    );
     const proposals: SkillProposalDTO[] = unclaimedRoutes(flows?.routes ?? [], claimed).map(
       (route) => ({
         routeKey: route.id,

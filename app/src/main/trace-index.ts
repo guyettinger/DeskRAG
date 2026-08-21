@@ -14,15 +14,25 @@
  * A graph accretes across sessions: each lift is merged into the existing graph
  * rather than replacing it, which is what makes a second recording of the same
  * task produce a branch (or fill a slot) instead of a second disconnected chain.
+ *
+ * It is also where THE RECORDER IS TAKEN OUT OF THE RECORDING. A session is
+ * started and stopped from an application, so every recording is bracketed by
+ * it; `excludeFocusedApps` drops those stretches before anything is lifted. That
+ * this happens here rather than in `graph-view.ts` is the point — lifting reads
+ * rows already on disk, so `rebuildGraph` applies the rule to recordings already
+ * taken, where a read-time filter would relabel the routes and leave the cards
+ * and the skill steps behind.
  */
 
 import {
   displayIdAt,
+  excludeFocusedApps,
   liftTrace,
   mergeTrace,
   type AxSnapshot,
   type DisplayInfo,
   type DualStore,
+  type ExcludedFocus,
   type Graph,
   type Keymap,
   type RegionsAtFrame,
@@ -102,6 +112,10 @@ export interface TraceIndexResult {
   actions: number;
   /** True when no keymap was ever captured, so typed text could not resolve. */
   missingKeymap: boolean;
+  /** Events dropped as the recorder's own. Disclosure, following `missingKeymap`. */
+  excludedEvents: number;
+  /** Which applications those were, first-seen order. */
+  excludedApps: string[];
 }
 
 /** One session lifted, before anything is merged or written. */
@@ -109,7 +123,19 @@ export interface LiftedSession {
   trace: Trace;
   /** No `keymap_change` event, so every keystroke was discarded. */
   missingKeymap: boolean;
+  /** Events dropped as the recorder's own, and which applications they were. */
+  excludedEvents: number;
+  excludedApps: string[];
 }
+
+/**
+ * Whether a `focus_change` names something the graph should leave out.
+ *
+ * Injected rather than read from settings here, for the reason every callback in
+ * this file is injected: `liftSession` is reachable from a rebuild, from the
+ * per-session stage and from a probe, and each of them holds the setting already.
+ */
+export type IsExcludedApp = (focus: ExcludedFocus) => boolean;
 
 /**
  * Lift one session into a `Trace`, touching no graph and writing nothing.
@@ -120,10 +146,26 @@ export interface LiftedSession {
  * Returns undefined when the session produced no events at all — an empty
  * recording should not create a node.
  */
-export function liftSession(store: DualStore, sessionId: string): LiftedSession | undefined {
-  const events = store.getEventsBySession(sessionId) as unknown as TraceEvent[];
+export function liftSession(
+  store: DualStore,
+  sessionId: string,
+  isExcluded?: IsExcludedApp,
+): LiftedSession | undefined {
+  const all = store.getEventsBySession(sessionId) as unknown as TraceEvent[];
+  // The recorder's own stretches, gone — before boundaries, before gestures,
+  // before anything reads a focus. A recording that never left the recorder
+  // empties here and correctly produces no node.
+  const excluded =
+    isExcluded === undefined
+      ? { events: all, dropped: 0, apps: [] as string[] }
+      : excludeFocusedApps(all, isExcluded);
+  const events = excluded.events;
   if (events.length === 0) return undefined;
 
+  // BOTH ends come from what SURVIVED. The left edge especially: pinned at zero
+  // it manufactures a boundary before every remaining event, with no focus, no
+  // AX and no keyframe behind it — the `n0 — no state` card.
+  const startTMono = events[0]!.tMono;
   const endTMono = events[events.length - 1]!.tMono;
   const { keymaps, displays, bounds } = environmentOf(events);
 
@@ -138,9 +180,42 @@ export function liftSession(store: DualStore, sessionId: string): LiftedSession 
     return found;
   };
 
+  /**
+   * The keyframe that best SHOWS the state at a boundary: the nearer of the
+   * first frame at-or-after and the latest at-or-before, ties to at-or-after.
+   *
+   * `frameAt` above is at-or-before and stays that way — a click landed on the
+   * screen as it was. A NODE is the settled state AFTER its boundary, so
+   * at-or-before hands its card the OUTGOING application's screen: the same
+   * off-by-one that paired every focus_change node with the previous app's AX
+   * tree until `getAxForBoundary` was introduced (measured at 54% of nodes).
+   *
+   * Nearest rather than strictly at-or-after, because the two boundary kinds
+   * differ. A focus change IS a visual change, so `mpdecimate` keeps a frame
+   * right after it; a dwell-gap boundary on a settled screen may have no
+   * following frame for minutes, and reaching forward to the NEXT state would be
+   * a worse lie than reaching back to this one.
+   */
+  const visualAt = (tMono: number): { frameId: string; framePhash: string } | undefined => {
+    const before = frameAt(tMono);
+    const after = frames.find((f) => f.tMono >= tMono);
+    const pick =
+      after === undefined
+        ? before
+        : before === undefined
+          ? after
+          : after.tMono - tMono <= tMono - before.tMono
+            ? after
+            : before;
+    return pick === undefined
+      ? undefined
+      : { frameId: pick.id, framePhash: pick.phash.toString(16) };
+  };
+
   const trace = liftTrace({
     sessionId,
     events,
+    startTMono,
     endTMono,
 
     axAt: (tMono): AxSnapshot | undefined => {
@@ -181,12 +256,19 @@ export function liftSession(store: DualStore, sessionId: string): LiftedSession 
       };
     },
 
+    visualAt,
+
     keymapAt: (tMono) => latestAt(keymaps, tMono),
     windowBoundsAt: (tMono) => latestAt(bounds, tMono),
     displayIdAt: (p, tMono) => displayIdAt(latestAt(displays, tMono) ?? [], p),
   });
 
-  return { trace, missingKeymap: keymaps.length === 0 };
+  return {
+    trace,
+    missingKeymap: keymaps.length === 0,
+    excludedEvents: excluded.dropped,
+    excludedApps: excluded.apps,
+  };
 }
 
 const actionsIn = (trace: Trace): number => trace.edges.reduce((n, e) => n + e.actions.length, 0);
@@ -201,12 +283,20 @@ async function mergeInto(existing: Graph | undefined, trace: Trace): Promise<Gra
   return { ...merged, id: DEFAULT_GRAPH_ID };
 }
 
-const summarize = (graph: Graph, actions: number, missingKeymap: boolean): TraceIndexResult => ({
+const summarize = (
+  graph: Graph,
+  actions: number,
+  missingKeymap: boolean,
+  excludedEvents: number,
+  excludedApps: string[],
+): TraceIndexResult => ({
   nodes: graph.nodes.length,
   edges: graph.edges.length,
   variables: graph.slots.filter((s) => s.samples.length > 1).length,
   actions,
   missingKeymap,
+  excludedEvents,
+  excludedApps,
 });
 
 /**
@@ -216,18 +306,28 @@ const summarize = (graph: Graph, actions: number, missingKeymap: boolean): Trace
 export async function indexTrace(
   store: DualStore,
   sessionId: string,
+  isExcluded?: IsExcludedApp,
 ): Promise<TraceIndexResult | undefined> {
-  const lifted = liftSession(store, sessionId);
+  const lifted = liftSession(store, sessionId, isExcluded);
   if (lifted === undefined) return undefined;
   const graph = await mergeInto(store.getGraph(DEFAULT_GRAPH_ID), lifted.trace);
   await store.putGraph(graph);
-  return summarize(graph, actionsIn(lifted.trace), lifted.missingKeymap);
+  return summarize(
+    graph,
+    actionsIn(lifted.trace),
+    lifted.missingKeymap,
+    lifted.excludedEvents,
+    lifted.excludedApps,
+  );
 }
 
 export interface RebuildResult extends TraceIndexResult {
   /** Sessions that produced a trace and were merged. */
   sessions: number;
-  /** Sessions with no events, which correctly produce no node. */
+  /**
+   * Sessions that produced no node. Empty recordings, and — since the recorder
+   * is filtered out before lifting — recordings that never left it.
+   */
   skipped: number;
 }
 
@@ -254,6 +354,7 @@ export interface RebuildResult extends TraceIndexResult {
 export async function rebuildGraph(
   store: DualStore,
   onProgress?: (done: number, total: number, sessionId: string) => void,
+  isExcluded?: IsExcludedApp,
 ): Promise<RebuildResult> {
   // Oldest first, so the rebuilt graph accretes in the same order the
   // incremental path produced it. Merge order decides which node a revisited
@@ -265,17 +366,21 @@ export async function rebuildGraph(
   let merged = 0;
   let skipped = 0;
   let missingKeymap = false;
+  let excludedEvents = 0;
+  const excludedApps: string[] = [];
 
   for (let i = 0; i < sessions.length; i++) {
     const session = sessions[i]!;
     onProgress?.(i, sessions.length, session.id);
-    const lifted = liftSession(store, session.id);
+    const lifted = liftSession(store, session.id, isExcluded);
     if (lifted === undefined) {
       skipped++;
       continue;
     }
     actions += actionsIn(lifted.trace);
     missingKeymap = missingKeymap || lifted.missingKeymap;
+    excludedEvents += lifted.excludedEvents;
+    for (const a of lifted.excludedApps) if (!excludedApps.includes(a)) excludedApps.push(a);
     graph = await mergeInto(graph, lifted.trace);
     merged++;
   }
@@ -286,9 +391,23 @@ export async function rebuildGraph(
   // dressed as a no-op, so leave whatever is on disk alone and say nothing was
   // rebuilt — the caller reports `sessions: 0`.
   if (graph === undefined) {
-    return { nodes: 0, edges: 0, variables: 0, actions: 0, missingKeymap, sessions: 0, skipped };
+    return {
+      nodes: 0,
+      edges: 0,
+      variables: 0,
+      actions: 0,
+      missingKeymap,
+      excludedEvents,
+      excludedApps,
+      sessions: 0,
+      skipped,
+    };
   }
 
   await store.putGraph(graph);
-  return { ...summarize(graph, actions, missingKeymap), sessions: merged, skipped };
+  return {
+    ...summarize(graph, actions, missingKeymap, excludedEvents, excludedApps),
+    sessions: merged,
+    skipped,
+  };
 }

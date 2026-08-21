@@ -112,10 +112,31 @@ export interface McpSettings {
   port: number;
 }
 
+/**
+ * What the trace graph treats as INSTRUMENTATION rather than as work.
+ *
+ * A session is started and stopped from an application, so every recording is
+ * bracketed by that application: it opens and closes every route, adds steps to
+ * every skill written from one, and makes unrelated tasks look like they share a
+ * hub. Excluding it happens at LIFT time, so `rebuildGraph` applies a change
+ * here to recordings already taken.
+ *
+ * A list rather than a boolean because the answer differs by build — `active-win`
+ * reports `Electron` from a dev checkout and the product name from a signed
+ * bundle — and because the same question has other answers (a password manager,
+ * a chat client) that are the user's to give. Only the trace graph reads it:
+ * capture, segments, captions, search and the Library player stay complete.
+ */
+export interface FlowsSettings {
+  /** App names OR bundle ids, matched case-insensitively. */
+  excludeApps: string[];
+}
+
 export interface SettingsView {
   providers: ProviderSettingsView;
   signals: SignalConfig;
   mcp: McpSettings;
+  flows: FlowsSettings;
 }
 
 export interface SettingsPatch {
@@ -127,6 +148,7 @@ export interface SettingsPatch {
   >;
   signals?: DeepPartial<SignalConfig>;
   mcp?: Partial<McpSettings>;
+  flows?: Partial<FlowsSettings>;
 }
 
 export type DeepPartial<T> = {
@@ -1183,6 +1205,15 @@ export interface FlowsDTO {
   graph: GraphDTO;
   /** Most-walked first. Empty when the graph carries no provenance. */
   routes: FlowRouteDTO[];
+  /**
+   * Applications this graph leaves out, so the screen can SAY SO.
+   *
+   * Silently dropping the user's own app from its own graph would be the kind of
+   * omission that reads as a bug. This is `FlowsSettings.excludeApps` as it
+   * stood at read time — which is not necessarily what the graph on disk was
+   * built with, since the list only takes effect on a rebuild.
+   */
+  excludedApps: string[];
 }
 
 /**

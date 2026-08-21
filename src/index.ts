@@ -484,6 +484,18 @@ export {
   type AxSnapshot,
   type RegionsAtFrame,
 } from "./trace/lift.js";
+/**
+ * The recorder is not part of the work it records. Lifting is re-runnable over
+ * recordings already on disk, so a filter at that layer repairs an existing
+ * library — which is why this is exported rather than living in the app.
+ */
+export {
+  excludeFocusedApps,
+  excludedByName,
+  focusOf,
+  type ExcludedFocus,
+  type ExcludeResult,
+} from "./trace/exclude.js";
 export { mergeTrace, edgeSignature, actionSignature, discoveredVariables } from "./trace/merge.js";
 export {
   printGraph,

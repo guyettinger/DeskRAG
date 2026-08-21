@@ -101,6 +101,7 @@ const flows = (): FlowsDTO => ({
     ],
     slots: [],
   },
+  excludedApps: [],
   routes: [
     {
       id: "e0",

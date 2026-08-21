@@ -90,24 +90,48 @@ export function labelNode(node: TraceNode): { label: string; app?: string; hint?
 }
 
 /**
- * BFS distance from the entry, first-seen winning so a merged loop does not
- * re-rank its target. A node unreachable from the entry ranks 0 rather than
+ * BFS distance from a root, first-seen winning so a merged loop does not
+ * re-rank its target. A node unreachable from every root ranks 0 rather than
  * being dropped: an orphan is visible and fixable, an omitted node is not.
+ *
+ * EVERY ROOT, not only `graph.entry` — and the difference is not cosmetic. A
+ * graph accretes across sessions, and two recordings that began in different
+ * applications share no starting state, so an install genuinely has as many
+ * roots as it has distinct openings. Walking from the declared entry alone left
+ * every other chain at rank 0: measured on the real store, 15 of 22 nodes in one
+ * flat row.
+ *
+ * That was invisible until the recorder was filtered out of the graph, and the
+ * reason is worth keeping: the recording used to open on a node with NO
+ * predicates, and a node with no predicates is vacuously true of every desktop,
+ * so `matchNode` merged every session's first node into one. The graph looked
+ * like a tree because it had a fake universal root. Removing it did not break
+ * the ranking; it revealed that the ranking had only ever worked by accident.
+ *
+ * `graph.entry` is still seeded FIRST so first-seen-wins resolves ties the way
+ * it always did.
  */
 export function rankNodes(graph: Graph): Map<string, number> {
   const out = new Map<string, number>();
   const outgoing = new Map<string, string[]>();
+  const hasIncoming = new Set<string>();
   for (const e of graph.edges) {
     const list = outgoing.get(e.from);
     if (list === undefined) outgoing.set(e.from, [e.to]);
     else list.push(e.to);
+    hasIncoming.add(e.to);
   }
 
   const queue: string[] = [];
-  if (graph.nodes.some((n) => n.id === graph.entry)) {
-    out.set(graph.entry, 0);
-    queue.push(graph.entry);
-  }
+  const seed = (id: string): void => {
+    if (out.has(id)) return;
+    out.set(id, 0);
+    queue.push(id);
+  };
+  if (graph.nodes.some((n) => n.id === graph.entry)) seed(graph.entry);
+  // A root is a node nothing leads to. Seeded after the entry, in graph order,
+  // so the walk is deterministic across reads.
+  for (const n of graph.nodes) if (!hasIncoming.has(n.id)) seed(n.id);
   for (let i = 0; i < queue.length; i++) {
     const id = queue[i]!;
     const next = (out.get(id) ?? 0) + 1;

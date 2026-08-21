@@ -85,6 +85,7 @@ function flows(): FlowsDTO {
       ],
       slots: [{ name: "issue_title", samples: [SECRET, "second run"] }],
     },
+    excludedApps: [],
     routes: [
       {
         id: "Ghostty → Google Chrome — github.com/user/repo",
