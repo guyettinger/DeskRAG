@@ -561,21 +561,48 @@ export function frequentRoutes(
       ),
     };
 
-    const nodeIds: string[] = [];
+    // The TRAVERSAL, in walk order, with every revisit kept — `places` is
+    // derived from it and `places` is the route KEY, so collapsing a revisit
+    // here would rename the route. A walk n0 -> n1 -> n0 -> n1 passes through
+    // four places and is not the same route as one that passes through two.
+    const walkNodeIds: string[] = [];
     for (const edgeId of edgeIds) {
       const edge = edgeById.get(edgeId);
       if (edge === undefined) continue;
-      if (nodeIds.length === 0) nodeIds.push(edge.from);
-      nodeIds.push(edge.to);
+      if (walkNodeIds.length === 0) walkNodeIds.push(edge.from);
+      walkNodeIds.push(edge.to);
     }
 
     const places: string[] = [];
-    for (const id of nodeIds) {
+    for (const id of walkNodeIds) {
       const place = placeOf(id);
       // Staying in one app across six states is one hop, not six.
       if (place !== undefined && places[places.length - 1] !== place) places.push(place);
     }
     if (places.length === 0) continue;
+
+    // THE UNION FIELDS ARE SETS, and the seed has to say so as loudly as the
+    // merge below does.
+    //
+    // A session can walk one edge more than once, which the sort comment above
+    // states outright — so its raw walk is not a set, and seeding a group with
+    // it published a union containing the same edge twice. Only the MERGE path
+    // carried an `includes` guard, so the defect survived exactly as long as a
+    // route had a single recording, or lived in whichever recording seeded it.
+    // Measured on the real store: 4 of 5 routes carried duplicate nodeIds (one
+    // reported 14 states where it had 6) and 2 of 5 carried duplicate edgeIds.
+    //
+    // It is not cosmetic. `habit-doc.ts` prints `nodeIds.length` into a
+    // person's own HABIT.md as "N states on this route", `route-ways.ts` falls
+    // back to `edgeIds.length` as a step count, and `frequentRoutes` sorts by
+    // it — so a looping recording read as a bigger route than it is.
+    //
+    // `new Set` preserves first-insertion order, which is the "first-walked
+    // order" the merge comment below asks for. `walks` keeps the RAW array:
+    // the union answers "what should light up", a walk answers "what did this
+    // recording do", and there the second crossing is the fact.
+    const nodeIds = [...new Set(walkNodeIds)];
+    const unionEdgeIds = [...new Set(edgeIds)];
 
     const key = places.join(" → ");
     const existing = byKey.get(key);
@@ -583,7 +610,7 @@ export function frequentRoutes(
       byKey.set(key, {
         places,
         nodeIds,
-        edgeIds,
+        edgeIds: unionEdgeIds,
         sessionIds: [sessionId],
         walks: [{ sessionId, edgeIds: [...edgeIds] }],
         spans: [span],

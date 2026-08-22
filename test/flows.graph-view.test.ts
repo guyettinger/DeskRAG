@@ -430,6 +430,65 @@ describe("frequentRoutes", () => {
     );
   };
 
+  /**
+   * A recording that walks one edge TWICE.
+   *
+   * `walked` pushes one step per SOURCE, so an edge with two sources for one
+   * session lands in that session's walk twice — which is correct, and which
+   * the loop comment above `ordered` says outright. Measured on the real store:
+   * 4 of 5 routes carried duplicate `nodeIds` (up to 8 of 14) and 2 of 5
+   * carried duplicate `edgeIds`, always the same edge walked twice in a row.
+   *
+   * The two fields answer different questions and must diverge here.
+   * `edgeIds`/`nodeIds` are the UNION — a SET, "what should light up" — and
+   * `habit-doc.ts` prints `nodeIds.length` into a person's HABIT.md as "the N
+   * states on this route", so a duplicate is a wrong number in their own file.
+   * `walks` is "what did this recording DO", where the repeat is the fact.
+   */
+  it("de-duplicates the union of a looping walk, and keeps the loop in the walk", () => {
+    const g = graph(
+      [
+        node("n0", [app("TextEdit")]),
+        node("n1", [app("Google Chrome")]),
+        node("n2", [app("Finder")]),
+      ],
+      [
+        sourcedEdge("e0", "n0", "n1", [{ sessionId: "s1", tMonoStart: 0, tMonoEnd: 900 }]),
+        // Walked at 1000 and again at 2000 — one edge, two crossings.
+        sourcedEdge("e1", "n1", "n2", [
+          { sessionId: "s1", tMonoStart: 1000, tMonoEnd: 1900 },
+          { sessionId: "s1", tMonoStart: 2000, tMonoEnd: 2900 },
+        ]),
+      ],
+    );
+    const routes = frequentRoutes(g);
+    expect(routes).toHaveLength(1);
+    // The UNION is a set: each edge and each state once.
+    expect(routes[0]!.edgeIds).toEqual(["e0", "e1"]);
+    expect(routes[0]!.nodeIds).toEqual(["n0", "n1", "n2"]);
+    // The WALK is a history: the second crossing is real and stays.
+    expect(routes[0]!.walks?.[0]?.edgeIds).toEqual(["e0", "e1", "e1"]);
+  });
+
+  /** The same invariant when a SECOND recording seeds nothing new. */
+  it("de-duplicates the union even when the FIRST recording is the looping one", () => {
+    const g = graph(
+      [node("n0", [app("TextEdit")]), node("n1", [app("Google Chrome")])],
+      [
+        sourcedEdge("e0", "n0", "n1", [
+          { sessionId: "s1", tMonoStart: 0, tMonoEnd: 900 },
+          { sessionId: "s1", tMonoStart: 1000, tMonoEnd: 1900 },
+          { sessionId: "s2", tMonoStart: 0, tMonoEnd: 900 },
+        ]),
+      ],
+    );
+    const routes = frequentRoutes(g);
+    expect(routes).toHaveLength(1);
+    expect(routes[0]!.count).toBe(2);
+    expect(routes[0]!.edgeIds).toEqual(["e0"]);
+    expect(routes[0]!.nodeIds).toEqual(["n0", "n1"]);
+  });
+
   it("collapses two recordings of one task into a single route", () => {
     const routes = frequentRoutes(chain({ s1: ["e0", "e1"], s2: ["e0", "e1"] }));
     expect(routes).toHaveLength(1);
