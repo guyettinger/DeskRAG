@@ -197,6 +197,14 @@ export interface LedgerMark {
   sessionId: string;
   x: number;
   gained: boolean;
+  /**
+   * The walk this mark stands for, carried rather than left to be re-joined by
+   * index. The renderer asks it what to say on hover, and pairing two arrays
+   * positionally is a coupling that survives exactly until one of them is
+   * filtered — which `walkMarks` already does, for a recording whose row is
+   * gone.
+   */
+  walk: WalkMarkDTO;
 }
 
 /**
@@ -222,6 +230,7 @@ export function ledgerMarks(
     sessionId: w.sessionId,
     x: width <= 0 ? 0.5 : (w.at - domain.from) / width,
     gained: w.gained,
+    walk: w,
   }));
 }
 
@@ -241,4 +250,66 @@ export function walkSpan(walks: readonly WalkMarkDTO[]): string | null {
   const first = DAY_MONTH.format(new Date(walks[0]!.at));
   const last = DAY_MONTH.format(new Date(walks[walks.length - 1]!.at));
   return first === last ? first : `${first} – ${last}`;
+}
+
+/**
+ * What one mark on the ledger says when a reader asks it.
+ *
+ * The ledger is the screen's signature and was, until now, a picture with no
+ * way in: a mark IS a recording, and the reader could neither name it nor go
+ * and watch it. This is the sentence the hover card and the mark's own
+ * accessible name are both built from, so a pointer and a screen reader are
+ * told the same thing — position is a metaphor, and the words are the fact.
+ *
+ * Formatters are INJECTED because `api.ts` reads `window.deskrag` at module
+ * scope and a root test cannot import it; this module is `.ts` precisely so the
+ * root suite can reach it. Same rule as `readoutAt(…, { label })` one screen
+ * over. They are `wallClock` and `timecode` from `api.ts` at every call site,
+ * so the ledger names a moment exactly as the Flows drawer's recordings list
+ * does — two evidence surfaces, one voice.
+ */
+export interface MarkReadout {
+  /** Wall clock: WHEN in a person's life this happened. */
+  when: string;
+  /** Where inside the recording, and how far it ran. Null with no walk. */
+  at: string | null;
+  /** THIS recording's own path, never the route's union. Null with no walk. */
+  steps: string | null;
+  /** Recorded since the habit was kept, or why there is nothing to open. */
+  note: string | null;
+  /** The affordance, in words. Null when there is nothing to open. */
+  action: string | null;
+}
+
+export function markReadout(
+  mark: WalkMarkDTO,
+  fmt: { wallClock: (ms: number) => string; timecode: (ms: number) => string },
+): MarkReadout {
+  const walk = mark.walk;
+  return {
+    when: fmt.wallClock(mark.at),
+    at:
+      walk === null
+        ? null
+        : `${fmt.timecode(walk.atSec * 1000)} – ${fmt.timecode(walk.throughSec * 1000)}`,
+    steps: walk === null ? null : `${walk.steps} step${walk.steps === 1 ? "" : "s"}`,
+    // A dead link is worse than none, so a mark that cannot be followed SAYS
+    // why rather than going quietly grey — the `StageSpec.skipReason` rule one
+    // screen over. It happens to an orphaned or ambiguous habit, whose marks
+    // come from the ids it was kept with because there is no live route left.
+    note:
+      walk === null
+        ? "Not in a current route, so there is no moment to open"
+        : mark.gained
+          ? "Recorded since you kept this"
+          : null,
+    action: walk === null ? null : "Open this recording",
+  };
+}
+
+/** The same readout as one line — a mark's accessible name and its tooltip. */
+export function markLabel(readout: MarkReadout): string {
+  return [readout.when, readout.at, readout.steps, readout.note]
+    .filter((part): part is string => part !== null)
+    .join(" · ");
 }

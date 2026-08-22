@@ -511,6 +511,15 @@ export function frequentRoutes(
    * `ax-dump`/`ax-exec` drift hazard, in the instrument rather than the code.
    */
   rule: ClusterRule = DEFAULT_CLUSTER_RULE,
+  /**
+   * Where lane offset 0 sits for a recording, injected exactly as `toGraphDTO`
+   * takes it and for the same measured reason (see `ResolveLaneOrigin`): a walk
+   * carries the moment it happened, and `tMono / MS_PER_SEC` is that moment
+   * only when the video's first frame coincides with t_mono zero. It never
+   * does. No resolver means origin 0, which is where a session with no video
+   * starts anyway.
+   */
+  laneOrigin: ResolveLaneOrigin = () => 0,
 ): FlowRouteDTO[] {
   const nodeById = new Map(graph.nodes.map((n) => [n.id, n]));
   /** Undefined for a node that describes no state, which names no place. */
@@ -559,6 +568,17 @@ export function frequentRoutes(
       tMonoEnd: Math.max(
         ...ordered.map((s) => edgeById.get(s.edgeId)?.sources?.[0]?.tMonoEnd ?? s.at),
       ),
+    };
+
+    // The same stretch on the LANE axis, which is what a reader can be sent to.
+    // Minted here, from the span above, so the two can never disagree about
+    // when this recording walked this route; `laneSec` is the one converter.
+    const origin = laneOrigin(sessionId);
+    const walk: RouteWalkDTO = {
+      sessionId,
+      edgeIds: [...edgeIds],
+      atSec: laneSec(span.tMonoStart, origin),
+      throughSec: laneSec(span.tMonoEnd, origin),
     };
 
     // The TRAVERSAL, in walk order, with every revisit kept — `places` is
@@ -612,7 +632,7 @@ export function frequentRoutes(
         nodeIds,
         edgeIds: unionEdgeIds,
         sessionIds: [sessionId],
-        walks: [{ sessionId, edgeIds: [...edgeIds] }],
+        walks: [walk],
         spans: [span],
       });
       continue;
@@ -625,7 +645,7 @@ export function frequentRoutes(
     // walked. `edgeIds` answers "what should light up"; `walks` answers "what
     // did this recording do", and only the second can become a step list.
     existing.sessionIds.push(sessionId);
-    existing.walks.push({ sessionId, edgeIds: [...edgeIds] });
+    existing.walks.push(walk);
     existing.spans.push(span);
     for (const id of nodeIds) if (!existing.nodeIds.includes(id)) existing.nodeIds.push(id);
     for (const id of edgeIds) if (!existing.edgeIds.includes(id)) existing.edgeIds.push(id);

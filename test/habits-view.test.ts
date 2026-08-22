@@ -10,6 +10,8 @@ import {
   proposalTitle,
   bandProposals,
   ledgerMarks,
+  markLabel,
+  markReadout,
   walkSpan,
 } from "../app/src/renderer/src/habits-view.js";
 import type {
@@ -271,6 +273,7 @@ describe("the recurrence ledger", () => {
     sessionId: `s${at}`,
     at,
     gained,
+    walk: { atSec: 0, throughSec: 1, steps: 2 },
   });
 
   it("places walks on the SHARED domain, not on their own extent", () => {
@@ -283,6 +286,78 @@ describe("the recurrence ledger", () => {
 
   it("centres a zero-width domain rather than asserting recency", () => {
     expect(ledgerMarks([w(7)], { from: 7, to: 7 }).map((m) => m.x)).toEqual([0.5]);
+  });
+
+  /**
+   * A MARK ANSWERS WHEN ASKED. Both formatters are injected because `api.ts`
+   * reads `window.deskrag` at module scope and this suite cannot import it;
+   * fakes here keep the assertions about the SENTENCE rather than about
+   * `Intl`'s output on whatever machine runs them.
+   */
+  const fmt = {
+    wallClock: (ms: number) => `wall(${ms})`,
+    timecode: (ms: number) => `tc(${ms})`,
+  };
+
+  it("says when, where inside the recording, and what it walked", () => {
+    const out = markReadout(
+      { sessionId: "s1", at: 1000, gained: false, walk: { atSec: 4, throughSec: 9, steps: 3 } },
+      fmt,
+    );
+    expect(out).toEqual({
+      when: "wall(1000)",
+      at: "tc(4000) – tc(9000)",
+      steps: "3 steps",
+      note: null,
+      action: "Open this recording",
+    });
+  });
+
+  it("counts one step in the singular", () => {
+    expect(
+      markReadout(
+        { sessionId: "s1", at: 1, gained: false, walk: { atSec: 0, throughSec: 1, steps: 1 } },
+        fmt,
+      ).steps,
+    ).toBe("1 step");
+  });
+
+  // The only evidence on this screen that a habit is still being practised
+  // rather than merely written down.
+  it("names a recording made since the habit was kept", () => {
+    expect(
+      markReadout(
+        { sessionId: "s1", at: 1, gained: true, walk: { atSec: 0, throughSec: 1, steps: 2 } },
+        fmt,
+      ).note,
+    ).toBe("Recorded since you kept this");
+  });
+
+  /**
+   * WITHHELD, AND IT SAYS WHY. An orphaned habit's marks have no live route, so
+   * there is no moment to open — and a control that merely goes grey is
+   * indistinguishable from one nobody implemented, the `skipReason` rule.
+   */
+  it("states the reason rather than offering a dead link", () => {
+    const out = markReadout({ sessionId: "s1", at: 1, gained: false, walk: null }, fmt);
+    expect(out.at).toBeNull();
+    expect(out.steps).toBeNull();
+    expect(out.action).toBeNull();
+    expect(out.note).toBe("Not in a current route, so there is no moment to open");
+  });
+
+  // The mark's accessible name IS the card, on one line: an action cannot be
+  // hidden from a screen reader, and a position is not a fact anyone should
+  // have to see to get.
+  it("says the same thing on one line for the label", () => {
+    expect(
+      markLabel(
+        markReadout(
+          { sessionId: "s1", at: 1, gained: true, walk: { atSec: 0, throughSec: 1, steps: 2 } },
+          fmt,
+        ),
+      ),
+    ).toBe("wall(1) · tc(0) – tc(1000) · 2 steps · Recorded since you kept this");
   });
 
   it("draws nothing with no domain", () => {

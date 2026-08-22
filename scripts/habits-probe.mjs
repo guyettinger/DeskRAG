@@ -105,10 +105,44 @@ try {
       ok("declares the steps are the template's", /\n  steps: template/.test(md));
       ok("carries the recorded steps", md.includes("## Recorded steps"));
       ok("says the steps are not model-written", /Not written by a model/.test(md));
-      ok(
-        "withholds recorded values by default",
-        !habit.showSamples && /recorded values are not printed/i.test(md),
-      );
+      // WHAT THE FILE SAYS ABOUT ITS OWN KEYSTROKES, in whichever state it is
+      // in — never "the default", which this cannot observe.
+      //
+      // `showSamples` is a STORED, per-habit choice: false at accept, and a
+      // checkbox in the editor. This asserted `!habit.showSamples`, so a real
+      // library where someone had turned it on failed a check about disclosure
+      // by disclosing correctly — measured on the author's own store, whose one
+      // kept habit carries `recorded_values: included`. It had a second hole in
+      // the same line: a route where nothing was typed prints "Nothing was
+      // typed on this route" and never the withheld sentence, so it would have
+      // failed there too, with `showSamples` off and the file perfectly honest.
+      //
+      // The invariant is that the frontmatter and the body AGREE, and that
+      // printing keystrokes carries its warning IN THE FILE — the file is the
+      // thing that gets pasted somewhere else.
+      const typed = !/Nothing was typed on this route/.test(md);
+      console.log(`  values      : ${habit.showSamples ? "included" : "withheld"}${typed ? "" : " (nothing typed on this route)"}`);
+      if (habit.showSamples) {
+        // `!typed ||` for the same reason the withheld branch has it: the
+        // warning lives inside the block that lists the slots, so a route where
+        // nothing was typed carries neither values nor a warning about them.
+        // Measured against a clone of the real store — the one kept habit is
+        // all clicks, and this check failed on it while the file was correct.
+        ok(
+          "printing recorded values carries the warning in the file",
+          !typed || (/Recorded values are printed below/i.test(md) && /including a password/i.test(md)),
+        );
+        ok("the frontmatter says so too", /\n  recorded_values: included/.test(md));
+      } else {
+        ok(
+          "withheld values are declared withheld",
+          !typed || /recorded values are not printed/i.test(md),
+        );
+        // The line is emitted ONLY when values are included, so its absence is
+        // the frontmatter agreeing with the body.
+        ok("the frontmatter claims no values", !/recorded_values:/.test(md));
+        ok("and none are printed", !/^\s+- "/m.test(md));
+      }
       ok("invents no confidence number", !/^\s*confidence:/m.test(md));
       // outcomes is {0,0} on every graph, so any success rate would be invented.
       ok("claims no success rate", !/\bsuccess(es)? ?\d|attempts=\d/.test(md));

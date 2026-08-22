@@ -11,7 +11,7 @@ const route = (walks: string[][], union: string[]): FlowRouteDTO => ({
   nodeIds: [],
   edgeIds: union,
   sessionIds: walks.map((_, i) => `s${i}`),
-  walks: walks.map((edgeIds, i) => ({ sessionId: `s${i}`, edgeIds })),
+  walks: walks.map((edgeIds, i) => ({ sessionId: `s${i}`, edgeIds, atSec: 0, throughSec: 0 })),
   variants: [],
 });
 

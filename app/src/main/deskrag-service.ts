@@ -1755,7 +1755,13 @@ export class DeskRagService {
           out.push({ text: summary.text, level, coveredMs });
         }
         return out;
-      }),
+      },
+      // The default rule. Named rather than passed as `undefined`, because the
+      // next argument is the one that matters here: a walk's `atSec` is on the
+      // SAME lane axis the graph's sources are, so a jump from a habit's ledger
+      // and a jump from a node's drawer land on one clock.
+      undefined,
+      (sessionId) => origins.get(sessionId) ?? 0),
       // The list as it stands NOW, which is not necessarily what the graph on
       // disk was built with — it only takes effect on a rebuild. The screen says
       // which applications are meant to be missing; a reader who finds their own
@@ -1836,7 +1842,10 @@ export class DeskRagService {
     // rather than placed at the epoch.
     const walkIds = bound.route?.sessionIds ?? doc.binding.sessionIds;
     const gained = new Set(bound.gainedSessionIds);
-    const walks = walkMarks(walkIds, startedAt, gained);
+    // The live route's walks carry WHERE inside each recording it was walked.
+    // With no live route there are none, and every mark is drawn without a
+    // moment to open rather than with an invented one.
+    const walks = walkMarks(walkIds, startedAt, gained, bound.route?.walks ?? []);
 
     const binding: HabitBindingDTO = {
       state: bound.state,
@@ -1963,7 +1972,7 @@ export class DeskRagService {
         sessionIds: [...route.sessionIds],
         // Never `gained`: nobody has kept this, so there is no keeping act for a
         // recording to have arrived after.
-        walks: walkMarks(route.sessionIds, startedAt, new Set()),
+        walks: walkMarks(route.sessionIds, startedAt, new Set(), route.walks),
         apps: flows === null ? [] : flowApps(flows, route),
         // The record it WOULD produce, so Accept is never a blind act.
         preview:

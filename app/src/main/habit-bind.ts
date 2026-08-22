@@ -21,7 +21,7 @@
  * Pure: plain objects in, plain objects out. Root-tested.
  */
 
-import type { FlowRouteDTO, WalkMarkDTO } from "@shared/types";
+import type { FlowRouteDTO, RouteWalkDTO, WalkMarkDTO } from "@shared/types";
 
 /** What was true at the moment the user kept this habit. Never rewritten here. */
 export interface HabitBindingDoc {
@@ -232,17 +232,34 @@ export function unclaimedRoutes(
  * half-century and flatten every real walk into one pixel. That is not
  * hypothetical — a route's `sessionIds` outlive the recordings they name, which
  * is exactly why `HabitBindingDoc.sessionIds` is not a foreign key.
+ *
+ * `walks` is the LIVE route's own walks, which is what makes a mark followable:
+ * it carries the lane seconds this recording walked the route at. It is
+ * deliberately allowed to be missing an id — an orphaned or ambiguous habit has
+ * no live route at all, and there the mark is drawn from the bind-time ids with
+ * no moment to open. Absent, never invented.
  */
 export function walkMarks(
   sessionIds: readonly string[],
   startedAt: ReadonlyMap<string, number>,
   gained: ReadonlySet<string>,
+  walks: readonly RouteWalkDTO[] = [],
 ): WalkMarkDTO[] {
+  const walked = new Map(walks.map((w) => [w.sessionId, w]));
   const out: WalkMarkDTO[] = [];
   for (const sessionId of sessionIds) {
     const at = startedAt.get(sessionId);
     if (at === undefined) continue;
-    out.push({ sessionId, at, gained: gained.has(sessionId) });
+    const w = walked.get(sessionId);
+    out.push({
+      sessionId,
+      at,
+      gained: gained.has(sessionId),
+      walk:
+        w === undefined
+          ? null
+          : { atSec: w.atSec, throughSec: w.throughSec, steps: w.edgeIds.length },
+    });
   }
   return out.sort((a, b) => a.at - b.at);
 }

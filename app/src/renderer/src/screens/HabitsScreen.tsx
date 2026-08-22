@@ -16,7 +16,7 @@
  * never drift.
  */
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   HabitDTO,
   HabitPatch,
@@ -24,7 +24,7 @@ import type {
   HabitsDTO,
   WalkMarkDTO,
 } from "@shared/types";
-import { api } from "../api.js";
+import { api, timecode, wallClock } from "../api.js";
 import { GhostLottie } from "../brand/GhostLottie.js";
 import {
   bandHabits,
@@ -33,10 +33,19 @@ import {
   evidenceLine,
   generateDisabledReason,
   ledgerMarks,
+  markLabel,
+  markReadout,
   proposalEvidence,
   proposalTitle,
   walkSpan,
 } from "../habits-view.js";
+import type { LedgerMark } from "../habits-view.js";
+import { clampTip } from "./hover-card.js";
+
+/** Distance from the mark to its card, and from the card to the window edge —
+    the rail's two constants, which the shared `clampTip` reads. */
+const TIP_OFFSET = 10;
+const TIP_MARGIN = 8;
 
 /** The span every ledger on the screen is drawn against. Null draws nothing. */
 type Domain = { from: number; to: number } | null;
@@ -60,7 +69,17 @@ function Head({ children }: { children?: React.ReactNode }): React.JSX.Element {
   );
 }
 
-export function HabitsScreen(): React.JSX.Element {
+export function HabitsScreen({
+  onOpenRecording,
+}: {
+  /**
+   * The one jump this screen makes. Minted in `App` like every other, so the
+   * `OpenAt` nonce cannot be forgotten and the same mark clicked twice still
+   * moves the playhead. Until now Habits was the only evidence surface in the
+   * app with no way back to the recordings it argues from.
+   */
+  onOpenRecording: (sessionId: string, atSec: number) => void;
+}): React.JSX.Element {
   const [data, setData] = useState<HabitsDTO | undefined>(undefined);
   const [selected, setSelected] = useState<Selection | null>(null);
   const [busy, setBusy] = useState(false);
@@ -231,6 +250,7 @@ export function HabitsScreen(): React.JSX.Element {
             <HabitEditor
               habit={habit}
               domain={data.domain}
+              onOpenRecording={onOpenRecording}
               busy={busy}
               copied={copied}
               proseNote={generateDisabledReason(data.prose)}
@@ -263,6 +283,7 @@ export function HabitsScreen(): React.JSX.Element {
             <ProposalPreview
               proposal={proposal}
               domain={data.domain}
+              onOpenRecording={onOpenRecording}
               busy={busy}
               onAccept={() => {
                 setSelected(null);
@@ -298,34 +319,159 @@ export function HabitsScreen(): React.JSX.Element {
  * `FrameResult.score` sin one layer down — an ordering wearing a confidence. A
  * mark is a recording; there is nothing to misread.
  *
- * `aria-hidden`, deliberately: every row states its evidence in words beside
- * this, so a screen reader gets the fact rather than a positional metaphor.
+ * IT IS AN INSTRUMENT WHERE IT CAN BE, AND DECORATION WHERE IT CANNOT — and
+ * which one is decided by `onOpen`, never by `size`.
+ *
+ * A mark IS a recording, so the reader should be able to ask it which one and
+ * go and watch it. Two of the four ledgers on this screen sit INSIDE the row
+ * `<button>` that selects a habit, and a button inside a button is invalid and
+ * would take the row's own click with it. So those stay exactly as they were:
+ * `aria-hidden`, inert, a picture beside words that already state the fact. The
+ * two in a masthead — the editor's and the proposal preview's — are outside any
+ * button and become the thing you can question.
+ *
+ * Interactive, it stops being `aria-hidden` and every mark carries the same
+ * sentence the card shows: an action cannot be hidden from a screen reader, and
+ * a position is not a fact anyone should have to see to get.
  */
 function Ledger({
   walks,
   domain,
   size = "row",
+  onOpen,
 }: {
   walks: readonly WalkMarkDTO[];
   domain: Domain;
   size?: "row" | "lead";
+  /** Given, the marks become buttons. Omitted, the ledger is a picture. */
+  onOpen?: (sessionId: string, atSec: number) => void;
 }): React.JSX.Element | null {
+  const [hover, setHover] = useState<{ mark: LedgerMark; x: number; y: number } | null>(null);
   const marks = ledgerMarks(walks, domain);
   if (marks.length === 0) return null;
   // A single mark is drawn HOLLOW. It is the one visual difference between an
   // observation and a habit, and it has to survive being glanced at.
   const lone = marks.length === 1;
+  const tone = (m: LedgerMark): string =>
+    `ledger__mark${lone ? " is-lone" : ""}${m.gained ? " is-gained" : ""}`;
+
+  if (onOpen === undefined) {
+    return (
+      <span className={`ledger ledger--${size}`} aria-hidden="true">
+        <span className="ledger__axis" />
+        {marks.map((m) => (
+          <span key={m.sessionId} className={tone(m)} style={{ left: `${m.x * 100}%` }} />
+        ))}
+      </span>
+    );
+  }
+
+  /** Where the card should point, from the mark itself rather than the cursor,
+      so a keyboard focus places it exactly as a hover does. */
+  const anchor = (el: Element): { x: number; y: number } => {
+    const r = el.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.bottom };
+  };
+
   return (
-    <span className={`ledger ledger--${size}`} aria-hidden="true">
+    <span
+      className={`ledger ledger--${size} ledger--live`}
+      role="group"
+      aria-label="Recordings that walked this route"
+      onMouseLeave={() => setHover(null)}
+    >
       <span className="ledger__axis" />
-      {marks.map((m) => (
-        <span
-          key={m.sessionId}
-          className={`ledger__mark${lone ? " is-lone" : ""}${m.gained ? " is-gained" : ""}`}
-          style={{ left: `${m.x * 100}%` }}
-        />
-      ))}
+      {marks.map((m) => {
+        const label = markLabel(markReadout(m.walk, { wallClock, timecode }));
+        const walk = m.walk.walk;
+        return (
+          <button
+            key={m.sessionId}
+            type="button"
+            // The HIT BOX is the button; the MARK is the span inside it. A mark
+            // is nine pixels because that is the size of the thing it reports,
+            // and widening it to be clickable would be the lie the track rail's
+            // separate `.tracks__span-hit` exists to refuse.
+            className="ledger__hit"
+            style={{ left: `${m.x * 100}%` }}
+            // Withheld, never offered dead — the Search hit's `sessionId !== ""`
+            // guard. An orphaned habit's marks have no live route and so no
+            // moment; the card says that in words.
+            disabled={walk === null}
+            aria-label={label}
+            title={label}
+            onMouseEnter={(e) => setHover({ mark: m, ...anchor(e.currentTarget) })}
+            onFocus={(e) => setHover({ mark: m, ...anchor(e.currentTarget) })}
+            onBlur={() => setHover(null)}
+            onClick={() => {
+              if (walk !== null) onOpen(m.sessionId, walk.atSec);
+            }}
+          >
+            <span className={tone(m)} />
+          </button>
+        );
+      })}
+      {hover && <MarkCard mark={hover.mark.walk} x={hover.x} y={hover.y} />}
     </span>
+  );
+}
+
+/**
+ * What one mark says, positioned off the mark rather than inside the ledger.
+ *
+ * `position: fixed` and MEASURED then clamped, exactly as the track rail's
+ * readout card is — a card sized by a guess ran off the bottom of the window
+ * there, and the arithmetic is now shared (`hover-card.ts`) so the two cannot
+ * drift. Hidden for the one frame between mount and measurement, so it never
+ * appears at an unclamped position and jumps.
+ */
+function MarkCard({
+  mark,
+  x,
+  y,
+}: {
+  mark: WalkMarkDTO;
+  x: number;
+  y: number;
+}): React.JSX.Element {
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  const readout = markReadout(mark, { wallClock, timecode });
+
+  useLayoutEffect(() => {
+    const el = cardRef.current;
+    if (!el) return;
+    const { width, height } = el.getBoundingClientRect();
+    setPos(
+      clampTip(
+        { x, y },
+        { width, height },
+        { width: window.innerWidth, height: window.innerHeight },
+        { offset: TIP_OFFSET, margin: TIP_MARGIN },
+      ),
+    );
+  }, [x, y, mark]);
+
+  return (
+    <div
+      className="ledger__tip"
+      ref={cardRef}
+      style={{
+        left: pos?.left ?? x + TIP_OFFSET,
+        top: pos?.top ?? y + TIP_OFFSET,
+        visibility: pos ? undefined : "hidden",
+      }}
+    >
+      <div className="ledger__tip-when">{readout.when}</div>
+      {readout.at !== null && (
+        <div className="ledger__tip-at mono">
+          {readout.at}
+          {readout.steps !== null && ` · ${readout.steps}`}
+        </div>
+      )}
+      {readout.note !== null && <div className="ledger__tip-note">{readout.note}</div>}
+      {readout.action !== null && <div className="ledger__tip-go">{readout.action}</div>}
+    </div>
   );
 }
 
@@ -418,12 +564,14 @@ function ProposalPreview({
   busy,
   onAccept,
   onDismiss,
+  onOpenRecording,
 }: {
   proposal: HabitProposalDTO;
   domain: Domain;
   busy: boolean;
   onAccept: () => void;
   onDismiss: () => void;
+  onOpenRecording: (sessionId: string, atSec: number) => void;
 }): React.JSX.Element {
   const span = walkSpan(proposal.walks);
   return (
@@ -434,7 +582,12 @@ function ProposalPreview({
         </span>
         <h2>{proposal.name ?? proposal.label}</h2>
         <div className="habitedit__evidence">
-          <Ledger walks={proposal.walks} domain={domain} size="lead" />
+          <Ledger
+            walks={proposal.walks}
+            domain={domain}
+            size="lead"
+            onOpen={onOpenRecording}
+          />
           <p className="mono">
             {proposalEvidence(proposal)}
             {span !== null && ` · ${span}`}
@@ -469,6 +622,7 @@ function ProposalPreview({
 function HabitEditor({
   habit,
   domain,
+  onOpenRecording,
   busy,
   copied,
   proseNote,
@@ -485,6 +639,7 @@ function HabitEditor({
 }: {
   habit: HabitDTO;
   domain: Domain;
+  onOpenRecording: (sessionId: string, atSec: number) => void;
   busy: boolean;
   copied: boolean;
   proseNote: string | null;
@@ -523,7 +678,7 @@ function HabitEditor({
           {habit.slug} · v{habit.version}
         </p>
         <div className="habitedit__evidence">
-          <Ledger walks={b.walks} domain={domain} size="lead" />
+          <Ledger walks={b.walks} domain={domain} size="lead" onOpen={onOpenRecording} />
           <p className="mono">
             {evidenceLine(habit)}
             {span !== null && ` · ${span}`}

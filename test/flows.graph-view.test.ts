@@ -664,6 +664,47 @@ describe("frequentRoutes", () => {
     const g = chain({ s1: ["e0", "e1"], s2: ["e0"], s3: ["e0", "e1"] });
     expect(frequentRoutes(g).map((r) => r.id)).toEqual(frequentRoutes(g).map((r) => r.id));
   });
+
+  /**
+   * A WALK CARRIES THE MOMENT IT HAPPENED, ON THE LANE AXIS.
+   *
+   * This is what makes a habit's ledger followable: a mark is a recording, and
+   * clicking it seeks the Library. The number has to be LANE seconds — offsets
+   * from the video's first frame — because `tMono / 1000` is the same thing
+   * only when capture began at t_mono zero, which it never does. That exact
+   * mistake shipped once on this screen and landed every jump ~1.9s early.
+   */
+  it("puts a walk's span on the LANE axis, not on raw t_mono", () => {
+    const g = chain({ s1: ["e0", "e1"] });
+    // The video's first frame arrived 1.9s into the recording — the measured
+    // pre-roll, and the whole reason this resolver exists.
+    const routes = frequentRoutes(g, () => [], undefined, () => 1900);
+    const walk = routes[0]!.walks[0]!;
+    expect(walk.sessionId).toBe("s1");
+    // e0 starts at t_mono 0 — BEFORE the video, so the axis floors at 0 rather
+    // than reporting a negative second no pixel can mean.
+    expect(walk.atSec).toBe(0);
+    // e1 ends at t_mono 1900 exactly: lane zero.
+    expect(walk.throughSec).toBe(0);
+  });
+
+  it("measures a walk from the video's first frame", () => {
+    const g = chain({ s1: ["e0", "e1"] });
+    const routes = frequentRoutes(g, () => [], undefined, () => 0);
+    expect(routes[0]!.walks[0]).toMatchObject({ atSec: 0, throughSec: 1.9 });
+    // With no resolver at all, origin 0 — where a session with no video starts.
+    expect(frequentRoutes(g)[0]!.walks[0]).toMatchObject({ atSec: 0, throughSec: 1.9 });
+  });
+
+  it("gives every recording in a shared route its own moment", () => {
+    const g = chain({ s1: ["e0", "e1"], s2: ["e0", "e1"] });
+    const routes = frequentRoutes(g, () => [], undefined, (id) => (id === "s2" ? 1000 : 0));
+    expect(routes).toHaveLength(1);
+    expect(routes[0]!.walks.map((w) => [w.sessionId, w.throughSec])).toEqual([
+      ["s1", 1.9],
+      ["s2", 0.9],
+    ]);
+  });
 });
 
 /**

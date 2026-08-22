@@ -82,9 +82,9 @@ function flows(): FlowsDTO {
         // unchanged from before variants existed.
         variants: [],
         walks: [
-          { sessionId: "s1", edgeIds: ["e0", "e1"] },
-          { sessionId: "s2", edgeIds: ["e0", "e1"] },
-          { sessionId: "s3", edgeIds: ["e0", "e1"] },
+          { sessionId: "s1", edgeIds: ["e0", "e1"], atSec: 0, throughSec: 0 },
+          { sessionId: "s2", edgeIds: ["e0", "e1"], atSec: 0, throughSec: 0 },
+          { sessionId: "s3", edgeIds: ["e0", "e1"], atSec: 0, throughSec: 0 },
         ],
       },
     ],
@@ -134,9 +134,9 @@ describe("flowWalks", () => {
     const f = flows();
     // s1 and s2 did the same thing; s3 went another way through the same apps.
     f.routes[0]!.walks = [
-      { sessionId: "s1", edgeIds: ["e0", "e1"] },
-      { sessionId: "s2", edgeIds: ["e0", "e1"] },
-      { sessionId: "s3", edgeIds: ["e1", "e0"] },
+      { sessionId: "s1", edgeIds: ["e0", "e1"], atSec: 0, throughSec: 0 },
+      { sessionId: "s2", edgeIds: ["e0", "e1"], atSec: 0, throughSec: 0 },
+      { sessionId: "s3", edgeIds: ["e1", "e0"], atSec: 0, throughSec: 0 },
     ];
     const walks = flowWalks(f, f.routes[0]!);
     expect(walks).toHaveLength(2);

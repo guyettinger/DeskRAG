@@ -28,7 +28,7 @@ const route = (id: string, sessionIds: string[]): FlowRouteDTO => ({
   nodeIds: [],
   edgeIds: [],
   sessionIds,
-  walks: sessionIds.map((sessionId) => ({ sessionId, edgeIds: [] })),
+  walks: sessionIds.map((sessionId) => ({ sessionId, edgeIds: [], atSec: 0, throughSec: 0 })),
   variants: [],
 });
 
@@ -256,5 +256,42 @@ describe("walks placed on the wall clock", () => {
   // shared domain over half a century and flatten every real walk to one pixel.
   it("DROPS a recording with no row rather than placing it at the epoch", () => {
     expect(walkMarks(["s1", "gone"], clock, new Set())).toHaveLength(1);
+  });
+
+  /**
+   * A mark can be FOLLOWED, and the moment comes from the live route's walk.
+   *
+   * `at` above is wall clock — WHEN in a person's life — and deliberately
+   * cannot say where inside the video anything happened. The walk carries that,
+   * so the ledger's marks open the Library at the stretch this recording spent
+   * on this route rather than at its beginning.
+   */
+  const walk = (sessionId: string, atSec: number, edges: string[]) => ({
+    sessionId,
+    edgeIds: edges,
+    atSec,
+    throughSec: atSec + 10,
+  });
+
+  it("carries the walk's own moment and step count", () => {
+    const out = walkMarks(["s1", "s2"], clock, new Set(), [
+      walk("s1", 4, ["e0", "e1", "e2"]),
+      walk("s2", 9, ["e0"]),
+    ]);
+    expect(out.map((w) => w.walk)).toEqual([
+      { atSec: 9, throughSec: 19, steps: 1 },
+      { atSec: 4, throughSec: 14, steps: 3 },
+    ]);
+  });
+
+  /**
+   * An orphaned or ambiguous habit has NO live route, so its marks are drawn
+   * from the ids it was kept with and there is no moment to open. Null, never
+   * zero: zero is a real second at the start of the recording, and a mark that
+   * seeks there would be a dead link wearing a working one.
+   */
+  it("leaves the walk null when no live route places it", () => {
+    expect(walkMarks(["s1"], clock, new Set())[0]!.walk).toBeNull();
+    expect(walkMarks(["s1"], clock, new Set(), [walk("s2", 4, ["e0"])])[0]!.walk).toBeNull();
   });
 });

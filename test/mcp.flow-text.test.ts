@@ -78,8 +78,8 @@ function flows(): FlowsDTO {
         sessionIds: ["s1", "s2"],
         variants: [],
         walks: [
-          { sessionId: "s1", edgeIds: ["e0", "e1"] },
-          { sessionId: "s2", edgeIds: ["e0", "e1"] },
+          { sessionId: "s1", edgeIds: ["e0", "e1"], atSec: 0, throughSec: 0 },
+          { sessionId: "s2", edgeIds: ["e0", "e1"], atSec: 0, throughSec: 0 },
         ],
       },
     ],
