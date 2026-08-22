@@ -109,7 +109,9 @@ npm run probe:stability       # does the library MOVE. A route's key is its plac
                               # all -- trace-index reads events, AX and regions, all
                               # deterministic -- so any drift is a finding, not noise. Names DO
                               # move (a model composes them) and are printed, never counted --
-                              # measured, 12 of 12 renamed while 0 of 4 keys moved.
+                              # measured on a 5-route store, 14 of 15 renamed while 0 of
+                              # 15 keys moved. Read baseline->1 as CONFOUNDED (it changes
+                              # the providers AND re-indexes); 1->2->3 is the clean signal.
                               # It WRITES: clones <userData>, re-indexes the CLONE, deletes it.
 npm run probe:patchgeom       # is the patch->box map DISPLACED? paints a marker at a known cell,
                               # re-embeds, and reports signed delta in cells. Read-only (SQLite
