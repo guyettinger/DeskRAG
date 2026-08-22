@@ -46,27 +46,27 @@ export type { ComposeContext, SummaryProvider } from "./embed/summary.js";
 export { OllamaSummaryProvider, listSummaryModels } from "./embed/ollama-summary.js";
 export type { OllamaSummaryOptions } from "./embed/ollama-summary.js";
 /**
- * Skill prose — the PROSE half of a SKILL.md, never the record. The four-field
+ * Habit prose — the PROSE half of a HABIT.md, never the record. The four-field
  * reply shape is what keeps a model from rewriting steps it did not observe.
  * Barrel-safe: an interface, a deterministic fake, two pure functions, and an
  * adapter that only calls `fetch`.
  */
 export {
-  FakeSkillProseProvider,
-  parseSkillResponse,
-  skillPrompt,
-  SKILL_SYSTEM,
-} from "./embed/skill-prose.js";
-export type { SkillBrief, SkillProse, SkillProseProvider } from "./embed/skill-prose.js";
-export { OllamaSkillProseProvider } from "./embed/ollama-skill-prose.js";
-export type { OllamaSkillProseOptions } from "./embed/ollama-skill-prose.js";
+  FakeHabitProseProvider,
+  parseHabitResponse,
+  habitPrompt,
+  HABIT_SYSTEM,
+} from "./embed/habit-prose.js";
+export type { HabitBrief, HabitProse, HabitProseProvider } from "./embed/habit-prose.js";
+export { OllamaHabitProseProvider } from "./embed/ollama-habit-prose.js";
+export type { OllamaHabitProseOptions } from "./embed/ollama-habit-prose.js";
 
 /**
  * The note written after a recording — what it was for, what stalled, what order
  * would have been better. MODEL-ONLY and with no template path: a rollup can
  * honestly name a stretch of work, but it cannot honestly say a session dragged,
  * so with no model configured there is simply no note. Same four-string seam as
- * skill prose, and for the same reason — a reflection reaches a skill as an
+ * habit prose, and for the same reason — a reflection reaches a habit as an
  * opinion in the prompt and can never reach the record.
  */
 export {

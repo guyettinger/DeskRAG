@@ -56,8 +56,8 @@ const reader: ExperienceReader = {
   recordings: () => [],
   outline: () => null,
   flows: () => null,
-  skills: () => ({
-    skills: [],
+  habits: () => ({
+    habits: [],
     proposals: [],
     graphPresent: false,
     prose: { available: false, model: null },
@@ -166,12 +166,12 @@ describe("the endpoint", () => {
     const names = json.result.tools.map((t: { name: string }) => t.name).sort();
     expect(names).toEqual([
       "get_flow",
+      "get_habit",
       "get_moment",
       "get_recording_outline",
-      "get_skill",
       "list_flows",
+      "list_habits",
       "list_recordings",
-      "list_skills",
       "search_experience",
     ]);
     for (const t of json.result.tools) {

@@ -1,7 +1,7 @@
 /**
- * The skill CATALOGUE as text — what `list_skills` prints.
+ * The habit CATALOGUE as text — what `list_habits` prints.
  *
- * Only the list. `get_skill` returns the SKILL.md verbatim and this module is
+ * Only the list. `get_habit` returns the HABIT.md verbatim and this module is
  * not involved, deliberately: the value of that tool is that its output IS a
  * file, and anything wrapping it would corrupt a paste-to-disk.
  *
@@ -9,19 +9,19 @@
  * this directory, so a new file here is guarded the day it lands.
  */
 
-import type { SkillDTO, SkillsDTO } from "@shared/types";
+import type { HabitDTO, HabitsDTO } from "@shared/types";
 
-/** A skill by its id, or undefined — the caller reports the miss. */
-export function findSkill(skills: SkillsDTO, skillId: string): SkillDTO | undefined {
-  return skills.skills.find((s) => s.id === skillId && s.state !== "dismissed");
+/** A habit by its id, or undefined — the caller reports the miss. */
+export function findHabit(habits: HabitsDTO, habitId: string): HabitDTO | undefined {
+  return habits.habits.find((s) => s.id === habitId && s.state !== "dismissed");
 }
 
 const PREAMBLE =
-  "Skills kept from this user's own recordings. Each one is a SKILL.md written from a route " +
+  "Habits kept from this user's own recordings. Each one is a HABIT.md written from a route " +
   "they actually walked, so it is evidence about what they did rather than general knowledge " +
-  "about how software works. get_skill returns the file verbatim.";
+  "about how software works. get_habit returns the file verbatim.";
 
-function lines(s: SkillDTO): string[] {
+function lines(s: HabitDTO): string[] {
   const b = s.binding;
   const out = [s.slug === "" ? s.title : s.slug];
   out.push(`  id: ${s.id}`);
@@ -38,9 +38,9 @@ function lines(s: SkillDTO): string[] {
 
   // The two disclosures an agent actually needs to weigh the file, stated in the
   // LIST so it can choose before fetching. One recording is not a habit, and an
-  // orphaned skill's steps have not been re-checked against anything.
+  // orphaned habit's steps have not been re-checked against anything.
   if (b.recordings === 1) {
-    out.push("  RECORDED ONCE — one observation, not an established habit.");
+    out.push("  RECORDED ONCE — kept from a single observation. Nothing has confirmed it repeats.");
   }
   if (b.state === "orphaned" || b.state === "ambiguous") {
     out.push(
@@ -54,7 +54,7 @@ function lines(s: SkillDTO): string[] {
   // duplicate or two genuinely different ways of doing the same work.
   if (s.duplicates.length > 0) {
     out.push(
-      `  ALSO DESCRIBED BY — ${s.duplicates.join(", ")}. These skills answer to the same recorded route; nobody has merged them.`,
+      `  ALSO DESCRIBED BY — ${s.duplicates.join(", ")}. These habits answer to the same recorded route; nobody has merged them.`,
     );
   }
 
@@ -71,28 +71,28 @@ function lines(s: SkillDTO): string[] {
  * reports the wrong one. The third names how many routes are available, because
  * that is the actionable half.
  */
-export function renderSkillList(skills: SkillsDTO, noGraph: string): string {
-  const kept = skills.skills.filter((s) => s.state !== "dismissed");
+export function renderHabitList(habits: HabitsDTO, noGraph: string): string {
+  const kept = habits.habits.filter((s) => s.state !== "dismissed");
 
   if (kept.length === 0) {
-    if (!skills.graphPresent) return noGraph;
-    if (skills.proposals.length === 0) {
+    if (!habits.graphPresent) return noGraph;
+    if (habits.proposals.length === 0) {
       return (
-        "No skills, and no recorded routes to build them from: this graph carries no " +
+        "No habits, and no recorded routes to build them from: this graph carries no " +
         "provenance, so press `Rebuild trace graph` in DeskRAG (Settings → Maintenance)."
       );
     }
-    const n = skills.proposals.length;
+    const n = habits.proposals.length;
     return (
-      `No skills have been kept yet. DeskRAG proposes one per recorded route and the user ` +
+      `No habits have been kept yet. DeskRAG proposes one per recorded route and the user ` +
       `keeps the ones worth keeping — there ${n === 1 ? "is" : "are"} ${n} route${n === 1 ? "" : "s"} ` +
       `it could propose from right now. \`list_flows\` shows them; keeping one is done in ` +
-      `DeskRAG → Skills.`
+      `DeskRAG → Habits.`
     );
   }
 
   const body = kept.map((s) => lines(s).join("\n")).join("\n\n");
-  const hidden = skills.skills.length - kept.length;
+  const hidden = habits.habits.length - kept.length;
   const foot =
     hidden > 0 ? "\n\nDismissed proposals are not listed." : "";
   return `${PREAMBLE}\n\n${body}${foot}`;

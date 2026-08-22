@@ -1957,7 +1957,7 @@ a:focus-visible {
 input[type="text"],
 input[type="password"],
 input[type="number"],
-/* `textarea` was NOT here, and nothing in the app had one until Skills. An
+/* `textarea` was NOT here, and nothing in the app had one until Habits. An
    unstyled textarea takes the UA's own light-mode chrome and reads as disabled
    against this panel — invisible to every DOM assertion, obvious in the first
    screenshot. */
@@ -4045,102 +4045,102 @@ select {
   text-decoration-color: var(--accent);
 }
 
-/* ---- skills: kept routes as SKILL.md -------------------------------------- */
-/* A list of what has been kept and what could be, beside one skill's editor.
-   The class family is `skill*` — greped first: `.signal`/`.signals`,
+/* ---- habits: kept routes as HABIT.md -------------------------------------- */
+/* A list of what has been kept and what could be, beside one habit's editor.
+   The class family is `habit*` — greped first: `.signal`/`.signals`,
    `.settings`, `.stagenode` and `.search` were all already taken, and in one
    unscoped sheet a base class is a repo-wide identifier. */
-.skills { display: flex; flex-direction: column; gap: var(--s4); }
-.skills__head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s4); flex-wrap: wrap; }
-.skills__headtext { min-width: 0; }
-.skills__bar { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; }
+.habits { display: flex; flex-direction: column; gap: var(--s4); }
+.habits__head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s4); flex-wrap: wrap; }
+.habits__headtext { min-width: 0; }
+.habits__bar { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; }
 
 /* List | editor. EVERY link in the height chain needs min-height: 0, and the
    last needs an explicit floor — the trap `.flows__stage` documents, where one
    omission silently restores page scroll instead of scrolling the pane. */
-.skills__stage {
+.habits__stage {
   display: flex; gap: var(--s3);
   flex: 1; min-height: 0;
 }
-.skills__list {
+.habits__list {
   flex: 0 0 clamp(280px, 26vw, 380px); min-height: 0; overflow-y: auto;
   display: flex; flex-direction: column; gap: var(--s3);
   border: 1px solid var(--hairline); border-radius: var(--radius);
   background: var(--panel); padding: var(--s2);
 }
-.skills__band { display: flex; flex-direction: column; gap: var(--s1); }
-.skills__bandhead { padding: var(--s1) var(--s2) 0; }
-.skills__items { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--s1); }
+.habits__band { display: flex; flex-direction: column; gap: var(--s1); }
+.habits__bandhead { padding: var(--s1) var(--s2) 0; }
+.habits__items { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--s1); }
 
 /* One row. NOTHING TRUNCATES: a title wraps rather than being cut, because an
    ellipsis hides a broken layout instead of showing one. */
-.skill {
+.habit {
   display: grid; grid-template-columns: auto 1fr; gap: var(--s0) var(--s2); width: 100%;
   padding: var(--s2); border-radius: 6px; text-align: left; color: var(--text);
   background: transparent; border: 1px solid transparent;
 }
-.skill:hover { background: var(--elevated); }
+.habit:hover { background: var(--elevated); }
 /* The contact rule, written per selector — never a bare `.is-active`, which in
    an unscoped sheet would claim the name for every block in the app. */
-.skill.is-active {
+.habit.is-active {
   background: var(--elevated); border-color: color-mix(in srgb, var(--accent) 40%, transparent);
   box-shadow: inset 2px 0 0 var(--accent);
 }
-.skill__count {
+.habit__count {
   grid-row: 1 / span 3; align-self: start;
   font-family: var(--font-mono); font-size: var(--t-meta); color: var(--muted);
   padding-top: 1px;
 }
-.skill__count.is-repeated { color: var(--data-signal); }
-.skill__title { grid-column: 2; font-size: var(--t-small); line-height: 1.35; overflow-wrap: anywhere; }
-.skill__slug { grid-column: 2; font-size: var(--t-nano); color: var(--muted); overflow-wrap: anywhere; }
-.skill__meta {
+.habit__count.is-repeated { color: var(--data-signal); }
+.habit__title { grid-column: 2; font-size: var(--t-small); line-height: 1.35; overflow-wrap: anywhere; }
+.habit__slug { grid-column: 2; font-size: var(--t-nano); color: var(--muted); overflow-wrap: anywhere; }
+.habit__meta {
   grid-column: 2; display: flex; flex-wrap: wrap; gap: var(--s1);
   font-size: var(--t-nano); color: var(--muted);
 }
-.skill__tag {
+.habit__tag {
   padding: 0 var(--s1); border-radius: 3px; font-size: var(--t-nano);
   background: var(--sunken); color: var(--muted);
 }
 /* Amber, the app's existing "say something is off" tone. A binding that moved is
    the one thing on this screen that can be silently wrong. */
-.skill__bind {
+.habit__bind {
   grid-column: 2; justify-self: start; font-size: var(--t-nano); color: var(--amber);
   padding: 0 var(--s1); border-radius: 3px;
   background: color-mix(in srgb, var(--amber) 14%, transparent);
 }
 
-.skilledit {
+.habitedit {
   flex: 1; min-width: 0; min-height: 0; overflow-y: auto;
   border: 1px solid var(--hairline); border-radius: var(--radius); background: var(--panel);
 }
-.skilledit__blank { padding: var(--s5); font-size: var(--t-small); }
-.skilledit__body { padding: var(--s4); display: flex; flex-direction: column; gap: var(--s3); }
-.skilledit__body h2 { font-size: var(--t-title); margin: 0; overflow-wrap: anywhere; }
-.skilledit__bind { display: flex; flex-direction: column; align-items: flex-start; gap: var(--s2); }
+.habitedit__blank { padding: var(--s5); font-size: var(--t-small); }
+.habitedit__body { padding: var(--s4); display: flex; flex-direction: column; gap: var(--s3); }
+.habitedit__body h2 { font-size: var(--t-title); margin: 0; overflow-wrap: anywhere; }
+.habitedit__bind { display: flex; flex-direction: column; align-items: flex-start; gap: var(--s2); }
 
 /* The record, cut into the panel. `--sunken` is the register the signal wells
    and the timeline use — a meter set into the instrument, which is what this is:
    generated, read-only, and not the user's to edit. */
-.skilledit__record {
+.habitedit__record {
   margin: 0; padding: var(--s3); border-radius: var(--radius);
   background: var(--sunken); border: 1px solid var(--hairline-soft);
   font-size: var(--t-meta); line-height: 1.5; color: var(--muted);
   white-space: pre-wrap; overflow-wrap: anywhere;
   max-height: 420px; overflow-y: auto;
 }
-.skilledit__field { display: flex; flex-direction: column; gap: var(--s1); }
-.skilledit__label {
+.habitedit__field { display: flex; flex-direction: column; gap: var(--s1); }
+.habitedit__label {
   font-size: var(--t-meta); letter-spacing: 0.04em; text-transform: uppercase;
   color: var(--muted);
 }
 /* The sentence a label was trying to be. Uppercasing a whole clause made two
    shouty wrapped lines; the label names the field and the hint explains it. */
-.skilledit__hint { font-size: var(--t-meta); color: var(--muted); line-height: 1.45; }
-.skilledit__actions { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; }
-.skilledit__recordhead { display: flex; align-items: baseline; gap: var(--s2); }
-.skilledit__toggle {
+.habitedit__hint { font-size: var(--t-meta); color: var(--muted); line-height: 1.45; }
+.habitedit__actions { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; }
+.habitedit__recordhead { display: flex; align-items: baseline; gap: var(--s2); }
+.habitedit__toggle {
   display: flex; gap: var(--s2); align-items: flex-start;
   font-size: var(--t-meta); color: var(--muted); line-height: 1.45;
 }
-.skilledit__toggle input { margin-top: 2px; flex: 0 0 auto; }
+.habitedit__toggle input { margin-top: 2px; flex: 0 0 auto; }

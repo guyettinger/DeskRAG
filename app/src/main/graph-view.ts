@@ -611,7 +611,7 @@ export function frequentRoutes(
   // side trip through Finder renames the key, and identical work lands as two
   // routes of ×1 that never look like a habit. `route-cluster.ts` merges those,
   // and merges WHOLE groups so the session ids still partition — which is what
-  // keeps `bindSkill`'s strict majority a proof rather than a threshold.
+  // keeps `bindHabit`'s strict majority a proof rather than a threshold.
   //
   // Most-walked first, then SHORTEST, so a cluster is named after the walk most
   // recordings took and — between two walked equally often — the one without

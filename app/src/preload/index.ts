@@ -68,15 +68,15 @@ const api: DeskRagApi = {
   flows: {
     graph: () => ipcRenderer.invoke(IPC.flowsGraph),
   },
-  skills: {
-    list: () => ipcRenderer.invoke(IPC.skillsList),
-    accept: (routeKey) => ipcRenderer.invoke(IPC.skillsAccept, routeKey),
-    dismiss: (routeKey) => ipcRenderer.invoke(IPC.skillsDismiss, routeKey),
-    update: (id, patch) => ipcRenderer.invoke(IPC.skillsUpdate, id, patch),
-    generate: (id) => ipcRenderer.invoke(IPC.skillsGenerate, id),
-    rebind: (id, routeKey) => ipcRenderer.invoke(IPC.skillsRebind, id, routeKey),
-    merge: (keepId, mergeId) => ipcRenderer.invoke(IPC.skillsMerge, keepId, mergeId),
-    remove: (id) => ipcRenderer.invoke(IPC.skillsRemove, id),
+  habits: {
+    list: () => ipcRenderer.invoke(IPC.habitsList),
+    accept: (routeKey) => ipcRenderer.invoke(IPC.habitsAccept, routeKey),
+    dismiss: (routeKey) => ipcRenderer.invoke(IPC.habitsDismiss, routeKey),
+    update: (id, patch) => ipcRenderer.invoke(IPC.habitsUpdate, id, patch),
+    generate: (id) => ipcRenderer.invoke(IPC.habitsGenerate, id),
+    rebind: (id, routeKey) => ipcRenderer.invoke(IPC.habitsRebind, id, routeKey),
+    merge: (keepId, mergeId) => ipcRenderer.invoke(IPC.habitsMerge, keepId, mergeId),
+    remove: (id) => ipcRenderer.invoke(IPC.habitsRemove, id),
   },
   mcp: {
     status: () => ipcRenderer.invoke(IPC.mcpStatus),

@@ -6,8 +6,8 @@ import type {
   FlowsDTO,
   ResultDetailDTO,
   SearchResultDTO,
-  SkillDTO,
-  SkillsDTO,
+  HabitDTO,
+  HabitsDTO,
 } from "@shared/types";
 
 const EPOCH = 1_754_000_000_000; // 2025-07-31T22:13:20Z
@@ -121,8 +121,8 @@ const flows = (): FlowsDTO => ({
   ],
 });
 
-const noSkills = (): SkillsDTO => ({
-  skills: [],
+const noHabits = (): HabitsDTO => ({
+  habits: [],
   proposals: [],
   graphPresent: true,
   prose: { available: false, model: null },
@@ -130,7 +130,7 @@ const noSkills = (): SkillsDTO => ({
 
 function fakeReader(over: Partial<ExperienceReader> = {}): ExperienceReader {
   return {
-    skills: () => noSkills(),
+    habits: () => noHabits(),
     search: async () => oneHit(),
     moment: () => detail(),
     frameImage: async () => ({ base64: "AAAA", mimeType: "image/jpeg" }),
@@ -175,12 +175,12 @@ describe("the tool surface", () => {
   it("exposes exactly the eight read-only tools", () => {
     expect(TOOLS.map((t) => t.name).sort()).toEqual([
       "get_flow",
+      "get_habit",
       "get_moment",
       "get_recording_outline",
-      "get_skill",
       "list_flows",
+      "list_habits",
       "list_recordings",
-      "list_skills",
       "search_experience",
     ]);
   });
@@ -500,16 +500,16 @@ describe("toolByName", () => {
 });
 
 /**
- * The skill catalogue and the file.
+ * The habit catalogue and the file.
  *
- * `list_skills` is a chooser: an agent decides from it whether to fetch, so the
+ * `list_habits` is a chooser: an agent decides from it whether to fetch, so the
  * two disclosures that would change that decision — one observation, and steps
  * that have not been re-checked — are in the LIST, not only in the file.
  *
- * `get_skill` returns the SKILL.md raw. That is the whole point of it.
+ * `get_habit` returns the HABIT.md raw. That is the whole point of it.
  */
 
-const skill = (over: Partial<SkillDTO> = {}): SkillDTO => ({
+const habit = (over: Partial<HabitDTO> = {}): HabitDTO => ({
   id: "01K3W8QF5T3M2Q7V6N0X4C1B8D",
   state: "active",
   pinned: false,
@@ -545,13 +545,13 @@ const skill = (over: Partial<SkillDTO> = {}): SkillDTO => ({
   ...over,
 });
 
-const withSkills = (s: SkillsDTO): ExperienceReader => fakeReader({ skills: () => s });
+const withHabits = (s: HabitsDTO): ExperienceReader => fakeReader({ habits: () => s });
 
-describe("list_skills", () => {
-  it("lists a kept skill with its id, evidence and route", async () => {
+describe("list_habits", () => {
+  it("lists a kept habit with its id, evidence and route", async () => {
     const out = await callTool(
-      withSkills({ ...noSkills(), skills: [skill()] }),
-      "list_skills",
+      withHabits({ ...noHabits(), habits: [habit()] }),
+      "list_habits",
       {},
     );
     const text = out.content[0]!.text!;
@@ -562,17 +562,17 @@ describe("list_skills", () => {
   });
 
   it("says RECORDED ONCE in the list, where the decision to fetch is made", async () => {
-    const one = skill({
-      binding: { ...skill().binding, recordings: 1, boundSessionIds: ["s1"] },
+    const one = habit({
+      binding: { ...habit().binding, recordings: 1, boundSessionIds: ["s1"] },
     });
-    const out = await callTool(withSkills({ ...noSkills(), skills: [one] }), "list_skills", {});
-    expect(out.content[0]!.text).toMatch(/RECORDED ONCE — one observation, not an established habit/);
+    const out = await callTool(withHabits({ ...noHabits(), habits: [one] }), "list_habits", {});
+    expect(out.content[0]!.text).toMatch(/RECORDED ONCE — kept from a single observation/);
   });
 
   it("prints the version, so an agent that cached this file can see it moved", async () => {
     const out = await callTool(
-      withSkills({ ...noSkills(), skills: [skill({ version: "0.1.7" })] }),
-      "list_skills",
+      withHabits({ ...noHabits(), habits: [habit({ version: "0.1.7" })] }),
+      "list_habits",
       {},
     );
     expect(out.content[0]!.text).toMatch(/v0\.1\.7/);
@@ -581,27 +581,27 @@ describe("list_skills", () => {
   // Two files describing one procedure. An agent that fetches both and finds
   // them near-identical cannot tell whether that is a duplicate or two genuinely
   // different ways of doing the same work — so the LIST says which.
-  it("discloses that another skill describes the same route", async () => {
+  it("discloses that another habit describes the same route", async () => {
     const out = await callTool(
-      withSkills({ ...noSkills(), skills: [skill({ duplicates: ["01OTHERSKILLID"] })] }),
-      "list_skills",
+      withHabits({ ...noHabits(), habits: [habit({ duplicates: ["01OTHERHABITID"] })] }),
+      "list_habits",
       {},
     );
-    expect(out.content[0]!.text).toMatch(/ALSO DESCRIBED BY — 01OTHERSKILLID/);
+    expect(out.content[0]!.text).toMatch(/ALSO DESCRIBED BY — 01OTHERHABITID/);
     expect(out.content[0]!.text).toMatch(/nobody has merged them/);
   });
 
   it("says ORPHANED, and that the steps have not been re-checked", async () => {
-    const orphan = skill({ binding: { ...skill().binding, state: "orphaned", recordings: 0 } });
-    const out = await callTool(withSkills({ ...noSkills(), skills: [orphan] }), "list_skills", {});
+    const orphan = habit({ binding: { ...habit().binding, state: "orphaned", recordings: 0 } });
+    const out = await callTool(withHabits({ ...noHabits(), habits: [orphan] }), "list_habits", {});
     expect(out.content[0]!.text).toMatch(/ORPHANED/);
     expect(out.content[0]!.text).toMatch(/have not been re-checked/);
   });
 
-  it("hides a dismissal — a suppressed proposal is not a skill", async () => {
+  it("hides a dismissal — a suppressed proposal is not a habit", async () => {
     const out = await callTool(
-      withSkills({ ...noSkills(), skills: [skill({ state: "dismissed" })] }),
-      "list_skills",
+      withHabits({ ...noHabits(), habits: [habit({ state: "dismissed" })] }),
+      "list_habits",
       {},
     );
     expect(out.content[0]!.text).not.toMatch(/file-a-bug-report/);
@@ -611,19 +611,19 @@ describe("list_skills", () => {
   // different remedy, and an agent handed a bare empty list reports the wrong one.
   it("distinguishes no graph from no routes from nothing kept", async () => {
     const noGraph = await callTool(
-      withSkills({ ...noSkills(), graphPresent: false }),
-      "list_skills",
+      withHabits({ ...noHabits(), graphPresent: false }),
+      "list_habits",
       {},
     );
     expect(noGraph.content[0]!.text).toMatch(/No trace graph has been built/);
 
-    const noRoutes = await callTool(withSkills(noSkills()), "list_skills", {});
+    const noRoutes = await callTool(withHabits(noHabits()), "list_habits", {});
     expect(noRoutes.content[0]!.text).toMatch(/carries no provenance/);
     expect(noRoutes.content[0]!.text).toMatch(/Rebuild trace graph/);
 
     const nothingKept = await callTool(
-      withSkills({
-        ...noSkills(),
+      withHabits({
+        ...noHabits(),
         proposals: [
           {
             routeKey: "A → B",
@@ -640,7 +640,7 @@ describe("list_skills", () => {
           },
         ],
       }),
-      "list_skills",
+      "list_habits",
       {},
     );
     // Naming the number is the actionable half.
@@ -649,36 +649,36 @@ describe("list_skills", () => {
   });
 });
 
-describe("get_skill", () => {
-  it("returns the SKILL.md RAW, with no preamble before the frontmatter", async () => {
+describe("get_habit", () => {
+  it("returns the HABIT.md RAW, with no preamble before the frontmatter", async () => {
     const out = await callTool(
-      withSkills({ ...noSkills(), skills: [skill()] }),
-      "get_skill",
-      { skillId: skill().id },
+      withHabits({ ...noHabits(), habits: [habit()] }),
+      "get_habit",
+      { habitId: habit().id },
     );
     // The value of this tool is that its output IS a file: a friendly sentence
     // in front of the `---` corrupts a paste-to-disk.
     expect(out.content).toHaveLength(1);
-    expect(out.content[0]!.text).toBe(skill().markdown);
+    expect(out.content[0]!.text).toBe(habit().markdown);
     expect(out.content[0]!.text!.startsWith("---")).toBe(true);
   });
 
   it("names the remedy for an unknown id", async () => {
-    const out = await callTool(withSkills(noSkills()), "get_skill", { skillId: "nope" });
+    const out = await callTool(withHabits(noHabits()), "get_habit", { habitId: "nope" });
     expect(out.isError).toBe(true);
-    expect(out.content[0]!.text).toMatch(/Skill ids come from list_skills/);
+    expect(out.content[0]!.text).toMatch(/Habit ids come from list_habits/);
   });
 
-  it("requires a skillId", async () => {
-    const out = await callTool(withSkills(noSkills()), "get_skill", {});
+  it("requires a habitId", async () => {
+    const out = await callTool(withHabits(noHabits()), "get_habit", {});
     expect(out.isError).toBe(true);
   });
 
   it("will not serve a dismissed row", async () => {
     const out = await callTool(
-      withSkills({ ...noSkills(), skills: [skill({ state: "dismissed" })] }),
-      "get_skill",
-      { skillId: skill().id },
+      withHabits({ ...noHabits(), habits: [habit({ state: "dismissed" })] }),
+      "get_habit",
+      { habitId: habit().id },
     );
     expect(out.isError).toBe(true);
   });

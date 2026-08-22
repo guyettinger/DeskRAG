@@ -1,12 +1,12 @@
 /**
- * Is the skill set the SAME after a full re-index and re-mine, or does it move?
+ * Is the habit set the SAME after a full re-index and re-mine, or does it move?
  *
  * The other half of the held-out evaluation. `probe:transfer` asks whether one
- * skill answers to a recording it was not built from; this asks whether the
+ * habit answers to a recording it was not built from; this asks whether the
  * LIBRARY is stable — because a route's key is its place-label sequence and
  * `rebuildGraph` discards and replays the whole graph on every re-index. If the
- * keys move, every stored `SkillBindingDoc.routeKey` is stale and `bindSkill`
- * has to re-bind, disclose an ambiguity, or orphan a skill somebody wrote. A
+ * keys move, every stored `HabitBindingDoc.routeKey` is stale and `bindHabit`
+ * has to re-bind, disclose an ambiguity, or orphan a habit somebody wrote. A
  * library that re-keys itself on every rebuild is not a library.
  *
  * ## What is being claimed, and what would falsify it
@@ -100,10 +100,10 @@ console.log("The real store is opened once, by cp, and never by the app.\n");
 
 const { app, page } = await launchApp({ width: 1400, height: 1100, userDataDir: root });
 
-/** One observation of the library: the route keys, and how every skill binds. */
+/** One observation of the library: the route keys, and how every habit binds. */
 const snapshot = async () => {
   const flows = await page.evaluate(async () => await window.deskrag.flows.graph());
-  const skills = await page.evaluate(async () => await window.deskrag.skills.list());
+  const habits = await page.evaluate(async () => await window.deskrag.habits.list());
   return {
     // A MULTISET as a sorted list: two routes cannot share a key, but a key
     // appearing or vanishing is exactly what this measures, so it is compared
@@ -111,7 +111,7 @@ const snapshot = async () => {
     keys: (flows?.routes ?? []).map((r) => r.id).sort(),
     counts: Object.fromEntries((flows?.routes ?? []).map((r) => [r.id, r.count])),
     names: Object.fromEntries((flows?.routes ?? []).map((r) => [r.id, r.name ?? "(unnamed)"])),
-    bindings: (skills?.skills ?? []).map((s) => ({
+    bindings: (habits?.habits ?? []).map((s) => ({
       slug: s.slug,
       state: s.binding.state,
       live: s.binding.liveRouteKey ?? null,
@@ -143,7 +143,7 @@ try {
   const baseline = await snapshot();
   console.log("BASELINE — the store as it stands");
   for (const k of baseline.keys) console.log(`  ${String(baseline.counts[k]).padStart(2)}x  ${k}`);
-  console.log(`  skills: ${baseline.bindings.map((b) => `${b.slug}=${b.state}`).join(", ") || "(none)"}`);
+  console.log(`  habits: ${baseline.bindings.map((b) => `${b.slug}=${b.state}`).join(", ") || "(none)"}`);
 
   await page.evaluate(
     async () =>
@@ -194,11 +194,20 @@ try {
     );
 
     const broken = now.bindings.filter((b) => b.state !== "exact");
-    ok(
-      `every kept skill still binds EXACTLY, ${label}`,
-      broken.length === 0,
-      broken.map((b) => `${b.slug}=${b.state}`).join(", "),
-    );
+    // Same trap as reflect-probe: `bindings` comes from `habits?.habits ?? []`,
+    // so a DTO field rename empties it and "every kept habit still binds" passes
+    // over nothing — in the one probe whose entire purpose is catching drift.
+    // With no kept habit there is nothing to measure, and that is DISCLOSED
+    // rather than reported as a pass.
+    if (now.bindings.length === 0) {
+      console.log(`  --  no kept habit to bind, ${label} — this measures nothing`);
+    } else {
+      ok(
+        `every kept habit still binds EXACTLY, ${label}`,
+        broken.length === 0,
+        broken.map((b) => `${b.slug}=${b.state}`).join(", "),
+      );
+    }
 
     // Names come from a model and are EXPECTED to move. Printed, never counted.
     const renamed = now.keys.filter((k) => previous.names[k] !== undefined && previous.names[k] !== now.names[k]);
@@ -218,7 +227,7 @@ try {
   console.log(`  keys gained        : ${d.gained.length}`);
   console.log(`  keys lost          : ${d.gone.length}`);
   console.log(
-    `  skills binding     : ${previous.bindings.map((b) => `${b.slug}=${b.state}`).join(", ") || "(none)"}`,
+    `  habits binding     : ${previous.bindings.map((b) => `${b.slug}=${b.state}`).join(", ") || "(none)"}`,
   );
 } finally {
   await app.close();

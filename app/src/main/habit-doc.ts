@@ -1,5 +1,5 @@
 /**
- * A kept route as a SKILL.md.
+ * A kept route as a HABIT.md.
  *
  * The file has two halves and they are written by different things. Above
  * `## Recorded steps` is PROSE — a model's, or the template's. From that heading
@@ -7,13 +7,13 @@
  * it.
  *
  * That split is enforced by construction, not by instruction:
- * `renderSkillMarkdown` calls `recordedBlocks()` and concatenates prose-then-
+ * `renderHabitMarkdown` calls `recordedBlocks()` and concatenates prose-then-
  * record, so there is no code path by which a model's string reaches the record.
- * `test/skill.doc.test.ts` asserts it with an adversarial body containing its own
+ * `test/habit.doc.test.ts` asserts it with an adversarial body containing its own
  * `## Recorded steps` and a fake step list.
  *
  * Frontmatter carries `name`, `description` and `metadata:` and nothing else at
- * the top level. Surveyed across the 139 SKILL.md files installed on this
+ * the top level. Surveyed across the 139 HABIT.md files installed on this
  * machine, those two are the only keys present in all of them, and `metadata` is
  * the sanctioned nested extension. An invented top-level `confidence:` would be
  * both non-standard and the exact number `search_experience` refuses to print.
@@ -22,7 +22,7 @@
  */
 
 import type { FlowRouteDTO, FlowsDTO } from "@shared/types";
-import type { SkillBrief, SkillProse } from "deskrag";
+import type { HabitBrief, HabitProse } from "deskrag";
 import {
   allSteps,
   flowApps,
@@ -32,7 +32,7 @@ import {
   type FlowStepAction,
   type FlowWalk,
 } from "./flow-steps.js";
-import type { SkillBinding } from "./skill-bind.js";
+import type { HabitBinding } from "./habit-bind.js";
 
 /** Frontmatter `name`: lowercase, hyphens, and never empty. */
 export function slugify(text: string): string {
@@ -42,7 +42,7 @@ export function slugify(text: string): string {
     .replace(/^-+|-+$/g, "")
     .slice(0, 64)
     .replace(/-+$/g, "");
-  return s.length > 0 ? s : "recorded-skill";
+  return s.length > 0 ? s : "recorded-habit";
 }
 
 const iso = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
@@ -92,7 +92,7 @@ export function cautionsFor(
 
   if (route.count === 1) {
     out.push(
-      "Recorded once. This is a single observation, not an established habit — one walk is not evidence that this is how the task is done.",
+      "Recorded once. Kept from a single observation, and nothing has confirmed it repeats — one walk is not evidence that this is how the task is done.",
     );
   } else if (route.name !== null && route.nameObservations < route.count) {
     out.push(
@@ -308,11 +308,11 @@ export function recordedBlocks(input: RecordedInput): string {
       // The warning travels IN THE FILE, not only in the UI that produced it.
       // The file is the thing that gets pasted somewhere else.
       out.push(
-        "Recorded values are printed below because this skill has “Show recorded values” turned on. They are verbatim keystrokes from the recordings and may include anything that was typed, including a password.",
+        "Recorded values are printed below because this habit has “Show recorded values” turned on. They are verbatim keystrokes from the recordings and may include anything that was typed, including a password.",
       );
     } else {
       out.push(
-        "The recorded values are not printed. Turn on “Show recorded values” for this skill if you need them.",
+        "The recorded values are not printed. Turn on “Show recorded values” for this habit if you need them.",
       );
     }
     out.push("");
@@ -347,7 +347,7 @@ export function recordedBlocks(input: RecordedInput): string {
   return out.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd();
 }
 
-export interface SkillDocInput {
+export interface HabitDocInput {
   flows: FlowsDTO;
   route: FlowRouteDTO;
   slug: string;
@@ -359,7 +359,7 @@ export interface SkillDocInput {
   /** "ollama qwen3:4b", or null when the template wrote it. */
   bodyModel: string | null;
   showSamples: boolean;
-  skillId: string;
+  habitId: string;
   /** `0.1.0` on a doc written before versioning. Rendered, never computed here. */
   version: string;
 }
@@ -377,7 +377,7 @@ function yamlString(s: string): string {
  * that contains its own `## Recorded steps` produces a document with two such
  * headings, of which the LAST is still the real one, byte for byte.
  */
-export function renderSkillMarkdown(input: SkillDocInput): string {
+export function renderHabitMarkdown(input: HabitDocInput): string {
   const { route, flows } = input;
   const walks = flowWalks(flows, route);
   const { first, last } = span(allSteps(walks));
@@ -386,7 +386,7 @@ export function renderSkillMarkdown(input: SkillDocInput): string {
   const meta: string[] = [
     "metadata:",
     "  source: deskrag",
-    `  skill_id: ${input.skillId}`,
+    `  habit_id: ${input.habitId}`,
     // The artifact's own version. It moves when the FILE moves — an edit, a
     // regeneration, a re-bind, or the record changing underneath it — so an
     // agent that cached this catalogue can see that it did.
@@ -431,19 +431,19 @@ export function renderSkillMarkdown(input: SkillDocInput): string {
   return out.join("\n");
 }
 
-/** The heading a merged skill's prose is appended under. Named once. */
+/** The heading a merged habit's prose is appended under. Named once. */
 export const MERGED_HEADING = "## Also written for this route";
 
 /**
- * The keeper's prose after a merge, with the archived skill's appended.
+ * The keeper's prose after a merge, with the archived habit's appended.
  *
  * A merge NEVER discards prose. `AUTHORED_TABLES` exists because a person's
  * writing is the one thing in this repo nothing can regenerate, so the losing
  * half is carried over verbatim under a heading naming where it came from,
- * and the skill it came from is archived rather than deleted.
+ * and the habit it came from is archived rather than deleted.
  *
  * Prose only, and only the prose HALF: the record below `## Recorded steps` is
- * re-rendered from the live route either way, and both skills answer to the
+ * re-rendered from the live route either way, and both habits answer to the
  * same route — which is what made them duplicates.
  */
 export function mergedBody(
@@ -451,8 +451,8 @@ export function mergedBody(
   other: { readonly title: string; readonly slug: string; readonly body: string },
 ): string {
   const provenance =
-    `The text below was written for a separate skill, ${JSON.stringify(other.title)} ` +
-    `(\`${other.slug}\`), which described this same recorded route. That skill was ` +
+    `The text below was written for a separate habit, ${JSON.stringify(other.title)} ` +
+    `(\`${other.slug}\`), which described this same recorded route. That habit was ` +
     `archived when the two were merged; nothing here has been re-checked.`;
   const carried = other.body.trim();
   return [
@@ -474,13 +474,13 @@ export function mergedBody(
  * tell whether prose was composed or rolled up cannot weigh it, which is the
  * `source: llm | template` rule applied to a paragraph instead of a row.
  */
-export function templateBody(flows: FlowsDTO, route: FlowRouteDTO): SkillProse {
+export function templateBody(flows: FlowsDTO, route: FlowRouteDTO): HabitProse {
   const walks = flowWalks(flows, route);
   const { first, last } = span(allSteps(walks));
   const apps = flowApps(flows, route);
   const name = route.name ?? route.label;
   // By DATE, never by millisecond. Two steps of one recording are minutes
-  // apart, so an ms comparison is never equal and every single-day skill read
+  // apart, so an ms comparison is never equal and every single-day habit read
   // "between 2026-08-17 and 2026-08-17".
   const when =
     first === null || last === null
@@ -494,14 +494,14 @@ export function templateBody(flows: FlowsDTO, route: FlowRouteDTO): SkillProse {
     title: name,
     description:
       route.count === 1
-        ? `Use when you need to ${name}. Recorded once, so this is one observation rather than an established habit.`
+        ? `Use when you need to ${name}. Recorded once, so nothing has confirmed yet that it repeats.`
         : `Use when you need to ${name}. Recorded ${route.count} times${apps.length > 0 ? ` across ${apps.join(", ")}` : ""}.`,
     // It says WHAT it is, never WHY. An earlier version claimed "no summary
     // model was configured", which was false on a machine that had one —
-    // `acceptSkill` writes a template body deliberately, so that a keep is
+    // `acceptHabit` writes a template body deliberately, so that a keep is
     // instant. Asserting a cause it cannot observe is the exact fabrication this
     // file exists to avoid, and it was invisible until the probe printed a
-    // rendered skill beside the settings it was rendered under.
+    // rendered habit beside the settings it was rendered under.
     overview:
       `DeskRAG recorded this flow ${times}${when}. This description is generated from the ` +
       `recording rather than written by a model. The steps below are the record either way.` +
@@ -518,13 +518,13 @@ export function templateBody(flows: FlowsDTO, route: FlowRouteDTO): SkillProse {
  * What a model is told about this route.
  *
  * **Names and counts, never a sample.** Whether the rendered file prints
- * recorded values is a per-skill toggle; whether the model sees them is not a
+ * recorded values is a per-habit toggle; whether the model sees them is not a
  * toggle, it is never — `showSamples` is deliberately not a parameter here.
  */
 export function briefFor(
   flows: FlowsDTO,
   route: FlowRouteDTO,
-  binding?: SkillBinding,
+  binding?: HabitBinding,
   /**
    * The reflection written after each recording this route was built from.
    *
@@ -534,14 +534,14 @@ export function briefFor(
    * existed has one either.
    */
   reflections: readonly string[] = [],
-): SkillBrief {
+): HabitBrief {
   const walks = flowWalks(flows, route);
   const many = walks.length > 1;
   const { first, last } = span(allSteps(walks));
   const cautions = cautionsFor(flows, route, walks);
   if (binding?.note != null) cautions.push(binding.note);
 
-  // The variant is carried IN the step line rather than as a new `SkillBrief`
+  // The variant is carried IN the step line rather than as a new `HabitBrief`
   // field, so the barrel type does not widen for it. It has to be carried
   // somehow: handed a flat concatenation of two different walks, the model
   // described the concatenation accurately — "a second variant repeats the entry

@@ -21,7 +21,7 @@
  * this happens here rather than in `graph-view.ts` is the point — lifting reads
  * rows already on disk, so `rebuildGraph` applies the rule to recordings already
  * taken, where a read-time filter would relabel the routes and leave the cards
- * and the skill steps behind.
+ * and the habit steps behind.
  */
 
 import {

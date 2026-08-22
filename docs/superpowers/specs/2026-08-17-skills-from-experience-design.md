@@ -2,6 +2,11 @@
 
 **Date:** 2026-08-17
 **Status:** designed
+**Renamed since:** on 2026-08-22 the concept this spec calls a **Skill** was renamed
+to a **Habit**, and `SKILL.md` to `HABIT.md`, throughout the code, the UI and the MCP
+tools (`list_habits` / `get_habit`). The design below is unchanged; only the word is.
+This file keeps the original wording because it is a record of what was designed on
+its date.
 **Builds on:** `2026-08-06-flows-graph-exploration-design.md` (the routes this reads) and
 `2026-08-13-mcp-experience-server-design.md` (the read-only surface it extends). Neither
 changes.

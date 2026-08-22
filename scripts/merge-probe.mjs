@@ -1,10 +1,10 @@
 /**
- * The skill WRITE paths, driven in the real app — versioning, duplicate
+ * The habit WRITE paths, driven in the real app — versioning, duplicate
  * disclosure, and a merge.
  *
  * Nothing in `npm test` can reach any of this. `deskrag-service.ts` imports
  * `electron`, so the root suite cannot construct it; the pure halves
- * (`bumpVersion`, `duplicateSkills`, `mergedBody`) are unit-tested and the
+ * (`bumpVersion`, `duplicateHabits`, `mergedBody`) are unit-tested and the
  * WIRING between them is not testable anywhere else. That wiring is exactly
  * where a bump was computed and then not written — caught by reading the file,
  * which is not a method.
@@ -12,7 +12,7 @@
  * IT WRITES, so it writes to a COPY. The real `<userData>/DeskRAG` is cloned
  * into a temp directory and the app is launched with `--user-data-dir` pointing
  * at it; the user's own library is opened read-only exactly once, by `cp`. A
- * probe that staged two duplicate skills in the real store and archived one of
+ * probe that staged two duplicate habits in the real store and archived one of
  * them would be doing to a person's authored prose precisely what
  * `AUTHORED_TABLES` exists to prevent.
  *
@@ -72,15 +72,15 @@ try {
   console.log(`  summaryProvider : ${settings.providers.summaryProvider}`);
   console.log(`  prose path      : ${settings.providers.summaryProvider === "none" ? "TEMPLATE (default install)" : "MODEL"}`);
 
-  await gotoScreen(page, "Skills");
-  await page.waitForSelector(".skills__stage, .skills .empty", { timeout: 30_000 });
+  await gotoScreen(page, "Habits");
+  await page.waitForSelector(".habits__stage, .habits .empty", { timeout: 30_000 });
 
-  let data0 = await page.evaluate(() => window.deskrag.skills.list());
-  console.log(`\nLibrary\n  proposals : ${data0.proposals.length}\n  kept      : ${data0.skills.length}`);
+  let data0 = await page.evaluate(() => window.deskrag.habits.list());
+  console.log(`\nLibrary\n  proposals : ${data0.proposals.length}\n  kept      : ${data0.habits.length}`);
 
-  // Two skills on ONE route is the whole subject, so it needs two things to
+  // Two habits on ONE route is the whole subject, so it needs two things to
   // keep. A store with fewer is a legitimate empty state, not a failure.
-  const keepable = data0.skills.filter((s) => s.state === "active").length + data0.proposals.length;
+  const keepable = data0.habits.filter((s) => s.state === "active").length + data0.proposals.length;
   if (keepable < 2) {
     console.log("\nFewer than two routes to keep. Record a second flow and index it, then run this again.");
     await app.close();
@@ -89,20 +89,20 @@ try {
   }
 
   const accept = async (routeKey) =>
-    page.evaluate((k) => window.deskrag.skills.accept(k), routeKey);
+    page.evaluate((k) => window.deskrag.habits.accept(k), routeKey);
   const update = async (id, patch) =>
-    page.evaluate(([i, p]) => window.deskrag.skills.update(i, p), [id, patch]);
+    page.evaluate(([i, p]) => window.deskrag.habits.update(i, p), [id, patch]);
 
-  let a = data0.skills.find((s) => s.state === "active");
+  let a = data0.habits.find((s) => s.state === "active");
   if (a === undefined) {
     data0 = await accept(data0.proposals[0].routeKey);
-    a = data0.skills.find((s) => s.state === "active");
+    a = data0.habits.find((s) => s.state === "active");
   }
   const startVersion = a.version;
   console.log(`\nKeeper ${a.id} (${a.slug}) at v${startVersion}`);
 
   ok("the file carries its version", a.markdown.includes(`\n  version: ${a.version}\n`));
-  ok("a lone skill discloses no duplicate", a.duplicates.length === 0);
+  ok("a lone habit discloses no duplicate", a.duplicates.length === 0);
 
   // --- what moves the version, and what deliberately does not --------------
   const bumped = (from) => {
@@ -111,34 +111,34 @@ try {
   };
 
   let after = await update(a.id, { description: `${a.description} ` });
-  a = after.skills.find((s) => s.id === a.id);
+  a = after.habits.find((s) => s.id === a.id);
   ok("an edit bumps the patch", a.version === bumped(startVersion), `${startVersion} -> ${a.version}`);
   ok("the frontmatter moved with it", a.markdown.includes(`\n  version: ${a.version}\n`));
   ok("the history says what moved it", a.history.at(-1)?.what === "edited by hand");
 
   const held = a.version;
   after = await update(a.id, { pinned: !a.pinned });
-  a = after.skills.find((s) => s.id === a.id);
-  // Pinning changes how the app LISTS a skill and not one byte of the file. A
+  a = after.habits.find((s) => s.id === a.id);
+  // Pinning changes how the app LISTS a habit and not one byte of the file. A
   // version that moved here would stop meaning "this artifact moved".
   ok("pinning does NOT bump", a.version === held, a.version);
   await update(a.id, { pinned: !a.pinned });
 
   // --- stage the duplicate, the way one really arises ----------------------
-  after = await page.evaluate(() => window.deskrag.skills.list());
+  after = await page.evaluate(() => window.deskrag.habits.list());
   const spare = after.proposals[0];
   if (spare === undefined) {
     console.log("\nOnly one route is unclaimed — cannot stage a duplicate. Stopping here.");
   } else {
     after = await accept(spare.routeKey);
-    let b = after.skills.find((s) => s.binding.routeKey === spare.routeKey);
+    let b = after.habits.find((s) => s.binding.routeKey === spare.routeKey);
     const bStart = b.version;
-    after = await page.evaluate(([i, k]) => window.deskrag.skills.rebind(i, k), [
+    after = await page.evaluate(([i, k]) => window.deskrag.habits.rebind(i, k), [
       b.id,
       a.binding.liveRouteKey,
     ]);
-    a = after.skills.find((s) => s.id === a.id);
-    b = after.skills.find((s) => s.id === b.id);
+    a = after.habits.find((s) => s.id === a.id);
+    b = after.habits.find((s) => s.id === b.id);
 
     ok("a confirmed re-bind bumps the version", b.version === bumped(bStart), `${bStart} -> ${b.version}`);
     ok("both now answer to one live route", a.binding.liveRouteKey === b.binding.liveRouteKey);
@@ -147,21 +147,21 @@ try {
     // The screen, not just the DTO.
     await page.reload();
     await page.waitForSelector(".rail__nav .rail__item");
-    await gotoScreen(page, "Skills");
-    await page.waitForSelector(".skills__stage");
+    await gotoScreen(page, "Habits");
+    await page.waitForSelector(".habits__stage");
     const chips = await page.evaluate(() =>
-      [...document.querySelectorAll(".skill__bind")].map((e) => e.textContent),
+      [...document.querySelectorAll(".habit__bind")].map((e) => e.textContent),
     );
     ok("the list chips BOTH `duplicated`", chips.filter((c) => c === "duplicated").length === 2, JSON.stringify(chips));
 
-    await page.locator(".skills__items .skill", { hasText: a.title }).first().click();
-    await page.waitForSelector(".skilledit__body");
+    await page.locator(".habits__items .habit", { hasText: a.title }).first().click();
+    await page.waitForSelector(".habitedit__body");
     const dom = await page.evaluate(() => {
-      const btn = [...document.querySelectorAll(".skilledit__bind .btn")].find((x) =>
+      const btn = [...document.querySelectorAll(".habitedit__bind .btn")].find((x) =>
         x.textContent.trim().startsWith("Merge in"),
       );
-      const p = document.querySelector(".skilledit__bind p");
-      const page_ = document.querySelector(".page.skills");
+      const p = document.querySelector(".habitedit__bind p");
+      const page_ = document.querySelector(".page.habits");
       return {
         offered: btn !== undefined,
         btnScroll: btn?.scrollWidth ?? 0,
@@ -174,7 +174,7 @@ try {
       };
     });
     ok("the editor OFFERS a merge", dom.offered);
-    // NOTHING TRUNCATES — and the button carries a user-supplied skill TITLE,
+    // NOTHING TRUNCATES — and the button carries a user-supplied habit TITLE,
     // which is the longest string this screen ever puts inside a control.
     ok("the Merge button does not truncate the title", dom.btnScroll <= dom.btnClient + 1, `${dom.btnScroll} vs ${dom.btnClient}`);
     ok("the banner does not truncate", dom.pScroll <= dom.pClient + 1, `${dom.pScroll} vs ${dom.pClient}`);
@@ -184,9 +184,9 @@ try {
 
     // --- the merge itself --------------------------------------------------
     const before = { keep: a.body, other: b.body, keepV: a.version, otherV: b.version };
-    after = await page.evaluate(([k, m]) => window.deskrag.skills.merge(k, m), [a.id, b.id]);
-    const keeper = after.skills.find((s) => s.id === a.id);
-    const loser = after.skills.find((s) => s.id === b.id);
+    after = await page.evaluate(([k, m]) => window.deskrag.habits.merge(k, m), [a.id, b.id]);
+    const keeper = after.habits.find((s) => s.id === a.id);
+    const loser = after.habits.find((s) => s.id === b.id);
 
     ok("the keeper survives, active", keeper?.state === "active", keeper?.state);
     // TWO independent guarantees that a merge destroys no writing.

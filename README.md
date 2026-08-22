@@ -30,7 +30,7 @@ often you took them, one click from any state to the moment it happened. Recordi
 twice is what reveals it as a flow, so what shows up is what you did rather than what a
 model inferred.
 
-A flow worth repeating becomes a **skill**: a `SKILL.md` an agent can load, written from
+A flow worth repeating becomes a **habit**: a `HABIT.md` an agent can load, written from
 the route you actually walked. The prose is a local model's or yours; the steps beneath it
 are the recording, and nothing model-written can reach them. It says what the evidence
 does not cover — which steps fewer recordings took, which states can be confirmed but not
@@ -63,7 +63,7 @@ permissions, and how it's wired.
 <td width="50%"><img src="docs/images/flows.png" alt="Flows screen"><br><strong>Flows</strong> — the paths you take, and one click back to the recording.</td>
 </tr>
 <tr>
-<td width="50%"><img src="docs/images/skills.png" alt="Skills screen"><br><strong>Skills</strong> — a repeated flow as a SKILL.md, with the record beneath the prose.</td>
+<td width="50%"><img src="docs/images/habits.png" alt="Habits screen"><br><strong>Habits</strong> — a repeated flow as a HABIT.md, with the record beneath the prose.</td>
 <td width="50%"></td>
 </tr>
 </table>

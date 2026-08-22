@@ -30,7 +30,7 @@ function when(startedAt: number, atSec: number): string {
  *
  * This prints recorded VALUES unconditionally, and deliberately keeps doing so:
  * `get_flow` is a shipped contract, documented in `docs/mcp.md` as returning
- * "the values that varied between attempts". The SKILL.md renderer makes the
+ * "the values that varied between attempts". The HABIT.md renderer makes the
  * opposite default choice for its own reasons — a file that gets pasted
  * elsewhere is a different exposure from a tool result — and the two differ here
  * rather than in the walk they share.

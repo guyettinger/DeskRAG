@@ -431,7 +431,7 @@ CREATE TABLE IF NOT EXISTS index_job (
 CREATE INDEX IF NOT EXISTS idx_index_job_state ON index_job(state, enqueued_at);
 CREATE INDEX IF NOT EXISTS idx_index_job_session ON index_job(session_id);
 
--- Skills the user has chosen to keep: a SKILL.md written from a recorded route.
+-- Habits the user has chosen to keep: a HABIT.md written from a recorded route.
 --
 -- AUTHORED, not derived — see AUTHORED_TABLES below. A re-index rebuilds the
 -- trace graph from zero and re-keys every route (a route's id is the sequence of
@@ -444,7 +444,7 @@ CREATE INDEX IF NOT EXISTS idx_index_job_session ON index_job(session_id);
 -- navigated back to; it is wrong here, where a person's writing is at stake.
 --
 -- state and doc are DELIBERATELY OPAQUE to store/, the index_job.payload seam:
--- what a skill IS — frontmatter, prose, binding, the samples toggle — is an app
+-- what a habit IS — frontmatter, prose, binding, the samples toggle — is an app
 -- concept. This schema can never change shape (CREATE TABLE IF NOT EXISTS, no
 -- migrations), so one JSON column is what makes a seventh field possible in six
 -- months without a data-dir reset.
@@ -452,7 +452,7 @@ CREATE INDEX IF NOT EXISTS idx_index_job_session ON index_job(session_id);
 -- (No backticks anywhere in this string: it is a JS template literal, and one
 -- would terminate it. That mistake typechecks as a cascade of unrelated errors
 -- fifteen lines further down.)
-CREATE TABLE IF NOT EXISTS skill (
+CREATE TABLE IF NOT EXISTS habit (
   id         TEXT PRIMARY KEY,          -- ULID, minted by the caller
   state      TEXT NOT NULL,             -- app-defined: active | archived | dismissed
   pinned     INTEGER NOT NULL DEFAULT 0,
@@ -460,7 +460,7 @@ CREATE TABLE IF NOT EXISTS skill (
   updated_at INTEGER NOT NULL,
   doc        TEXT NOT NULL              -- JSON, app-defined
 );
-CREATE INDEX IF NOT EXISTS idx_skill_state ON skill(state, updated_at);
+CREATE INDEX IF NOT EXISTS idx_habit_state ON habit(state, updated_at);
 `;
 
 /**
@@ -549,14 +549,14 @@ export const OPERATIONAL_TABLES = ["index_job"] as const;
  * everything else is re-derived FROM; derived rows can be thrown away and
  * rebuilt; `index_job` can be re-enqueued, and its own comment says so ("losing
  * it costs pending work, which is re-enqueueable, never a recording, which is
- * not"). A skill is the exact inverse of that sentence: its title, its prose and
+ * not"). A habit is the exact inverse of that sentence: its title, its prose and
  * its samples toggle exist only because someone typed them.
  *
  * So no purge, no re-index and no trace rebuild may touch this table — and
  * filing it under OPERATIONAL instead would have put the one table that must
  * never be lost inside the list that means "safe to lose".
  */
-export const AUTHORED_TABLES = ["skill"] as const;
+export const AUTHORED_TABLES = ["habit"] as const;
 
 /** Pragmas applied on every connection open. WAL = single-writer + concurrent reads. */
 export const PRAGMA_SQL = /* sql */ `

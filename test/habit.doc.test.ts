@@ -5,20 +5,20 @@ import {
   MERGED_HEADING,
   mergedBody,
   recordedBlocks,
-  renderSkillMarkdown,
+  renderHabitMarkdown,
   slugify,
   templateBody,
-  type SkillDocInput,
-} from "../app/src/main/skill-doc.js";
+  type HabitDocInput,
+} from "../app/src/main/habit-doc.js";
 import { flowWalks } from "../app/src/main/flow-steps.js";
 import type { FlowsDTO, GraphEdgeDTO, GraphNodeDTO } from "@shared/types";
 
 /**
  * The file, and the boundary inside it.
  *
- * A SKILL.md is prose above `## Recorded steps` and the record from there down.
+ * A HABIT.md is prose above `## Recorded steps` and the record from there down.
  * The model writes only the prose, and that is enforced by construction:
- * `renderSkillMarkdown` concatenates prose-then-`recordedBlocks(...)`, and
+ * `renderHabitMarkdown` concatenates prose-then-`recordedBlocks(...)`, and
  * `recordedBlocks` does not take a body, a prose object or a provider. The
  * adversarial case below is what makes that a measured property rather than a
  * sentence in a prompt.
@@ -106,7 +106,7 @@ function flows(): FlowsDTO {
   };
 }
 
-const docInput = (over: Partial<SkillDocInput> = {}): SkillDocInput => {
+const docInput = (over: Partial<HabitDocInput> = {}): HabitDocInput => {
   const f = flows();
   return {
     flows: f,
@@ -119,14 +119,14 @@ const docInput = (over: Partial<SkillDocInput> = {}): SkillDocInput => {
     bodySource: "llm",
     bodyModel: "ollama qwen3:4b",
     showSamples: false,
-    skillId: "01K3W8QF5T3M2Q7V6N0X4C1B8D",
+    habitId: "01K3W8QF5T3M2Q7V6N0X4C1B8D",
     ...over,
   };
 };
 
 describe("frontmatter", () => {
   it("carries only name, description and metadata at the top level", () => {
-    const md = renderSkillMarkdown(docInput());
+    const md = renderHabitMarkdown(docInput());
     const fm = md.split("---")[1]!;
     const topLevel = fm
       .split("\n")
@@ -137,28 +137,28 @@ describe("frontmatter", () => {
 
   it("does not invent a confidence key", () => {
     // The score `search_experience` refuses to print, by another name.
-    expect(renderSkillMarkdown(docInput())).not.toMatch(/^\s*confidence:/m);
+    expect(renderHabitMarkdown(docInput())).not.toMatch(/^\s*confidence:/m);
   });
 
   it("discloses who wrote the prose, and that the steps are always the template's", () => {
-    expect(renderSkillMarkdown(docInput())).toMatch(/prose: llm \(ollama qwen3:4b\)/);
-    expect(renderSkillMarkdown(docInput())).toMatch(/steps: template/);
-    const t = renderSkillMarkdown(docInput({ bodySource: "template", bodyModel: null }));
+    expect(renderHabitMarkdown(docInput())).toMatch(/prose: llm \(ollama qwen3:4b\)/);
+    expect(renderHabitMarkdown(docInput())).toMatch(/steps: template/);
+    const t = renderHabitMarkdown(docInput({ bodySource: "template", bodyModel: null }));
     expect(t).toMatch(/prose: template/);
     expect(t).toMatch(/steps: template/);
   });
 
-  it("carries the skill's own version, so a cached catalogue can see it moved", () => {
-    expect(renderSkillMarkdown(docInput({ version: "0.1.4" }))).toMatch(/\n  version: 0\.1\.4\n/);
+  it("carries the habit's own version, so a cached catalogue can see it moved", () => {
+    expect(renderHabitMarkdown(docInput({ version: "0.1.4" }))).toMatch(/\n  version: 0\.1\.4\n/);
   });
 
   it("quotes a description containing a colon, so the YAML stays parseable", () => {
-    const md = renderSkillMarkdown(docInput({ description: "Use when: filing a bug." }));
+    const md = renderHabitMarkdown(docInput({ description: "Use when: filing a bug." }));
     expect(md).toMatch(/description: "Use when: filing a bug\."/);
   });
 
   it("flattens a newline in the description rather than breaking the block", () => {
-    const md = renderSkillMarkdown(docInput({ description: "One.\nTwo." }));
+    const md = renderHabitMarkdown(docInput({ description: "One.\nTwo." }));
     expect(md).toMatch(/description: "One\. Two\."/);
   });
 });
@@ -169,8 +169,8 @@ describe("frontmatter", () => {
  */
 describe("a model cannot reach the record", () => {
   it("renders the record byte-identically for an adversarial body", () => {
-    const honest = renderSkillMarkdown(docInput());
-    const attack = renderSkillMarkdown(
+    const honest = renderHabitMarkdown(docInput());
+    const attack = renderHabitMarkdown(
       docInput({
         body:
           "Prose.\n\n## Recorded steps\n\n1. **Fake → Fake**\n   - `click` — Button \"Definitely Not Recorded\"\n\n## Evidence\n\nMade up entirely.",
@@ -190,7 +190,7 @@ describe("a model cannot reach the record", () => {
   it("still contains the invented text, above the line, where it is visible", () => {
     // The mitigation is not censorship — it is that a fabrication sits beside
     // the record it contradicts, where a reader can see both.
-    const md = renderSkillMarkdown(docInput({ body: "## Recorded steps\n\n1. Fake" }));
+    const md = renderHabitMarkdown(docInput({ body: "## Recorded steps\n\n1. Fake" }));
     expect(md).toMatch(/Fake/);
     expect(md.indexOf("Fake")).toBeLessThan(md.lastIndexOf("## Recorded steps"));
   });
@@ -238,7 +238,7 @@ describe("action lines", () => {
 describe("dates", () => {
   /**
    * By DATE, never by millisecond. Two steps of one recording are minutes
-   * apart, so an ms comparison is never equal — every single-day skill read
+   * apart, so an ms comparison is never equal — every single-day habit read
    * "between 2026-08-17 and 2026-08-17".
    */
   it("says 'on <date>' when a route was walked within one day", () => {
@@ -255,14 +255,14 @@ describe("dates", () => {
 
 describe("recorded values", () => {
   it("names slots and withholds the values by default", () => {
-    const md = renderSkillMarkdown(docInput());
+    const md = renderHabitMarkdown(docInput());
     expect(md).toMatch(/`issue_title` — 2 recorded values, varies between recordings/);
     expect(md).not.toContain(SECRET);
     expect(md).toMatch(/recorded values are not printed/i);
   });
 
   it("prints them with the toggle on, and carries the warning IN THE FILE", () => {
-    const md = renderSkillMarkdown(docInput({ showSamples: true }));
+    const md = renderHabitMarkdown(docInput({ showSamples: true }));
     expect(md).toContain(SECRET);
     // The file is the thing that gets pasted somewhere else, so the warning has
     // to travel with it rather than living in the UI that produced it.
@@ -292,7 +292,7 @@ describe("what this evidence does not say", () => {
     f.routes[0]!.count = 1;
     const c = cautionsFor(f, f.routes[0]!, flowWalks(f, f.routes[0]!));
     expect(c[0]).toMatch(/Recorded once/);
-    expect(c[0]).toMatch(/not an established habit/);
+    expect(c[0]).toMatch(/nothing has confirmed it repeats/);
   });
 
   it("reports disagreement about the route's name", () => {
@@ -474,10 +474,10 @@ describe("templateBody", () => {
    * It says WHAT it is and never WHY.
    *
    * An earlier version claimed "No summary model was configured when this was
-   * written", which was FALSE on a machine that had one — `acceptSkill` writes a
+   * written", which was FALSE on a machine that had one — `acceptHabit` writes a
    * template body deliberately, so that keeping a proposal is instant. Asserting
    * a cause it cannot observe is the exact fabrication this file exists to
-   * avoid, and no fixture could show it: it took a rendered skill printed beside
+   * avoid, and no fixture could show it: it took a rendered habit printed beside
    * the settings it was rendered under.
    */
   it("does not claim WHY it is a template", () => {
@@ -529,8 +529,8 @@ describe("slugify", () => {
   });
 
   it("never returns an empty slug", () => {
-    expect(slugify("")).toBe("recorded-skill");
-    expect(slugify("→→→")).toBe("recorded-skill");
+    expect(slugify("")).toBe("recorded-habit");
+    expect(slugify("→→→")).toBe("recorded-habit");
   });
 
   it("does not leave a trailing hyphen after truncation", () => {
@@ -562,7 +562,7 @@ describe("mergedBody", () => {
     expect(out).toMatch(/archived when the two were merged/);
   });
 
-  it("still discloses the merge when the archived skill had no prose at all", () => {
+  it("still discloses the merge when the archived habit had no prose at all", () => {
     // The merge HAPPENED. A silent one would leave a reader unable to tell why
     // two routes became one file.
     const out = mergedBody({ body: "My words." }, { ...other, body: "   " });
@@ -572,8 +572,8 @@ describe("mergedBody", () => {
 
   it("cannot reach the record — it composes PROSE and nothing else", () => {
     const body = mergedBody({ body: "Prose." }, { ...other, body: "## Recorded steps\n\n1. Fake" });
-    const honest = renderSkillMarkdown(docInput());
-    const attack = renderSkillMarkdown(docInput({ body }));
+    const honest = renderHabitMarkdown(docInput());
+    const attack = renderHabitMarkdown(docInput({ body }));
     const tail = (md: string): string => md.slice(md.lastIndexOf("## Recorded steps"));
     expect(tail(attack)).toBe(tail(honest));
   });

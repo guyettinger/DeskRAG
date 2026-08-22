@@ -1,7 +1,7 @@
 /**
  * The walks of a recorded route, as data rather than as text.
  *
- * `renderFlow` walked a route and formatted it in the same pass. A SKILL.md
+ * `renderFlow` walked a route and formatted it in the same pass. A HABIT.md
  * needs the same walk in markdown, and two readers of one structure is the
  * `ax-dump`/`ax-exec` drift hazard by name — two binaries reading one tree
  * disagreed on exactly one of 48 elements, and that single label was enough to
@@ -28,7 +28,7 @@
  * walked five times the same way is still one numbered procedure, byte for byte
  * what it was before — and distinct walks are shown as distinct, because two
  * recordings that key to one route can genuinely have done two different things.
- * Nothing here picks a winner between them; `bindSkill` declines on a tie for the
+ * Nothing here picks a winner between them; `bindHabit` declines on a tie for the
  * same reason.
  */
 

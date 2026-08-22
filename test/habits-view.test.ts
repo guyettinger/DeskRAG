@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   bandOf,
-  bandSkills,
+  bandHabits,
   bindingChip,
   evidenceLine,
   generateDisabledReason,
-  orderSkills,
-} from "../app/src/renderer/src/skills-view.js";
-import type { SkillBindingDTO, SkillDTO } from "@shared/types";
+  orderHabits,
+} from "../app/src/renderer/src/habits-view.js";
+import type { HabitBindingDTO, HabitDTO } from "@shared/types";
 
 /**
  * How the screen orders and labels what main hands it.
@@ -16,7 +16,7 @@ import type { SkillBindingDTO, SkillDTO } from "@shared/types";
  * `jsx`, so a test touching a `.tsx` even for a type breaks `npm run typecheck`.
  */
 
-const binding = (over: Partial<SkillBindingDTO> = {}): SkillBindingDTO => ({
+const binding = (over: Partial<HabitBindingDTO> = {}): HabitBindingDTO => ({
   state: "exact",
   routeKey: "A → B",
   liveRouteKey: "A → B",
@@ -32,7 +32,7 @@ const binding = (over: Partial<SkillBindingDTO> = {}): SkillBindingDTO => ({
   ...over,
 });
 
-const skill = (over: Partial<SkillDTO> = {}): SkillDTO => ({
+const habit = (over: Partial<HabitDTO> = {}): HabitDTO => ({
   id: "k1",
   state: "active",
   pinned: false,
@@ -41,8 +41,8 @@ const skill = (over: Partial<SkillDTO> = {}): SkillDTO => ({
   version: "0.1.0",
   history: [],
   duplicates: [],
-  slug: "a-skill",
-  title: "A skill",
+  slug: "a-habit",
+  title: "A habit",
   description: "Use when.",
   body: "prose",
   bodySource: "template",
@@ -58,12 +58,12 @@ const skill = (over: Partial<SkillDTO> = {}): SkillDTO => ({
 describe("bandOf", () => {
   it("puts anything whose route moved into Needs attention", () => {
     for (const state of ["rebound", "ambiguous", "orphaned"] as const) {
-      expect(bandOf(skill({ binding: binding({ state }) }))).toBe("attention");
+      expect(bandOf(habit({ binding: binding({ state }) }))).toBe("attention");
     }
   });
 
-  it("leaves an intact skill in Mine", () => {
-    expect(bandOf(skill())).toBe("mine");
+  it("leaves an intact habit in Mine", () => {
+    expect(bandOf(habit())).toBe("mine");
   });
 
   /**
@@ -71,44 +71,44 @@ describe("bandOf", () => {
    * What is unresolved is that two files claim one route, and only a person can
    * resolve it, which is what Needs attention means.
    */
-  it("puts a duplicated skill into Needs attention even though its binding is exact", () => {
-    expect(bandOf(skill({ duplicates: ["k2"] }))).toBe("attention");
+  it("puts a duplicated habit into Needs attention even though its binding is exact", () => {
+    expect(bandOf(habit({ duplicates: ["k2"] }))).toBe("attention");
   });
 
   it("keeps archived out of the way even when its binding moved", () => {
-    expect(bandOf(skill({ state: "archived", binding: binding({ state: "orphaned" }) }))).toBe(
+    expect(bandOf(habit({ state: "archived", binding: binding({ state: "orphaned" }) }))).toBe(
       "archived",
     );
   });
 });
 
-describe("bandSkills", () => {
-  it("drops dismissals — they are suppressed proposals, not skills", () => {
-    const b = bandSkills([skill({ id: "a" }), skill({ id: "b", state: "dismissed" })]);
+describe("bandHabits", () => {
+  it("drops dismissals — they are suppressed proposals, not habits", () => {
+    const b = bandHabits([habit({ id: "a" }), habit({ id: "b", state: "dismissed" })]);
     expect([...b.attention, ...b.mine, ...b.archived].map((s) => s.id)).toEqual(["a"]);
   });
 });
 
-describe("orderSkills", () => {
+describe("orderHabits", () => {
   it("puts pinned first, then newest-touched", () => {
-    const out = orderSkills([
-      skill({ id: "old", updatedAt: 1 }),
-      skill({ id: "new", updatedAt: 9 }),
-      skill({ id: "pin", updatedAt: 2, pinned: true }),
+    const out = orderHabits([
+      habit({ id: "old", updatedAt: 1 }),
+      habit({ id: "new", updatedAt: 9 }),
+      habit({ id: "pin", updatedAt: 2, pinned: true }),
     ]);
     expect(out.map((s) => s.id)).toEqual(["pin", "new", "old"]);
   });
 
   it("does not mutate its argument", () => {
-    const input = [skill({ id: "a", updatedAt: 1 }), skill({ id: "b", updatedAt: 2 })];
-    orderSkills(input);
+    const input = [habit({ id: "a", updatedAt: 1 }), habit({ id: "b", updatedAt: 2 })];
+    orderHabits(input);
     expect(input.map((s) => s.id)).toEqual(["a", "b"]);
   });
 });
 
 describe("bindingChip", () => {
   it("says nothing when nothing moved", () => {
-    expect(bindingChip(skill())).toBeNull();
+    expect(bindingChip(habit())).toBeNull();
   });
 
   /**
@@ -117,49 +117,49 @@ describe("bindingChip", () => {
    * still there.
    */
   it("flags an intact key that lost evidence", () => {
-    expect(bindingChip(skill({ binding: binding({ lostSessionIds: ["s2"], recordings: 1 }) }))).toBe(
+    expect(bindingChip(habit({ binding: binding({ lostSessionIds: ["s2"], recordings: 1 }) }))).toBe(
       "evidence changed",
     );
   });
 
-  it("says `duplicated` FIRST — it is the larger problem, and another skill's too", () => {
-    expect(bindingChip(skill({ duplicates: ["k2"] }))).toBe("duplicated");
-    expect(bindingChip(skill({ duplicates: ["k2"], binding: binding({ state: "rebound" }) }))).toBe(
+  it("says `duplicated` FIRST — it is the larger problem, and another habit's too", () => {
+    expect(bindingChip(habit({ duplicates: ["k2"] }))).toBe("duplicated");
+    expect(bindingChip(habit({ duplicates: ["k2"], binding: binding({ state: "rebound" }) }))).toBe(
       "duplicated",
     );
   });
 
   it("names each moved state", () => {
-    expect(bindingChip(skill({ binding: binding({ state: "rebound" }) }))).toBe("re-bound");
-    expect(bindingChip(skill({ binding: binding({ state: "ambiguous" }) }))).toBe("split");
-    expect(bindingChip(skill({ binding: binding({ state: "orphaned" }) }))).toBe("orphaned");
+    expect(bindingChip(habit({ binding: binding({ state: "rebound" }) }))).toBe("re-bound");
+    expect(bindingChip(habit({ binding: binding({ state: "ambiguous" }) }))).toBe("split");
+    expect(bindingChip(habit({ binding: binding({ state: "orphaned" }) }))).toBe("orphaned");
   });
 });
 
 describe("evidenceLine", () => {
   it("states the live count when it agrees with the bind-time one", () => {
-    expect(evidenceLine(skill())).toBe("2 recordings");
+    expect(evidenceLine(habit())).toBe("2 recordings");
   });
 
   it("prints BOTH counts when they disagree, never just one", () => {
     // Their disagreement is the fact the screen exists to show — the
     // `observations` vs `sources` rule, one level up.
-    const s = skill({ binding: binding({ lostSessionIds: ["s2"], recordings: 1 }) });
+    const s = habit({ binding: binding({ lostSessionIds: ["s2"], recordings: 1 }) });
     expect(evidenceLine(s)).toBe("1 recording — was 2 when this was kept");
   });
 
   it("reports recordings made since", () => {
-    const s = skill({ binding: binding({ gainedSessionIds: ["s3"], recordings: 3 }) });
+    const s = habit({ binding: binding({ gainedSessionIds: ["s3"], recordings: 3 }) });
     expect(evidenceLine(s)).toBe("3 recordings — 1 recorded since");
   });
 
   it("never claims a live count for an orphan", () => {
-    const s = skill({ binding: binding({ state: "orphaned", recordings: 0 }) });
+    const s = habit({ binding: binding({ state: "orphaned", recordings: 0 }) });
     expect(evidenceLine(s)).toMatch(/written from 2 recordings, none of which are in a current route/);
   });
 
   it("says 'recording' singular", () => {
-    const s = skill({ binding: binding({ boundSessionIds: ["s1"], recordings: 1 }) });
+    const s = habit({ binding: binding({ boundSessionIds: ["s1"], recordings: 1 }) });
     expect(evidenceLine(s)).toBe("1 recording");
   });
 });
