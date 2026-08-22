@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
-  FakeSkillProseProvider,
-  parseSkillResponse,
-  skillPrompt,
-  type SkillBrief,
-} from "../src/embed/skill-prose.js";
-import { OllamaSkillProseProvider } from "../src/embed/ollama-skill-prose.js";
+  FakeHabitProseProvider,
+  parseHabitResponse,
+  habitPrompt,
+  type HabitBrief,
+} from "../src/embed/habit-prose.js";
+import { OllamaHabitProseProvider } from "../src/embed/ollama-habit-prose.js";
 
 /**
  * The seam that keeps a model out of the record, and samples out of the model.
@@ -15,14 +15,14 @@ import { OllamaSkillProseProvider } from "../src/embed/ollama-skill-prose.js";
  * half-written by a model and half by a template with nothing saying which half
  * is worse than one written entirely by the template and labelled. And a
  * recorded keystroke must never reach the request at all — whether the rendered
- * file prints values is a per-skill toggle, whether the model sees them is not.
+ * file prints values is a per-habit toggle, whether the model sees them is not.
  */
 
 /** Distinctive tokens, so "no sample reached the prompt" is a real assertion. */
 const SECRET_A = "hunter2-correct-horse-battery";
 const SECRET_B = "sk-live-DEADBEEFCAFE1234";
 
-const brief: SkillBrief = {
+const brief: HabitBrief = {
   routeLabel: "Ghostty → Google Chrome → github.com/user/repo",
   routeName: "file a bug report",
   recordings: 5,
@@ -38,12 +38,12 @@ const brief: SkillBrief = {
   reflections: [],
 };
 
-describe("skillPrompt", () => {
+describe("habitPrompt", () => {
   it("carries variable NAMES and counts, never a sample", () => {
     // The brief type has no field a sample could occupy — this asserts the
     // consequence, over a prompt built beside values that would be catastrophic
-    // to leak. If `SkillBrief` ever grows a `samples: string[]`, this fails.
-    const text = skillPrompt(brief);
+    // to leak. If `HabitBrief` ever grows a `samples: string[]`, this fails.
+    const text = habitPrompt(brief);
     expect(text).not.toContain(SECRET_A);
     expect(text).not.toContain(SECRET_B);
     expect(text).toContain("issue_title");
@@ -51,7 +51,7 @@ describe("skillPrompt", () => {
   });
 
   it("distinguishes a discovered variable from a value typed once", () => {
-    const text = skillPrompt(brief);
+    const text = habitPrompt(brief);
     expect(text).toContain("issue_title: 4 distinct values — varies between recordings");
     expect(text).toContain("command: 1 value, typed once — not established as a variable");
   });
@@ -63,7 +63,7 @@ describe("skillPrompt", () => {
    * laundered into the prose as though the recording showed it.
    */
   it("labels reflections as opinion, and keeps them out of the step list", () => {
-    const text = skillPrompt({
+    const text = habitPrompt({
       ...brief,
       reflections: ["Goal: file a bug.\nWhat stalled: finding the repo took half the session."],
     });
@@ -76,18 +76,18 @@ describe("skillPrompt", () => {
   });
 
   it("says nothing at all when no reflection was written", () => {
-    expect(skillPrompt(brief)).not.toContain("Notes written by a model");
+    expect(habitPrompt(brief)).not.toContain("Notes written by a model");
   });
 
   it("leads with 'recorded once' rather than a date range for a single walk", () => {
-    const once = skillPrompt({ ...brief, recordings: 1 });
+    const once = habitPrompt({ ...brief, recordings: 1 });
     expect(once).toContain("Recorded ONCE");
-    expect(once).toContain("not an established habit");
-    expect(skillPrompt(brief)).toContain("Recorded 5 times");
+    expect(once).toContain("nothing has confirmed it repeats");
+    expect(habitPrompt(brief)).toContain("Recorded 5 times");
   });
 
   it("is deterministic", () => {
-    expect(skillPrompt(brief)).toBe(skillPrompt(brief));
+    expect(habitPrompt(brief)).toBe(habitPrompt(brief));
   });
 });
 
@@ -98,21 +98,21 @@ const good = {
   whenToUse: "A paragraph.",
 };
 
-describe("parseSkillResponse", () => {
+describe("parseHabitResponse", () => {
   it("accepts a clean object", () => {
-    expect(parseSkillResponse(JSON.stringify(good))).toEqual(good);
+    expect(parseHabitResponse(JSON.stringify(good))).toEqual(good);
   });
 
   it("digs the object out of a fence or a preamble", () => {
-    expect(parseSkillResponse("Sure!\n```json\n" + JSON.stringify(good) + "\n```")).toEqual(good);
+    expect(parseHabitResponse("Sure!\n```json\n" + JSON.stringify(good) + "\n```")).toEqual(good);
   });
 
   it("brace-matches rather than regexing, so a nested object does not truncate", () => {
     const nested = { ...good, overview: "x" };
     const text = `prefix {"a":{"b":1}} ` + JSON.stringify(nested);
-    // The FIRST object wins, and it is not a valid skill — the point is that the
+    // The FIRST object wins, and it is not a valid habit — the point is that the
     // scan consumes the whole of it rather than stopping at the inner brace.
-    expect(parseSkillResponse(text)).toBeUndefined();
+    expect(parseHabitResponse(text)).toBeUndefined();
   });
 
   it.each(["title", "description", "overview", "whenToUse"] as const)(
@@ -120,16 +120,16 @@ describe("parseSkillResponse", () => {
     (field) => {
       const partial: Record<string, string> = { ...good };
       delete partial[field];
-      expect(parseSkillResponse(JSON.stringify(partial))).toBeUndefined();
+      expect(parseHabitResponse(JSON.stringify(partial))).toBeUndefined();
     },
   );
 
   it("rejects an empty or whitespace-only field rather than accepting a blank", () => {
-    expect(parseSkillResponse(JSON.stringify({ ...good, description: "   " }))).toBeUndefined();
+    expect(parseHabitResponse(JSON.stringify({ ...good, description: "   " }))).toBeUndefined();
   });
 
   it("rejects a non-string field", () => {
-    expect(parseSkillResponse(JSON.stringify({ ...good, title: 3 }))).toBeUndefined();
+    expect(parseHabitResponse(JSON.stringify({ ...good, title: 3 }))).toBeUndefined();
   });
 
   /**
@@ -140,17 +140,17 @@ describe("parseSkillResponse", () => {
   it.each(["steps", "recorded", "recordedSteps"])(
     "rejects a reply carrying a %s key, even with all four fields present",
     (key) => {
-      expect(parseSkillResponse(JSON.stringify({ ...good, [key]: ["fake"] }))).toBeUndefined();
+      expect(parseHabitResponse(JSON.stringify({ ...good, [key]: ["fake"] }))).toBeUndefined();
     },
   );
 
   it("rejects a bare string and text with no object", () => {
-    expect(parseSkillResponse('"just a string"')).toBeUndefined();
-    expect(parseSkillResponse("no json here")).toBeUndefined();
-    expect(parseSkillResponse("")).toBeUndefined();
-    // An ARRAY of junk: the first object found is not a skill, and nothing
+    expect(parseHabitResponse('"just a string"')).toBeUndefined();
+    expect(parseHabitResponse("no json here")).toBeUndefined();
+    expect(parseHabitResponse("")).toBeUndefined();
+    // An ARRAY of junk: the first object found is not a habit, and nothing
     // scans past it looking for a better one.
-    expect(parseSkillResponse('[{"a":1},' + JSON.stringify(good) + "]")).toBeUndefined();
+    expect(parseHabitResponse('[{"a":1},' + JSON.stringify(good) + "]")).toBeUndefined();
   });
 
   /**
@@ -161,12 +161,12 @@ describe("parseSkillResponse", () => {
    * whichever wrapper it arrived in.
    */
   it("digs the object out of an array wrapper", () => {
-    expect(parseSkillResponse(JSON.stringify([good]))).toEqual(good);
-    expect(parseSkillResponse(JSON.stringify([{ ...good, steps: ["x"] }]))).toBeUndefined();
+    expect(parseHabitResponse(JSON.stringify([good]))).toEqual(good);
+    expect(parseHabitResponse(JSON.stringify([{ ...good, steps: ["x"] }]))).toBeUndefined();
   });
 
   it("rejects an unterminated object rather than guessing at the tail", () => {
-    expect(parseSkillResponse(JSON.stringify(good).slice(0, -1))).toBeUndefined();
+    expect(parseHabitResponse(JSON.stringify(good).slice(0, -1))).toBeUndefined();
   });
 });
 
@@ -177,9 +177,9 @@ const chat = (message: unknown): typeof globalThis.fetch =>
       headers: { "content-type": "application/json" },
     })) as unknown as typeof globalThis.fetch;
 
-describe("OllamaSkillProseProvider", () => {
+describe("OllamaHabitProseProvider", () => {
   it("reads the reply from content", async () => {
-    const p = new OllamaSkillProseProvider({
+    const p = new OllamaHabitProseProvider({
       model: "m",
       fetchImpl: chat({ content: JSON.stringify(good) }),
     });
@@ -189,11 +189,11 @@ describe("OllamaSkillProseProvider", () => {
   /**
    * The measurement `OllamaSummaryProvider` records, carried here: a thinking
    * model routes structured output into `thinking` and leaves `content` empty
-   * even with `think: false`. Reading only `content` would make every skill come
+   * even with `think: false`. Reading only `content` would make every habit come
    * out template-written, and the file would say so without anyone asking why.
    */
   it("falls back to the thinking channel when content is empty", async () => {
-    const p = new OllamaSkillProseProvider({
+    const p = new OllamaHabitProseProvider({
       model: "m",
       fetchImpl: chat({ content: "", thinking: JSON.stringify(good) }),
     });
@@ -201,7 +201,7 @@ describe("OllamaSkillProseProvider", () => {
   });
 
   it("THROWS on a torn reply rather than returning invented prose", async () => {
-    const p = new OllamaSkillProseProvider({
+    const p = new OllamaHabitProseProvider({
       model: "m",
       fetchImpl: chat({ content: '{"title":"only"' }),
     });
@@ -209,7 +209,7 @@ describe("OllamaSkillProseProvider", () => {
   });
 
   it("throws rather than accepting a reply that rewrote the steps", async () => {
-    const p = new OllamaSkillProseProvider({
+    const p = new OllamaHabitProseProvider({
       model: "m",
       fetchImpl: chat({ content: JSON.stringify({ ...good, steps: ["invented"] }) }),
     });
@@ -217,9 +217,9 @@ describe("OllamaSkillProseProvider", () => {
   });
 });
 
-describe("FakeSkillProseProvider", () => {
+describe("FakeHabitProseProvider", () => {
   it("is deterministic and invents nothing not in the brief", async () => {
-    const p = new FakeSkillProseProvider();
+    const p = new FakeHabitProseProvider();
     const a = await p.write(brief);
     expect(await p.write(brief)).toEqual(a);
     expect(a.title).toBe("file a bug report");

@@ -1,7 +1,7 @@
 /**
  * An `Actuator` over a RECORDING instead of a live desktop.
  *
- * The decisive question about a skill is whether it transfers: does it still
+ * The decisive question about a habit is whether it transfers: does it still
  * resolve against a screen it was not built from? Answering that live means
  * arranging the other screen by hand, which is why it has never been answered
  * here. But every recording already contains a sequence of real AX trees, and

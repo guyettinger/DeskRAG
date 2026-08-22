@@ -155,10 +155,10 @@ continues.
   cannot count says so rather than showing a stalled bar. Everything else on the
   Indexing screen can be checked against a finished job, where no meter exists —
   which is exactly how three ordering bugs survived a green suite here.
-- `scripts/merge-probe.mjs` is the one that WRITES SKILLS, and it is the reason
+- `scripts/merge-probe.mjs` is the one that WRITES HABITS, and it is the reason
   `launchApp` takes a `userDataDir`. It clones the real `<userData>` (APFS
   copy-on-write), drives the app against the clone, and deletes it — so it can
-  stage two duplicate skills and archive one without touching a person's
+  stage two duplicate habits and archive one without touching a person's
   authored prose. Pass `userDataDir` only for a check that writes; a read-only
   check wants the REAL store, because a fixture agrees with whatever the code
   assumes.
@@ -167,7 +167,7 @@ continues.
   ONE recording, which is minutes rather than hours only because it turns
   captions off **in the clone** first — 92% of a re-index on a real library, and
   Reflecting reads neither of them. It ends by reading the note out of the
-  clone's `app.db` with `better-sqlite3` and checking no rendered `SKILL.md`
+  clone's `app.db` with `better-sqlite3` and checking no rendered `HABIT.md`
   contains it: a reflection is prompt input, never record.
 - `scripts/stability-probe.mjs` is the longest-running one, and also writes to a
   clone. It runs three FULL re-index + re-mine cycles and asks whether the route

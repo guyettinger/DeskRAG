@@ -8,7 +8,7 @@
  * neither of them took.
  *
  * It lives in `shared/` because BOTH sides need it and they must agree. The
- * route list is a renderer module and the Skills proposal row is built in main;
+ * route list is a renderer module and the Habits proposal row is built in main;
  * when this was two copies, the list was fixed and the proposal row was not, so
  * one screen said "8 steps" while the other said "14" about the same route.
  * Two readers of one tree, again.

@@ -6,7 +6,7 @@
  * bracketed by that application: the first `focus_change` fires while the Record
  * click still has it focused, and the last one fires when the user comes back to
  * press Stop. Neither is work. Left in, they inflate every route key, add steps
- * to every skill written from one, and make two unrelated tasks look like they
+ * to every habit written from one, and make two unrelated tasks look like they
  * pass through a shared hub.
  *
  * WHY HERE AND NOT IN THE PROJECTION. Lifting is re-runnable over recordings

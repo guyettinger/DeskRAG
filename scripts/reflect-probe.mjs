@@ -77,7 +77,7 @@ console.log("The real store is opened once, by cp, and never by the app.\n");
 
 const { app, page } = await launchApp({ width: 1400, height: 1100, userDataDir: root });
 let reflections = [];
-let renderedSkills = [];
+let renderedHabits = [];
 /**
  * Set when there is nothing to measure. NOT `process.exit()` — that skips
  * `finally`, which is what quits the app and deletes the clone, so an early
@@ -164,9 +164,9 @@ try {
       stage?.detail ?? "(none)",
     );
 
-    // The rendered skills, to prove the note did NOT reach one.
-    const listed = await page.evaluate(async () => await window.deskrag.skills.list());
-    renderedSkills = (listed?.skills ?? []).map((s) => s.markdown ?? "");
+    // The rendered habits, to prove the note did NOT reach one.
+    const listed = await page.evaluate(async () => await window.deskrag.habits.list());
+    renderedHabits = (listed?.habits ?? []).map((s) => s.markdown ?? "");
   }
 } finally {
   await app.close();
@@ -219,13 +219,20 @@ if (note !== undefined) {
   console.log(note.text);
   console.log("-----------------------------------\n");
 
-  // THE SEAM. A reflection reaches a skill as an opinion in the PROMPT and never
+  // THE SEAM. A reflection reaches a habit as an opinion in the PROMPT and never
   // as text in the file: `recordedBlocks()` takes the route and nothing else.
-  const leaked = renderedSkills.filter((md) => md.includes(note.text.split("\n")[0]));
+  const leaked = renderedHabits.filter((md) => md.includes(note.text.split("\n")[0]));
+  // NON-EMPTY IS PART OF THE ASSERTION. `renderedHabits` is read as
+  // `listed?.habits ?? []`, so any rename of that DTO field turns this into a
+  // filter over nothing and the headline still says ok — the failure mode that
+  // makes a guard worse than no guard. A zero-length set is reported, never
+  // passed: there is nothing to leak into if nothing rendered.
   ok(
-    "and no rendered SKILL.md contains it — a note is prompt input, never record",
-    leaked.length === 0,
-    `${renderedSkills.length} skill(s) checked`,
+    "and no rendered HABIT.md contains it — a note is prompt input, never record",
+    leaked.length === 0 && renderedHabits.length > 0,
+    renderedHabits.length === 0
+      ? "NOTHING CHECKED — no habit rendered, so this proves nothing"
+      : `${renderedHabits.length} habit(s) checked`,
   );
 }
 

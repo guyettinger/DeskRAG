@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { bindSkill, duplicateSkills, unclaimedRoutes, type SkillBindingDoc } from "../app/src/main/skill-bind.js";
+import { bindHabit, duplicateHabits, unclaimedRoutes, type HabitBindingDoc } from "../app/src/main/habit-bind.js";
 import type { FlowRouteDTO } from "@shared/types";
 
 /**
- * What happens to a kept skill when the graph is rebuilt underneath it.
+ * What happens to a kept habit when the graph is rebuilt underneath it.
  *
  * A route's id is the sequence of place labels it passes through, so recording
  * the same task once more through one extra application RENAMES it — and
  * `rebuildGraph` replays every recording from zero on each re-index. Binding a
- * skill to `route.id` would therefore lose the user's prose routinely and
+ * habit to `route.id` would therefore lose the user's prose routinely and
  * silently. These are the four answers, and the third one is the interesting
  * one: it declines rather than guessing.
  */
@@ -26,7 +26,7 @@ const route = (id: string, sessionIds: string[]): FlowRouteDTO => ({
   variants: [],
 });
 
-const doc = (routeKey: string, sessionIds: string[]): SkillBindingDoc => ({
+const doc = (routeKey: string, sessionIds: string[]): HabitBindingDoc => ({
   routeKey,
   routeLabel: routeKey,
   sessionIds,
@@ -36,7 +36,7 @@ const doc = (routeKey: string, sessionIds: string[]): SkillBindingDoc => ({
 describe("exact", () => {
   it("binds when the key still exists, and says nothing moved", () => {
     const r = route("A → B", ["s1", "s2"]);
-    const b = bindSkill(doc("A → B", ["s1", "s2"]), [r]);
+    const b = bindHabit(doc("A → B", ["s1", "s2"]), [r]);
 
     expect(b.state).toBe("exact");
     expect(b.route).toBe(r);
@@ -48,12 +48,12 @@ describe("exact", () => {
   /**
    * A route can keep its key and lose a recording — deleting one cascades
    * `trace_edge_source` immediately, without any rebuild. That must show rather
-   * than reading as intact, or the skill's evidence count silently overstates
+   * than reading as intact, or the habit's evidence count silently overstates
    * what is still there.
    */
   it("still reports a lost recording when the key is unchanged", () => {
     const r = route("A → B", ["s1"]);
-    const b = bindSkill(doc("A → B", ["s1", "s2"]), [r]);
+    const b = bindHabit(doc("A → B", ["s1", "s2"]), [r]);
 
     expect(b.state).toBe("exact");
     expect(b.overlap).toBe(1);
@@ -63,7 +63,7 @@ describe("exact", () => {
   });
 
   it("reports recordings the route gained since", () => {
-    const b = bindSkill(doc("A → B", ["s1"]), [route("A → B", ["s1", "s2"])]);
+    const b = bindHabit(doc("A → B", ["s1"]), [route("A → B", ["s1", "s2"])]);
     expect(b.gainedSessionIds).toEqual(["s2"]);
   });
 });
@@ -71,7 +71,7 @@ describe("exact", () => {
 describe("rebound", () => {
   it("follows a strict majority of the recordings to the renamed route", () => {
     const grown = route("A → B → C", ["s1", "s2", "s3", "s4"]);
-    const b = bindSkill(doc("A → B", ["s1", "s2", "s3"]), [grown, route("X", ["s9"])]);
+    const b = bindHabit(doc("A → B", ["s1", "s2", "s3"]), [grown, route("X", ["s9"])]);
 
     expect(b.state).toBe("rebound");
     expect(b.route).toBe(grown);
@@ -84,7 +84,7 @@ describe("rebound", () => {
   it("does not rebind on a bare plurality below half", () => {
     // 1 of 3 is not a majority. Two routes each holding one recording is exactly
     // the split the majority rule exists to refuse.
-    const b = bindSkill(doc("A → B", ["s1", "s2", "s3"]), [
+    const b = bindHabit(doc("A → B", ["s1", "s2", "s3"]), [
       route("P", ["s1"]),
       route("Q", ["s2"]),
     ]);
@@ -92,7 +92,7 @@ describe("rebound", () => {
   });
 
   it("treats exactly half as not a majority", () => {
-    const b = bindSkill(doc("A → B", ["s1", "s2"]), [route("P", ["s1"])]);
+    const b = bindHabit(doc("A → B", ["s1", "s2"]), [route("P", ["s1"])]);
     expect(b.state).toBe("orphaned");
   });
 });
@@ -109,7 +109,7 @@ describe("rebound", () => {
  */
 describe("ambiguous", () => {
   it("declines rather than picking when two routes both hold a majority", () => {
-    const b = bindSkill(doc("A → B", ["s1", "s2"]), [
+    const b = bindHabit(doc("A → B", ["s1", "s2"]), [
       route("P", ["s1", "s2"]),
       route("Q", ["s1", "s2"]),
     ]);
@@ -122,8 +122,8 @@ describe("ambiguous", () => {
 });
 
 describe("orphaned", () => {
-  it("keeps the skill and says the evidence is gone", () => {
-    const b = bindSkill(doc("A → B", ["s1", "s2"]), [route("X", ["s8", "s9"])]);
+  it("keeps the habit and says the evidence is gone", () => {
+    const b = bindHabit(doc("A → B", ["s1", "s2"]), [route("X", ["s8", "s9"])]);
 
     expect(b.state).toBe("orphaned");
     expect(b.route).toBeNull();
@@ -133,7 +133,7 @@ describe("orphaned", () => {
   });
 
   it("orphans against an empty graph rather than throwing", () => {
-    expect(bindSkill(doc("A → B", ["s1"]), []).state).toBe("orphaned");
+    expect(bindHabit(doc("A → B", ["s1"]), []).state).toBe("orphaned");
   });
 });
 
@@ -143,12 +143,12 @@ describe("the binding is a reading, never a write", () => {
     const routes = [route("A → B → C", ["s1", "s2", "s3", "s4"])];
     const before = JSON.stringify({ d, routes });
 
-    const a = bindSkill(d, routes);
-    const b = bindSkill(d, routes);
+    const a = bindHabit(d, routes);
+    const b = bindHabit(d, routes);
 
     expect(a).toEqual(b);
     // The stored key is only ever changed by an explicit act. If this call
-    // adopted the new one, the skill's record of where it came from would be
+    // adopted the new one, the habit's record of where it came from would be
     // unfalsifiable.
     expect(d.routeKey).toBe("A → B");
     expect(JSON.stringify({ d, routes })).toBe(before);
@@ -156,7 +156,7 @@ describe("the binding is a reading, never a write", () => {
 });
 
 describe("unclaimedRoutes", () => {
-  it("excludes routes that already have a skill or a dismissal", () => {
+  it("excludes routes that already have a habit or a dismissal", () => {
     const routes = [route("A", ["s1"]), route("B", ["s2"]), route("C", ["s3"])];
     expect(unclaimedRoutes(routes, ["A", "C"]).map((r) => r.id)).toEqual(["B"]);
   });
@@ -166,12 +166,12 @@ describe("unclaimedRoutes", () => {
     expect(unclaimedRoutes(routes, [])).toEqual(routes);
   });
 
-  it("a REBOUND skill claims the route it moved to, not only the one it left", () => {
+  it("a REBOUND habit claims the route it moved to, not only the one it left", () => {
     // A route's key is its place-label sequence, so a change to what a place is
-    // called re-keys every route. `bindSkill` re-resolves by session overlap and
-    // the caller passes BOTH keys — without the live one, a kept skill's own
+    // called re-keys every route. `bindHabit` re-resolves by session overlap and
+    // the caller passes BOTH keys — without the live one, a kept habit's own
     // route is offered straight back as something to keep. Measured on the real
-    // store: one skill, correctly rebound to `Calculator → TextEdit`, with that
+    // store: one habit, correctly rebound to `Calculator → TextEdit`, with that
     // same route sitting in the proposals list beneath it.
     const routes = [route("Calculator → TextEdit", ["s1"]), route("B", ["s2"])];
     const stale = "Electron — localhost → Calculator → TextEdit → Electron";
@@ -185,41 +185,41 @@ describe("unclaimedRoutes", () => {
   });
 });
 
-describe("duplicateSkills", () => {
+describe("duplicateHabits", () => {
   const s = (id: string, liveRouteKey: string | null) => ({ id, liveRouteKey });
 
-  it("reports nothing when every skill answers to its own route", () => {
-    expect(duplicateSkills([s("a", "R1"), s("b", "R2")]).size).toBe(0);
+  it("reports nothing when every habit answers to its own route", () => {
+    expect(duplicateHabits([s("a", "R1"), s("b", "R2")]).size).toBe(0);
   });
 
-  it("pairs two skills that now answer to ONE route", () => {
-    const out = duplicateSkills([s("a", "R1"), s("b", "R1")]);
+  it("pairs two habits that now answer to ONE route", () => {
+    const out = duplicateHabits([s("a", "R1"), s("b", "R1")]);
     expect(out.get("a")).toEqual(["b"]);
     expect(out.get("b")).toEqual(["a"]);
   });
 
   it("names every other member when three collide", () => {
-    const out = duplicateSkills([s("a", "R1"), s("b", "R1"), s("c", "R1")]);
+    const out = duplicateHabits([s("a", "R1"), s("b", "R1"), s("c", "R1")]);
     expect(out.get("b")).toEqual(["a", "c"]);
   });
 
   it("never groups ORPHANS together", () => {
     // They answer to no route, so they duplicate nothing. Grouping them would
-    // report every unbindable skill as a duplicate of every other.
-    expect(duplicateSkills([s("a", null), s("b", null)]).size).toBe(0);
+    // report every unbindable habit as a duplicate of every other.
+    expect(duplicateHabits([s("a", null), s("b", null)]).size).toBe(0);
   });
 
   it("keys on the LIVE route, not on what each was bound to", () => {
-    // The interesting case: two skills bound at different times to keys that
+    // The interesting case: two habits bound at different times to keys that
     // have since merged. Comparing stored keys would miss exactly this one.
-    const out = duplicateSkills([s("old", "MERGED"), s("new", "MERGED")]);
+    const out = duplicateHabits([s("old", "MERGED"), s("new", "MERGED")]);
     expect(out.get("old")).toEqual(["new"]);
   });
 
   it("does not mutate its input", () => {
     const input = [s("a", "R1"), s("b", "R1")];
     const snapshot = JSON.stringify(input);
-    duplicateSkills(input);
+    duplicateHabits(input);
     expect(JSON.stringify(input)).toBe(snapshot);
   });
 });

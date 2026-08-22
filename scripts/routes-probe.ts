@@ -22,7 +22,7 @@
  * route starts and ends, which routes are one) stays in the single
  * implementation the app runs.
  *
- * It PRINTS THE LIBRARY IT FOUND BEFORE JUDGING ANYTHING (the `probe:skills`
+ * It PRINTS THE LIBRARY IT FOUND BEFORE JUDGING ANYTHING (the `probe:habits`
  * precedent). A verdict drawn from two recordings is not a verdict, and the
  * numbers quoted in `graph-view.ts` came from a nine-recording store that no
  * longer exists — so the corpus is the first thing on screen.
@@ -143,7 +143,7 @@ try {
       const repeated = out.filter((r) => r.count >= 2).length;
       const alone = out.filter((r) => r.count === 1).length;
 
-      // The invariant that keeps `bindSkill`'s majority rule a proof rather
+      // The invariant that keeps `bindHabit`'s majority rule a proof rather
       // than a threshold: every recording in exactly one route. Structural —
       // but a rule that broke it must be visible here rather than inferred.
       const seen = out.flatMap((r) => r.sessionIds);

@@ -132,7 +132,7 @@ export interface McpSettings {
  *
  * A session is started and stopped from an application, so every recording is
  * bracketed by that application: it opens and closes every route, adds steps to
- * every skill written from one, and makes unrelated tasks look like they share a
+ * every habit written from one, and makes unrelated tasks look like they share a
  * hub. Excluding it happens at LIFT time, so `rebuildGraph` applies a change
  * here to recordings already taken.
  *
@@ -1125,9 +1125,9 @@ export interface FlowRouteDTO {
    * The consequence is that it is **stable across reloads but NOT across
    * recordings**: record the same task once more in a way that touches one extra
    * application and the key changes, and `rebuildGraph` replays everything from
-   * zero on each re-index. Anything that needs to survive that — a kept skill —
+   * zero on each re-index. Anything that needs to survive that — a kept habit —
    * must store this as a record of a past act and re-bind, never treat it as an
-   * identity. See `app/src/main/skill-bind.ts`.
+   * identity. See `app/src/main/habit-bind.ts`.
    */
   id: string;
   /** Recordings that walked exactly this sequence. */
@@ -1236,19 +1236,19 @@ export interface FlowsDTO {
 }
 
 /**
- * A SKILL.md the user chose to keep, written from a route they actually walked.
+ * A HABIT.md the user chose to keep, written from a route they actually walked.
  *
  * AUTHORED, unlike everything else on this screen's side of the wire: a re-index
  * rebuilds the trace graph and re-keys every route, but it must never touch
  * these. See `AUTHORED_TABLES` in `src/store/sqlite/schema.ts`.
  */
-export type SkillState = "active" | "archived" | "dismissed";
+export type HabitState = "active" | "archived" | "dismissed";
 
-/** Where a skill's route went. See `app/src/main/skill-bind.ts`. */
-export type SkillBindState = "exact" | "rebound" | "ambiguous" | "orphaned";
+/** Where a habit's route went. See `app/src/main/habit-bind.ts`. */
+export type HabitBindState = "exact" | "rebound" | "ambiguous" | "orphaned";
 
-export interface SkillBindingDTO {
-  state: SkillBindState;
+export interface HabitBindingDTO {
+  state: HabitBindState;
   /** The route key at accept time. Only an explicit re-bind changes it. */
   routeKey: string;
   /** The key it reads from now. Equal when exact; null when it cannot tell. */
@@ -1273,8 +1273,8 @@ export interface SkillBindingDTO {
   note: string | null;
 }
 
-/** One entry in a skill's version history. */
-export interface SkillRevisionDTO {
+/** One entry in a habit's version history. */
+export interface HabitRevisionDTO {
   /** Wall-clock, and only for display — a version history is a human record. */
   at: number;
   version: string;
@@ -1282,13 +1282,13 @@ export interface SkillRevisionDTO {
   what: string;
 }
 
-export interface SkillDTO {
+export interface HabitDTO {
   id: string;
-  state: SkillState;
+  state: HabitState;
   pinned: boolean;
   createdAt: number;
   updatedAt: number;
-  /** Frontmatter `name`: lowercase, hyphens, unique across active skills. */
+  /** Frontmatter `name`: lowercase, hyphens, unique across active habits. */
   slug: string;
   title: string;
   description: string;
@@ -1308,35 +1308,35 @@ export interface SkillDTO {
   generateNote: string | null;
   /**
    * The artifact's own version, `major.minor.patch`. Only the patch position
-   * moves: nothing here computes what a breaking change to a skill would be.
+   * moves: nothing here computes what a breaking change to a habit would be.
    * It bumps when the FILE moves, never on a read.
    */
   version: string;
-  /** Newest last, bounded. What moved this skill, and when. */
-  history: SkillRevisionDTO[];
+  /** Newest last, bounded. What moved this habit, and when. */
+  history: HabitRevisionDTO[];
   /**
-   * OTHER active skills that now answer to the same LIVE route.
+   * OTHER active habits that now answer to the same LIVE route.
    *
    * Empty is the common case. Non-empty is a disclosure, never an action: a
    * merge is a human act, because prose is the one thing nothing can remake.
    */
   duplicates: string[];
   /**
-   * The whole SKILL.md.
+   * The whole HABIT.md.
    *
    * Rendered in MAIN and handed out verbatim: the clipboard button and
-   * `get_skill` both return this string, so the two can never drift. The
+   * `get_habit` both return this string, so the two can never drift. The
    * renderer never re-renders the document.
    */
   markdown: string;
-  binding: SkillBindingDTO;
+  binding: HabitBindingDTO;
 }
 
 /** `llm | template`, spelled here so this file imports nothing from the library. */
 export type SummarySourceLike = "llm" | "template";
 
-/** A route with no skill and no dismissal yet. COMPUTED, never stored. */
-export interface SkillProposalDTO {
+/** A route with no habit and no dismissal yet. COMPUTED, never stored. */
+export interface HabitProposalDTO {
   routeKey: string;
   name: string | null;
   label: string;
@@ -1354,9 +1354,9 @@ export interface SkillProposalDTO {
   preview: string;
 }
 
-export interface SkillsDTO {
-  skills: SkillDTO[];
-  proposals: SkillProposalDTO[];
+export interface HabitsDTO {
+  habits: HabitDTO[];
+  proposals: HabitProposalDTO[];
   /**
    * False when no trace graph exists at all — a DIFFERENT emptiness from a graph
    * with no provenance, which yields zero routes and zero proposals and points
@@ -1374,14 +1374,14 @@ export interface SkillsDTO {
 }
 
 /** Any subset. Absent means unchanged — the `SettingsPatch` precedent. */
-export interface SkillPatch {
+export interface HabitPatch {
   title?: string;
   description?: string;
   slug?: string;
   body?: string;
   showSamples?: boolean;
   pinned?: boolean;
-  state?: SkillState;
+  state?: HabitState;
 }
 
 export interface DeskRagApi {
@@ -1466,36 +1466,36 @@ export interface DeskRagApi {
     graph(): Promise<FlowsDTO | null>;
   };
   /**
-   * The SKILL.md library.
+   * The HABIT.md library.
    *
-   * Unlike `flows`, this one WRITES — a skill is authored, and the writes are
+   * Unlike `flows`, this one WRITES — a habit is authored, and the writes are
    * what make an edit survive a trace-graph rebuild. It still touches nothing
-   * outside the `skill` table: it cannot record, index, or delete a recording,
-   * and no call here re-binds a skill without being asked to.
+   * outside the `habit` table: it cannot record, index, or delete a recording,
+   * and no call here re-binds a habit without being asked to.
    *
-   * Every call returns the whole `SkillsDTO`, the `settings.set` precedent, so
+   * Every call returns the whole `HabitsDTO`, the `settings.set` precedent, so
    * the screen never re-fetches and cannot paint a half-applied edit.
    */
-  skills: {
-    list(): Promise<SkillsDTO>;
+  habits: {
+    list(): Promise<HabitsDTO>;
     /**
      * Keep a proposal. Mints a ULID, records the binding, writes a TEMPLATE
      * body — deliberately no model call, because accepting must be instant.
      */
-    accept(routeKey: string): Promise<SkillsDTO>;
+    accept(routeKey: string): Promise<HabitsDTO>;
     /** Suppress a proposal, durably, or it returns on the next load. */
-    dismiss(routeKey: string): Promise<SkillsDTO>;
-    update(id: string, patch: SkillPatch): Promise<SkillsDTO>;
+    dismiss(routeKey: string): Promise<HabitsDTO>;
+    update(id: string, patch: HabitPatch): Promise<HabitsDTO>;
     /** One model call, seconds. Falls back to the template and says so. */
-    generate(id: string): Promise<SkillsDTO>;
+    generate(id: string): Promise<HabitsDTO>;
     /** Confirm a DISCLOSED re-bind. The only thing that rewrites `routeKey`. */
-    rebind(id: string, routeKey: string): Promise<SkillsDTO>;
+    rebind(id: string, routeKey: string): Promise<HabitsDTO>;
     /**
-     * Merge two skills answering to the same live route. The keeper survives
+     * Merge two habits answering to the same live route. The keeper survives
      * with the other's prose appended; the other is ARCHIVED, never deleted.
      */
-    merge(keepId: string, mergeId: string): Promise<SkillsDTO>;
-    remove(id: string): Promise<SkillsDTO>;
+    merge(keepId: string, mergeId: string): Promise<HabitsDTO>;
+    remove(id: string): Promise<HabitsDTO>;
   };
   models: {
     /** Fires while weights download; may start from a search, not just indexing. */
@@ -1622,14 +1622,14 @@ export const IPC = {
   sessionsRemove: "sessions:remove",
   sessionsTracks: "sessions:tracks",
   flowsGraph: "flows:graph",
-  skillsList: "skills:list",
-  skillsAccept: "skills:accept",
-  skillsDismiss: "skills:dismiss",
-  skillsUpdate: "skills:update",
-  skillsGenerate: "skills:generate",
-  skillsRebind: "skills:rebind",
-  skillsMerge: "skills:merge",
-  skillsRemove: "skills:remove",
+  habitsList: "habits:list",
+  habitsAccept: "habits:accept",
+  habitsDismiss: "habits:dismiss",
+  habitsUpdate: "habits:update",
+  habitsGenerate: "habits:generate",
+  habitsRebind: "habits:rebind",
+  habitsMerge: "habits:merge",
+  habitsRemove: "habits:remove",
   mcpStatus: "mcp:status",
   mcpLog: "mcp:log",
   mcpLogEvent: "mcp:log-event",

@@ -286,7 +286,7 @@ export const INDEX_STAGES: readonly StageSpec[] = [
     // AFTER Composing and not before it: the note is written over the composed
     // steps and their durations, which do not exist until that stage has run.
     // Before Search index only because the table's order is the run's order and
-    // the note is not indexed — it reaches a reader through a skill's prompt,
+    // the note is not indexed — it reaches a reader through a habit's prompt,
     // never through a query.
     id: "reflect",
     label: () => "Reflecting",

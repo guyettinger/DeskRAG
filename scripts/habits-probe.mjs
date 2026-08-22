@@ -1,12 +1,12 @@
 /**
- * Does the Skills screen produce a usable SKILL.md against the REAL store?
+ * Does the Habits screen produce a usable HABIT.md against the REAL store?
  *
  * Read-only except for one deliberate write: it accepts the top proposal, which
- * is the only way to see what a kept skill actually renders to. It deletes
- * nothing, re-indexes nothing, and reports the skill it left behind.
+ * is the only way to see what a kept habit actually renders to. It deletes
+ * nothing, re-indexes nothing, and reports the habit it left behind.
  *
  * The check that matters and that NOTHING in the suite can see: the string the
- * Copy button puts on the clipboard and the string `get_skill` returns over a
+ * Copy button puts on the clipboard and the string `get_habit` returns over a
  * real socket must be byte-identical. They are rendered once in main precisely
  * so they cannot drift, and this is the only place that claim is tested.
  *
@@ -50,75 +50,75 @@ try {
   console.log(`  prose path      : ${defaultProse ? "TEMPLATE (default install)" : "MODEL"}`);
 
   // --- the screen ----------------------------------------------------------
-  await gotoScreen(page, "Skills");
+  await gotoScreen(page, "Habits");
   const loaded = await until(async () =>
     page.evaluate(
       () =>
-        document.querySelector(".skills__stage") !== null ||
-        document.querySelector(".skills .empty") !== null,
+        document.querySelector(".habits__stage") !== null ||
+        document.querySelector(".habits .empty") !== null,
     ),
   );
-  ok("Skills screen renders", loaded === true);
+  ok("Habits screen renders", loaded === true);
 
-  let data = await page.evaluate(() => window.deskrag.skills.list());
+  let data = await page.evaluate(() => window.deskrag.habits.list());
   console.log("\nLibrary");
   console.log(`  graph present   : ${data.graphPresent}`);
   console.log(`  proposals       : ${data.proposals.length}`);
-  console.log(`  kept            : ${data.skills.filter((s) => s.state !== "dismissed").length}`);
+  console.log(`  kept            : ${data.habits.filter((s) => s.state !== "dismissed").length}`);
   console.log(`  prose available : ${data.prose.available}${data.prose.model ? ` (${data.prose.model})` : ""}`);
 
-  if (!data.graphPresent || data.proposals.length + data.skills.length === 0) {
+  if (!data.graphPresent || data.proposals.length + data.habits.length === 0) {
     console.log(
-      "\nNo routes to build a skill from. That is a legitimate empty state, not a failure —\n" +
+      "\nNo routes to build a habit from. That is a legitimate empty state, not a failure —\n" +
         "record a session twice and rebuild the trace graph, then run this again.",
     );
-    await page.screenshot({ path: "/tmp/skills-empty.png" });
-    console.log("screenshot: /tmp/skills-empty.png");
+    await page.screenshot({ path: "/tmp/habits-empty.png" });
+    console.log("screenshot: /tmp/habits-empty.png");
   } else {
     // --- keep one, if nothing is kept yet ----------------------------------
-    let skill = data.skills.find((s) => s.state === "active");
-    if (skill === undefined) {
+    let habit = data.habits.find((s) => s.state === "active");
+    if (habit === undefined) {
       const top = data.proposals[0];
       console.log(`\nAccepting top proposal: ${top.name ?? top.label} (x${top.count})`);
-      data = await page.evaluate((k) => window.deskrag.skills.accept(k), top.routeKey);
-      skill = data.skills.find((s) => s.state === "active");
+      data = await page.evaluate((k) => window.deskrag.habits.accept(k), top.routeKey);
+      habit = data.habits.find((s) => s.state === "active");
     }
-    ok("a skill exists after accepting", skill !== undefined);
+    ok("a habit exists after accepting", habit !== undefined);
 
-    if (skill !== undefined) {
-      console.log(`\nSkill ${skill.id}`);
-      console.log(`  slug        : ${skill.slug}`);
-      console.log(`  prose by    : ${skill.bodySource}${skill.bodyModel ? ` (${skill.bodyModel})` : ""}`);
-      console.log(`  binding     : ${skill.binding.state}`);
-      console.log(`  recordings  : ${skill.binding.recordings}`);
-      console.log(`  markdown    : ${skill.markdown.length} bytes`);
+    if (habit !== undefined) {
+      console.log(`\nHabit ${habit.id}`);
+      console.log(`  slug        : ${habit.slug}`);
+      console.log(`  prose by    : ${habit.bodySource}${habit.bodyModel ? ` (${habit.bodyModel})` : ""}`);
+      console.log(`  binding     : ${habit.binding.state}`);
+      console.log(`  recordings  : ${habit.binding.recordings}`);
+      console.log(`  markdown    : ${habit.markdown.length} bytes`);
 
       // A default install must produce a usable file with no model at all.
       if (defaultProse) {
-        ok("default install writes a template body", skill.bodySource === "template");
+        ok("default install writes a template body", habit.bodySource === "template");
       }
 
-      const md = skill.markdown;
+      const md = habit.markdown;
       ok("starts with frontmatter", md.startsWith("---\n"));
-      ok("names the skill", /\nname: \S+/.test(md));
+      ok("names the habit", /\nname: \S+/.test(md));
       ok("has a description", /\ndescription: /.test(md));
       ok("declares the steps are the template's", /\n  steps: template/.test(md));
       ok("carries the recorded steps", md.includes("## Recorded steps"));
       ok("says the steps are not model-written", /Not written by a model/.test(md));
       ok(
         "withholds recorded values by default",
-        !skill.showSamples && /recorded values are not printed/i.test(md),
+        !habit.showSamples && /recorded values are not printed/i.test(md),
       );
       ok("invents no confidence number", !/^\s*confidence:/m.test(md));
       // outcomes is {0,0} on every graph, so any success rate would be invented.
       ok("claims no success rate", !/\bsuccess(es)? ?\d|attempts=\d/.test(md));
 
-      // --- THE check: clipboard vs get_skill, byte for byte -----------------
+      // --- THE check: clipboard vs get_habit, byte for byte -----------------
       const clip = await page.evaluate(async (text) => {
         await navigator.clipboard.writeText(text);
         return navigator.clipboard.readText();
-      }, skill.markdown);
-      ok("clipboard round-trips the markdown", clip === skill.markdown);
+      }, habit.markdown);
+      ok("clipboard round-trips the markdown", clip === habit.markdown);
 
       if (mcp.listening) {
         const call = async (name, args = {}) => {
@@ -142,24 +142,24 @@ try {
           return json.result?.content?.[0]?.text ?? "";
         };
 
-        const list = await call("list_skills");
-        ok("list_skills names the kept skill", list.includes(skill.slug));
-        ok("list_skills names its id", list.includes(skill.id));
+        const list = await call("list_habits");
+        ok("list_habits names the kept habit", list.includes(habit.slug));
+        ok("list_habits names its id", list.includes(habit.id));
 
-        const got = await call("get_skill", { skillId: skill.id });
-        ok("get_skill returns the file with NO preamble", got.startsWith("---"));
+        const got = await call("get_habit", { habitId: habit.id });
+        ok("get_habit returns the file with NO preamble", got.startsWith("---"));
         // The one drift this whole design is arranged to prevent.
-        ok("get_skill === clipboard, byte for byte", got === clip, `${got.length} vs ${clip.length}`);
+        ok("get_habit === clipboard, byte for byte", got === clip, `${got.length} vs ${clip.length}`);
       } else {
         console.log("  (MCP not listening — skipping the tool half)");
       }
 
-      console.log("\n--- SKILL.md ---\n");
-      console.log(skill.markdown);
+      console.log("\n--- HABIT.md ---\n");
+      console.log(habit.markdown);
     }
 
-    await page.screenshot({ path: "/tmp/skills-screen.png" });
-    console.log("screenshot: /tmp/skills-screen.png");
+    await page.screenshot({ path: "/tmp/habits-screen.png" });
+    console.log("screenshot: /tmp/habits-screen.png");
   }
 
   // --- a route is a PATH, not a union --------------------------------------
@@ -207,11 +207,11 @@ try {
 
   // --- geometry, which a screenshot cannot answer --------------------------
   const geo = await page.evaluate(() => {
-    const page_ = document.querySelector(".page.skills");
-    const stage = document.querySelector(".skills__stage");
-    const list = document.querySelector(".skills__list");
-    const edit = document.querySelector(".skilledit");
-    const titles = [...document.querySelectorAll(".skill__title")];
+    const page_ = document.querySelector(".page.habits");
+    const stage = document.querySelector(".habits__stage");
+    const list = document.querySelector(".habits__list");
+    const edit = document.querySelector(".habitedit");
+    const titles = [...document.querySelectorAll(".habit__title")];
     return {
       pageScrolls: document.documentElement.scrollHeight > window.innerHeight + 1,
       stageH: stage?.getBoundingClientRect().height ?? 0,
@@ -231,7 +231,19 @@ try {
   // scroll silently, which is the trap .flows__stage documents.
   ok("the page does not scroll", !geo.pageScrolls);
   // NOTHING TRUNCATES: a label fits or is withheld.
-  ok("no title is truncated", geo.truncated === 0, `${geo.truncated} of ${geo.titles}`);
+  //
+  // The title COUNT is part of the assertion. `.habit__title` is a bare selector
+  // string, so a class rename empties `titles` and `truncated === 0` becomes
+  // `0 === 0` — reporting "no title is truncated — 0 of 0" in a repo where the
+  // selector, not the layout, was what broke. An empty set is a subset of every
+  // observation; it is disclosed, never counted as a pass.
+  ok(
+    "no title is truncated",
+    geo.truncated === 0 && geo.titles > 0,
+    geo.titles === 0
+      ? "NOTHING MEASURED — no .habit__title matched, so this proves nothing"
+      : `${geo.truncated} of ${geo.titles}`,
+  );
 } finally {
   await app.close();
 }

@@ -86,7 +86,7 @@ export const IconNextKeyframe = (p: P): React.JSX.Element => (
    "the shapes your work takes". Deliberately NOT the old play-in-an-arc: this
    screen explores recorded behavior and never replays it. */
 /* A page with a turned corner and a spark — a written artifact, not a graph. */
-export const IconSkills = (p: P): React.JSX.Element => (
+export const IconHabits = (p: P): React.JSX.Element => (
   <svg {...base} {...p}>
     <path d="M14 3H7a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V7z" />
     <path d="M14 3v4h4" />

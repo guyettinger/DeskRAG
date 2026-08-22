@@ -31,8 +31,8 @@ import type {
   FrameRow,
   FrameScope,
   IndexJobInput,
-  SkillInput,
-  SkillRow,
+  HabitInput,
+  HabitRow,
   IndexJobRow,
   IndexJobState,
   MissingVector,
@@ -399,13 +399,13 @@ export class DualStore implements Store {
                ORDER BY enqueued_at DESC, rowid DESC LIMIT ?
             )`,
       ),
-      // --- authored skills ---------------------------------------------------
+      // --- authored habits ---------------------------------------------------
       // Whole-row upsert. `created_at` is written only on insert: the excluded
       // row carries the caller's "now" for both columns, and the DO UPDATE
-      // deliberately does not name created_at, so re-saving a skill cannot
+      // deliberately does not name created_at, so re-saving a habit cannot
       // rewrite when it was kept.
-      upsertSkill: db.prepare(
-        `INSERT INTO skill (id, state, pinned, created_at, updated_at, doc)
+      upsertHabit: db.prepare(
+        `INSERT INTO habit (id, state, pinned, created_at, updated_at, doc)
          VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            state = excluded.state,
@@ -413,12 +413,12 @@ export class DualStore implements Store {
            updated_at = excluded.updated_at,
            doc = excluded.doc`,
       ),
-      // Newest-touched first, so an edit moves a skill to the top of whatever
+      // Newest-touched first, so an edit moves a habit to the top of whatever
       // band the app draws it in. rowid breaks a same-millisecond tie the way
       // the job queue does.
-      selectSkills: db.prepare("SELECT * FROM skill ORDER BY updated_at DESC, rowid DESC"),
-      selectSkill: db.prepare("SELECT * FROM skill WHERE id = ?"),
-      deleteSkill: db.prepare("DELETE FROM skill WHERE id = ?"),
+      selectHabits: db.prepare("SELECT * FROM habit ORDER BY updated_at DESC, rowid DESC"),
+      selectHabit: db.prepare("SELECT * FROM habit WHERE id = ?"),
+      deleteHabit: db.prepare("DELETE FROM habit WHERE id = ?"),
       selectEventsBySession: db.prepare(
         "SELECT * FROM event WHERE session_id = ? ORDER BY t_mono ASC",
       ),
@@ -2017,16 +2017,16 @@ export class DualStore implements Store {
     });
   }
 
-  // --- authored skills -------------------------------------------------------
+  // --- authored habits -------------------------------------------------------
   //
   // SQLite only, and the one table in this class that is neither captured nor
   // derived: `purgeDerived` and `deleteSession` both leave it alone, because no
   // rebuild can reproduce prose a person wrote. See `AUTHORED_TABLES`.
   //
-  // `state` and `doc` are opaque here, the `index_job` seam — what a skill IS
+  // `state` and `doc` are opaque here, the `index_job` seam — what a habit IS
   // belongs to the app.
 
-  private hydrateSkill(r: Record<string, unknown>): SkillRow {
+  private hydrateHabit(r: Record<string, unknown>): HabitRow {
     return {
       id: r.id as string,
       state: r.state as string,
@@ -2038,10 +2038,10 @@ export class DualStore implements Store {
     };
   }
 
-  async putSkill(input: SkillInput): Promise<SkillRow> {
+  async putHabit(input: HabitInput): Promise<HabitRow> {
     return this.mutex.run(async () => {
       const now = Date.now();
-      this.stmts.upsertSkill.run(
+      this.stmts.upsertHabit.run(
         input.id,
         input.state,
         input.pinned ? 1 : 0,
@@ -2049,24 +2049,24 @@ export class DualStore implements Store {
         now,
         input.doc,
       );
-      return this.hydrateSkill(this.stmts.selectSkill.get(input.id) as Record<string, unknown>);
+      return this.hydrateHabit(this.stmts.selectHabit.get(input.id) as Record<string, unknown>);
     });
   }
 
-  listSkills(): SkillRow[] {
-    return (this.stmts.selectSkills.all() as Record<string, unknown>[]).map((r) =>
-      this.hydrateSkill(r),
+  listHabits(): HabitRow[] {
+    return (this.stmts.selectHabits.all() as Record<string, unknown>[]).map((r) =>
+      this.hydrateHabit(r),
     );
   }
 
-  getSkill(id: string): SkillRow | undefined {
-    const r = this.stmts.selectSkill.get(id) as Record<string, unknown> | undefined;
-    return r ? this.hydrateSkill(r) : undefined;
+  getHabit(id: string): HabitRow | undefined {
+    const r = this.stmts.selectHabit.get(id) as Record<string, unknown> | undefined;
+    return r ? this.hydrateHabit(r) : undefined;
   }
 
-  async deleteSkill(id: string): Promise<void> {
+  async deleteHabit(id: string): Promise<void> {
     await this.mutex.run(async () => {
-      this.stmts.deleteSkill.run(id);
+      this.stmts.deleteHabit.run(id);
     });
   }
 

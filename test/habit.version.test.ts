@@ -3,11 +3,11 @@ import {
   INITIAL_VERSION,
   MAX_HISTORY,
   bumpVersion,
-  type SkillRevision,
-} from "../app/src/main/skill-version.js";
+  type HabitRevision,
+} from "../app/src/main/habit-version.js";
 
 describe("bumpVersion", () => {
-  it("starts a skill that has none at the initial version, without inventing history", () => {
+  it("starts a habit that has none at the initial version, without inventing history", () => {
     // A doc written before versioning existed has neither field. It is not
     // retroactively given a past it did not have.
     const out = bumpVersion(undefined, [], "the recorded steps changed", 1000);
@@ -18,7 +18,7 @@ describe("bumpVersion", () => {
   });
 
   it("moves ONLY the patch position", () => {
-    // Nothing here knows what a breaking change to a skill would be, so the two
+    // Nothing here knows what a breaking change to a habit would be, so the two
     // positions that would claim to are never touched. Saying "0.2.0" would be
     // asserting a distinction nothing computes.
     let v = INITIAL_VERSION;
@@ -40,7 +40,7 @@ describe("bumpVersion", () => {
     // An unbounded list inside a JSON column grows with every re-index that
     // moves the steps, and nothing would ever prune it.
     let version = INITIAL_VERSION;
-    let history: SkillRevision[] = [];
+    let history: HabitRevision[] = [];
     for (let i = 0; i < MAX_HISTORY + 5; i += 1) {
       const out = bumpVersion(version, history, `change ${i}`, i);
       version = out.version;
@@ -53,14 +53,14 @@ describe("bumpVersion", () => {
 
   it("tolerates a malformed stored version rather than throwing on a read", () => {
     // The column is opaque JSON that older builds and hand edits can both reach.
-    // Refusing to render a skill because its version is odd would be worse than
+    // Refusing to render a habit because its version is odd would be worse than
     // restarting the count, and the history still says what happened.
     expect(bumpVersion("not.a.version", [], "x", 1).version).toBe("0.1.1");
     expect(bumpVersion("", [], "x", 1).version).toBe("0.1.1");
   });
 
   it("does not mutate the history it was given", () => {
-    const history: SkillRevision[] = [{ at: 1, version: "0.1.1", what: "first" }];
+    const history: HabitRevision[] = [{ at: 1, version: "0.1.1", what: "first" }];
     bumpVersion("0.1.1", history, "second", 2);
     expect(history).toHaveLength(1);
   });

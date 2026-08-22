@@ -5,7 +5,7 @@ import type { FlowsDTO, GraphEdgeDTO, GraphNodeDTO } from "@shared/types";
 /**
  * The walk both formatters share.
  *
- * `renderFlow` used to walk and format in one pass. The SKILL.md renderer needs
+ * `renderFlow` used to walk and format in one pass. The HABIT.md renderer needs
  * the same walk in markdown, and two readers of one structure is the
  * ax-dump/ax-exec drift hazard by name — so the walk happens once and the
  * formatters differ only in how they print it.

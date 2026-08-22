@@ -74,31 +74,31 @@ import { IndexWorker } from "./index-worker.js";
 import { frequentRoutes, toGraphDTO } from "./graph-view.js";
 import { flowApps } from "./flow-steps.js";
 import {
-  bindSkill,
-  duplicateSkills,
+  bindHabit,
+  duplicateHabits,
   unclaimedRoutes,
-  type SkillBindingDoc,
-} from "./skill-bind.js";
+  type HabitBindingDoc,
+} from "./habit-bind.js";
 import {
   INITIAL_VERSION,
   bumpVersion,
-  type SkillRevision,
-} from "./skill-version.js";
+  type HabitRevision,
+} from "./habit-version.js";
 import {
   briefFor,
   mergedBody,
   recordedBlocks,
-  renderSkillMarkdown,
+  renderHabitMarkdown,
   slugify,
   templateBody,
-} from "./skill-doc.js";
-import { OllamaReflectionProvider, OllamaSkillProseProvider } from "deskrag";
+} from "./habit-doc.js";
+import { OllamaReflectionProvider, OllamaHabitProseProvider } from "deskrag";
 import { ModelStore, type ModelDownloadProgress } from "./model-store.js";
 import { OnnxHost } from "./onnx-host.js";
 import { spawnOnnxWorker } from "./onnx-spawn.js";
 import { TRACK_BUCKETS } from "@shared/types";
 import { routeStepSummary, routeWayLengths } from "@shared/route-ways";
-import type { IndexJobRow, SegmentRow, SegmentSummaryRow, SkillRow } from "deskrag";
+import type { IndexJobRow, SegmentRow, SegmentSummaryRow, HabitRow } from "deskrag";
 import type {
   Capabilities,
   FlowsDTO,
@@ -118,12 +118,12 @@ import type {
   SessionTracksDTO,
   SessionVideoDTO,
   SignalKind,
-  SkillBindingDTO,
-  SkillDTO,
-  SkillPatch,
-  SkillProposalDTO,
-  SkillState,
-  SkillsDTO,
+  HabitBindingDTO,
+  HabitDTO,
+  HabitPatch,
+  HabitProposalDTO,
+  HabitState,
+  HabitsDTO,
 } from "@shared/types";
 import { request as requestPermission } from "./permissions.js";
 import { resolveWhisperBinary, whisperAvailable } from "./whisper.js";
@@ -1763,12 +1763,12 @@ export class DeskRagService {
     };
   }
 
-  // --- skills ---------------------------------------------------------------
+  // --- habits ---------------------------------------------------------------
   //
   // The first surface in this app whose writes are the user's own text rather
   // than something derived from a recording. That is why the table is AUTHORED
   // and why none of this is reachable from `mcp/`: the reader port declares only
-  // the read half, so a tool structurally cannot accept, edit or forget a skill.
+  // the read half, so a tool structurally cannot accept, edit or forget a habit.
 
   /**
    * The prose writer alone, and deliberately NOT `buildProviders()`.
@@ -1779,10 +1779,10 @@ export class DeskRagService {
    * picker: naming a composed level and naming a recorded flow are the same act
    * at two altitudes, and two model settings is two things to keep in step.
    */
-  private buildProseWriter(): OllamaSkillProseProvider | null {
+  private buildProseWriter(): OllamaHabitProseProvider | null {
     const p = this.settings.view().providers;
     if (p.summaryProvider !== "ollama") return null;
-    return new OllamaSkillProseProvider({ host: p.ollamaHost, model: p.ollamaSummaryModel });
+    return new OllamaHabitProseProvider({ host: p.ollamaHost, model: p.ollamaSummaryModel });
   }
 
   private proseStatus(): { available: boolean; model: string | null } {
@@ -1792,8 +1792,8 @@ export class DeskRagService {
       : { available: false, model: null };
   }
 
-  private skillDocOf(row: SkillRow): StoredSkillDoc {
-    const doc = JSON.parse(row.doc) as StoredSkillDoc;
+  private habitDocOf(row: HabitRow): StoredHabitDoc {
+    const doc = JSON.parse(row.doc) as StoredHabitDoc;
     // A doc written before versioning has neither field, and it is given the
     // INITIAL version rather than a fabricated history: it has changed zero
     // times as far as anything can know, and inventing revisions for edits
@@ -1806,25 +1806,25 @@ export class DeskRagService {
   }
 
   /** Apply a version bump to a doc about to be written. Never on a read. */
-  private versioned(doc: StoredSkillDoc, what: string): StoredSkillDoc {
+  private versioned(doc: StoredHabitDoc, what: string): StoredHabitDoc {
     const next = bumpVersion(doc.version, doc.history, what, Date.now());
     return { ...doc, version: next.version, history: next.history };
   }
 
   /**
-   * One skill as the screen and the MCP tools see it: bound against the routes
+   * One habit as the screen and the MCP tools see it: bound against the routes
    * the graph has NOW, and rendered.
    *
    * The markdown is built HERE rather than in the renderer, so the clipboard
-   * button and `get_skill` hand out the same string. Two renderers of one file
+   * button and `get_habit` hand out the same string. Two renderers of one file
    * is the drift hazard `flow-steps.ts` exists to avoid one level down.
    */
-  private toSkillDTO(row: SkillRow, flows: FlowsDTO | null): SkillDTO {
-    const doc = this.skillDocOf(row);
+  private toHabitDTO(row: HabitRow, flows: FlowsDTO | null): HabitDTO {
+    const doc = this.habitDocOf(row);
     const routes = flows?.routes ?? [];
-    const bound = bindSkill(doc.binding, routes);
+    const bound = bindHabit(doc.binding, routes);
 
-    const binding: SkillBindingDTO = {
+    const binding: HabitBindingDTO = {
       state: bound.state,
       routeKey: doc.binding.routeKey,
       liveRouteKey: bound.route?.id ?? null,
@@ -1842,7 +1842,7 @@ export class DeskRagService {
 
     const markdown =
       flows !== null && bound.route !== null
-        ? renderSkillMarkdown({
+        ? renderHabitMarkdown({
             flows,
             route: bound.route,
             slug: doc.slug,
@@ -1852,19 +1852,19 @@ export class DeskRagService {
             bodySource: doc.bodySource,
             bodyModel: doc.bodyModel,
             showSamples: doc.showSamples,
-            skillId: row.id,
+            habitId: row.id,
             version: doc.version ?? INITIAL_VERSION,
           })
         : // ORPHANED (or ambiguous): the live route is gone, so the record cannot
-          // be re-rendered. The snapshot taken when the skill was last written is
+          // be re-rendered. The snapshot taken when the habit was last written is
           // printed instead, under a dated header saying it has not been
-          // re-checked. A skill whose whole body read "route unavailable" would
+          // re-checked. A habit whose whole body read "route unavailable" would
           // be a broken artifact, and orphaning is routine rather than exotic.
-          renderOrphanedSkill(doc, row.id, bound.note);
+          renderOrphanedHabit(doc, row.id, bound.note);
 
     return {
       id: row.id,
-      state: row.state as SkillState,
+      state: row.state as HabitState,
       pinned: row.pinned,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
@@ -1879,8 +1879,8 @@ export class DeskRagService {
       generateNote: doc.generateNote,
       version: doc.version ?? INITIAL_VERSION,
       history: [...(doc.history ?? [])],
-      // Filled by `skills()`, which is the only caller that sees the whole set.
-      // A duplicate is a relation between two skills and cannot be computed
+      // Filled by `habits()`, which is the only caller that sees the whole set.
+      // A duplicate is a relation between two habits and cannot be computed
       // from one, so this is empty here rather than guessed.
       duplicates: [],
       markdown,
@@ -1888,43 +1888,43 @@ export class DeskRagService {
     };
   }
 
-  skills(): SkillsDTO {
+  habits(): HabitsDTO {
     const flows = this.flows();
-    const rows = this.store.listSkills();
-    const rendered = rows.map((r) => this.toSkillDTO(r, flows));
+    const rows = this.store.listHabits();
+    const rendered = rows.map((r) => this.toHabitDTO(r, flows));
 
     // Duplicates are a relation over the whole set, so they are resolved here
-    // and disclosed on both members. ACTIVE only: an archived skill is already
+    // and disclosed on both members. ACTIVE only: an archived habit is already
     // the losing half of a merge somebody performed, and reporting it as a
     // duplicate forever would make the disclosure permanent noise.
-    const dupes = duplicateSkills(
+    const dupes = duplicateHabits(
       rendered
         .filter((s) => s.state === "active")
         .map((s) => ({ id: s.id, liveRouteKey: s.binding.liveRouteKey })),
     );
-    const skills = rendered.map((s) => ({ ...s, duplicates: dupes.get(s.id) ?? [] }));
+    const habits = rendered.map((s) => ({ ...s, duplicates: dupes.get(s.id) ?? [] }));
 
     // A dismissal is a real row carrying only its binding: a rejected proposal
     // that is not persisted comes back on every load.
     //
     // BOTH KEYS CLAIM, and the live one is the half that matters. A route's key
     // is its place-label sequence, so any change to what a place is called
-    // re-keys every route on the next rebuild — and a skill whose STORED key
+    // re-keys every route on the next rebuild — and a habit whose STORED key
     // went stale would have its own route offered straight back as something to
-    // keep, which is how a person ends up with two skills for one flow. That is
-    // exactly what `binding.liveRouteKey` is for, and `duplicateSkills` above
+    // keep, which is how a person ends up with two habits for one flow. That is
+    // exactly what `binding.liveRouteKey` is for, and `duplicateHabits` above
     // already reads it. Measured on the real store while removing the recorder
-    // from the graph: one kept skill, correctly rebound to `Calculator →
+    // from the graph: one kept habit, correctly rebound to `Calculator →
     // TextEdit`, and that same route sitting in the proposals list beneath it.
     //
     // The stored key keeps claiming too, because it is still right whenever the
-    // graph has not moved, and an unbindable skill has no live key at all.
+    // graph has not moved, and an unbindable habit has no live key at all.
     const claimed = rendered.flatMap((s) =>
       s.binding.liveRouteKey === null
         ? [s.binding.routeKey]
         : [s.binding.routeKey, s.binding.liveRouteKey],
     );
-    const proposals: SkillProposalDTO[] = unclaimedRoutes(flows?.routes ?? [], claimed).map(
+    const proposals: HabitProposalDTO[] = unclaimedRoutes(flows?.routes ?? [], claimed).map(
       (route) => ({
         routeKey: route.id,
         name: route.name,
@@ -1946,7 +1946,7 @@ export class DeskRagService {
     );
 
     return {
-      skills,
+      habits,
       proposals,
       graphPresent: flows !== null,
       prose: this.proseStatus(),
@@ -1957,16 +1957,16 @@ export class DeskRagService {
    * Keep a proposal.
    *
    * Deliberately does NOT call the model: accepting must be instant, and a
-   * template body is a usable skill on its own. `generateSkill` is a separate,
+   * template body is a usable habit on its own. `generateHabit` is a separate,
    * explicit act.
    */
-  async acceptSkill(routeKey: string): Promise<void> {
+  async acceptHabit(routeKey: string): Promise<void> {
     const flows = this.flows();
     const route = flows?.routes.find((r) => r.id === routeKey);
     if (flows === null || route === undefined) return;
 
     const prose = templateBody(flows, route);
-    const doc: StoredSkillDoc = {
+    const doc: StoredHabitDoc = {
       binding: {
         routeKey: route.id,
         routeLabel: route.label,
@@ -1985,7 +1985,7 @@ export class DeskRagService {
       stepsSnapshot: recordedBlocks({ flows, route, showSamples: false }),
       snapshotAt: Date.now(),
     };
-    await this.store.putSkill({
+    await this.store.putHabit({
       id: ulid(),
       state: "active",
       pinned: false,
@@ -1994,11 +1994,11 @@ export class DeskRagService {
   }
 
   /** Suppress a proposal, durably. */
-  async dismissSkill(routeKey: string): Promise<void> {
+  async dismissHabit(routeKey: string): Promise<void> {
     const flows = this.flows();
     const route = flows?.routes.find((r) => r.id === routeKey);
     if (route === undefined) return;
-    const doc: StoredSkillDoc = {
+    const doc: StoredHabitDoc = {
       binding: {
         routeKey: route.id,
         routeLabel: route.label,
@@ -2017,7 +2017,7 @@ export class DeskRagService {
       stepsSnapshot: "",
       snapshotAt: Date.now(),
     };
-    await this.store.putSkill({
+    await this.store.putHabit({
       id: ulid(),
       state: "dismissed",
       pinned: false,
@@ -2025,10 +2025,10 @@ export class DeskRagService {
     });
   }
 
-  async updateSkill(id: string, patch: SkillPatch): Promise<void> {
-    const row = this.store.getSkill(id);
+  async updateHabit(id: string, patch: HabitPatch): Promise<void> {
+    const row = this.store.getHabit(id);
     if (row === undefined) return;
-    const doc = this.skillDocOf(row);
+    const doc = this.habitDocOf(row);
 
     // `edited` is what makes Regenerate ask before overwriting. Only the three
     // prose fields set it — flipping a toggle or pinning is not writing.
@@ -2037,7 +2037,7 @@ export class DeskRagService {
       (patch.description !== undefined && patch.description !== doc.description) ||
       (patch.body !== undefined && patch.body !== doc.body);
 
-    const next: StoredSkillDoc = {
+    const next: StoredHabitDoc = {
       ...doc,
       ...(patch.title !== undefined ? { title: patch.title } : {}),
       ...(patch.description !== undefined ? { description: patch.description } : {}),
@@ -2049,7 +2049,7 @@ export class DeskRagService {
     const moved = this.refreshSnapshot(next);
 
     // Only what changes the FILE. Pinning and archiving change how the app
-    // lists a skill and not a byte of what it hands an agent, so versioning
+    // lists a habit and not a byte of what it hands an agent, so versioning
     // them would make the number stop meaning "this artifact moved".
     const rewritten =
       patch.title !== undefined ||
@@ -2063,7 +2063,7 @@ export class DeskRagService {
         ? this.versioned(next, "the recorded steps changed")
         : next;
 
-    await this.store.putSkill({
+    await this.store.putHabit({
       id: row.id,
       state: patch.state ?? row.state,
       pinned: patch.pinned ?? row.pinned,
@@ -2072,15 +2072,15 @@ export class DeskRagService {
   }
 
   /**
-   * Re-render the steps snapshot, at every moment the skill is written anyway.
+   * Re-render the steps snapshot, at every moment the habit is written anyway.
    *
    * Never on a read: a snapshot that refreshed itself when looked at would be
    * indistinguishable from a live render, which is exactly the distinction an
-   * orphaned skill has to make.
+   * orphaned habit has to make.
    */
-  private refreshSnapshot(doc: StoredSkillDoc): boolean {
+  private refreshSnapshot(doc: StoredHabitDoc): boolean {
     const flows = this.flows();
-    const bound = bindSkill(doc.binding, flows?.routes ?? []);
+    const bound = bindHabit(doc.binding, flows?.routes ?? []);
     if (flows === null || bound.route === null) return false;
     const next = recordedBlocks({
       flows,
@@ -2088,7 +2088,7 @@ export class DeskRagService {
       showSamples: doc.showSamples,
     });
     // Whether the RECORD moved, which is the one change a person did not make.
-    // A re-index can rewrite the steps under a kept skill, and that is worth a
+    // A re-index can rewrite the steps under a kept habit, and that is worth a
     // version of its own — an agent holding last week's file has no other way
     // to notice it now describes something else.
     const moved = next !== doc.stepsSnapshot;
@@ -2128,12 +2128,12 @@ export class DeskRagService {
    * It can never fail: an unreachable daemon degrades to the template body and
    * SAYS SO in `generateNote`, the compose precedent.
    */
-  async generateSkill(id: string): Promise<void> {
-    const row = this.store.getSkill(id);
+  async generateHabit(id: string): Promise<void> {
+    const row = this.store.getHabit(id);
     if (row === undefined) return;
-    const doc = this.skillDocOf(row);
+    const doc = this.habitDocOf(row);
     const flows = this.flows();
-    const bound = bindSkill(doc.binding, flows?.routes ?? []);
+    const bound = bindHabit(doc.binding, flows?.routes ?? []);
     if (flows === null || bound.route === null) return;
 
     const writer = this.buildProseWriter();
@@ -2158,7 +2158,7 @@ export class DeskRagService {
       }
     }
 
-    const next: StoredSkillDoc = {
+    const next: StoredHabitDoc = {
       ...doc,
       slug: doc.edited ? doc.slug : slugify(prose.title),
       title: prose.title,
@@ -2175,7 +2175,7 @@ export class DeskRagService {
       source === "llm" ? `prose regenerated by ${model}` : "prose regenerated from the template",
     );
 
-    await this.store.putSkill({
+    await this.store.putHabit({
       id: row.id,
       state: row.state,
       pinned: row.pinned,
@@ -2186,18 +2186,18 @@ export class DeskRagService {
   /**
    * Confirm a DISCLOSED re-bind. The only thing that rewrites `routeKey`.
    *
-   * `bindSkill` never does it, so a skill that moved says so until a person
+   * `bindHabit` never does it, so a habit that moved says so until a person
    * agrees — the record of where it came from stays falsifiable.
    */
-  async rebindSkill(id: string, routeKey: string): Promise<void> {
-    const row = this.store.getSkill(id);
+  async rebindHabit(id: string, routeKey: string): Promise<void> {
+    const row = this.store.getHabit(id);
     if (row === undefined) return;
     const flows = this.flows();
     const route = flows?.routes.find((r) => r.id === routeKey);
     if (flows === null || route === undefined) return;
 
-    const doc = this.skillDocOf(row);
-    const next: StoredSkillDoc = {
+    const doc = this.habitDocOf(row);
+    const next: StoredHabitDoc = {
       ...doc,
       binding: {
         routeKey: route.id,
@@ -2212,7 +2212,7 @@ export class DeskRagService {
       `re-bound from ${JSON.stringify(doc.binding.routeKey)} to ${JSON.stringify(route.id)}`,
     );
 
-    await this.store.putSkill({
+    await this.store.putHabit({
       id: row.id,
       state: row.state,
       pinned: row.pinned,
@@ -2221,37 +2221,37 @@ export class DeskRagService {
   }
 
   /**
-   * Merge two skills that answer to the same live route. A HUMAN act.
+   * Merge two habits that answer to the same live route. A HUMAN act.
    *
-   * Nothing auto-merges: `duplicateSkills` only discloses, because choosing
+   * Nothing auto-merges: `duplicateHabits` only discloses, because choosing
    * which of two descriptions of one procedure to keep is a judgement about
    * prose. This is the confirmation of that judgement.
    *
    * The loser is ARCHIVED, never deleted, and its prose is carried into the
    * keeper first — two independent guarantees that the merge destroys no
    * writing. It refuses unless both are active and both bind to the same live
-   * route: merging skills about different work would be a data loss the app
+   * route: merging habits about different work would be a data loss the app
    * performed on its own reading of a screen.
    */
-  async mergeSkills(keepId: string, mergeId: string): Promise<void> {
+  async mergeHabits(keepId: string, mergeId: string): Promise<void> {
     if (keepId === mergeId) return;
-    const keepRow = this.store.getSkill(keepId);
-    const otherRow = this.store.getSkill(mergeId);
+    const keepRow = this.store.getHabit(keepId);
+    const otherRow = this.store.getHabit(mergeId);
     if (keepRow === undefined || otherRow === undefined) return;
     if (keepRow.state !== "active" || otherRow.state !== "active") return;
 
     const flows = this.flows();
     const routes = flows?.routes ?? [];
-    const keepDoc = this.skillDocOf(keepRow);
-    const otherDoc = this.skillDocOf(otherRow);
-    // The LIVE route, the same key `duplicateSkills` groups on. Comparing the
-    // STORED routeKey would refuse exactly the interesting case: two skills
+    const keepDoc = this.habitDocOf(keepRow);
+    const otherDoc = this.habitDocOf(otherRow);
+    // The LIVE route, the same key `duplicateHabits` groups on. Comparing the
+    // STORED routeKey would refuse exactly the interesting case: two habits
     // bound at different times to keys that have since merged.
-    const keepLive = bindSkill(keepDoc.binding, routes).route?.id ?? null;
-    const otherLive = bindSkill(otherDoc.binding, routes).route?.id ?? null;
+    const keepLive = bindHabit(keepDoc.binding, routes).route?.id ?? null;
+    const otherLive = bindHabit(otherDoc.binding, routes).route?.id ?? null;
     if (keepLive === null || keepLive !== otherLive) return;
 
-    const merged: StoredSkillDoc = {
+    const merged: StoredHabitDoc = {
       ...keepDoc,
       body: mergedBody(keepDoc, otherDoc),
       // A merge is prose a person decided on, so the keeper is edited from here
@@ -2260,7 +2260,7 @@ export class DeskRagService {
       edited: true,
     };
     this.refreshSnapshot(merged);
-    await this.store.putSkill({
+    await this.store.putHabit({
       id: keepRow.id,
       state: keepRow.state,
       pinned: keepRow.pinned,
@@ -2269,7 +2269,7 @@ export class DeskRagService {
       ),
     });
 
-    await this.store.putSkill({
+    await this.store.putHabit({
       id: otherRow.id,
       state: "archived",
       pinned: false,
@@ -2279,17 +2279,17 @@ export class DeskRagService {
     });
   }
 
-  async removeSkill(id: string): Promise<void> {
-    await this.store.deleteSkill(id);
+  async removeHabit(id: string): Promise<void> {
+    await this.store.deleteHabit(id);
   }
 }
 
 /**
- * What a skill row's opaque `doc` column holds. App-side by construction — the
+ * What a habit row's opaque `doc` column holds. App-side by construction — the
  * store deliberately does not know any of this.
  */
-export interface StoredSkillDoc {
-  binding: SkillBindingDoc;
+export interface StoredHabitDoc {
+  binding: HabitBindingDoc;
   slug: string;
   title: string;
   description: string;
@@ -2303,23 +2303,23 @@ export interface StoredSkillDoc {
   stepsSnapshot: string;
   snapshotAt: number;
   /**
-   * `0.1.N`. Absent on a doc written before versioning — see `skillDocOf`.
+   * `0.1.N`. Absent on a doc written before versioning — see `habitDocOf`.
    *
    * In the JSON rather than a column because `schema.ts` has no migration step.
    */
   version?: string;
   /** What moved it, newest last, bounded by `MAX_HISTORY`. */
-  history?: SkillRevision[];
+  history?: HabitRevision[];
 }
 
 /**
- * A skill whose route is no longer in the graph.
+ * A habit whose route is no longer in the graph.
  *
  * It still produces a usable file: the snapshot, under a header dating it and
  * saying it has not been re-checked. Never blended with a live render — the
  * whole point is that a reader can tell which one they are holding.
  */
-function renderOrphanedSkill(doc: StoredSkillDoc, id: string, note: string | null): string {
+function renderOrphanedHabit(doc: StoredHabitDoc, id: string, note: string | null): string {
   const when = new Date(doc.snapshotAt).toISOString().slice(0, 10);
   return [
     "---",
@@ -2327,7 +2327,7 @@ function renderOrphanedSkill(doc: StoredSkillDoc, id: string, note: string | nul
     `description: ${JSON.stringify(doc.description.replace(/\r?\n/g, " ").trim())}`,
     "metadata:",
     "  source: deskrag",
-    `  skill_id: ${id}`,
+    `  habit_id: ${id}`,
     `  version: ${doc.version ?? INITIAL_VERSION}`,
     `  binding: orphaned`,
     `  recorded_snapshot: ${when}`,

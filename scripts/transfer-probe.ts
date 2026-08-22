@@ -1,7 +1,7 @@
 /**
- * Does a kept skill transfer to a recording it was NOT built from?
+ * Does a kept habit transfer to a recording it was NOT built from?
  *
- * This is the decisive question about a skill and the one nothing here has ever
+ * This is the decisive question about a habit and the one nothing here has ever
  * answered. Extraction is easy; a route that only resolves against the recording
  * it came from is a memory of one event, not a procedure. Answering it live
  * would mean arranging the other screen by hand — but every recording already
@@ -9,7 +9,7 @@
  *
  * ## What it measures
  *
- * For each node on the skill's route, in order, it scans FORWARD through the
+ * For each node on the habit's route, in order, it scans FORWARD through the
  * held-out recording for the first moment that VERIFIES that node — the same
  * subset rule the executor uses (`verifyNode`: every predicate the node claims
  * must still hold; extras are not violations). The scan is monotone: a node may
@@ -23,7 +23,7 @@
  *
  * ## The CONTROL is the point
  *
- * Every skill is also run against recordings of DIFFERENT work. A transfer test
+ * Every habit is also run against recordings of DIFFERENT work. A transfer test
  * that can only say yes measures nothing — a permissive resolver would report
  * 100% and look like success. The number that matters is the gap between the
  * two, and both are printed.
@@ -45,12 +45,12 @@ import Database from "better-sqlite3";
 import { frequentRoutes } from "../app/src/main/graph-view.js";
 // THE SAME re-resolution the app performs, never a second copy of it. A route's
 // key is its place-label sequence, so every rebuild re-keys everything and a
-// skill's STORED key goes stale by design — `bindSkill` finds it again by
+// habit's STORED key goes stale by design — `bindHabit` finds it again by
 // strict-majority session overlap. Matching the raw key here reported every kept
-// skill as orphaned the first time a rebuild moved the keys, which reads as the
-// skill being broken rather than as this probe not asking the question the app
+// habit as orphaned the first time a rebuild moved the keys, which reads as the
+// habit being broken rather than as this probe not asking the question the app
 // asks.
-import { bindSkill } from "../app/src/main/skill-bind.js";
+import { bindHabit } from "../app/src/main/habit-bind.js";
 import { StoredActuator } from "../app/src/main/stored-actuator.js";
 import { focusContext } from "../src/trace/lift.js";
 import { verifyNode } from "../src/replay/verify.js";
@@ -322,13 +322,13 @@ try {
   const heldOut = tally();
   const control = tally();
 
-  // --- the kept skills ----------------------------------------------------
+  // --- the kept habits ----------------------------------------------------
   //
   // Read WITH the dismissals, because coverage is a question about answered
   // routes and a dismissal is an answer. Dropping them would report a route the
   // user explicitly declined as a gap in the library, which is the opposite of
   // what it is.
-  interface SkillRow {
+  interface HabitRow {
     id: string;
     state: string;
     doc: {
@@ -336,40 +336,40 @@ try {
       binding: { routeKey: string; routeLabel: string; sessionIds: string[]; boundAt: number };
     };
   }
-  const allSkills: SkillRow[] = (
-    db.prepare("SELECT id, state, doc FROM skill ORDER BY updated_at DESC").all() as {
+  const allHabits: HabitRow[] = (
+    db.prepare("SELECT id, state, doc FROM habit ORDER BY updated_at DESC").all() as {
       id: string;
       state: string;
       doc: string;
     }[]
-  ).map((r) => ({ id: r.id, state: r.state, doc: JSON.parse(r.doc) as SkillRow["doc"] }));
-  const skills = allSkills.filter((r) => r.state !== "dismissed");
+  ).map((r) => ({ id: r.id, state: r.state, doc: JSON.parse(r.doc) as HabitRow["doc"] }));
+  const habits = allHabits.filter((r) => r.state !== "dismissed");
 
   console.log("\nStore");
   console.log(`  path            : ${dbPath}`);
   console.log(`  recordings      : ${sessionIds.length}`);
   console.log(`  routes          : ${routes.length}`);
-  console.log(`  kept skills     : ${skills.length}`);
+  console.log(`  kept habits     : ${habits.length}`);
   for (const sid of sessionIds) {
     console.log(`  ${sid}  ${String(momentsOf.get(sid)?.length ?? 0).padStart(3)} AX moments`);
   }
 
   // --- coverage -------------------------------------------------------------
   //
-  // "Does the library have a skill for the work that RECURS." Recurrence is the
-  // whole question: a route walked once is an observation, and `skillPrompt`
+  // "Does the library have a habit for the work that RECURS." Recurrence is the
+  // whole question: a route walked once is an observation, and `habitPrompt`
   // already refuses to describe one as a habit. A singleton is admissible as a
-  // skill and is counted apart rather than counted against.
+  // habit and is counted apart rather than counted against.
   //
   // A DISMISSED route is an ANSWERED route. Leaving dismissals out would report
   // a route the user looked at and declined as a hole in the library.
   {
-    // Keyed by the route each skill answers for NOW. A skill still answers for
+    // Keyed by the route each habit answers for NOW. A habit still answers for
     // its route after a rebuild moved the key; counting only the stored key
     // would report answered work as an unanswered gap.
     const answered = new Map<string, string>();
-    for (const s of allSkills) {
-      const live = bindSkill(s.doc.binding, routes).route;
+    for (const s of allHabits) {
+      const live = bindHabit(s.doc.binding, routes).route;
       answered.set(live?.id ?? s.doc.binding.routeKey, s.state);
     }
     const recurring = routes.filter((r) => r.count >= 2);
@@ -389,33 +389,33 @@ try {
         `   singletons ${routes.length - recurring.length} of ${routes.length}` +
         ` (${share(routes.length - recurring.length, routes.length)})`,
     );
-    console.log(`  with an active skill   : ${held.length} of ${recurring.length}  (${share(held.length, recurring.length)})`);
+    console.log(`  with an active habit   : ${held.length} of ${recurring.length}  (${share(held.length, recurring.length)})`);
     console.log(`  dismissed on purpose   : ${declined.length}`);
     console.log(`  unanswered             : ${open.length}`);
     for (const r of open) console.log(`      ${String(r.count)}x  ${r.id}`);
   }
 
-  if (skills.length === 0) {
-    console.log("\nNo kept skills. Keep one on the Skills screen, then run this again.");
+  if (habits.length === 0) {
+    console.log("\nNo kept habits. Keep one on the Habits screen, then run this again.");
     process.exit(0);
   }
 
-  for (const skill of skills) {
-    const binding = bindSkill(skill.doc.binding, routes);
+  for (const habit of habits) {
+    const binding = bindHabit(habit.doc.binding, routes);
     const route = binding.route;
-    console.log(`\n=== ${skill.doc.slug} ===`);
+    console.log(`\n=== ${habit.doc.slug} ===`);
     if (route === null) {
       console.log(`  ${binding.state} — nothing to replay. ${binding.note ?? ""}`.trimEnd());
       continue;
     }
     // Disclosed, never silently adopted: the app holds the same line, and a
-    // measurement taken against a route the skill has not been re-bound to has
+    // measurement taken against a route the habit has not been re-bound to has
     // to say which route it used.
     if (binding.state !== "exact") {
       console.log(`  ${binding.state}: reading “${route.id}” — ${binding.note ?? ""}`.trimEnd());
     }
 
-    const bound = new Set(skill.doc.binding.sessionIds);
+    const bound = new Set(habit.doc.binding.sessionIds);
     const inRoute = route.sessionIds.filter((s) => !bound.has(s));
     const outOfRoute = sessionIds.filter((s) => !route.sessionIds.includes(s));
     const walk = route.walks[0]?.edgeIds ?? route.edgeIds;
@@ -431,7 +431,7 @@ try {
 
     if (inRoute.length === 0) {
       console.log(
-        "\n  UNTESTABLE — every recording on this route is one the skill was built from.\n" +
+        "\n  UNTESTABLE — every recording on this route is one the habit was built from.\n" +
           "  Transfer cannot be measured against the only evidence there is.",
       );
     }
@@ -499,7 +499,7 @@ try {
       `  gap      : ${(gap * 100).toFixed(0)} points of state verification between the two.` +
         (gap <= 0
           ? "\n             NOT A TRANSFER RESULT — the control did as well or better, which means\n" +
-            "             this is measuring how permissive the check is, not whether a skill moves."
+            "             this is measuring how permissive the check is, not whether a habit moves."
           : ""),
     );
   } else if (control.attempts === 0) {

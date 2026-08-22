@@ -1,7 +1,7 @@
 /**
- * A skill's version, and the short record of what moved it.
+ * A habit's version, and the short record of what moved it.
  *
- * A kept skill is not a snapshot: a re-index can change the steps under it, a
+ * A kept habit is not a snapshot: a re-index can change the steps under it, a
  * regenerate rewrites its prose, and a re-bind points it at a different route.
  * Without a version those all happen silently, and an agent that read the file
  * last week has no way to notice it is now describing something else.
@@ -23,7 +23,7 @@
  * MISSING version as ordinary rather than as corruption.
  */
 
-/** Where a skill starts the moment it is kept. */
+/** Where a habit starts the moment it is kept. */
 export const INITIAL_VERSION = "0.1.0";
 
 /**
@@ -36,8 +36,8 @@ export const INITIAL_VERSION = "0.1.0";
  */
 export const MAX_HISTORY = 20;
 
-export interface SkillRevision {
-  /** Wall-clock ms. A skill is authored, so this is when a PERSON changed it. */
+export interface HabitRevision {
+  /** Wall-clock ms. A habit is authored, so this is when a PERSON changed it. */
   at: number;
   /** The version this change produced. */
   version: string;
@@ -56,18 +56,18 @@ const PATTERN = /^(\d+)\.(\d+)\.(\d+)$/;
  */
 export function bumpVersion(
   version: string | undefined,
-  history: readonly SkillRevision[] | undefined,
+  history: readonly HabitRevision[] | undefined,
   what: string,
   at: number,
-): { version: string; history: SkillRevision[] } {
+): { version: string; history: HabitRevision[] } {
   const m = PATTERN.exec(version ?? "");
   // A version this cannot parse restarts the count rather than throwing. The
   // column is opaque JSON that older builds and hand edits both reach, and
-  // refusing to render a skill because its version is odd is worse than
+  // refusing to render a habit because its version is odd is worse than
   // counting again — the history still says what happened.
   const next =
     m === null ? "0.1.1" : `${m[1]}.${m[2]}.${Number(m[3]) + 1}`;
-  const entry: SkillRevision = { at, version: next, what };
+  const entry: HabitRevision = { at, version: next, what };
   const all = [...(history ?? []), entry];
   return { version: next, history: all.slice(-MAX_HISTORY) };
 }

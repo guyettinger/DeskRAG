@@ -11,7 +11,7 @@ import {
   type SearchInput,
   type SettingsPatch,
 } from "@shared/types";
-import type { SkillPatch } from "@shared/types";
+import type { HabitPatch } from "@shared/types";
 import type { DeskRagService } from "./deskrag-service.js";
 import type { SettingsStore } from "./settings.js";
 import type { McpExperienceServer } from "./mcp/server.js";
@@ -91,36 +91,36 @@ export function registerIpc(
   // The first screen whose IPC WRITES. That is not a widening of the MCP
   // promise: these handlers are reachable only from the renderer, and the MCP
   // reader port declares no method that could call one — a tool structurally
-  // cannot accept, edit or forget a skill. Each returns the whole snapshot, so
+  // cannot accept, edit or forget a habit. Each returns the whole snapshot, so
   // the screen cannot paint a half-applied edit.
-  ipcMain.handle(IPC.skillsList, () => service.skills());
-  ipcMain.handle(IPC.skillsAccept, async (_e, routeKey: string) => {
-    await service.acceptSkill(routeKey);
-    return service.skills();
+  ipcMain.handle(IPC.habitsList, () => service.habits());
+  ipcMain.handle(IPC.habitsAccept, async (_e, routeKey: string) => {
+    await service.acceptHabit(routeKey);
+    return service.habits();
   });
-  ipcMain.handle(IPC.skillsDismiss, async (_e, routeKey: string) => {
-    await service.dismissSkill(routeKey);
-    return service.skills();
+  ipcMain.handle(IPC.habitsDismiss, async (_e, routeKey: string) => {
+    await service.dismissHabit(routeKey);
+    return service.habits();
   });
-  ipcMain.handle(IPC.skillsUpdate, async (_e, id: string, patch: SkillPatch) => {
-    await service.updateSkill(id, patch);
-    return service.skills();
+  ipcMain.handle(IPC.habitsUpdate, async (_e, id: string, patch: HabitPatch) => {
+    await service.updateHabit(id, patch);
+    return service.habits();
   });
-  ipcMain.handle(IPC.skillsGenerate, async (_e, id: string) => {
-    await service.generateSkill(id);
-    return service.skills();
+  ipcMain.handle(IPC.habitsGenerate, async (_e, id: string) => {
+    await service.generateHabit(id);
+    return service.habits();
   });
-  ipcMain.handle(IPC.skillsRebind, async (_e, id: string, routeKey: string) => {
-    await service.rebindSkill(id, routeKey);
-    return service.skills();
+  ipcMain.handle(IPC.habitsRebind, async (_e, id: string, routeKey: string) => {
+    await service.rebindHabit(id, routeKey);
+    return service.habits();
   });
-  ipcMain.handle(IPC.skillsMerge, async (_e, keepId: string, mergeId: string) => {
-    await service.mergeSkills(keepId, mergeId);
-    return service.skills();
+  ipcMain.handle(IPC.habitsMerge, async (_e, keepId: string, mergeId: string) => {
+    await service.mergeHabits(keepId, mergeId);
+    return service.habits();
   });
-  ipcMain.handle(IPC.skillsRemove, async (_e, id: string) => {
-    await service.removeSkill(id);
-    return service.skills();
+  ipcMain.handle(IPC.habitsRemove, async (_e, id: string) => {
+    await service.removeHabit(id);
+    return service.habits();
   });
 
   /**

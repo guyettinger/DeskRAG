@@ -35,7 +35,7 @@
     "probe:decimate": "node scripts/decimate-probe.mjs",
     "probe:latency": "node scripts/capture-latency-probe.mjs",
     "probe:mcp": "npm run app:build && node scripts/mcp-probe.mjs",
-    "probe:skills": "npm run app:build && node scripts/skills-probe.mjs",
+    "probe:habits": "npm run app:build && node scripts/habits-probe.mjs",
     "probe:merge": "npm run app:build && node scripts/merge-probe.mjs",
     "probe:reflect": "npm run app:build && node scripts/reflect-probe.mjs",
     "probe:stability": "npm run app:build && node scripts/stability-probe.mjs",

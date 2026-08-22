@@ -9,7 +9,7 @@
  *
  * ## The partition is the constraint, not a nicety
  *
- * `bindSkill`'s majority rule is a PROOF, not a threshold: `frequentRoutes`
+ * `bindHabit`'s majority rule is a PROOF, not a threshold: `frequentRoutes`
  * gives each recording exactly one route key, so the session ids partition
  * across routes and more than half of a set can lie in at most one part — a
  * strict majority has at most one winner mathematically. Everything here
@@ -28,7 +28,7 @@
  * compatible with each other stays ON ITS OWN. That is `trace/identity.ts`
  * declining to merge when a match is ambiguous, applied one layer up: the cost
  * of declining is a route that reads as walked once, and the cost of guessing is
- * a skill that claims recordings it does not describe.
+ * a habit that claims recordings it does not describe.
  *
  * Pure, DTO-free and dependency-free — it speaks in place sequences and keys, so
  * both `graph-view.ts` and `scripts/routes-probe.ts` can read the ONE
@@ -210,7 +210,7 @@ export interface RouteCluster {
  *
  * Input order decides which member names a cluster, so callers pass routes in
  * the order they already rank them — `frequentRoutes` sorts most-walked first,
- * and the most-walked walk is the one a skill should describe. Stable: equal
+ * and the most-walked walk is the one a habit should describe. Stable: equal
  * inputs in equal order give an equal answer, with no `Map` iteration deciding
  * anything.
  */

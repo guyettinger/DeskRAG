@@ -434,11 +434,11 @@ export interface IndexJobInput {
 }
 
 /**
- * One AUTHORED skill: a SKILL.md the user chose to keep, written from a route
+ * One AUTHORED habit: a HABIT.md the user chose to keep, written from a route
  * their recordings actually walked.
  *
  * **`state` and `doc` are opaque to the store**, the `IndexJobRow` seam. What a
- * skill IS — frontmatter, prose, which route it was bound to, whether recorded
+ * habit IS — frontmatter, prose, which route it was bound to, whether recorded
  * values are printed — is an app concept, and `store/` must not learn it. This
  * layer owns identity, lifecycle and ordering only.
  *
@@ -446,7 +446,7 @@ export interface IndexJobInput {
  * re-index or trace rebuild may touch it, because nothing can recompute prose a
  * person wrote. See `AUTHORED_TABLES`.
  */
-export interface SkillRow {
+export interface HabitRow {
   id: string;
   /** App-defined. Today: `active | archived | dismissed`. */
   state: string;
@@ -463,7 +463,7 @@ export interface SkillRow {
  * into one row is how a screen comes to show a half-applied edit, and the caller
  * already holds the whole document.
  */
-export interface SkillInput {
+export interface HabitInput {
   id: string;
   state: string;
   pinned: boolean;
@@ -749,22 +749,22 @@ export interface Store {
   /** Delete a graph; nodes, edges and slots cascade. */
   deleteGraph(id: string): Promise<void>;
 
-  // authored skills — SQLite only, no vector space, and never purged
+  // authored habits — SQLite only, no vector space, and never purged
 
   /**
-   * Insert or replace a whole skill. Stamps `created_at` once and `updated_at`
+   * Insert or replace a whole habit. Stamps `created_at` once and `updated_at`
    * on every write.
    *
    * Nothing else in the system writes this table: it is not derived, so no
    * indexing stage produces it, and `purgeDerived` and `deleteSession` both
    * leave it alone. Every call here is a user's own act.
    */
-  putSkill(input: SkillInput): Promise<SkillRow>;
-  /** Every skill, newest-touched first. States are the app's to filter. */
-  listSkills(): SkillRow[];
-  getSkill(id: string): SkillRow | undefined;
+  putHabit(input: HabitInput): Promise<HabitRow>;
+  /** Every habit, newest-touched first. States are the app's to filter. */
+  listHabits(): HabitRow[];
+  getHabit(id: string): HabitRow | undefined;
   /** User-initiated forgetting, and the only path that loses authored text. */
-  deleteSkill(id: string): Promise<void>;
+  deleteHabit(id: string): Promise<void>;
 
   // scoped search (retrieval tiers)
 

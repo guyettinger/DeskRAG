@@ -4,7 +4,7 @@
  *
  * Everything else the pipeline derives answers "what happened". A digest names
  * a gesture, a caption describes a screen, a composed summary names a stretch of
- * work — and all three are silent about whether the work went WELL. So a skill
+ * work — and all three are silent about whether the work went WELL. So a habit
  * built from them can only ever describe a task as though it went smoothly,
  * because nothing it reads is capable of saying otherwise. That gap is what this
  * fills, and it is the one thing here that has to be a judgement rather than a
@@ -14,12 +14,12 @@
  * rollup can honestly name a group of actions; it cannot honestly say a session
  * stalled. `segment_summary.source` exists so a templated summary cannot
  * masquerade as a composed one — here the equivalent guarantee is stronger: with
- * no model there is simply no note, the stage says so, and `SkillBrief.
+ * no model there is simply no note, the stage says so, and `HabitBrief.
  * reflections` is empty.
  *
- * The seam is drawn the same way `skill-prose.ts` draws its: `SessionReflection`
+ * The seam is drawn the same way `habit-prose.ts` draws its: `SessionReflection`
  * has four string fields and none of them is a step. A reflection reaches a
- * skill only through `SkillBrief.reflections`, where the prompt labels it as an
+ * habit only through `HabitBrief.reflections`, where the prompt labels it as an
  * opinion — so a note that invented a keyboard shortcut still cannot put one in
  * the record, which `recordedBlocks()` renders from the trace graph alone.
  *
@@ -37,7 +37,7 @@ import { firstJsonObject } from "./json-reply.js";
  * the shape of the session, not about any one click. It also means this brief
  * can only exist AFTER composing, which is what fixes the stage's position.
  *
- * No typed text and no captured values, for the reason `SkillBrief` withholds
+ * No typed text and no captured values, for the reason `HabitBrief` withholds
  * them: recorded typing is verbatim and unredacted, and this note is written
  * into a document that gets pasted elsewhere.
  */
@@ -82,7 +82,7 @@ export interface ReflectionProvider {
   readonly model: string;
   /**
    * THROWS rather than guessing when the daemon is unreachable or the reply is
-   * torn — the `SkillProseProvider.write` contract. There is no template to fall
+   * torn — the `HabitProseProvider.write` contract. There is no template to fall
    * back to here, so the caller's only options are a note or no note, and no
    * note is the honest one.
    */
@@ -171,7 +171,7 @@ export const REFLECTION_HEADINGS: readonly { key: keyof SessionReflection; head:
  * The note as the one string that gets stored.
  *
  * Rendered here rather than stored as JSON because the note is PROSE and its
- * only consumers read it as prose — the skill prompt quotes it whole. Four
+ * only consumers read it as prose — the habit prompt quotes it whole. Four
  * columns or a JSON blob would both mean every reader re-deciding how to lay it
  * out, and two readers laying one thing out differently is the drift this repo
  * has already paid for twice.

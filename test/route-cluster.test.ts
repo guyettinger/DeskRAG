@@ -158,7 +158,7 @@ describe("clusterRoutes", () => {
   });
 
   it("PARTITIONS: every input lands in exactly one cluster", () => {
-    // This is what keeps `bindSkill`'s strict-majority proof true. Nothing else
+    // This is what keeps `bindHabit`'s strict-majority proof true. Nothing else
     // enforces it, so it is asserted here rather than assumed.
     const input = [
       r(3, "A", "B"),

@@ -1,44 +1,46 @@
 /**
- * Skills — recorded routes kept as SKILL.md files an agent can load.
+ * Habits — recorded routes kept as HABIT.md files an agent can load.
  *
  * THIS SCREEN WRITES, and it is the only one that writes the user's own text.
- * Everything else in the app either captures, derives, or reads; a skill's
+ * Everything else in the app either captures, derives, or reads; a habit's
  * title, description and prose exist because someone typed them, which is why
  * the table is AUTHORED and why no re-index may touch it.
  *
  * Two panes, one selection, the Flows precedent. The list bands by what needs
- * answering; the editor shows one skill's prose above a read-only well holding
+ * answering; the editor shows one habit's prose above a read-only well holding
  * the record, because the file's two halves are written by different things and
  * the screen should not pretend otherwise.
  *
  * The markdown is rendered in MAIN and handed here verbatim. The Copy button
- * copies `skill.markdown` — the same string `get_skill` returns — so the two can
+ * copies `habit.markdown` — the same string `get_habit` returns — so the two can
  * never drift.
  */
 
 import React, { useEffect, useMemo, useState } from "react";
-import type { SkillDTO, SkillPatch, SkillProposalDTO, SkillsDTO } from "@shared/types";
+import type { HabitDTO, HabitPatch, HabitProposalDTO, HabitsDTO } from "@shared/types";
 import { api } from "../api.js";
 import { GhostLottie } from "../brand/GhostLottie.js";
 import {
-  bandSkills,
+  bandHabits,
   bindingChip,
   evidenceLine,
   generateDisabledReason,
   orderProposals,
   proposalCount,
-} from "../skills-view.js";
+  proposalEvidence,
+  proposalTitle,
+} from "../habits-view.js";
 
-type Selection = { kind: "skill"; id: string } | { kind: "proposal"; routeKey: string };
+type Selection = { kind: "habit"; id: string } | { kind: "proposal"; routeKey: string };
 
 function Head({ children }: { children?: React.ReactNode }): React.JSX.Element {
   return (
-    <div className="page__head skills__head">
-      <div className="skills__headtext">
-        <span className="eyebrow">Skills</span>
+    <div className="page__head habits__head">
+      <div className="habits__headtext">
+        <span className="eyebrow">Habits</span>
         <h1>What you have done, as instructions</h1>
         <p>
-          A skill is one of your recorded flows written as a SKILL.md an agent can load. The
+          A habit is one of your recorded flows written as a HABIT.md an agent can load. The
           prose is DeskRAG&rsquo;s or yours; the steps below it are the recording.
         </p>
       </div>
@@ -47,27 +49,27 @@ function Head({ children }: { children?: React.ReactNode }): React.JSX.Element {
   );
 }
 
-export function SkillsScreen(): React.JSX.Element {
-  const [data, setData] = useState<SkillsDTO | undefined>(undefined);
+export function HabitsScreen(): React.JSX.Element {
+  const [data, setData] = useState<HabitsDTO | undefined>(undefined);
   const [selected, setSelected] = useState<Selection | null>(null);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [confirmRegen, setConfirmRegen] = useState<string | null>(null);
 
   useEffect(() => {
-    void api.skills.list().then(setData);
+    void api.habits.list().then(setData);
   }, []);
 
-  const run = (p: Promise<SkillsDTO>): void => {
+  const run = (p: Promise<HabitsDTO>): void => {
     setBusy(true);
     void p
       .then(setData)
       .finally(() => setBusy(false));
   };
 
-  const skill = useMemo(
+  const habit = useMemo(
     () =>
-      selected?.kind === "skill" ? data?.skills.find((s) => s.id === selected.id) : undefined,
+      selected?.kind === "habit" ? data?.habits.find((s) => s.id === selected.id) : undefined,
     [data, selected],
   );
   const proposal = useMemo(
@@ -88,16 +90,16 @@ export function SkillsScreen(): React.JSX.Element {
     );
   }
 
-  const bands = bandSkills(data.skills);
+  const bands = bandHabits(data.habits);
   const proposals = orderProposals(data.proposals);
-  const nothing = data.skills.length === 0 && proposals.length === 0;
+  const nothing = data.habits.length === 0 && proposals.length === 0;
 
   // THREE distinct emptinesses, never one. No graph at all, a graph carrying no
   // provenance (zero routes, and the remedy is a rebuild), and a graph with
   // routes nobody has answered about yet.
   if (nothing) {
     return (
-      <div className="page skills">
+      <div className="page habits">
         <Head />
         <div className="empty">
           <GhostLottie size={104} playing />
@@ -109,7 +111,7 @@ export function SkillsScreen(): React.JSX.Element {
             </p>
           ) : (
             <p>
-              No recorded routes to build a skill from. A route is a path a recording actually
+              No recorded routes to build a habit from. A route is a path a recording actually
               walked, so this is empty when the graph carries no provenance — press{" "}
               <b>Rebuild trace graph</b> in Settings &rarr; Maintenance and try again.
             </p>
@@ -119,14 +121,14 @@ export function SkillsScreen(): React.JSX.Element {
     );
   }
 
-  const patch = (id: string, p: SkillPatch): void => run(api.skills.update(id, p));
+  const patch = (id: string, p: HabitPatch): void => run(api.habits.update(id, p));
 
   return (
-    <div className="page skills">
+    <div className="page habits">
       <Head>
-        <div className="skills__bar">
+        <div className="habits__bar">
           <span className="chip mono">
-            {data.skills.filter((s) => s.state !== "dismissed").length} kept
+            {data.habits.filter((s) => s.state !== "dismissed").length} kept
           </span>
           <span className="chip mono">{proposals.length} proposed</span>
           <span className="muted">
@@ -135,16 +137,16 @@ export function SkillsScreen(): React.JSX.Element {
         </div>
       </Head>
 
-      <div className="skills__stage">
-        <aside className="skills__list">
+      <div className="habits__stage">
+        <aside className="habits__list">
           {bands.attention.length > 0 && (
             <Band title="Needs attention">
               {bands.attention.map((s) => (
-                <SkillRow
+                <HabitRow
                   key={s.id}
-                  skill={s}
-                  active={skill?.id === s.id}
-                  onSelect={() => setSelected({ kind: "skill", id: s.id })}
+                  habit={s}
+                  active={habit?.id === s.id}
+                  onSelect={() => setSelected({ kind: "habit", id: s.id })}
                 />
               ))}
             </Band>
@@ -153,11 +155,11 @@ export function SkillsScreen(): React.JSX.Element {
           {bands.mine.length > 0 && (
             <Band title="Mine">
               {bands.mine.map((s) => (
-                <SkillRow
+                <HabitRow
                   key={s.id}
-                  skill={s}
-                  active={skill?.id === s.id}
-                  onSelect={() => setSelected({ kind: "skill", id: s.id })}
+                  habit={s}
+                  active={habit?.id === s.id}
+                  onSelect={() => setSelected({ kind: "habit", id: s.id })}
                 />
               ))}
             </Band>
@@ -179,47 +181,47 @@ export function SkillsScreen(): React.JSX.Element {
           {bands.archived.length > 0 && (
             <Band title="Archived">
               {bands.archived.map((s) => (
-                <SkillRow
+                <HabitRow
                   key={s.id}
-                  skill={s}
-                  active={skill?.id === s.id}
-                  onSelect={() => setSelected({ kind: "skill", id: s.id })}
+                  habit={s}
+                  active={habit?.id === s.id}
+                  onSelect={() => setSelected({ kind: "habit", id: s.id })}
                 />
               ))}
             </Band>
           )}
         </aside>
 
-        <section className="skilledit">
-          {skill !== undefined ? (
-            <SkillEditor
-              skill={skill}
+        <section className="habitedit">
+          {habit !== undefined ? (
+            <HabitEditor
+              habit={habit}
               busy={busy}
               copied={copied}
               proseNote={generateDisabledReason(data.prose)}
-              confirmRegen={confirmRegen === skill.id}
-              onAskRegen={() => setConfirmRegen(skill.edited ? skill.id : null)}
+              confirmRegen={confirmRegen === habit.id}
+              onAskRegen={() => setConfirmRegen(habit.edited ? habit.id : null)}
               onCancelRegen={() => setConfirmRegen(null)}
               onGenerate={() => {
                 setConfirmRegen(null);
-                run(api.skills.generate(skill.id));
+                run(api.habits.generate(habit.id));
               }}
-              onPatch={(p) => patch(skill.id, p)}
+              onPatch={(p) => patch(habit.id, p)}
               onCopy={() => {
-                void navigator.clipboard.writeText(skill.markdown).then(() => {
+                void navigator.clipboard.writeText(habit.markdown).then(() => {
                   setCopied(true);
                   setTimeout(() => setCopied(false), 1600);
                 });
               }}
-              onRebind={(routeKey) => run(api.skills.rebind(skill.id, routeKey))}
-              duplicates={skill.duplicates.flatMap((id) => {
-                const other = data.skills.find((s) => s.id === id);
+              onRebind={(routeKey) => run(api.habits.rebind(habit.id, routeKey))}
+              duplicates={habit.duplicates.flatMap((id) => {
+                const other = data.habits.find((s) => s.id === id);
                 return other === undefined ? [] : [other];
               })}
-              onMerge={(mergeId) => run(api.skills.merge(skill.id, mergeId))}
+              onMerge={(mergeId) => run(api.habits.merge(habit.id, mergeId))}
               onRemove={() => {
                 setSelected(null);
-                run(api.skills.remove(skill.id));
+                run(api.habits.remove(habit.id));
               }}
             />
           ) : proposal !== undefined ? (
@@ -228,16 +230,16 @@ export function SkillsScreen(): React.JSX.Element {
               busy={busy}
               onAccept={() => {
                 setSelected(null);
-                run(api.skills.accept(proposal.routeKey));
+                run(api.habits.accept(proposal.routeKey));
               }}
               onDismiss={() => {
                 setSelected(null);
-                run(api.skills.dismiss(proposal.routeKey));
+                run(api.habits.dismiss(proposal.routeKey));
               }}
             />
           ) : (
-            <div className="skilledit__blank muted">
-              <p>Pick a skill to read or edit it, or a proposal to see what it would produce.</p>
+            <div className="habitedit__blank muted">
+              <p>Pick a habit to read or edit it, or a proposal to see what it would produce.</p>
             </div>
           )}
         </section>
@@ -248,37 +250,37 @@ export function SkillsScreen(): React.JSX.Element {
 
 function Band({ title, children }: { title: string; children: React.ReactNode }): React.JSX.Element {
   return (
-    <div className="skills__band">
-      <div className="skills__bandhead">
+    <div className="habits__band">
+      <div className="habits__bandhead">
         <span className="eyebrow">{title}</span>
       </div>
-      <ul className="skills__items">{children}</ul>
+      <ul className="habits__items">{children}</ul>
     </div>
   );
 }
 
-function SkillRow({
-  skill,
+function HabitRow({
+  habit,
   active,
   onSelect,
 }: {
-  skill: SkillDTO;
+  habit: HabitDTO;
   active: boolean;
   onSelect: () => void;
 }): React.JSX.Element {
-  const chip = bindingChip(skill);
+  const chip = bindingChip(habit);
   return (
     <li>
-      <button className={`skill${active ? " is-active" : ""}`} onClick={onSelect}>
-        <span className="skill__title">{skill.title}</span>
-        <span className="skill__slug mono">{skill.slug}</span>
-        <span className="skill__meta">
-          <span className="mono">{evidenceLine(skill)}</span>
-          <span className="skill__tag mono">{skill.bodySource}</span>
-          {skill.edited && <span className="skill__tag mono">edited</span>}
-          {skill.pinned && <span className="skill__tag mono">pinned</span>}
+      <button className={`habit${active ? " is-active" : ""}`} onClick={onSelect}>
+        <span className="habit__title">{habit.title}</span>
+        <span className="habit__slug mono">{habit.slug}</span>
+        <span className="habit__meta">
+          <span className="mono">{evidenceLine(habit)}</span>
+          <span className="habit__tag mono">{habit.bodySource}</span>
+          {habit.edited && <span className="habit__tag mono">edited</span>}
+          {habit.pinned && <span className="habit__tag mono">pinned</span>}
         </span>
-        {chip !== null && <span className="skill__bind mono">{chip}</span>}
+        {chip !== null && <span className="habit__bind mono">{chip}</span>}
       </button>
     </li>
   );
@@ -289,21 +291,28 @@ function ProposalRow({
   active,
   onSelect,
 }: {
-  proposal: SkillProposalDTO;
+  proposal: HabitProposalDTO;
   active: boolean;
   onSelect: () => void;
 }): React.JSX.Element {
   const count = proposalCount(proposal);
   return (
     <li>
-      <button className={`skill${active ? " is-active" : ""}`} onClick={onSelect}>
-        <span className={`skill__count${count.repeated ? " is-repeated" : ""}`}>{count.text}</span>
-        <span className="skill__title">{proposal.name ?? proposal.label}</span>
-        {proposal.name !== null && <span className="skill__slug mono">{proposal.label}</span>}
-        <span className="skill__meta mono">
+      <button
+        className={`habit${active ? " is-active" : ""}`}
+        onClick={onSelect}
+        title={proposalTitle(proposal)}
+      >
+        <span className={`habit__count${count.repeated ? " is-repeated" : ""}`}>{count.text}</span>
+        <span className="habit__title">{proposal.name ?? proposal.label}</span>
+        {proposal.name !== null && <span className="habit__slug mono">{proposal.label}</span>}
+        <span className="habit__meta mono">
           {proposal.stepSummary}
           {proposal.variants > 0 && " · merged"}
-          {proposal.count === 1 && " · recorded once"}
+          {/* Recurrence in WORDS, at every count. `×N` alone is a bare number,
+              and it used to be explained only when it was 1 — so the evidence
+              was legible exactly where it was weakest. */}
+          {` · ${proposalEvidence(proposal)}`}
         </span>
       </button>
     </li>
@@ -316,38 +325,38 @@ function ProposalPreview({
   onAccept,
   onDismiss,
 }: {
-  proposal: SkillProposalDTO;
+  proposal: HabitProposalDTO;
   busy: boolean;
   onAccept: () => void;
   onDismiss: () => void;
 }): React.JSX.Element {
   return (
-    <div className="skilledit__body">
+    <div className="habitedit__body">
       <h2>{proposal.name ?? proposal.label}</h2>
       {proposal.count === 1 && (
         <p className="banner">
-          Recorded once. One walk is a single observation, not an established habit — keeping it
+          Recorded once. Kept from a single observation, and nothing has confirmed it repeats — keeping it
           is reasonable, but an agent should not read it as how the task is done.
         </p>
       )}
       <p className="muted">
         This is the record it would produce. The prose above it is written when you keep it.
       </p>
-      <pre className="skilledit__record mono">{proposal.preview}</pre>
-      <div className="skilledit__actions">
+      <pre className="habitedit__record mono">{proposal.preview}</pre>
+      <div className="habitedit__actions">
         <button className="btn" disabled={busy} onClick={onAccept}>
-          Keep as a skill
+          Keep as a habit
         </button>
         <button className="btn" disabled={busy} onClick={onDismiss}>
-          Not a skill
+          Not a habit
         </button>
       </div>
     </div>
   );
 }
 
-function SkillEditor({
-  skill,
+function HabitEditor({
+  habit,
   busy,
   copied,
   proseNote,
@@ -362,7 +371,7 @@ function SkillEditor({
   onMerge,
   onRemove,
 }: {
-  skill: SkillDTO;
+  habit: HabitDTO;
   busy: boolean;
   copied: boolean;
   proseNote: string | null;
@@ -370,27 +379,27 @@ function SkillEditor({
   onAskRegen: () => void;
   onCancelRegen: () => void;
   onGenerate: () => void;
-  onPatch: (p: SkillPatch) => void;
+  onPatch: (p: HabitPatch) => void;
   onCopy: () => void;
   onRebind: (routeKey: string) => void;
-  /** The OTHER active skills on this same live route. Usually empty. */
-  duplicates: SkillDTO[];
+  /** The OTHER active habits on this same live route. Usually empty. */
+  duplicates: HabitDTO[];
   onMerge: (mergeId: string) => void;
   onRemove: () => void;
 }): React.JSX.Element {
-  const b = skill.binding;
-  // Merging archives somebody else's skill, so it is confirmed. The state holds
-  // WHICH one, because a skill can duplicate more than one at a time.
+  const b = habit.binding;
+  // Merging archives somebody else's habit, so it is confirmed. The state holds
+  // WHICH one, because a habit can duplicate more than one at a time.
   const [confirmMerge, setConfirmMerge] = useState<string | null>(null);
   // The record is not editable here, and the file says the same thing. Splitting
   // the document at the heading is how the screen shows which half is which.
-  const cut = skill.markdown.lastIndexOf("## Recorded steps");
-  const record = cut < 0 ? skill.markdown : skill.markdown.slice(cut);
+  const cut = habit.markdown.lastIndexOf("## Recorded steps");
+  const record = cut < 0 ? habit.markdown : habit.markdown.slice(cut);
 
   return (
-    <div className="skilledit__body">
+    <div className="habitedit__body">
       {b.note !== null && (
-        <div className="banner skilledit__bind">
+        <div className="banner habitedit__bind">
           <p>{b.note}</p>
           {b.state === "rebound" && b.liveRouteKey !== null && (
             <button className="btn" disabled={busy} onClick={() => onRebind(b.liveRouteKey!)}>
@@ -407,9 +416,9 @@ function SkillEditor({
       )}
 
       {duplicates.length > 0 && (
-        <div className="banner skilledit__bind">
+        <div className="banner habitedit__bind">
           <p>
-            {duplicates.length === 1 ? "Another skill describes" : "Other skills describe"} this
+            {duplicates.length === 1 ? "Another habit describes" : "Other habits describe"} this
             same recorded route: {duplicates.map((d) => d.title).join(", ")}. Merging keeps this
             one and appends the other&rsquo;s prose to it; the other is archived, not deleted.
           </p>
@@ -448,49 +457,49 @@ function SkillEditor({
         </div>
       )}
 
-      {skill.generateNote !== null && <p className="banner">{skill.generateNote}</p>}
+      {habit.generateNote !== null && <p className="banner">{habit.generateNote}</p>}
 
-      <label className="skilledit__field">
-        <span className="skilledit__label">Title</span>
+      <label className="habitedit__field">
+        <span className="habitedit__label">Title</span>
         <input
           type="text"
-          value={skill.title}
+          value={habit.title}
           onChange={(e) => onPatch({ title: e.target.value })}
         />
       </label>
 
-      <label className="skilledit__field">
-        <span className="skilledit__label">Description</span>
-        <span className="skilledit__hint">
+      <label className="habitedit__field">
+        <span className="habitedit__label">Description</span>
+        <span className="habitedit__hint">
           How an agent decides whether to load this file at all.
         </span>
         <textarea
           rows={2}
-          value={skill.description}
+          value={habit.description}
           onChange={(e) => onPatch({ description: e.target.value })}
         />
       </label>
 
-      <label className="skilledit__field">
-        <span className="skilledit__label">Name</span>
-        <span className="skilledit__hint">The frontmatter <code>name:</code>, and the folder it would live in.</span>
+      <label className="habitedit__field">
+        <span className="habitedit__label">Name</span>
+        <span className="habitedit__hint">The frontmatter <code>name:</code>, and the folder it would live in.</span>
         <input
           type="text"
           className="mono"
-          value={skill.slug}
+          value={habit.slug}
           onChange={(e) => onPatch({ slug: e.target.value })}
         />
       </label>
 
-      <label className="skilledit__field">
-        <span className="skilledit__label">Prose</span>
-        <span className="skilledit__hint">
+      <label className="habitedit__field">
+        <span className="habitedit__label">Prose</span>
+        <span className="habitedit__hint">
           Yours or the model&rsquo;s. Everything below is generated from the recording and
           cannot be edited here.
         </span>
         <textarea
           rows={10}
-          value={skill.body}
+          value={habit.body}
           onChange={(e) => onPatch({ body: e.target.value })}
         />
       </label>
@@ -498,14 +507,14 @@ function SkillEditor({
       {/* The frontmatter is not on screen — the well below starts at the record —
           so the version this file carries is stated here or nowhere. */}
       <p className="muted mono">
-        v{skill.version}
-        {skill.history.length > 0 &&
-          ` · ${skill.history[skill.history.length - 1]!.what}, ${new Date(
-            skill.history[skill.history.length - 1]!.at,
+        v{habit.version}
+        {habit.history.length > 0 &&
+          ` · ${habit.history[habit.history.length - 1]!.what}, ${new Date(
+            habit.history[habit.history.length - 1]!.at,
           ).toLocaleDateString()}`}
       </p>
 
-      <div className="skilledit__actions">
+      <div className="habitedit__actions">
         {confirmRegen ? (
           <div className="confirm">
             <p>This replaces the prose you wrote. The recorded steps are unaffected.</p>
@@ -520,24 +529,24 @@ function SkillEditor({
           <button
             className="btn"
             disabled={busy}
-            onClick={skill.edited ? onAskRegen : onGenerate}
+            onClick={habit.edited ? onAskRegen : onGenerate}
             title={proseNote ?? undefined}
           >
             {busy ? "Writing…" : "Generate with model"}
           </button>
         )}
         <button className="btn" onClick={onCopy}>
-          {copied ? "Copied" : "Copy SKILL.md"}
+          {copied ? "Copied" : "Copy HABIT.md"}
         </button>
-        <button className="btn" disabled={busy} onClick={() => onPatch({ pinned: !skill.pinned })}>
-          {skill.pinned ? "Unpin" : "Pin"}
+        <button className="btn" disabled={busy} onClick={() => onPatch({ pinned: !habit.pinned })}>
+          {habit.pinned ? "Unpin" : "Pin"}
         </button>
         <button
           className="btn"
           disabled={busy}
-          onClick={() => onPatch({ state: skill.state === "archived" ? "active" : "archived" })}
+          onClick={() => onPatch({ state: habit.state === "archived" ? "active" : "archived" })}
         >
-          {skill.state === "archived" ? "Restore" : "Archive"}
+          {habit.state === "archived" ? "Restore" : "Archive"}
         </button>
         <button className="btn danger" disabled={busy} onClick={onRemove}>
           Forget
@@ -545,20 +554,20 @@ function SkillEditor({
       </div>
 
       {/* The record LAST, because it is the tallest thing here and the actions
-          must not sit below it — Copy SKILL.md was entirely off-screen at
+          must not sit below it — Copy HABIT.md was entirely off-screen at
           1180x800, which only the screenshot showed. */}
-      <div className="skilledit__recordhead">
+      <div className="habitedit__recordhead">
         <span className="eyebrow">The record — generated, and not editable</span>
       </div>
-      <pre className="skilledit__record mono">{record}</pre>
+      <pre className="habitedit__record mono">{record}</pre>
 
       {/* The reason in WORDS, not a greyed control with no explanation. */}
       {proseNote !== null && <p className="muted">{proseNote}</p>}
 
-      <label className="skilledit__toggle">
+      <label className="habitedit__toggle">
         <input
           type="checkbox"
-          checked={skill.showSamples}
+          checked={habit.showSamples}
           onChange={(e) => onPatch({ showSamples: e.target.checked })}
         />
         <span>

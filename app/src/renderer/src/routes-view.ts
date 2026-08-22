@@ -1,7 +1,7 @@
 /**
  * How a route reads in a list.
  *
- * The counting itself lives in `@shared/route-ways`, because the Skills proposal
+ * The counting itself lives in `@shared/route-ways`, because the Habits proposal
  * row is built in MAIN and has to say the same thing about the same route. When
  * this module owned its own copy, the fix that removed the union step count
  * reached the route list and not the proposal row, and the two screens disagreed

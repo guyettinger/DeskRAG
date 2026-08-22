@@ -7,10 +7,10 @@
  * reflection — the stage says so and the pipeline carries on — but this adapter
  * must not decide that, and must never return an invented note, which would be
  * indistinguishable from a real one downstream. Same split as
- * `OllamaSkillProseProvider.write`.
+ * `OllamaHabitProseProvider.write`.
  *
  * It reuses the SUMMARY model rather than adding a third picker, for the reason
- * `ollama-skill-prose.ts` does: naming a composed level, naming a recorded flow
+ * `ollama-habit-prose.ts` does: naming a composed level, naming a recorded flow
  * and judging how a session went are the same act at three altitudes, and each
  * extra model setting is one more thing to keep in step.
  */
@@ -65,7 +65,7 @@ export class OllamaReflectionProvider implements ReflectionProvider {
     );
 
     // BOTH channels, content first — the measurement `OllamaSummaryProvider`
-    // recorded and `OllamaSkillProseProvider` repeats. A thinking model routes
+    // recorded and `OllamaHabitProseProvider` repeats. A thinking model routes
     // its structured answer into `thinking` and leaves `content` EMPTY even with
     // `think: false`, because Ollama applies the JSON format constraint to
     // whichever channel the model writes. Reading only `content` would make this

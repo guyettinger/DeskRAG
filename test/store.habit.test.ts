@@ -7,7 +7,7 @@ import { ulid } from "ulid";
 import { DualStore } from "../src/store/store.js";
 
 /**
- * A skill is AUTHORED: written by a person, and reproducible by nothing.
+ * A habit is AUTHORED: written by a person, and reproducible by nothing.
  *
  * That is one claim with two halves, and both are asserted here. The row must
  * round-trip through a real SQLite file — including across a re-open, because
@@ -23,7 +23,7 @@ let dir: string;
 let store: DualStore;
 
 beforeEach(async () => {
-  dir = mkdtempSync(join(tmpdir(), "erag-skill-"));
+  dir = mkdtempSync(join(tmpdir(), "erag-habit-"));
   store = await DualStore.open(join(dir, "app.db"), join(dir, "lance"));
 });
 
@@ -34,44 +34,44 @@ afterEach(() => {
 
 const doc = (name: string): string => JSON.stringify({ slug: name, body: "prose" });
 
-describe("authored skills", () => {
-  it("round-trips a skill", async () => {
+describe("authored habits", () => {
+  it("round-trips a habit", async () => {
     const id = ulid();
-    const written = await store.putSkill({ id, state: "active", pinned: false, doc: doc("a") });
+    const written = await store.putHabit({ id, state: "active", pinned: false, doc: doc("a") });
 
     expect(written.id).toBe(id);
     expect(written.state).toBe("active");
     expect(written.pinned).toBe(false);
     expect(written.doc).toBe(doc("a"));
-    expect(store.getSkill(id)).toEqual(written);
-    expect(store.listSkills()).toEqual([written]);
+    expect(store.getHabit(id)).toEqual(written);
+    expect(store.listHabits()).toEqual([written]);
   });
 
   it("returns undefined for an unknown id rather than throwing", () => {
-    expect(store.getSkill(ulid())).toBeUndefined();
+    expect(store.getHabit(ulid())).toBeUndefined();
   });
 
   // SQLite has no boolean. A column read back as 0/1 and handed to the app as a
   // number would be truthy for BOTH values, so `pinned: false` would pin.
   it("reads pinned back as a boolean, not as 0 or 1", async () => {
     const id = ulid();
-    await store.putSkill({ id, state: "active", pinned: true, doc: doc("a") });
-    expect(store.getSkill(id)?.pinned).toBe(true);
+    await store.putHabit({ id, state: "active", pinned: true, doc: doc("a") });
+    expect(store.getHabit(id)?.pinned).toBe(true);
 
-    await store.putSkill({ id, state: "active", pinned: false, doc: doc("a") });
-    expect(store.getSkill(id)?.pinned).toBe(false);
+    await store.putHabit({ id, state: "active", pinned: false, doc: doc("a") });
+    expect(store.getHabit(id)?.pinned).toBe(false);
   });
 
   it("upserts in place, keeping created_at and moving updated_at", async () => {
     const id = ulid();
-    const first = await store.putSkill({ id, state: "active", pinned: false, doc: doc("a") });
+    const first = await store.putHabit({ id, state: "active", pinned: false, doc: doc("a") });
 
     // The stamps are millisecond wall clock, so two writes inside one tick would
     // compare equal and prove nothing either way.
     await new Promise((r) => setTimeout(r, 2));
-    const second = await store.putSkill({ id, state: "archived", pinned: true, doc: doc("b") });
+    const second = await store.putHabit({ id, state: "archived", pinned: true, doc: doc("b") });
 
-    expect(store.listSkills()).toHaveLength(1);
+    expect(store.listHabits()).toHaveLength(1);
     expect(second.createdAt).toBe(first.createdAt);
     expect(second.updatedAt).toBeGreaterThan(first.updatedAt);
     expect(second.state).toBe("archived");
@@ -82,31 +82,31 @@ describe("authored skills", () => {
   it("lists newest-touched first", async () => {
     const older = ulid();
     const newer = ulid();
-    await store.putSkill({ id: older, state: "active", pinned: false, doc: doc("a") });
+    await store.putHabit({ id: older, state: "active", pinned: false, doc: doc("a") });
     await new Promise((r) => setTimeout(r, 2));
-    await store.putSkill({ id: newer, state: "active", pinned: false, doc: doc("b") });
+    await store.putHabit({ id: newer, state: "active", pinned: false, doc: doc("b") });
 
-    expect(store.listSkills().map((s) => s.id)).toEqual([newer, older]);
+    expect(store.listHabits().map((s) => s.id)).toEqual([newer, older]);
 
     // Touching the older one moves it to the front — an edit belongs at the top
     // of whatever band the screen draws it in.
     await new Promise((r) => setTimeout(r, 2));
-    await store.putSkill({ id: older, state: "active", pinned: false, doc: doc("a2") });
-    expect(store.listSkills().map((s) => s.id)).toEqual([older, newer]);
+    await store.putHabit({ id: older, state: "active", pinned: false, doc: doc("a2") });
+    expect(store.listHabits().map((s) => s.id)).toEqual([older, newer]);
   });
 
-  it("deletes only the skill it was asked for", async () => {
+  it("deletes only the habit it was asked for", async () => {
     const keep = ulid();
     const drop = ulid();
-    await store.putSkill({ id: keep, state: "active", pinned: false, doc: doc("a") });
-    await store.putSkill({ id: drop, state: "active", pinned: false, doc: doc("b") });
+    await store.putHabit({ id: keep, state: "active", pinned: false, doc: doc("a") });
+    await store.putHabit({ id: drop, state: "active", pinned: false, doc: doc("b") });
 
-    await store.deleteSkill(drop);
-    expect(store.listSkills().map((s) => s.id)).toEqual([keep]);
+    await store.deleteHabit(drop);
+    expect(store.listHabits().map((s) => s.id)).toEqual([keep]);
 
     // Deleting an id that is not there is not an error: the screen's Forget
     // button and a concurrent delete must not race into a throw.
-    await expect(store.deleteSkill(drop)).resolves.toBeUndefined();
+    await expect(store.deleteHabit(drop)).resolves.toBeUndefined();
   });
 });
 
@@ -114,7 +114,7 @@ describe("authored skills", () => {
  * The half that matters, and the reason `AUTHORED_TABLES` exists as a fifth list
  * rather than being folded into OPERATIONAL.
  */
-describe("a skill is neither captured nor derived", () => {
+describe("a habit is neither captured nor derived", () => {
   it("survives purgeDerived and deleteSession", async () => {
     const sessionId = ulid();
     const id = ulid();
@@ -129,29 +129,29 @@ describe("a skill is neither captured nor derived", () => {
         boundaryReason: "focus_change",
       },
     ]);
-    await store.putSkill({ id, state: "active", pinned: false, doc: doc("a") });
+    await store.putHabit({ id, state: "active", pinned: false, doc: doc("a") });
 
     // A re-index of that recording throws its derived rows away.
     await store.purgeDerived(sessionId);
     expect(store.getSegmentsBySession(sessionId)).toHaveLength(0);
-    expect(store.getSkill(id)?.doc).toBe(doc("a"));
+    expect(store.getHabit(id)?.doc).toBe(doc("a"));
 
     // And deleting the recording outright, whose CASCADE reaches most of the
-    // schema, must still leave the writing alone: the skill's evidence count is
-    // what changes, never the skill.
+    // schema, must still leave the writing alone: the habit's evidence count is
+    // what changes, never the habit.
     await store.deleteSession(sessionId);
     expect(store.listSessions()).toHaveLength(0);
-    expect(store.getSkill(id)?.doc).toBe(doc("a"));
+    expect(store.getHabit(id)?.doc).toBe(doc("a"));
   });
 
   it("survives a store re-open, so the table lands on an existing install", async () => {
     const id = ulid();
-    await store.putSkill({ id, state: "active", pinned: true, doc: doc("a") });
+    await store.putHabit({ id, state: "active", pinned: true, doc: doc("a") });
     store.close();
 
     store = await DualStore.open(join(dir, "app.db"), join(dir, "lance"));
-    expect(store.getSkill(id)?.doc).toBe(doc("a"));
-    expect(store.getSkill(id)?.pinned).toBe(true);
+    expect(store.getHabit(id)?.doc).toBe(doc("a"));
+    expect(store.getHabit(id)?.pinned).toBe(true);
   });
 
   /**
@@ -164,7 +164,7 @@ describe("a skill is neither captured nor derived", () => {
     const gone = ulid();
     const id = ulid();
     await store.putSession({ id: gone, startedAt: Date.now(), epochMono: 0 });
-    await store.putSkill({
+    await store.putHabit({
       id,
       state: "active",
       pinned: false,
@@ -173,7 +173,7 @@ describe("a skill is neither captured nor derived", () => {
 
     await store.deleteSession(gone);
 
-    const row = store.getSkill(id);
+    const row = store.getHabit(id);
     expect(row).toBeDefined();
     expect(JSON.parse(row!.doc).sessionIds).toEqual([gone]);
   });
@@ -183,7 +183,7 @@ describe("the table itself", () => {
   it("is created on open with the columns the app writes", async () => {
     const sql = new Database(join(dir, "app.db"), { readonly: true });
     try {
-      const cols = (sql.prepare("PRAGMA table_info(skill)").all() as { name: string }[]).map(
+      const cols = (sql.prepare("PRAGMA table_info(habit)").all() as { name: string }[]).map(
         (c) => c.name,
       );
       expect(cols.sort()).toEqual(

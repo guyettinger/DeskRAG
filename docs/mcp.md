@@ -153,10 +153,10 @@ you have never done as a habit — so a graph with no provenance yields no route
 and the tool points you at **Rebuild trace graph** instead of returning an empty
 list.
 
-### `list_skills` and `get_skill`
+### `list_habits` and `get_habit`
 
-SKILL.md files you have kept from your own recorded flows, ready for an agent to
-load. `list_skills` is the catalogue:
+HABIT.md files you have kept from your own recorded flows, ready for an agent to
+load. `list_habits` is the catalogue:
 
 ```
 record-calculation-and-document-result
@@ -164,31 +164,38 @@ record-calculation-and-document-result
   Use when you need to perform a simple arithmetic calculation in Calculator and
   capture the result for documentation.
   1 recording · prose: llm
-  RECORDED ONCE — one observation, not an established habit.
+  RECORDED ONCE — kept from a single observation. Nothing has confirmed it repeats.
   route: Electron — localhost → Calculator → TextEdit → Electron
 ```
 
+After the kept habits, the catalogue names the recorded routes you have walked
+**more than once** but not yet kept, with how many recordings walked each —
+recurrence is the only evidence a proposal carries, and it is what makes one
+worth keeping. Routes walked once are counted rather than named: one walk is an
+observation, and listing it beside a repeated route would present it as the same
+kind of thing.
+
 The two disclosures that would change an agent's mind about fetching are in the
-**list**, not only in the file: a skill built from one recording, and a skill
+**list**, not only in the file: a habit built from one recording, and a habit
 whose route has left the graph so its steps are a stored copy that has not been
 re-checked.
 
-`get_skill` returns the file itself, raw, with no preamble before the `---`. The
-point of the tool is that its output *is* a SKILL.md — a friendly sentence in
+`get_habit` returns the file itself, raw, with no preamble before the `---`. The
+point of the tool is that its output *is* a HABIT.md — a friendly sentence in
 front of the frontmatter would corrupt a paste to disk, and everything a client
 needs in order to weigh it is already inside the document.
 
-Every skill has two halves written by different things, and the file says which
+Every habit has two halves written by different things, and the file says which
 is which. Above `## Recorded steps` is prose — a local model's, or a template's,
 declared as `prose: llm (...)` or `prose: template` in the frontmatter. From that
 heading down is the **record**, rendered from the trace graph, and
-`steps: template` says so on every skill because a model never writes it. That is
+`steps: template` says so on every habit because a model never writes it. That is
 structural rather than a promise: the function that renders the record takes the
 route and nothing else, so there is no path by which model output could reach it.
 
-Two things a skill will not do. It does not print what you typed — a slot is
+Two things a habit will not do. It does not print what you typed — a slot is
 named and counted (`` `title` — 2 recorded values, varies between recordings ``)
-unless you turn recorded values on for that skill, and even then the model is
+unless you turn recorded values on for that habit, and even then the model is
 never shown a sample. And it never claims a step succeeded or failed: nothing in
 DeskRAG observes a failure, because passive recording only sees what you did. In
 place of a success rate it carries **What this evidence does not say** — which
@@ -196,8 +203,15 @@ steps fewer recordings walked, which states can be confirmed but not located,
 what lifting could not resolve, and whether one recording is being read as a
 habit.
 
-Skills are kept, renamed and edited in DeskRAG → Skills; this endpoint only
+Habits are kept, renamed and edited in DeskRAG → Habits; this endpoint only
 reads them.
+
+**Saving one to disk.** DeskRAG calls the artifact a HABIT.md, but the document
+inside it is the ordinary agent-skill shape — `name`, `description`, `metadata:`
+and nothing else at the top level. So a habit destined for a Claude Code skills
+directory is saved at `~/.claude/skills/<name>/SKILL.md`, under the filename that
+directory requires; the frontmatter needs no editing. The rename is what DeskRAG
+calls the thing, not a change to the format.
 
 ## Read-only, by construction
 
@@ -268,6 +282,6 @@ npm run probe:mcp
 It drives the built app, calls all eight tools, and runs the three guard checks.
 It is read-only — every tool it calls is a read.
 
-`npm run probe:skills` does the same for the two skill tools, and additionally
+`npm run probe:habits` does the same for the two habit tools, and additionally
 keeps one proposal so there is a file to check. That one write is disclosed in
 its output; it deletes nothing and re-indexes nothing.

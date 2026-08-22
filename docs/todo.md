@@ -1,5 +1,4 @@
 - "Process" should probably be renamed to "Phase"
-- "Skill" might not be the best name for a concept that represents a set of actions or behaviors that can be performed by an agent
 - Transcription has NEVER been validated against real speech — every one of the 24 clips in the library is an annotation or filler. Record a session with someone actually talking before trusting the transcript lane or the digest text built from it.
 - Whisper hallucinates WORDS on silence, not just annotations: "You" came out of a chunk that was digitally silent at -91 dB. The bracketed-annotation filter cannot catch it and no text rule can. An energy gate would, but its floor has to be swept against a recording containing QUIET speech first — set a shade too high it silently drops the thing it exists to keep.
 - Surface per-source speech: `transcript_clip_source` now records which audio source each clip came from, but `segment.transcript` is still one merged string, so MCP says a neutral "Speech:" rather than "Said:" / "Heard:". Needs a DTO field; deliberately not faked from the merged string.
