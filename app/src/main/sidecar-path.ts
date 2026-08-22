@@ -20,14 +20,40 @@
 
 import { join } from "node:path";
 
-/** The paths to try, in order. `resourcesPath` is undefined outside a bundle. */
-export function axBinCandidates(resourcesPath: string | undefined, mainDir: string): string[] {
+/**
+ * The paths to try for one sidecar, in order. `resourcesPath` is undefined
+ * outside a bundle.
+ *
+ * Named rather than hardcoded because there are now three Swift sidecars and
+ * two of them ship: `ax-dump` (the capture clock) and `audio-tap` (computer
+ * audio). `ax-exec` deliberately does not — see index.ts.
+ */
+export function sidecarCandidates(
+  name: string,
+  resourcesPath: string | undefined,
+  mainDir: string,
+): string[] {
   const out: string[] = [];
   if (typeof resourcesPath === "string" && resourcesPath !== "") {
-    out.push(join(resourcesPath, "ax-dump")); // packaged: extraResources
+    out.push(join(resourcesPath, name)); // packaged: extraResources
   }
-  out.push(join(mainDir, "../../../native/ax-dump")); // dev: npm run build:ax
+  out.push(join(mainDir, `../../../native/${name}`)); // dev: npm run build:ax
   return out;
+}
+
+/** The paths to try, in order. `resourcesPath` is undefined outside a bundle. */
+export function axBinCandidates(resourcesPath: string | undefined, mainDir: string): string[] {
+  return sidecarCandidates("ax-dump", resourcesPath, mainDir);
+}
+
+/** As `resolveAxBin`, for any named sidecar. */
+export function resolveSidecar(
+  name: string,
+  resourcesPath: string | undefined,
+  mainDir: string,
+  exists: (p: string) => boolean,
+): string | undefined {
+  return sidecarCandidates(name, resourcesPath, mainDir).find(exists);
 }
 
 /**

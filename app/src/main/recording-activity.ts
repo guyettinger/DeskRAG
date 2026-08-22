@@ -21,7 +21,7 @@ import type { CaptureActivity } from "deskrag";
 import type { RecordingSignalDTO, RecordingTickDTO, SignalKind } from "@shared/types";
 import { appTone } from "./session-tracks.js";
 
-const KINDS: SignalKind[] = ["screen", "input", "active-win", "audio", "ax"];
+const KINDS: SignalKind[] = ["screen", "input", "active-win", "audio", "desktop-audio", "ax"];
 
 interface Counters {
   keyframes: number;
@@ -30,8 +30,6 @@ interface Counters {
   clicks: number;
   app?: string;
   focusChanges: number;
-  chunks: number;
-  peaks?: number[] | null;
   walks: number;
   elements: number;
 }
@@ -41,13 +39,36 @@ const empty = (): Counters => ({
   keys: 0,
   clicks: 0,
   focusChanges: 0,
-  chunks: 0,
   walks: 0,
   elements: 0,
 });
 
+/**
+ * Per-source audio tallies.
+ *
+ * SEPARATE, because `CaptureActivity` has always carried `media` and this fold
+ * used to throw it away: with the microphone and the tap both running, one
+ * counter would be the sum of two sources and one envelope would flicker
+ * between them — and a dead tap would hide behind a live microphone, which is
+ * precisely the thing the lamp exists to prevent.
+ */
+interface AudioCounters {
+  chunks: number;
+  peaks?: number[] | null;
+}
+
+/** Which signal card a captured medium reports to. */
+const KIND_FOR_MEDIA = {
+  mic: "audio",
+  desktop_audio: "desktop-audio",
+} as const satisfies Record<"mic" | "desktop_audio", SignalKind>;
+
 export class SignalTally {
   private readonly c = empty();
+  private readonly audio: Record<"mic" | "desktop_audio", AudioCounters> = {
+    mic: { chunks: 0 },
+    desktop_audio: { chunks: 0 },
+  };
   private readonly attached: ReadonlySet<SignalKind>;
 
   constructor(attached: readonly SignalKind[]) {
@@ -68,10 +89,12 @@ export class SignalTally {
         this.c.keyframes += 1;
         if (a.blobId !== undefined) this.c.lastFrameBlobId = a.blobId;
         return;
-      case "audio":
-        this.c.chunks += 1;
-        this.c.peaks = a.peaks;
+      case "audio": {
+        const c = this.audio[a.media];
+        c.chunks += 1;
+        c.peaks = a.peaks;
         return;
+      }
       case "ax":
         this.c.walks += 1;
         this.c.elements = a.elements;
@@ -100,6 +123,16 @@ export class SignalTally {
     }
   }
 
+  /** One medium's readout, attached against the card it reports to. */
+  private audioDto(media: "mic" | "desktop_audio"): RecordingSignalDTO {
+    const a = this.audio[media];
+    return {
+      attached: this.attached.has(KIND_FOR_MEDIA[media]),
+      chunks: a.chunks,
+      ...(a.peaks !== undefined ? { peaks: a.peaks } : {}),
+    };
+  }
+
   snapshot(sessionId: string, atMs: number): RecordingTickDTO {
     const c = this.c;
     const per: Record<SignalKind, RecordingSignalDTO> = {
@@ -117,11 +150,8 @@ export class SignalTally {
         // here. A second copy of it is the `ax-dump`/`ax-exec` drift hazard.
         ...(c.app !== undefined ? { app: c.app, appTone: appTone(c.app) } : {}),
       },
-      audio: {
-        attached: this.attached.has("audio"),
-        chunks: c.chunks,
-        ...(c.peaks !== undefined ? { peaks: c.peaks } : {}),
-      },
+      audio: this.audioDto("mic"),
+      "desktop-audio": this.audioDto("desktop_audio"),
       ax: { attached: this.attached.has("ax"), walks: c.walks, elements: c.elements },
     };
     return { sessionId, atMs, signals: per };

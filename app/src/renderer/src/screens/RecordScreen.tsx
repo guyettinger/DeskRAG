@@ -91,6 +91,28 @@ const SIGNALS: SignalDef[] = [
           : null,
   },
   {
+    id: "desktopAudio",
+    kind: "desktop-audio",
+    name: "Computer audio",
+    describe:
+      "Records what your Mac plays — calls, video, anything but DeskRAG itself — transcribed after the recording.",
+    // No device to name: a global tap has nothing to choose between.
+    meta: (s) => `${s.signals.desktopAudio.chunkSeconds}s chunks`,
+    // NO `permission`. macOS exposes no API that answers whether System Audio
+    // Recording is granted — Electron's systemPreferences has no member for it —
+    // so a PermissionKind here could only ever report a constant, which is the
+    // shape `Capabilities` had a member removed for. The grant is asked for by
+    // the tap's own first attempt, and reported by the well.
+    needs: (e) =>
+      !e.audioTapSupported
+        ? { ok: false, note: "needs macOS 14.2 or later" }
+        : !e.audioTapAvailable
+          ? { ok: false, note: "audio-tap sidecar missing (npm run build:ax)" }
+          : !e.whisperConfigured
+            ? { ok: true, note: "recorded, but whisper-cli not found — install it to transcribe" }
+            : null,
+  },
+  {
     id: "ax",
     kind: "ax",
     name: "Accessibility tree",

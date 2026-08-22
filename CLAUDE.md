@@ -17,7 +17,15 @@ npm test               # vitest run (full suite)
 npx vitest run test/dual-store.crash.test.ts  # a single test file
 npx vitest run -t "scoped ANN"              # tests matching a name
 npm run test:watch     # vitest watch
-npm run build:ax       # compile BOTH Swift sidecars -> native/ax-dump + native/ax-exec (gitignored)
+npm run build:ax       # compile ALL THREE Swift sidecars -> native/ax-dump + native/ax-exec
+                       # + native/audio-tap (all gitignored). audio-tap builds LAST on purpose:
+                       # it needs Xcode 15.1+ for CATapDescription, and chaining it last leaves
+                       # the two CLOCK-CRITICAL binaries on disk if that compile fails.
+                       # MACOSX_DEPLOYMENT_TARGET=13.0 is set so audio-tap LAUNCHES on an older
+                       # Mac and prints an honest reason (exit 2) instead of failing to exec.
+                       # COMPUTER AUDIO IS A CORE AUDIO TAP (macOS 14.2+): ffmpeg cannot reach
+                       # system audio on macOS at all, and the tap is PRE-MIXER -- measured
+                       # capturing at -34.5 dB through a MUTED output.
                        # REQUIRED TO RECORD AT ALL now, not just for AX: the capture clock comes
                        # from `ax-dump --clock` and a session refuses to start without it. A
                        # packaged build ships the binary (extraResources); a dev checkout builds it.

@@ -190,6 +190,14 @@ export {
   FfmpegAudioProducer,
   type FfmpegAudioOptions,
 } from "./capture/producers/ffmpeg-audio.js";
+export {
+  SystemAudioProducer,
+  type SystemAudioOptions,
+} from "./capture/producers/system-audio.js";
+export {
+  parseAudioTapAnchor,
+  type AudioTapAnchor,
+} from "./capture/audio-tap-anchor.js";
 export { encodeWav, wavPeaks, type WavFormat, type WavPeaks } from "./capture/producers/wav.js";
 
 /**

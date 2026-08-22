@@ -171,9 +171,31 @@ export interface TranscriptClipInsert {
   tMonoStart: number;
   tMonoEnd: number;
   text: string;
+  /**
+   * Which audio source these words came from. REQUIRED on write: every writer
+   * is already looping over blobs and knows it, and an optional field here is
+   * exactly how a source silently goes unrecorded on the one path that has it.
+   */
+  media: Media;
+  /** The blob transcribed, so a suspect sentence can be traced to its bytes. */
+  blobId: string;
 }
 
-export type TranscriptClipRow = TranscriptClipInsert;
+/**
+ * ASYMMETRIC WITH THE INSERT ON PURPOSE. A clip written before
+ * `transcript_clip_source` existed has no row there, and `null` is the honest
+ * answer — see the table's comment. Defaulting it to "mic" would attribute a
+ * video's narration to the person recording.
+ */
+export interface TranscriptClipRow {
+  id: string;
+  sessionId: string;
+  tMonoStart: number;
+  tMonoEnd: number;
+  text: string;
+  media: Media | null;
+  blobId: string | null;
+}
 
 /**
  * Which producer wrote a composed summary — see `segment_summary.source`.

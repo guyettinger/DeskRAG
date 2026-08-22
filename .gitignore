@@ -23,6 +23,8 @@ native/ax-dump
 native/ax-dump.dSYM/
 native/ax-exec
 native/ax-exec.dSYM/
+native/audio-tap
+native/audio-tap.dSYM/
 
 # python bytecode from scripts/*.py (maintainer export tooling)
 __pycache__/

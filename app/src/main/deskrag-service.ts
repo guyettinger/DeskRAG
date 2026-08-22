@@ -13,7 +13,7 @@
  */
 
 import { join } from "node:path";
-import { screen } from "electron";
+import { app, screen } from "electron";
 import { ulid } from "ulid";
 import {
   DualStore,
@@ -22,6 +22,7 @@ import {
   CaptureSession,
   FfmpegScreenProducer,
   FfmpegAudioProducer,
+  SystemAudioProducer,
   SwiftAxSource,
   SwiftDeviceClockSource,
   SwiftDisplaySource,
@@ -695,6 +696,29 @@ export class DeskRagService {
       } else {
         console.error(`[deskrag] microphone ${mic.state}: recording without audio`);
       }
+    }
+    if (sig.desktopAudio.enabled) {
+      // NO requestPermission() — deliberately. Electron's systemPreferences has
+      // no member for the System Audio Recording grant, and macOS exposes no
+      // way to query it, so there is nothing honest to ask. The tap's own first
+      // attempt IS the request: macOS shows its dialog when the sidecar creates
+      // the tap. A refusal then reads as a signal that attached and produced
+      // nothing, which is exactly what the card's well says.
+      session.addProducer(
+        new SystemAudioProducer({
+          chunkSeconds: sig.desktopAudio.chunkSeconds,
+          // A SNAPSHOT, not a rule: CATapDescription resolves pids once, at tap
+          // creation. Electron plays audio from RENDERER and helper processes,
+          // never the main one, so passing process.pid alone would exclude
+          // nothing that can make a sound — and a helper that starts playing
+          // later cannot be excluded at all. The Library player is the concrete
+          // hazard: playing a past recording during a capture would feed
+          // DeskRAG's own output back into the new one.
+          excludePids: app.getAppMetrics().map((m) => m.pid),
+          onError: (m) => console.error(`[deskrag] computer audio: ${m}`),
+        }),
+      );
+      active.push("desktop-audio");
     }
     if (sig.ax.enabled) active.push("ax");
 

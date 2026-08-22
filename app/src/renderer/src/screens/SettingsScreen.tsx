@@ -595,6 +595,25 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
               onChange={(e) => void patchSignals({ audio: { chunkSeconds: Number(e.target.value) } })}
             />
           </div>
+          <div className="form-row">
+            <div>
+              <label>Computer audio chunk seconds</label>
+              <div className="desc">
+                Computer audio is captured through a Core Audio tap, so there is no device to
+                choose — it records whatever your Mac plays, minus DeskRAG itself. macOS asks
+                for System Audio Recording the first time you record with it on.
+              </div>
+            </div>
+            <input
+              type="number"
+              min={2}
+              max={30}
+              value={s.signals.desktopAudio.chunkSeconds}
+              onChange={(e) =>
+                void patchSignals({ desktopAudio: { chunkSeconds: Number(e.target.value) } })
+              }
+            />
+          </div>
         </div>
 
         <McpPane mcp={s.mcp} onPatch={patchMcp} />

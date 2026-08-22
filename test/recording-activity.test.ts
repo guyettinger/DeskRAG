@@ -25,6 +25,38 @@ describe("SignalTally", () => {
     expect(s.ax.attached).toBe(true);
   });
 
+  it("KEEPS THE TWO AUDIO SOURCES APART, counters and envelopes both", () => {
+    // `CaptureActivity` has always carried `media`, and this fold used to throw
+    // it away: both sources landed in one counter and one envelope. The visible
+    // consequence is worse than a wrong number — a dead tap hides behind a live
+    // microphone, which is the one thing the lamp exists to prevent.
+    const t = new SignalTally(["audio", "desktop-audio"]);
+    feed(t, [
+      { kind: "audio", media: "mic", byteLength: 4, tMonoStart: 0, tMonoEnd: 1, peaks: [0.5] },
+      { kind: "audio", media: "mic", byteLength: 4, tMonoStart: 1, tMonoEnd: 2, peaks: [0.6] },
+      { kind: "audio", media: "desktop_audio", byteLength: 4, tMonoStart: 0, tMonoEnd: 1, peaks: [0.1] },
+    ]);
+    const s = t.snapshot("S", 0).signals;
+    expect(s.audio.chunks).toBe(2);
+    expect(s["desktop-audio"].chunks).toBe(1);
+    // Each card shows its OWN last chunk, not whichever arrived most recently.
+    expect(s.audio.peaks).toEqual([0.6]);
+    expect(s["desktop-audio"].peaks).toEqual([0.1]);
+  });
+
+  it("reports a silent tap independently of a healthy microphone", () => {
+    // The measured shape of "System Audio Recording was refused", and also of
+    // "nothing was playing": zero chunks on one card while the other is fine.
+    const t = new SignalTally(["audio", "desktop-audio"]);
+    feed(t, [
+      { kind: "audio", media: "mic", byteLength: 4, tMonoStart: 0, tMonoEnd: 1, peaks: [0.7] },
+    ]);
+    const s = t.snapshot("S", 0).signals;
+    expect(s.audio.chunks).toBe(1);
+    expect(s["desktop-audio"].attached).toBe(true);
+    expect(s["desktop-audio"].chunks).toBe(0);
+  });
+
   it("counts keys and clicks, and nothing else from the event firehose", () => {
     const t = new SignalTally(["input"]);
     feed(t, [
@@ -133,6 +165,13 @@ describe("SignalTally", () => {
     expect(dto.atMs).toBe(1_700_000_000_000);
     // Every kind is present whether it attached or not — a card must be able to
     // ask about a signal that is switched off.
-    expect(Object.keys(dto.signals).sort()).toEqual(["active-win", "audio", "ax", "input", "screen"]);
+    expect(Object.keys(dto.signals).sort()).toEqual([
+      "active-win",
+      "audio",
+      "ax",
+      "desktop-audio",
+      "input",
+      "screen",
+    ]);
   });
 });

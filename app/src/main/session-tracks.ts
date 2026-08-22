@@ -820,6 +820,12 @@ export function mouseXyLane(input: LaneInput): LaneBody {
 
 // --- sound -------------------------------------------------------------------
 
+/** What each captured medium is called on the rail. */
+const AUDIO_LANE_TITLES: Record<string, string> = {
+  mic: "audio (microphone)",
+  desktop_audio: "audio (computer)",
+};
+
 export function audioLanes(input: LaneInput): LaneBody[] {
   if (input.audio.length === 0) {
     return [
@@ -846,7 +852,9 @@ export function audioLanes(input: LaneInput): LaneBody[] {
     }
     return {
       id: `audio-${a.media}`,
-      title: a.media === "mic" ? "audio (mic)" : `audio (${a.media})`,
+      // Named for a reader, not for the column. The raw value would draw
+      // "audio (desktop_audio)" in a gutter where NOTHING TRUNCATES.
+      title: AUDIO_LANE_TITLES[a.media] ?? `audio (${a.media})`,
       shape: "density" as const,
       showLabels: false,
       level: null,
