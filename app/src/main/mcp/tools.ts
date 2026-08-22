@@ -54,7 +54,8 @@ export interface ToolDef {
  * software works.
  */
 export const SERVER_INSTRUCTIONS = `DeskRAG is a local recording of this user's own desktop activity — \
-screen, audio, input and the accessibility tree — indexed so it can be searched.
+screen, audio (microphone and what the computer played), input and the
+accessibility tree — indexed so it can be searched.
 
 Use it to ground decisions in what the user has ACTUALLY done rather than guessing: \
 which tools and sites they use, how they carried out a task before, what they typed, \
@@ -124,7 +125,13 @@ function hitLines(h: FrameHitDTO, rank: number): string {
   if (h.taskSummary !== null) out.push(`   Task: ${h.taskSummary}`);
   if (h.segmentCaption !== null) out.push(`   On screen: ${h.segmentCaption}`);
   if (h.segmentDigest !== null) out.push(`   What happened: ${h.segmentDigest}`);
-  if (h.segmentTranscript !== null) out.push(`   Said: ${h.segmentTranscript}`);
+  // "Speech", not "Said": `segment.transcript` is ONE string merged from every
+  // audio blob overlapping the segment, and with computer audio recording that
+  // includes the far end of a call or a video's narration. Saying "Said" would
+  // attribute those words to the person recording — a claim nothing checked.
+  // Per-source attribution DOES exist, on `transcript_clip_source`; surfacing it
+  // here needs a DTO field and is deliberately not faked from this string.
+  if (h.segmentTranscript !== null) out.push(`   Speech: ${h.segmentTranscript}`);
   out.push(
     h.evidence.lanes.length > 0
       ? `   Matched in: ${h.evidence.lanes.map(laneText).join(", ")}`
@@ -221,7 +228,9 @@ function momentText(d: ResultDetailDTO, hasImage: boolean): string {
   if (d.segment !== null) {
     if (d.segment.caption !== null) out.push(`On screen: ${d.segment.caption}`);
     if (d.segment.digest !== null) out.push(`What happened: ${d.segment.digest}`);
-    if (d.segment.transcript !== null) out.push(`Said: ${d.segment.transcript}`);
+    // See the note in the search renderer: this string may hold BOTH audio
+    // sources, so it is not attributed to the person recording.
+    if (d.segment.transcript !== null) out.push(`Speech: ${d.segment.transcript}`);
   }
   const labelled = d.ax
     .filter((e) => e.label !== undefined && e.label.length > 0)

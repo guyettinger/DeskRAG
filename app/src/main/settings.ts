@@ -87,6 +87,13 @@ const DEFAULTS: PersistedSettings = {
     // The device is `:default` — the input macOS Sound is set to — and NOT an
     // index. See LEGACY_AUDIO_DEVICE below for what the index cost.
     audio: { enabled: true, device: DEFAULT_AUDIO_INPUT, chunkSeconds: 10 },
+    // OFF by default, and for the opposite reason the microphone is on.
+    // Computer audio records the FAR END of a call and everything else the
+    // machine plays, so defaulting it on would start recording other people
+    // without the user having chosen to. It also asks macOS for a permission
+    // nothing else here needs, and a prompt the user did not provoke reads as
+    // the app overstepping.
+    desktopAudio: { enabled: false, chunkSeconds: 10 },
     ax: { enabled: false },
   },
   mcp: { enabled: true, port: DEFAULT_MCP_PORT },
@@ -268,6 +275,11 @@ export class SettingsStore {
             ...raw.signals?.audio,
             device: audioDeviceFor(raw.signals?.audio?.device),
           },
+          // No device coercion here, unlike `audio` above: `audioDeviceFor` is
+          // the microphone's `":0" -> ":default"` migration, and its whole
+          // justification is that ":0" was the exact string the OLD mic default
+          // wrote and so cannot have been deliberate. A tap has no device at all.
+          desktopAudio: { ...DEFAULTS.signals.desktopAudio, ...raw.signals?.desktopAudio },
           ax: { ...DEFAULTS.signals.ax, ...raw.signals?.ax },
         },
         mcp: {
@@ -331,6 +343,7 @@ export class SettingsStore {
         input: { ...s.input, ...p.input },
         activeWin: { ...s.activeWin, ...p.activeWin },
         audio: { ...s.audio, ...p.audio },
+        desktopAudio: { ...s.desktopAudio, ...p.desktopAudio },
         ax: { ...s.ax, ...p.ax },
       };
     }

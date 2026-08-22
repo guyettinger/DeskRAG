@@ -296,7 +296,9 @@ describe("search_experience", () => {
     });
     const text = textOf(await callTool(reader, "search_experience", { query: "x" }));
     expect(text).toMatch(/On screen: The Calculator shows 21/);
-    expect(text).toMatch(/Said: there we go/);
+    // "Speech", not "Said": segment.transcript merges every audio blob in the
+    // window, and with computer audio that can include a video's narration.
+    expect(text).toMatch(/Speech: there we go/);
     expect(text).toMatch(/What happened: clicked "=" in Calculator/);
   });
 

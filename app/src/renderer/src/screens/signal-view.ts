@@ -22,7 +22,7 @@
  *   bytes were not readable PCM, and no chunk yet means neither has been said.
  */
 
-import type { RecordingSignalDTO, TrackTone } from "@shared/types";
+import type { RecordingSignalDTO, TrackTone, SignalKind } from "@shared/types";
 
 /** The lamp. Three states, matching the `.led` vocabulary already in the sheet. */
 export type LedState = "ok" | "warn" | "off";
@@ -83,8 +83,46 @@ function loudest(peaks: number[] | null | undefined): number | null {
  * `live` is the recording, not the signal: a card must be able to say "ready"
  * while nothing is capturing, and "not capturing" while something is.
  */
+/**
+ * One audio card's well. Shared by the microphone and computer audio because
+ * the READING is identical — chunks, then peak, then an envelope — and only the
+ * two sentences differ. Two copies of this would be the `ax-dump`/`ax-exec`
+ * drift hazard in the place where the digital-silence callout lives.
+ */
+function audioReadout(
+  s: RecordingSignalDTO,
+  silenceWarning: string,
+  note: string,
+): SignalReadout {
+  const chunks = s.chunks ?? 0;
+  if (chunks === 0) return { led: "ok", figure: "Waiting for the first chunk", idle: true };
+  const peak = loudest(s.peaks);
+  if (peak === null)
+    return {
+      led: "warn",
+      figure: "Cannot read the audio",
+      idle: true,
+      warning: "The chunk is not 16-bit PCM.",
+    };
+  if (peak === 0)
+    return {
+      led: "warn",
+      figure: "No signal",
+      idle: false,
+      glyph: { kind: "wave", peaks: s.peaks ?? [] },
+      warning: silenceWarning,
+    };
+  return {
+    led: "ok",
+    figure: `peak ${peakDb(peak)}`,
+    idle: false,
+    glyph: { kind: "wave", peaks: s.peaks ?? [] },
+    note,
+  };
+}
+
 export function signalReadout(
-  id: "screen" | "input" | "active-win" | "audio" | "ax",
+  id: SignalKind,
   gate: SignalGate,
   live: boolean,
   s: RecordingSignalDTO | undefined,
@@ -129,34 +167,24 @@ export function signalReadout(
         glyph: { kind: "count", text: plural(s.focusChanges ?? 0, "switch", "switches") },
       };
     }
-    case "audio": {
-      const chunks = s.chunks ?? 0;
-      if (chunks === 0)
-        return { led: "ok", figure: "Waiting for the first chunk", idle: true };
-      const peak = loudest(s.peaks);
-      if (peak === null)
-        return {
-          led: "warn",
-          figure: "Cannot read the audio",
-          idle: true,
-          warning: "The chunk is not 16-bit PCM.",
-        };
-      if (peak === 0)
-        return {
-          led: "warn",
-          figure: "No signal",
-          idle: false,
-          glyph: { kind: "wave", peaks: s.peaks ?? [] },
-          warning: "Every sample is zero — check the input device in Settings.",
-        };
-      return {
-        led: "ok",
-        figure: `peak ${peakDb(peak)}`,
-        idle: false,
-        glyph: { kind: "wave", peaks: s.peaks ?? [] },
-        note: "The loudest sample in the last completed chunk.",
-      };
-    }
+    case "audio":
+      return audioReadout(
+        s,
+        "Every sample is zero — check the input device in Settings.",
+        "The loudest sample in the last completed chunk.",
+      );
+    case "desktop-audio":
+      return audioReadout(
+        s,
+        // BOTH causes, because from inside the process they are the same
+        // observation. A tap delivers nothing at all while the output device is
+        // idle — measured: five seconds of silence yields zero callbacks — and
+        // a refused permission looks identical. Naming one would be a claim
+        // nobody measured.
+        "Every sample is zero — either nothing is playing, or System Audio " +
+          "Recording is not granted to DeskRAG.",
+        "The loudest sample in the last completed chunk. DeskRAG's own sound is excluded.",
+      );
     case "ax": {
       const walks = s.walks ?? 0;
       if (walks === 0) return { led: "ok", figure: "No walk yet", idle: true };

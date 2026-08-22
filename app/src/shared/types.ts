@@ -7,13 +7,28 @@
 
 // --- signals -----------------------------------------------------------------
 
-export type SignalKind = "screen" | "input" | "active-win" | "audio" | "ax";
+export type SignalKind =
+  | "screen"
+  | "input"
+  | "active-win"
+  | "audio"
+  | "desktop-audio"
+  | "ax";
 
 export interface SignalConfig {
   screen: { enabled: boolean; fps: number; imageMaxWidth: number };
   input: { enabled: boolean };
   activeWin: { enabled: boolean };
   audio: { enabled: boolean; device: string; chunkSeconds: number };
+  /**
+   * Computer audio — everything this Mac PLAYS, captured through a Core Audio
+   * process tap.
+   *
+   * No `device`, unlike the microphone: a global tap has nothing to choose
+   * between, so there is no equivalent of the `:default` answer the user
+   * already gave macOS Sound.
+   */
+  desktopAudio: { enabled: boolean; chunkSeconds: number };
   ax: { enabled: boolean };
 }
 
@@ -870,6 +885,10 @@ export interface EnvInfo {
   platform: string;
   ffmpegAvailable: boolean;
   axSidecarAvailable: boolean;
+  /** macOS 14.2+, where Core Audio process taps exist at all. */
+  audioTapSupported: boolean;
+  /** The `audio-tap` sidecar is on disk (`npm run build:ax` builds it). */
+  audioTapAvailable: boolean;
   whisperConfigured: boolean;
   dataDir: string;
   /**

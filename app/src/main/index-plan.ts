@@ -239,7 +239,9 @@ export const INDEX_STAGES: readonly StageSpec[] = [
     id: "transcribe",
     label: () => "Transcribing",
     phase: "enrichment",
-    describe: () => "Turns the recorded microphone audio into text and per-utterance clips.",
+    describe: () =>
+      "Turns the recorded audio — microphone and computer — into text and " +
+      "per-utterance clips, each tagged with the source it came from.",
     needs: ["segment"],
     gate: (f) => f.hasAudio && f.whisper,
     // The two facts fail for completely different reasons and the fix differs:

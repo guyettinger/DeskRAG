@@ -585,22 +585,40 @@ a:focus-visible {
 
 /* ---- signal switches ---------------------------------------------------- */
 
-/* TWO UP IS THE FLOOR, FIVE UP IS THE POINT. `auto-fill` cannot express "five,
-   or a clean fold": at `minmax(220px, 1fr)` the fit count was 4 for every page
-   width between 916 and 1104px, so the default window showed 4 + 1 — one card
+/* 2, 3 OR 6 UP — EVERY FOLD IS CLEAN. `auto-fill` cannot express "a clean
+   fold": at `minmax(220px, 1fr)` the fit count was 4 for every page width
+   between 916 and 1104px, so the default window showed 4 + 1 — one card
    orphaned on a row of its own with three cards' worth of gap beside it. The
-   set is a FIXED five (`SIGNALS` in RecordScreen.tsx), not an open list, so the
-   band can say five as soon as it has room for five and two until then. */
+   set is a FIXED SIX (`SIGNALS` in RecordScreen.tsx), not an open list.
+
+   Six is a kinder number than the five this held before: 2, 3 and 6 all divide
+   it, so no step can orphan a card. Five could not fold at all, and adding
+   computer audio to a `repeat(5)` band produced exactly the 5 + 1 the comment
+   above was written about. */
 .signals {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--s3);
 }
-/* 940px = five cards at ~178px, the narrowest that fits a signal's name beside
-   its 38px switch on one line. Measured in the running app, not derived. */
-@container recband (min-width: 940px) {
+/* MEASURED IN THE RUNNING APP, not derived — and the measurement that counts is
+   WRAPPING, not clipping. A name that no longer fits does not overflow its box,
+   it takes a second line, so a width check passes while the card visibly breaks:
+   "Accessibility tree" wrapped at 6-up under a threshold chosen that way, and it
+   took reading the screenshot to see it.
+
+   Measured by line count against the name's own line-height: the longest name
+   ("Accessibility tree", 117.7px of text; "Computer audio" is 109.4px) needs a
+   119px box beside its 38px switch. Three cards clear that from a band of 669px
+   and six from 1350px, so the stops are those rounded up. The default 1180px
+   window lands on 3-up — two clean rows of three. */
+@container recband (min-width: 680px) {
   .signals {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@container recband (min-width: 1360px) {
+  .signals {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
   }
 }
 /* A CHANNEL STRIP, not a checkbox. Each card says what it captures, what it is

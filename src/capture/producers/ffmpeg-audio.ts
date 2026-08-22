@@ -11,9 +11,11 @@
  * set to — resolved in start() against the machine's real device table. An
  * INDEX is not a safe default: index 0 is often a virtual device that records
  * silence (see resolveAudioInput). Desktop/system audio needs a loopback
- * device (e.g. BlackHole) selected via `device`. Like FfmpegScreenProducer this
- * only spawns a subprocess (no native addon), but it is NOT re-exported from the
- * barrel — import it from this path.
+ * device (e.g. BlackHole) selected via `device`, but the shipped route for
+ * computer audio is `SystemAudioProducer` and its Core Audio tap — macOS
+ * exposes no system audio to avfoundation at all. Like FfmpegScreenProducer
+ * this only spawns a subprocess (no native addon), so it IS re-exported from
+ * the barrel.
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
@@ -54,7 +56,8 @@ export interface FfmpegAudioOptions {
 const BITS_PER_SAMPLE = 16;
 
 export class FfmpegAudioProducer implements Producer {
-  readonly id = "audio";
+  /** Instance-derived: `SystemAudioProducer` is the other audio producer. */
+  readonly id: string;
   private proc: ChildProcess | undefined;
   private ctx: CaptureContext | undefined;
   private ingestChain: Promise<void> = Promise.resolve();
@@ -76,6 +79,7 @@ export class FfmpegAudioProducer implements Producer {
 
   constructor(private readonly opts: FfmpegAudioOptions = {}) {
     this.media = opts.media ?? "mic";
+    this.id = `audio-${this.media === "mic" ? "mic" : "desktop"}`;
     this.sampleRate = opts.sampleRate ?? 16000;
     this.channels = opts.channels ?? 1;
     const chunkSeconds = opts.chunkSeconds ?? 10;

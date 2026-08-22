@@ -145,6 +145,34 @@ CREATE TABLE IF NOT EXISTS transcript_clip (
 CREATE INDEX IF NOT EXISTS idx_transcript_clip_session
   ON transcript_clip(session_id, t_mono_start);
 
+-- WHICH AUDIO SOURCE a clip's words came from.
+--
+-- A SIDE TABLE, because transcript_clip already exists on every install and
+-- this file is CREATE TABLE IF NOT EXISTS with no migration step: a new TABLE
+-- appears on a database that predates it, but an existing table's SHAPE can
+-- never change. The precedent is exact and was verified rather than assumed
+-- each time -- ax_snapshot, ax_snapshot_boundary, trace_node_source,
+-- segment_app_caption, index_job, and transcript_clip itself.
+--
+-- ABSENCE IS THE MARKER, the way a missing session_clock row marks a recording
+-- timed by arrival. A clip written before this table existed has no row here,
+-- and that reads as "the source was not recorded" -- NEVER as "microphone".
+-- Guessing from the blob whose window contains the clip is wrong in precisely
+-- the case that matters: a session capturing both sources has overlapping
+-- windows by construction, which is the whole reason this table exists.
+--
+-- blob_id, not just media: it is the only path from a sentence back to the
+-- BYTES it was transcribed from, which is what 'ffmpeg -af volumedetect' needs
+-- when a transcript looks wrong. ON DELETE SET NULL rather than CASCADE --
+-- losing the file must not delete the record that there were words.
+CREATE TABLE IF NOT EXISTS transcript_clip_source (
+  clip_id  TEXT PRIMARY KEY REFERENCES transcript_clip(id) ON DELETE CASCADE,
+  media    TEXT NOT NULL,              -- Media: 'mic' | 'desktop_audio'
+  blob_id  TEXT REFERENCES blob(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_transcript_clip_source_media
+  ON transcript_clip_source(media);
+
 CREATE TABLE IF NOT EXISTS frame (
   id            TEXT PRIMARY KEY,
   session_id    TEXT NOT NULL REFERENCES session(id) ON DELETE CASCADE,
@@ -471,6 +499,7 @@ export const DERIVED_SESSION_TABLES = [
   "session_reflection",
   "segment_fts",
   "transcript_clip",
+  "transcript_clip_source",
   "frame_segment",
   "region",
   "region_fts",

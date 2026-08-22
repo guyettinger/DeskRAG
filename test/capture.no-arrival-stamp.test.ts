@@ -25,6 +25,7 @@ describe("no producer stamps a sample from arrival time", () => {
   for (const file of [
     "src/capture/producers/ffmpeg-screen.ts",
     "src/capture/producers/ffmpeg-audio.ts",
+    "src/capture/producers/system-audio.ts",
   ]) {
     it(`${file} reads a wall clock only where it says why`, () => {
       const lines = readFileSync(file, "utf8").split("\n");

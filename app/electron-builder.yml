@@ -19,6 +19,11 @@ files:
 extraResources:
   - from: ../native/ax-dump
     to: ax-dump
+  # Computer audio. Unlike ax-dump this one is OPTIONAL — capture runs without
+  # it and the Record card says the signal is unavailable — but it must still be
+  # signed, for the same reason.
+  - from: ../native/audio-tap
+    to: audio-tap
 mac:
   icon: build/icon.icns
   category: public.app-category.productivity
@@ -35,8 +40,14 @@ mac:
   # without a signing identity: verify with `codesign`, not by reading this file.
   binaries:
     - Contents/Resources/ax-dump
+    - Contents/Resources/audio-tap
   extendInfo:
     NSMicrophoneUsageDescription: DeskRAG records microphone audio so your sessions can be transcribed and searched. Audio never leaves this machine.
+    # WITHOUT THIS KEY macOS NEVER PROMPTS, and the Core Audio tap simply
+    # returns nothing — which is indistinguishable from a quiet Mac. Inert on an
+    # unsigned build, like the entitlements: verify with `codesign`, not by
+    # reading this file.
+    NSAudioCaptureUsageDescription: DeskRAG records the audio your computer plays so your sessions can be transcribed and searched. Audio never leaves this machine.
     NSCameraUsageDescription: DeskRAG does not use the camera.
     NSAppleEventsUsageDescription: DeskRAG reads the accessibility tree of the focused app to make on-screen text searchable.
 win:

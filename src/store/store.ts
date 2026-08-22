@@ -64,6 +64,7 @@ import type {
   SessionSummaryRow,
   Store,
   VectorSpaceInsert,
+  Media,
 } from "./types.js";
 
 function parseElements(json: string): UIElement[] {
@@ -287,9 +288,19 @@ export class DualStore implements Store {
         `INSERT INTO transcript_clip(id, session_id, t_mono_start, t_mono_end, text)
          VALUES (@id, @sessionId, @tMonoStart, @tMonoEnd, @text)`,
       ),
+      insertTranscriptClipSource: db.prepare(
+        `INSERT INTO transcript_clip_source(clip_id, media, blob_id)
+         VALUES (@id, @media, @blobId)`,
+      ),
+      // LEFT, never INNER: a clip written before transcript_clip_source existed
+      // has no row there, and an inner join would make every one of them vanish
+      // from the rail — which reads as "transcription is broken".
       selectTranscriptClipsBySession: db.prepare(
-        `SELECT id, session_id, t_mono_start, t_mono_end, text
-           FROM transcript_clip WHERE session_id = ? ORDER BY t_mono_start`,
+        `SELECT c.id, c.session_id, c.t_mono_start, c.t_mono_end, c.text,
+                s.media, s.blob_id
+           FROM transcript_clip c
+           LEFT JOIN transcript_clip_source s ON s.clip_id = c.id
+          WHERE c.session_id = ? ORDER BY c.t_mono_start`,
       ),
       deleteRegionFts: db.prepare(`DELETE FROM region_fts WHERE region_id = ?`),
       insertSegmentFts: db.prepare(
@@ -796,6 +807,15 @@ export class DualStore implements Store {
             tMonoEnd: r.tMonoEnd,
             text: r.text,
           });
+          // The SAME transaction as the clip. No Lance is involved, so there is
+          // no commit-then-add ordering to respect here; what matters is that a
+          // clip can never exist without its source, which is the state that
+          // would read as "recorded before attribution existed".
+          this.stmts.insertTranscriptClipSource.run({
+            id: r.id,
+            media: r.media,
+            blobId: r.blobId,
+          });
         }
       });
       tx(rows);
@@ -809,6 +829,8 @@ export class DualStore implements Store {
       t_mono_start: number;
       t_mono_end: number;
       text: string;
+      media: string | null;
+      blob_id: string | null;
     }[];
     return rows.map((r) => ({
       id: r.id,
@@ -818,6 +840,8 @@ export class DualStore implements Store {
       tMonoStart: Number(r.t_mono_start),
       tMonoEnd: Number(r.t_mono_end),
       text: r.text,
+      media: (r.media as Media | null) ?? null,
+      blobId: r.blob_id ?? null,
     }));
   }
 

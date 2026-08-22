@@ -32,6 +32,7 @@ import type {
   SegmentVectorInsert,
   Store,
   TranscriptClipInsert,
+  Media,
 } from "../../store/types.js";
 
 export interface TranscriptRepresenterOptions {
@@ -139,6 +140,12 @@ export class TranscriptRepresenter {
           tMonoStart: b.tMonoStart + s.startMs,
           tMonoEnd: b.tMonoStart + s.endMs,
           text,
+          // The loop is already per BLOB, so the source is free here and
+          // unrecoverable later: with both audio sources recording, the blob
+          // windows overlap, so nothing downstream could work out which one a
+          // sentence came from.
+          media: b.media as Media,
+          blobId: b.id,
         });
       }
     }

@@ -22,7 +22,7 @@ import { ServiceExperienceReader } from "./mcp/reader.js";
 import { IPC } from "@shared/types";
 import { registerScheme, registerProtocol } from "./protocol.js";
 import { ensureToolPath } from "./tool-path.js";
-import { resolveAxBin } from "./sidecar-path.js";
+import { resolveAxBin, resolveSidecar } from "./sidecar-path.js";
 
 let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -72,6 +72,14 @@ ensureToolPath();
 if (!process.env["ERAG_AX_BIN"]) {
   const found = resolveAxBin(process.resourcesPath, __dirname, existsSync);
   if (found) process.env["ERAG_AX_BIN"] = found;
+}
+
+// The computer-audio sidecar, resolved the same two ways. Unlike ax-dump this
+// one is OPTIONAL: capture runs without it, and the Record card says the signal
+// is unavailable rather than the session refusing to start.
+if (!process.env["ERAG_AUDIO_TAP_BIN"]) {
+  const found = resolveSidecar("audio-tap", process.resourcesPath, __dirname, existsSync);
+  if (found) process.env["ERAG_AUDIO_TAP_BIN"] = found;
 }
 
 // `ax-exec` is DELIBERATELY NOT RESOLVED HERE. It is the binary that can click,

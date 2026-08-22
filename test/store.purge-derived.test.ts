@@ -132,7 +132,8 @@ async function seed(store: DualStore): Promise<Seeded> {
     source: "ollama fake",
   });
   await store.putTranscriptClips([
-    { id: ulid(), sessionId, tMonoStart: 5, tMonoEnd: 9, text: "hello" },
+    { id: ulid(), sessionId, tMonoStart: 5, tMonoEnd: 9, text: "hello",
+      media: "mic", blobId },
   ]);
   await store.associateFrameSegments(frameId, [segmentId]);
   await store.putRegions([
