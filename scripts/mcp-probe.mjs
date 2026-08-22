@@ -180,6 +180,27 @@ try {
     console.log("(no frameId from search — nothing indexed?)");
   }
 
+  // list_habits and get_habit were NOT exercised here for a long time, while
+  // both CLAUDE.md and this file's own header said "all eight tools" — the two
+  // that reach a person's own writing were the two nothing drove over a real
+  // socket. `habits-probe.mjs` covers the screen and the clipboard; this covers
+  // the wire.
+  console.log("\n=== list_habits ===");
+  const habits = textOf(await call(url, "list_habits"));
+  console.log(head(habits, 20));
+
+  const habitId = /^\s*id: (\S+)$/m.exec(habits)?.[1];
+  console.log("\n=== get_habit ===");
+  if (habitId) {
+    const doc = textOf(await call(url, "get_habit", { habitId }));
+    // The whole value of the tool is that its output IS a file: a preamble
+    // before the frontmatter would corrupt a paste to disk.
+    console.log(`starts with frontmatter: ${doc.startsWith("---")}`);
+    console.log(head(doc, 12));
+  } else {
+    console.log("(no habit kept — nothing to fetch)");
+  }
+
   // The log had better show every one of those calls.
   await page.waitForTimeout(300);
   const logged = await page.evaluate(() =>

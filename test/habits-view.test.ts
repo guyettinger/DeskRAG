@@ -6,8 +6,10 @@ import {
   evidenceLine,
   generateDisabledReason,
   orderHabits,
+  proposalEvidence,
+  proposalTitle,
 } from "../app/src/renderer/src/habits-view.js";
-import type { HabitBindingDTO, HabitDTO } from "@shared/types";
+import type { HabitBindingDTO, HabitDTO, HabitProposalDTO } from "@shared/types";
 
 /**
  * How the screen orders and labels what main hands it.
@@ -178,5 +180,49 @@ describe("generateDisabledReason", () => {
 
   it("is null when a model is available", () => {
     expect(generateDisabledReason({ available: true, model: "ollama m" })).toBeNull();
+  });
+});
+
+describe("what ×N means, in words", () => {
+  const proposal = (over: Partial<HabitProposalDTO> = {}): HabitProposalDTO => ({
+    routeKey: "A → B",
+    name: null,
+    label: "A → B",
+    count: 2,
+    steps: 3,
+    stepSummary: "2 steps",
+    variants: 0,
+    nameObservations: 0,
+    sessionIds: ["s1", "s2"],
+    apps: [],
+    preview: "",
+    ...over,
+  });
+
+  it("states the recurrence at every count, not only at one", () => {
+    expect(proposalEvidence(proposal({ count: 4 }))).toBe("4 recordings walked this");
+    expect(proposalEvidence(proposal({ count: 2 }))).toBe("2 recordings walked this");
+  });
+
+  it("never claims a single walk is a habit", () => {
+    const once = proposalEvidence(proposal({ count: 1 }));
+    expect(once).toBe("recorded once");
+    expect(once).not.toMatch(/habit/i);
+  });
+
+  it("says the same thing RouteList's tooltip says about the same route", () => {
+    expect(proposalTitle(proposal({ count: 4 }))).toBe("4 recordings took this path");
+    expect(proposalTitle(proposal({ count: 1 }))).toBe("1 recording took this path");
+  });
+
+  it("REPORTS name disagreement rather than smoothing it over", () => {
+    const title = proposalTitle(proposal({ count: 4, name: "File a bug", nameObservations: 2 }));
+    expect(title).toMatch(/4 recordings took this path/);
+    expect(title).toMatch(/2 of them called it/);
+  });
+
+  it("stays silent about agreement when every recording agrees", () => {
+    const title = proposalTitle(proposal({ count: 4, name: "File a bug", nameObservations: 4 }));
+    expect(title).toBe("4 recordings took this path");
   });
 });

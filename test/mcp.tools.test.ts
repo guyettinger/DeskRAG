@@ -7,6 +7,7 @@ import type {
   ResultDetailDTO,
   SearchResultDTO,
   HabitDTO,
+  HabitProposalDTO,
   HabitsDTO,
 } from "@shared/types";
 
@@ -646,6 +647,70 @@ describe("list_habits", () => {
     // Naming the number is the actionable half.
     expect(nothingKept.content[0]!.text).toMatch(/1 route it could propose from/);
     expect(nothingKept.content[0]!.text).toMatch(/list_flows/);
+  });
+
+  // Recurrence is the only evidence a proposal carries, and before this the
+  // catalogue stopped reporting it entirely the moment one habit was kept.
+  describe("candidates nobody has kept", () => {
+    const proposal = (over: Partial<HabitProposalDTO> = {}): HabitProposalDTO => ({
+      routeKey: "A → B",
+      name: null,
+      label: "A → B",
+      count: 2,
+      steps: 3,
+      stepSummary: "2 steps",
+      variants: 0,
+      nameObservations: 0,
+      sessionIds: ["s1", "s2"],
+      apps: [],
+      preview: "PREVIEW-SHOULD-NEVER-APPEAR",
+      ...over,
+    });
+
+    it("names a repeated route with its count, beside the kept habits", async () => {
+      const out = await callTool(
+        withHabits({
+          ...noHabits(),
+          habits: [habit()],
+          proposals: [proposal({ name: "File a bug", count: 4, sessionIds: ["a", "b", "c", "d"] })],
+        }),
+        "list_habits",
+        {},
+      );
+      const text = out.content[0]!.text!;
+      // The kept habit is still the answer; the candidate is context after it.
+      expect(text).toMatch(/NOT YET KEPT/);
+      expect(text).toMatch(/×4 {2}File a bug/);
+      expect(text.indexOf("NOT YET KEPT")).toBeGreaterThan(text.indexOf("id: "));
+      // A whole rendered record would dwarf the catalogue.
+      expect(text).not.toContain("PREVIEW-SHOULD-NEVER-APPEAR");
+    });
+
+    it("COUNTS a once-walked route and refuses to name it", async () => {
+      const out = await callTool(
+        withHabits({
+          ...noHabits(),
+          habits: [habit()],
+          proposals: [proposal({ name: "Walked once", count: 1, sessionIds: ["a"] })],
+        }),
+        "list_habits",
+        {},
+      );
+      const text = out.content[0]!.text!;
+      expect(text).not.toContain("Walked once");
+      expect(text).toMatch(/1 further route was walked once each and is not listed/);
+      // A single walk is never presented as a candidate.
+      expect(text).not.toMatch(/NOT YET KEPT/);
+    });
+
+    it("says nothing at all when every route is claimed", async () => {
+      const out = await callTool(
+        withHabits({ ...noHabits(), habits: [habit()], proposals: [] }),
+        "list_habits",
+        {},
+      );
+      expect(out.content[0]!.text).not.toMatch(/NOT YET KEPT|not listed/);
+    });
   });
 });
 

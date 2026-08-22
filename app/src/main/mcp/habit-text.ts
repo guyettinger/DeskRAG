@@ -71,6 +71,60 @@ function lines(s: HabitDTO): string[] {
  * reports the wrong one. The third names how many routes are available, because
  * that is the actionable half.
  */
+/** How many candidates to name before the rest are counted. */
+const MAX_CANDIDATES = 10;
+
+/**
+ * Recorded routes nobody has kept yet, named with their recurrence.
+ *
+ * THIS IS THE ONLY PLACE AN AGENT CAN SEE THEM. `renderHabitList` used to
+ * mention proposals solely in its EMPTY states, so the moment one habit was
+ * kept the catalogue stopped reporting that eleven other routes had been walked
+ * four times each — the very thing that makes one worth keeping.
+ *
+ * Recurrence is the whole disclosure, so the partition is by recurrence:
+ * routes walked more than once are NAMED, routes walked once are COUNTED and
+ * not named. That is `lines()`'s RECORDED ONCE rule applied one level up — a
+ * single walk is an observation, and presenting it beside a repeated route as
+ * though the two were the same kind of thing is the misreading the whole file
+ * exists to prevent. Counting them rather than dropping them keeps the
+ * disclosure complete.
+ *
+ * `stepSummary` is used verbatim and never recomputed: it is the field that
+ * exists BECAUSE the union of every walk over-counts. `preview` is deliberately
+ * never printed — it is a whole rendered record and would dwarf the catalogue.
+ */
+function candidateBlock(habits: HabitsDTO): string {
+  const repeated = habits.proposals.filter((p) => p.count > 1);
+  const once = habits.proposals.length - repeated.length;
+  if (repeated.length === 0 && once === 0) return "";
+
+  const out: string[] = [];
+  if (repeated.length > 0) {
+    out.push(
+      `NOT YET KEPT — ${repeated.length} recorded route${repeated.length === 1 ? "" : "s"} ` +
+        `walked more than once that nobody has kept as a habit. Recurrence is the evidence: ` +
+        `these have no prose and no HABIT.md, only a shape somebody repeated.`,
+    );
+    for (const p of repeated.slice(0, MAX_CANDIDATES)) {
+      const name = p.name ?? p.label;
+      const label = p.name === null ? "" : ` — ${p.label}`;
+      out.push(`  ×${p.count}  ${name}${label} · ${p.stepSummary}`);
+    }
+    const more = repeated.length - MAX_CANDIDATES;
+    if (more > 0) out.push(`  …and ${more} more, not listed.`);
+  }
+  if (once > 0) {
+    out.push(
+      `${once} further route${once === 1 ? " was" : "s were"} walked once each and ` +
+        `${once === 1 ? "is" : "are"} not listed — one walk is an observation, and nothing ` +
+        `has confirmed it repeats.`,
+    );
+  }
+  out.push("`get_flow` shows one in full; keeping one is done in DeskRAG → Habits.");
+  return out.join("\n");
+}
+
 export function renderHabitList(habits: HabitsDTO, noGraph: string): string {
   const kept = habits.habits.filter((s) => s.state !== "dismissed");
 
@@ -95,5 +149,10 @@ export function renderHabitList(habits: HabitsDTO, noGraph: string): string {
   const hidden = habits.habits.length - kept.length;
   const foot =
     hidden > 0 ? "\n\nDismissed proposals are not listed." : "";
-  return `${PREAMBLE}\n\n${body}${foot}`;
+  // The candidates come AFTER the kept habits: the catalogue's job is to answer
+  // "what has this user established", and what nobody has kept yet is context
+  // for that answer rather than part of it.
+  const candidates = candidateBlock(habits);
+  const tail = candidates === "" ? "" : `\n\n${candidates}`;
+  return `${PREAMBLE}\n\n${body}${foot}${tail}`;
 }

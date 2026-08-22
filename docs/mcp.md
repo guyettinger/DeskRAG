@@ -168,6 +168,13 @@ record-calculation-and-document-result
   route: Electron — localhost → Calculator → TextEdit → Electron
 ```
 
+After the kept habits, the catalogue names the recorded routes you have walked
+**more than once** but not yet kept, with how many recordings walked each —
+recurrence is the only evidence a proposal carries, and it is what makes one
+worth keeping. Routes walked once are counted rather than named: one walk is an
+observation, and listing it beside a repeated route would present it as the same
+kind of thing.
+
 The two disclosures that would change an agent's mind about fetching are in the
 **list**, not only in the file: a habit built from one recording, and a habit
 whose route has left the graph so its steps are a stored copy that has not been

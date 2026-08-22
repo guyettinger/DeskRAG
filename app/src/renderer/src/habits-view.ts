@@ -111,6 +111,38 @@ export function proposalCount(p: HabitProposalDTO): { text: string; repeated: bo
 }
 
 /**
+ * What `×N` MEANS, in words.
+ *
+ * The glyph alone is a bare number: `proposalCount` renders `×4` in muted mono
+ * and nothing on the card said what it counted unless the count was 1, where
+ * `· recorded once` appeared. So recurrence — the only evidence a proposal
+ * carries, and the thing that makes one worth keeping — was legible on exactly
+ * the routes where it was weakest.
+ *
+ * Worded from `RouteList`'s own `title`, which states the same fact about the
+ * same routes on the Flows screen; the two surfaces must not describe one route
+ * differently. Here rather than in the .tsx because a projection is what the
+ * root suite can reach — `.tsx` is not.
+ */
+export function proposalEvidence(p: HabitProposalDTO): string {
+  if (p.count === 1) return "recorded once";
+  return `${p.count} recordings walked this`;
+}
+
+/**
+ * The same fact for a tooltip, with the agreement clause `RouteList` discloses.
+ *
+ * Agreement is REPORTED, never smoothed over: recordings that share a shape can
+ * disagree about what they were for.
+ */
+export function proposalTitle(p: HabitProposalDTO): string {
+  const base = `${p.count} recording${p.count === 1 ? "" : "s"} took this path`;
+  return p.name !== null && p.nameObservations < p.count
+    ? `${base} · ${p.nameObservations} of them called it \u201C${p.name}\u201D`
+    : base;
+}
+
+/**
  * Proposals in `frequentRoutes`' own order — count first, then length.
  *
  * The order is preserved rather than recomputed: main already sorted them, and a

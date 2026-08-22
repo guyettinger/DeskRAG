@@ -409,7 +409,9 @@ const listHabitsTool: ToolDef = {
   description:
     "HABIT.md files the user has kept from their own recorded flows. Use one when you are " +
     "about to repeat something they have done before: it says how they actually did it, " +
-    "how many recordings agree, and what the evidence does not cover.",
+    "how many recordings agree, and what the evidence does not cover. It also names the " +
+    "recorded routes they have walked more than once but not yet kept, with how many " +
+    "recordings walked each.",
   inputSchema: { type: "object", properties: {}, additionalProperties: false },
   async run(reader) {
     return text(renderHabitList(reader.habits(), NO_GRAPH));

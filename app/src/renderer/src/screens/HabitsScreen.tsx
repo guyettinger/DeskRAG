@@ -27,6 +27,8 @@ import {
   generateDisabledReason,
   orderProposals,
   proposalCount,
+  proposalEvidence,
+  proposalTitle,
 } from "../habits-view.js";
 
 type Selection = { kind: "habit"; id: string } | { kind: "proposal"; routeKey: string };
@@ -296,14 +298,21 @@ function ProposalRow({
   const count = proposalCount(proposal);
   return (
     <li>
-      <button className={`habit${active ? " is-active" : ""}`} onClick={onSelect}>
+      <button
+        className={`habit${active ? " is-active" : ""}`}
+        onClick={onSelect}
+        title={proposalTitle(proposal)}
+      >
         <span className={`habit__count${count.repeated ? " is-repeated" : ""}`}>{count.text}</span>
         <span className="habit__title">{proposal.name ?? proposal.label}</span>
         {proposal.name !== null && <span className="habit__slug mono">{proposal.label}</span>}
         <span className="habit__meta mono">
           {proposal.stepSummary}
           {proposal.variants > 0 && " · merged"}
-          {proposal.count === 1 && " · recorded once"}
+          {/* Recurrence in WORDS, at every count. `×N` alone is a bare number,
+              and it used to be explained only when it was 1 — so the evidence
+              was legible exactly where it was weakest. */}
+          {` · ${proposalEvidence(proposal)}`}
         </span>
       </button>
     </li>
