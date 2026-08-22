@@ -125,6 +125,7 @@ const flows = (): FlowsDTO => ({
 const noHabits = (): HabitsDTO => ({
   habits: [],
   proposals: [],
+  domain: null,
   graphPresent: true,
   prose: { available: false, model: null },
 });
@@ -542,6 +543,7 @@ const habit = (over: Partial<HabitDTO> = {}): HabitDTO => ({
     recordings: 4,
     candidates: [],
     note: null,
+    walks: [],
   },
   ...over,
 });
@@ -636,6 +638,7 @@ describe("list_habits", () => {
             variants: 0,
             nameObservations: 0,
             sessionIds: ["s1", "s2"],
+            walks: [],
             apps: [],
             preview: "",
           },
@@ -662,6 +665,7 @@ describe("list_habits", () => {
       variants: 0,
       nameObservations: 0,
       sessionIds: ["s1", "s2"],
+      walks: [],
       apps: [],
       preview: "PREVIEW-SHOULD-NEVER-APPEAR",
       ...over,

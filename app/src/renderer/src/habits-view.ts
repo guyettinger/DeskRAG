@@ -6,7 +6,12 @@
  * `npm run typecheck`. Main decides what a row MEANS; this decides how it reads.
  */
 
-import type { HabitBindState, HabitDTO, HabitProposalDTO } from "@shared/types";
+import type {
+  HabitBindState,
+  HabitDTO,
+  HabitProposalDTO,
+  WalkMarkDTO,
+} from "@shared/types";
 
 /**
  * Which band a habit is drawn in.
@@ -105,19 +110,13 @@ export function evidenceLine(habit: HabitDTO): string {
   return times(b.recordings);
 }
 
-/** "×5", and whether that count is strong enough to lead with. */
-export function proposalCount(p: HabitProposalDTO): { text: string; repeated: boolean } {
-  return { text: `×${p.count}`, repeated: p.count > 1 };
-}
-
 /**
- * What `×N` MEANS, in words.
+ * What the count MEANS, in words.
  *
- * The glyph alone is a bare number: `proposalCount` renders `×4` in muted mono
- * and nothing on the card said what it counted unless the count was 1, where
- * `· recorded once` appeared. So recurrence — the only evidence a proposal
- * carries, and the thing that makes one worth keeping — was legible on exactly
- * the routes where it was weakest.
+ * There was a `×N` glyph here too, in muted mono in the row's gutter. It is
+ * gone: recurrence is now drawn as one mark per recording and said in this
+ * sentence, and a third statement of the same fact was the only one of the
+ * three that could be read as nothing but a number.
  *
  * Worded from `RouteList`'s own `title`, which states the same fact about the
  * same routes on the Flows screen; the two surfaces must not describe one route
@@ -166,4 +165,80 @@ export function generateDisabledReason(prose: {
   return prose.available
     ? null
     : "No summary model is configured, so the template writes this. Settings → Providers.";
+}
+
+/**
+ * Proposals split by whether anything has actually recurred.
+ *
+ * The screen's whole argument is that doing a thing once and doing it
+ * repeatedly are different in kind — an act versus a habit — and until this
+ * split they were drawn as one list distinguished by an `×1` in muted mono in a
+ * gutter. Measured on the real store: four proposals, every one of them `×1`,
+ * presented exactly as a route walked five times would be.
+ *
+ * A partition of `orderProposals`' order, never a re-sort: main already decided
+ * what "most walked" means, and a second opinion here would contradict it.
+ */
+export interface ProposalBands {
+  repeated: HabitProposalDTO[];
+  once: HabitProposalDTO[];
+}
+
+export function bandProposals(proposals: readonly HabitProposalDTO[]): ProposalBands {
+  const out: ProposalBands = { repeated: [], once: [] };
+  for (const p of orderProposals(proposals)) {
+    (p.count > 1 ? out.repeated : out.once).push(p);
+  }
+  return out;
+}
+
+/** One walk, placed along the screen's shared axis. `x` is a 0..1 fraction. */
+export interface LedgerMark {
+  sessionId: string;
+  x: number;
+  gained: boolean;
+}
+
+/**
+ * Walks placed on the SHARED domain, oldest at 0 and newest at 1.
+ *
+ * Shared is the whole point: every row is drawn against the same span, so a
+ * route walked three times last week and a route walked three times in March
+ * read differently at a glance. Scaling each row to its own extent would draw
+ * them identically, which is the thing a count already does.
+ *
+ * A domain of zero width places every mark at the CENTRE rather than at an end.
+ * It happens when the library holds a single moment, and there the axis carries
+ * no information at all — putting the marks hard right would assert recency the
+ * data cannot support.
+ */
+export function ledgerMarks(
+  walks: readonly WalkMarkDTO[],
+  domain: { from: number; to: number } | null,
+): LedgerMark[] {
+  if (domain === null) return [];
+  const width = domain.to - domain.from;
+  return walks.map((w) => ({
+    sessionId: w.sessionId,
+    x: width <= 0 ? 0.5 : (w.at - domain.from) / width,
+    gained: w.gained,
+  }));
+}
+
+const DAY_MONTH = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short" });
+
+/**
+ * When this was walked, in words — the half a count cannot say.
+ *
+ * A count answers "how often" and stops there, so a habit abandoned in March
+ * and one practised all week print the same `3 recordings`. post.md's third
+ * lesson is that habits are what you change, which is unanswerable without a
+ * date. Null when there is nothing to say rather than "unknown": an absent line
+ * is quieter than a line admitting it knows nothing.
+ */
+export function walkSpan(walks: readonly WalkMarkDTO[]): string | null {
+  if (walks.length === 0) return null;
+  const first = DAY_MONTH.format(new Date(walks[0]!.at));
+  const last = DAY_MONTH.format(new Date(walks[walks.length - 1]!.at));
+  return first === last ? first : `${first} – ${last}`;
 }

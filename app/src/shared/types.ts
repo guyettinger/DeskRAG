@@ -1247,6 +1247,31 @@ export type HabitState = "active" | "archived" | "dismissed";
 /** Where a habit's route went. See `app/src/main/habit-bind.ts`. */
 export type HabitBindState = "exact" | "rebound" | "ambiguous" | "orphaned";
 
+/**
+ * One recording that walked a route, placed on the wall clock.
+ *
+ * Recurrence is the whole argument a habit makes — a thing done once is an act,
+ * and a thing done repeatedly is a habit — so the screen draws every walk rather
+ * than printing a count and asking the reader to trust it. Wall clock, not
+ * `t_mono`: the question is WHEN in a person's life this happened, which is the
+ * one thing the monotonic clock deliberately cannot say.
+ *
+ * A count is a summary of this array and never the other way round.
+ */
+export interface WalkMarkDTO {
+  sessionId: string;
+  /** Wall clock of the recording's start. Display only, like `startedAt`. */
+  at: number;
+  /**
+   * Recorded AFTER the habit was kept — the same set as `gainedSessionIds`.
+   *
+   * The only evidence on this screen that a habit is still being practised
+   * rather than merely written down. Always false for a proposal, which has no
+   * keeping act to be after.
+   */
+  gained: boolean;
+}
+
 export interface HabitBindingDTO {
   state: HabitBindState;
   /** The route key at accept time. Only an explicit re-bind changes it. */
@@ -1271,6 +1296,14 @@ export interface HabitBindingDTO {
   candidates: string[];
   /** One sentence for the row and for the file. Null when nothing moved. */
   note: string | null;
+  /**
+   * Every recording in the LIVE route, oldest first — `recordings` itemised.
+   *
+   * Falls back to the bind-time recordings when there is no live route, because
+   * an orphaned habit still came from somewhere and drawing nothing would say it
+   * came from nowhere.
+   */
+  walks: WalkMarkDTO[];
 }
 
 /** One entry in a habit's version history. */
@@ -1349,6 +1382,8 @@ export interface HabitProposalDTO {
   variants: number;
   nameObservations: number;
   sessionIds: string[];
+  /** `sessionIds` on the wall clock, oldest first. `gained` is always false. */
+  walks: WalkMarkDTO[];
   apps: string[];
   /** The record it would produce, so Accept is never a blind act. */
   preview: string;
@@ -1371,6 +1406,18 @@ export interface HabitsDTO {
    * answers to one question — the drift `shared/evidence.ts` exists to stop.
    */
   prose: { available: boolean; model: string | null };
+  /**
+   * The span every ledger on this screen is drawn against, or null when there is
+   * nothing to draw.
+   *
+   * ONE domain for the whole screen, computed over every walk of every row. A
+   * per-row axis would rescale each row to its own extent, so a route walked
+   * three times in one afternoon and a route walked three times across a month
+   * would draw identically — which is the exact distinction the ledger exists to
+   * make. Shared here rather than in the renderer because main is the only side
+   * that sees all the rows at once.
+   */
+  domain: { from: number; to: number } | null;
 }
 
 /** Any subset. Absent means unchanged — the `SettingsPatch` precedent. */
