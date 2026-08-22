@@ -77,6 +77,7 @@ import {
   bindHabit,
   duplicateHabits,
   unclaimedRoutes,
+  walkMarks,
   type HabitBindingDoc,
 } from "./habit-bind.js";
 import {
@@ -1819,10 +1820,23 @@ export class DeskRagService {
    * button and `get_habit` hand out the same string. Two renderers of one file
    * is the drift hazard `flow-steps.ts` exists to avoid one level down.
    */
-  private toHabitDTO(row: HabitRow, flows: FlowsDTO | null): HabitDTO {
+  private toHabitDTO(
+    row: HabitRow,
+    flows: FlowsDTO | null,
+    startedAt: ReadonlyMap<string, number>,
+  ): HabitDTO {
     const doc = this.habitDocOf(row);
     const routes = flows?.routes ?? [];
     const bound = bindHabit(doc.binding, routes);
+
+    // The LIVE route's recordings, because that is what the habit reads from
+    // now. With no live route the bind-time ones stand in: an orphaned habit
+    // still came from somewhere, and an empty ledger would say it came from
+    // nowhere. A recording whose row is gone has no wall clock and is dropped
+    // rather than placed at the epoch.
+    const walkIds = bound.route?.sessionIds ?? doc.binding.sessionIds;
+    const gained = new Set(bound.gainedSessionIds);
+    const walks = walkMarks(walkIds, startedAt, gained);
 
     const binding: HabitBindingDTO = {
       state: bound.state,
@@ -1838,6 +1852,7 @@ export class DeskRagService {
       recordings: bound.route?.count ?? 0,
       candidates: bound.candidates,
       note: bound.note,
+      walks,
     };
 
     const markdown =
@@ -1891,7 +1906,15 @@ export class DeskRagService {
   habits(): HabitsDTO {
     const flows = this.flows();
     const rows = this.store.listHabits();
-    const rendered = rows.map((r) => this.toHabitDTO(r, flows));
+
+    // One pass for the whole screen. `flows()` builds the same map for its own
+    // reasons; this is deliberately a second local one rather than a field,
+    // because a cached session clock would go stale the moment a recording is
+    // deleted and nothing here would notice.
+    const startedAt = new Map<string, number>();
+    for (const s of this.store.listSessions()) startedAt.set(s.id, s.startedAt);
+
+    const rendered = rows.map((r) => this.toHabitDTO(r, flows, startedAt));
 
     // Duplicates are a relation over the whole set, so they are resolved here
     // and disclosed on both members. ACTIVE only: an archived habit is already
@@ -1938,6 +1961,9 @@ export class DeskRagService {
         variants: route.variants.length,
         nameObservations: route.nameObservations,
         sessionIds: [...route.sessionIds],
+        // Never `gained`: nobody has kept this, so there is no keeping act for a
+        // recording to have arrived after.
+        walks: walkMarks(route.sessionIds, startedAt, new Set()),
         apps: flows === null ? [] : flowApps(flows, route),
         // The record it WOULD produce, so Accept is never a blind act.
         preview:
@@ -1945,11 +1971,22 @@ export class DeskRagService {
       }),
     );
 
+    // The domain spans EVERY walk on the screen, kept habits and proposals
+    // alike, so one row's ledger can be read against another's.
+    const every = [
+      ...habits.flatMap((h) => h.binding.walks),
+      ...proposals.flatMap((p) => p.walks),
+    ].map((w) => w.at);
+
     return {
       habits,
       proposals,
       graphPresent: flows !== null,
       prose: this.proseStatus(),
+      domain:
+        every.length === 0
+          ? null
+          : { from: Math.min(...every), to: Math.max(...every) },
     };
   }
 

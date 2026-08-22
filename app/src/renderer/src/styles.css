@@ -4075,7 +4075,7 @@ select {
 /* One row. NOTHING TRUNCATES: a title wraps rather than being cut, because an
    ellipsis hides a broken layout instead of showing one. */
 .habit {
-  display: grid; grid-template-columns: auto 1fr; gap: var(--s0) var(--s2); width: 100%;
+  display: grid; grid-template-columns: 1fr; gap: var(--s1); width: 100%;
   padding: var(--s2); border-radius: 6px; text-align: left; color: var(--text);
   background: transparent; border: 1px solid transparent;
 }
@@ -4086,18 +4086,15 @@ select {
   background: var(--elevated); border-color: color-mix(in srgb, var(--accent) 40%, transparent);
   box-shadow: inset 2px 0 0 var(--accent);
 }
-.habit__count {
-  grid-row: 1 / span 3; align-self: start;
-  font-family: var(--font-mono); font-size: var(--t-meta); color: var(--muted);
-  padding-top: 1px;
-}
-.habit__count.is-repeated { color: var(--data-signal); }
-.habit__title { grid-column: 2; font-size: var(--t-small); line-height: 1.35; overflow-wrap: anywhere; }
-.habit__slug { grid-column: 2; font-size: var(--t-nano); color: var(--muted); overflow-wrap: anywhere; }
+.habit__title { font-size: var(--t-small); line-height: 1.35; overflow-wrap: anywhere; }
 .habit__meta {
-  grid-column: 2; display: flex; flex-wrap: wrap; gap: var(--s1);
+  display: flex; flex-wrap: wrap; gap: var(--s1);
   font-size: var(--t-nano); color: var(--muted);
 }
+.habit__meta > *:not(:first-child)::before {
+  content: "\00b7"; margin-right: var(--s1); color: var(--hairline);
+}
+.habit__meta > .habit__tag:not(:first-child)::before { content: none; }
 .habit__tag {
   padding: 0 var(--s1); border-radius: 3px; font-size: var(--t-nano);
   background: var(--sunken); color: var(--muted);
@@ -4105,10 +4102,44 @@ select {
 /* Amber, the app's existing "say something is off" tone. A binding that moved is
    the one thing on this screen that can be silently wrong. */
 .habit__bind {
-  grid-column: 2; justify-self: start; font-size: var(--t-nano); color: var(--amber);
+  justify-self: start; font-size: var(--t-nano); color: var(--amber);
   padding: 0 var(--s1); border-radius: 3px;
   background: color-mix(in srgb, var(--amber) 14%, transparent);
 }
+
+/* ---- the recurrence ledger ------------------------------------------------ */
+/* One mark per recording on the axis EVERY row shares, so the rows read down
+   the list as a contact sheet of what actually repeats. It is marks on a rule,
+   the same vernacular the track rail uses for a discrete event — never a bar and
+   never a percentage, because nothing here measured a magnitude and a habit has
+   no strength score to show. A count says how often; this says how often AND
+   when, and "when" is the half that answers whether it is still being done.
+
+   `--data-signal` is the register the rail already gives an indexed thing, and
+   `.habit__count.is-repeated` was already using it for exactly this fact. */
+.ledger { position: relative; display: block; width: 100%; }
+.ledger--row { height: 11px; }
+.ledger--lead { height: 16px; }
+.ledger__axis {
+  position: absolute; left: 0; right: 0; top: 50%;
+  height: 1px; background: var(--hairline-soft);
+}
+.ledger__mark {
+  position: absolute; top: 50%; width: 7px; height: 7px; border-radius: 50%;
+  margin: -3.5px 0 0 -3.5px;
+  background: var(--data-signal);
+}
+.ledger--lead .ledger__mark { width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; }
+/* HOLLOW when there is exactly one. The single visual difference between an
+   observation and a habit, and the reason it is a ring rather than a fainter
+   dot: a lighter dot reads as "less important", and a ring reads as "not filled
+   in yet", which is the true statement. */
+.ledger__mark.is-lone {
+  background: transparent; border: 1.5px solid var(--muted);
+}
+/* Recorded AFTER the habit was kept — the only evidence on this screen that
+   something is still being practised rather than merely written down. */
+.ledger__mark.is-gained { background: var(--data-ok); }
 
 .habitedit {
   flex: 1; min-width: 0; min-height: 0; overflow-y: auto;
@@ -4129,6 +4160,17 @@ select {
   white-space: pre-wrap; overflow-wrap: anywhere;
   max-height: 420px; overflow-y: auto;
 }
+/* The document's head. The habit's title used to exist on this pane only as the
+   VALUE of a text input, so the editor opened on the word TITLE and the thing
+   being edited was never named. */
+.habitedit__masthead { display: flex; flex-direction: column; gap: var(--s1); }
+.habitedit__slugline { font-size: var(--t-meta); color: var(--muted); overflow-wrap: anywhere; }
+.habitedit__evidence {
+  display: flex; flex-direction: column; gap: var(--s1);
+  margin-top: var(--s1); max-width: 420px;
+}
+.habitedit__evidence p { margin: 0; font-size: var(--t-meta); color: var(--muted); }
+
 .habitedit__field { display: flex; flex-direction: column; gap: var(--s1); }
 .habitedit__label {
   font-size: var(--t-meta); letter-spacing: 0.04em; text-transform: uppercase;
@@ -4138,7 +4180,14 @@ select {
    shouty wrapped lines; the label names the field and the hint explains it. */
 .habitedit__hint { font-size: var(--t-meta); color: var(--muted); line-height: 1.45; }
 .habitedit__actions { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; }
+/* Pushes Forget away from the rest. A destructive control adjacent to the one
+   people press most is a misclick waiting to be reported as a bug. */
+.habitedit__gap { flex: 1 1 var(--s4); }
 .habitedit__recordhead { display: flex; align-items: baseline; gap: var(--s2); }
+/* The file's own seam, drawn. Above it is prose a person or a model wrote;
+   below it is the recording, which neither of them can edit — the invariant the
+   whole table is AUTHORED for. */
+.habitedit__recordhead--cut { border-top: 1px solid var(--hairline); padding-top: var(--s3); }
 .habitedit__toggle {
   display: flex; gap: var(--s2); align-items: flex-start;
   font-size: var(--t-meta); color: var(--muted); line-height: 1.45;

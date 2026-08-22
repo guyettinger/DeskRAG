@@ -8,8 +8,16 @@ import {
   orderHabits,
   proposalEvidence,
   proposalTitle,
+  bandProposals,
+  ledgerMarks,
+  walkSpan,
 } from "../app/src/renderer/src/habits-view.js";
-import type { HabitBindingDTO, HabitDTO, HabitProposalDTO } from "@shared/types";
+import type {
+  HabitBindingDTO,
+  HabitDTO,
+  HabitProposalDTO,
+  WalkMarkDTO,
+} from "@shared/types";
 
 /**
  * How the screen orders and labels what main hands it.
@@ -31,6 +39,7 @@ const binding = (over: Partial<HabitBindingDTO> = {}): HabitBindingDTO => ({
   recordings: 2,
   candidates: [],
   note: null,
+  walks: [],
   ...over,
 });
 
@@ -193,6 +202,7 @@ describe("what ×N means, in words", () => {
     stepSummary: "2 steps",
     variants: 0,
     nameObservations: 0,
+    walks: [],
     sessionIds: ["s1", "s2"],
     apps: [],
     preview: "",
@@ -224,5 +234,72 @@ describe("what ×N means, in words", () => {
   it("stays silent about agreement when every recording agrees", () => {
     const title = proposalTitle(proposal({ count: 4, name: "File a bug", nameObservations: 4 }));
     expect(title).toBe("4 recordings took this path");
+  });
+});
+
+describe("an act and a habit are not drawn alike", () => {
+  const p = (routeKey: string, count: number): HabitProposalDTO => ({
+    routeKey,
+    name: null,
+    label: routeKey,
+    count,
+    steps: 2,
+    stepSummary: "2 steps",
+    variants: 0,
+    nameObservations: 0,
+    sessionIds: [],
+    walks: [],
+    apps: [],
+    preview: "",
+  });
+
+  it("splits on whether anything recurred", () => {
+    const out = bandProposals([p("a", 3), p("b", 1), p("c", 2), p("d", 1)]);
+    expect(out.repeated.map((x) => x.routeKey)).toEqual(["a", "c"]);
+    expect(out.once.map((x) => x.routeKey)).toEqual(["b", "d"]);
+  });
+
+  // A partition, never a re-sort: main already decided what "most walked" means.
+  it("keeps main's order inside each band", () => {
+    const out = bandProposals([p("z", 5), p("y", 9)]);
+    expect(out.repeated.map((x) => x.routeKey)).toEqual(["z", "y"]);
+  });
+});
+
+describe("the recurrence ledger", () => {
+  const w = (at: number, gained = false): WalkMarkDTO => ({
+    sessionId: `s${at}`,
+    at,
+    gained,
+  });
+
+  it("places walks on the SHARED domain, not on their own extent", () => {
+    const domain = { from: 0, to: 100 };
+    // Two rows whose walks span different fractions of one library must NOT
+    // both draw edge to edge — that is the whole reason the domain is shared.
+    expect(ledgerMarks([w(0), w(100)], domain).map((m) => m.x)).toEqual([0, 1]);
+    expect(ledgerMarks([w(50), w(75)], domain).map((m) => m.x)).toEqual([0.5, 0.75]);
+  });
+
+  it("centres a zero-width domain rather than asserting recency", () => {
+    expect(ledgerMarks([w(7)], { from: 7, to: 7 }).map((m) => m.x)).toEqual([0.5]);
+  });
+
+  it("draws nothing with no domain", () => {
+    expect(ledgerMarks([w(1)], null)).toEqual([]);
+  });
+
+  it("carries `gained` through, because it is the only 'still doing it' signal", () => {
+    const marks = ledgerMarks([w(0), w(10, true)], { from: 0, to: 10 });
+    expect(marks.map((m) => m.gained)).toEqual([false, true]);
+  });
+
+  it("says WHEN, which a count cannot", () => {
+    expect(walkSpan([])).toBeNull();
+    // One walk names one day rather than a span of it to itself.
+    const one = walkSpan([w(Date.UTC(2026, 7, 17, 12))]);
+    expect(one).not.toBeNull();
+    expect(one).not.toMatch(/–/);
+    expect(walkSpan([w(Date.UTC(2026, 7, 17, 12)), w(Date.UTC(2026, 7, 20, 12))])).toMatch(/–/);
   });
 });

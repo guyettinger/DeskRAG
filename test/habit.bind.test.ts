@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { bindHabit, duplicateHabits, unclaimedRoutes, type HabitBindingDoc } from "../app/src/main/habit-bind.js";
+import {
+  bindHabit,
+  duplicateHabits,
+  unclaimedRoutes,
+  walkMarks,
+  type HabitBindingDoc,
+} from "../app/src/main/habit-bind.js";
 import type { FlowRouteDTO } from "@shared/types";
 
 /**
@@ -221,5 +227,34 @@ describe("duplicateHabits", () => {
     const snapshot = JSON.stringify(input);
     duplicateHabits(input);
     expect(JSON.stringify(input)).toBe(snapshot);
+  });
+});
+
+describe("walks placed on the wall clock", () => {
+  const clock = new Map([
+    ["s1", 300],
+    ["s2", 100],
+    ["s3", 200],
+  ]);
+
+  it("returns them oldest first, whatever order the route holds them in", () => {
+    expect(walkMarks(["s1", "s2", "s3"], clock, new Set()).map((w) => w.at)).toEqual([
+      100, 200, 300,
+    ]);
+  });
+
+  it("flags the ones recorded after the habit was kept", () => {
+    const out = walkMarks(["s1", "s2"], clock, new Set(["s1"]));
+    expect(out.map((w) => [w.sessionId, w.gained])).toEqual([
+      ["s2", false],
+      ["s1", true],
+    ]);
+  });
+
+  // A route's sessionIds outlive the recordings they name — that is exactly why
+  // they are not a foreign key. A mark at the epoch would stretch the screen's
+  // shared domain over half a century and flatten every real walk to one pixel.
+  it("DROPS a recording with no row rather than placing it at the epoch", () => {
+    expect(walkMarks(["s1", "gone"], clock, new Set())).toHaveLength(1);
   });
 });

@@ -21,7 +21,7 @@
  * Pure: plain objects in, plain objects out. Root-tested.
  */
 
-import type { FlowRouteDTO } from "@shared/types";
+import type { FlowRouteDTO, WalkMarkDTO } from "@shared/types";
 
 /** What was true at the moment the user kept this habit. Never rewritten here. */
 export interface HabitBindingDoc {
@@ -217,4 +217,32 @@ export function unclaimedRoutes(
 ): FlowRouteDTO[] {
   const taken = new Set(claimed);
   return routes.filter((r) => !taken.has(r.id));
+}
+
+/**
+ * Recordings placed on the wall clock, oldest first.
+ *
+ * The screen draws one mark per walk instead of printing `×3`, so this is the
+ * function that turns a count back into the thing it counted. A count can only
+ * say how often; the marks say how often AND when, and "when" is the half that
+ * answers whether a habit is still being practised.
+ *
+ * A recording with no row in the session table is DROPPED, never placed at the
+ * epoch: a mark at 1970 would rescale the whole screen's shared domain to a
+ * half-century and flatten every real walk into one pixel. That is not
+ * hypothetical — a route's `sessionIds` outlive the recordings they name, which
+ * is exactly why `HabitBindingDoc.sessionIds` is not a foreign key.
+ */
+export function walkMarks(
+  sessionIds: readonly string[],
+  startedAt: ReadonlyMap<string, number>,
+  gained: ReadonlySet<string>,
+): WalkMarkDTO[] {
+  const out: WalkMarkDTO[] = [];
+  for (const sessionId of sessionIds) {
+    const at = startedAt.get(sessionId);
+    if (at === undefined) continue;
+    out.push({ sessionId, at, gained: gained.has(sessionId) });
+  }
+  return out.sort((a, b) => a.at - b.at);
 }
