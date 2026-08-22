@@ -4,6 +4,7 @@ import type { SessionTracksDTO, TrackGroup } from "@shared/types";
 import { api, keyframeLabel } from "../api.js";
 import { TrackLane } from "./TrackLane.js";
 import { groupLanes, preRollSec, readoutAt, rulerTicks } from "./track-view.js";
+import { clampTip } from "./hover-card.js";
 
 /** How far from the cursor a point event still counts as "here". */
 const HOVER_TOL_PX = 8;
@@ -517,19 +518,16 @@ function ReadoutCard({
     const el = cardRef.current;
     if (!el) return;
     const { width, height } = el.getBoundingClientRect();
-    const right = hover.x + TIP_OFFSET + width;
-    setPos({
-      left:
-        right > window.innerWidth - TIP_MARGIN
-          ? Math.max(TIP_MARGIN, hover.x - TIP_OFFSET - width)
-          : hover.x + TIP_OFFSET,
-      // Clamped rather than flipped: a card taller than the space on either
-      // side has no good anchor, so it is pinned inside the window instead.
-      top: Math.max(
-        TIP_MARGIN,
-        Math.min(hover.y + TIP_OFFSET, window.innerHeight - height - TIP_MARGIN),
+    // The flip-and-clamp rule itself lives in `hover-card.ts`, shared with the
+    // Habits ledger's card so the two cannot drift apart.
+    setPos(
+      clampTip(
+        { x: hover.x, y: hover.y },
+        { width, height },
+        { width: window.innerWidth, height: window.innerHeight },
+        { offset: TIP_OFFSET, margin: TIP_MARGIN },
       ),
-    });
+    );
   }, [hover.x, hover.y, readout]);
 
   if (readout.focus === null && readout.rows.length === 0) return null;

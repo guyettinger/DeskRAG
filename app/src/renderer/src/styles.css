@@ -3130,7 +3130,12 @@ select {
    scroller and a card anchored inside it would be cut off at exactly the lanes
    nearest its edges. Replaces a one-line readout that ellipsized precisely when
    it had the most to say. */
-.tracks__tip {
+/* `.ledger__tip` joins this rule rather than restating it: the Habits ledger's
+   card is the same object — a measured, clamped, fixed-position readout hanging
+   off a pointer — and two copies of one box is how the two would drift apart the
+   first time either was tuned. Only their CONTENTS differ, below. */
+.tracks__tip,
+.ledger__tip {
   position: fixed;
   z-index: 60;
   width: max-content;
@@ -4140,6 +4145,49 @@ select {
 /* Recorded AFTER the habit was kept — the only evidence on this screen that
    something is still being practised rather than merely written down. */
 .ledger__mark.is-gained { background: var(--data-ok); }
+
+/* ---- the ledger as an instrument ------------------------------------------
+   A mark IS a recording, so where the ledger is not inside a row button it can
+   be asked which one and opened. THE MARK IS NOT WIDENED TO BE CLICKED: the
+   button is a transparent hit box and the mark keeps its exact 9px, the same
+   split `.tracks__span` / `.tracks__span-hit` makes on the rail. A bar widened
+   for the mouse's benefit is a lie about the signal's extent, and a mark is
+   the smallest possible case of one. */
+.ledger--live .ledger__hit {
+  position: absolute; top: 50%;
+  /* 18px wide, comfortably past the rail's MIN_HIT_PX floor of 12 and centred
+     on the mark, so two recordings minutes apart are still separable. */
+  width: 18px; height: 18px; margin: -9px 0 0 -9px;
+  display: grid; place-items: center;
+  padding: 0; border: 0; background: none; cursor: pointer;
+}
+/* A mark with no live route has no moment to open. It still DRAWS — the
+   evidence is real even when the way in is not — and the card says why. */
+.ledger--live .ledger__hit:disabled { cursor: default; }
+.ledger--live .ledger__hit .ledger__mark {
+  position: static; margin: 0; top: auto; left: auto;
+}
+.ledger--live .ledger__hit:hover .ledger__mark:not(.is-lone),
+.ledger--live .ledger__hit:focus-visible .ledger__mark:not(.is-lone) {
+  background: var(--accent);
+}
+.ledger--live .ledger__hit:hover .ledger__mark.is-lone,
+.ledger--live .ledger__hit:focus-visible .ledger__mark.is-lone {
+  border-color: var(--accent);
+}
+.ledger--live .ledger__hit:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 50%;
+}
+
+/* The card's contents. The box itself is shared with `.tracks__tip` above. */
+.ledger__tip-when { font-size: var(--t-body); color: var(--text); }
+.ledger__tip-at { font-size: var(--t-meta); color: var(--muted); }
+.ledger__tip-note { font-size: var(--t-meta); color: var(--muted); margin-top: var(--s1); }
+/* The affordance, said rather than implied — a card that names a recording and
+   stops leaves the reader to guess that clicking does anything. */
+.ledger__tip-go {
+  font-size: var(--t-meta); color: var(--accent); margin-top: var(--s1);
+}
 
 .habitedit {
   flex: 1; min-width: 0; min-height: 0; overflow-y: auto;

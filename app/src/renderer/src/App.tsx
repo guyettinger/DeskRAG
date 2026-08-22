@@ -185,7 +185,9 @@ export function App(): React.JSX.Element {
               onOpenSettings={() => setRoute("settings")}
             />
           )}
-          {route === "habits" && <HabitsScreen />}
+          {/* The ledger's marks ARE the recordings, so they open like a Flows
+              source or a Search hit does — through the one minter above. */}
+          {route === "habits" && <HabitsScreen onOpenRecording={openRecording} />}
           {route === "search" && <SearchScreen onOpenRecording={openRecording} />}
           {route === "settings" && <SettingsScreen onEnv={setEnv} />}
         </main>

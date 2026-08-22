@@ -82,15 +82,46 @@ export const IconNextKeyframe = (p: P): React.JSX.Element => (
   </svg>
 );
 
-/* One path that branches into two, with a node at each fork and each end —
-   "the shapes your work takes". Deliberately NOT the old play-in-an-arc: this
-   screen explores recorded behavior and never replays it. */
-/* A page with a turned corner and a spark — a written artifact, not a graph. */
+/**
+ * Habits: the recurrence ledger, drawn inside the file it is written in.
+ *
+ * The screen's whole argument is that a thing done once is an act and a thing
+ * done repeatedly is a habit, and the screen already spends its boldness on
+ * exactly that — one mark per recording, on the axis every row shares. So the
+ * nav icon is that instrument, carried by the page a HABIT.md is.
+ *
+ * The marks are FILLED, because fill is the meaning here and not decoration
+ * (`IconRecord`, `IconLibrary`): a filled mark is a route that was walked, and
+ * the ledger's hollow ring means "seen once", which a nav icon must not claim.
+ * There are TWO of them, which is the screen's own threshold: one walk is an
+ * observation and two is the first thing that can be called a habit. Three were
+ * drawn first, unevenly spaced so the gaps would read as WHEN rather than as a
+ * tally — and at the 20px the rail actually renders, the two nearest merged
+ * into one blob. Legibility decided the count; a pair still says "again".
+ *
+ * THE MARKS SIT ON THE RULE, NOT ABOVE IT, and that was measured rather than
+ * composed: two dots floating over a line inside a page read unmistakably as a
+ * FACE at 96px — two eyes and a mouth, in an app whose brand mark is a ghost
+ * with two eyes. On the axis they are beads on a timeline, which is also how
+ * the real ledger draws a mark, and the pair is set left of the rule's midpoint
+ * so the axis runs on past them — a ledger's axis is time, and time does not
+ * stop at the last recording.
+ *
+ * The rule is the ONE stroke in this file that overrides `base`, to a hairline.
+ * At 1.7 it was as heavy as the marks and the three of them fused into one
+ * lumpy line at 96px. The real ledger draws a 1px axis under a 9px mark; this
+ * is the same ratio, and the axis is background to the marks in both.
+ *
+ * Deliberately NOT the spark it replaced: a spark says "generated", and the
+ * prose on this screen is the one thing in this app a person writes.
+ */
 export const IconHabits = (p: P): React.JSX.Element => (
   <svg {...base} {...p}>
     <path d="M14 3H7a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V7z" />
     <path d="M14 3v4h4" />
-    <path d="m10 13 1 2.2 2.2 1-2.2 1L10 19.4 9 17.2 6.8 16.2 9 15.2z" />
+    <path d="M7.9 15.6h8.2" strokeWidth={1} />
+    <circle cx="9.7" cy="15.6" r="1.4" fill="currentColor" stroke="none" />
+    <circle cx="13.7" cy="15.6" r="1.4" fill="currentColor" stroke="none" />
   </svg>
 );
 

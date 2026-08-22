@@ -1218,6 +1218,14 @@ export interface RouteWalkDTO {
   sessionId: string;
   /** The edges it walked, ordered by the moment it walked each. */
   edgeIds: string[];
+  /**
+   * When this recording walked it — LANE seconds, the axis the track rail is
+   * drawn in, exactly as `NodeSourceDTO.atSec` is. NOT media seconds, and never
+   * raw `tMono / 1000`: that was the measured Flows bug that landed every jump
+   * ~1.9s early. `frequentRoutes` mints both from the walk's own span.
+   */
+  atSec: number;
+  throughSec: number;
 }
 
 export interface FlowsDTO {
@@ -1262,6 +1270,21 @@ export interface WalkMarkDTO {
   sessionId: string;
   /** Wall clock of the recording's start. Display only, like `startedAt`. */
   at: number;
+  /**
+   * Where inside that recording the route was walked, and how much of it.
+   *
+   * `at` above answers WHEN IN A PERSON'S LIFE and deliberately cannot answer
+   * where inside the video — so a mark could be drawn but never followed. This
+   * is the walk itself: lane seconds (`RouteWalkDTO`), plus the number of steps
+   * THIS recording took, which is its own path and never the route's `edgeIds`
+   * union.
+   *
+   * NULL when the walk cannot be placed — an orphaned or ambiguous habit has no
+   * live route to read a moment from. One nullable object rather than three
+   * nullable fields, so the payload can never be half-built (the `OpenAt` nonce
+   * rule). A mark with no walk is still DRAWN; it is never offered as a link.
+   */
+  walk: { atSec: number; throughSec: number; steps: number } | null;
   /**
    * Recorded AFTER the habit was kept — the same set as `gainedSessionIds`.
    *

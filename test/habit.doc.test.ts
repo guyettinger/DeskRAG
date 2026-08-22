@@ -98,8 +98,8 @@ function flows(): FlowsDTO {
         sessionIds: ["s1", "s2"],
         variants: [],
         walks: [
-          { sessionId: "s1", edgeIds: ["e0"] },
-          { sessionId: "s2", edgeIds: ["e0"] },
+          { sessionId: "s1", edgeIds: ["e0"], atSec: 0, throughSec: 0 },
+          { sessionId: "s2", edgeIds: ["e0"], atSec: 0, throughSec: 0 },
         ],
       },
     ],
@@ -403,8 +403,8 @@ describe("recordings that did NOT take the same path", () => {
     const r = f.routes[0]!;
     r.edgeIds = ["e0", "e1", "e2"];
     r.walks = [
-      { sessionId: "s1", edgeIds: ["e0", "e1"] },
-      { sessionId: "s2", edgeIds: ["e0", "e2"] },
+      { sessionId: "s1", edgeIds: ["e0", "e1"], atSec: 0, throughSec: 0 },
+      { sessionId: "s2", edgeIds: ["e0", "e2"], atSec: 0, throughSec: 0 },
     ];
     return f;
   }
