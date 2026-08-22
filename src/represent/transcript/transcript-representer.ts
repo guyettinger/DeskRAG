@@ -63,6 +63,37 @@ export interface TranscriptRepresentResult {
 
 const AUDIO_MEDIA = new Set(["mic", "desktop_audio"]);
 
+/**
+ * WHAT WHISPER WRITES WHEN IT HEARD NO WORDS.
+ *
+ * whisper.cpp brackets everything it could not hear as speech — `(soft music)`,
+ * `[BLANK_AUDIO]`, `*sighs*` — and those strings are indistinguishable from
+ * speech to everything downstream: they land in `transcript_clip`, in
+ * `segment.transcript`, in the transcript VECTOR SPACE, and in the digest
+ * corpus. Nobody searches "soft music", so they add nothing retrievable while
+ * making a segment look like it had speech in it.
+ *
+ * MEASURED on the real store rather than assumed: of 24 clips, **22** were
+ * bracketed annotations and 0 were plausible speech — a desktop is a
+ * music-and-silence corpus far more often than a spoken one, and computer audio
+ * roughly doubled the count. Before this, 22 segments carried
+ * `"(soft music) (dramatic music)"` as their searchable speech.
+ *
+ * A TEXT RULE, DELIBERATELY NOT AN ENERGY GATE. This form is whisper's own and
+ * needs no threshold; a level floor would be a number nobody has swept, and set
+ * a shade too high it silently drops quiet speech — which is the failure this
+ * pipeline is least able to notice. What it therefore does NOT catch is a
+ * hallucinated WORD: the same measurement found `"You"` transcribed from a
+ * chunk that was digitally silent at −91 dB, and no text rule can tell that
+ * from someone actually saying "you".
+ */
+const NON_SPEECH = /^\s*[([*][^)\]*]*[)\]*]\s*$/;
+
+/** True when whisper bracketed this instead of hearing words. */
+export function isNonSpeechText(text: string): boolean {
+  return NON_SPEECH.test(text);
+}
+
 export class TranscriptRepresenter {
   private readonly transcriber: TranscriptionProvider;
   private readonly embedder: EmbeddingProvider;
@@ -133,7 +164,7 @@ export class TranscriptRepresenter {
       if (!r?.segments) continue;
       for (const s of r.segments) {
         const text = s.text.trim();
-        if (!text) continue;
+        if (!text || isNonSpeechText(text)) continue;
         clips.push({
           id: ulid(),
           sessionId,
@@ -169,7 +200,7 @@ export class TranscriptRepresenter {
             const absEnd = b.tMonoStart + s.endMs;
             if (absStart < seg.tMonoEnd && absEnd > seg.tMonoStart) {
               const piece = s.text.trim();
-              if (piece) pieces.push(piece);
+              if (piece && !isNonSpeechText(piece)) pieces.push(piece);
             }
           }
         } else {
@@ -177,7 +208,7 @@ export class TranscriptRepresenter {
           // can't give them): fall back to attributing its whole text to every
           // segment it overlaps — today's behavior. Duplication can return in
           // this case, but a transcript is still better than none.
-          pieces.push(r.text);
+          if (!isNonSpeechText(r.text.trim())) pieces.push(r.text);
         }
       }
 

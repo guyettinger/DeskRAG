@@ -21,7 +21,13 @@ export class FakeTranscription implements TranscriptionProvider {
 
   async transcribe(audio: Uint8Array): Promise<TranscriptionResult> {
     const sig = audio.reduce((n, b) => (n + b) % 100003, 0);
-    const text = `speech[${audio.length}:${sig}]`;
+    // NO BRACKETS, and that is load-bearing rather than cosmetic. This used to
+    // be `speech[<len>:<sig>]`, whose SECOND HALF under the split below is
+    // `[5:15]` — indistinguishable from the bracketed annotations whisper emits
+    // when it heard no words (`[BLANK_AUDIO]`, `(soft music)`), which
+    // `isNonSpeechText` drops at write time. The fixture would then transcribe
+    // to nothing and the failure reads as a bug in the representer.
+    const text = `speech ${audio.length} of ${sig}`;
     if (!this.opts.withTimestamps) return { text };
 
     const duration = this.opts.clipDurationMs ?? 10_000;

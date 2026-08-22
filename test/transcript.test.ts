@@ -117,7 +117,7 @@ describe("TranscriptRepresenter (transcript view)", () => {
     const early = segs.find((s) => s.granularity === "action" && s.tMonoStart === 0)!;
     const late = segs.find((s) => s.granularity === "action" && s.tMonoStart === 5000)!;
 
-    // Full text is "speech[5:<sig>]"; the synthetic split at duration/2=5000ms
+    // Full text is "speech 5 of <sig>"; the synthetic split at duration/2=5000ms
     // lines up exactly with the focus_change boundary, so each store segment
     // gets only its own half — never both.
     expect(early.transcript).not.toBeNull();
