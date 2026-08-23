@@ -17,12 +17,15 @@ import type {
   DroppedEarlyDTO,
   FlowRouteDTO,
   FlowsDTO,
+  HabitForkDTO,
+  HabitForkRowDTO,
   HabitStepDTO,
   HabitWayDTO,
   WalkFitDTO,
 } from "@shared/types";
 import { flowWalks, variantLetter, type FlowStep } from "./flow-steps.js";
 import { walkAnalysis } from "./walk-analysis.js";
+import { runPhrase, wayFork } from "./way-fork.js";
 
 /**
  * Each recording's fit against the standard, keyed by session.
@@ -89,11 +92,52 @@ function toStep(step: FlowStep): HabitStepDTO {
  * other's output.
  */
 export function habitWays(flows: FlowsDTO, route: FlowRouteDTO): HabitWayDTO[] {
+  const totalMs = new Map(
+    route.walks.map((w) => [w.sessionId, Math.max(0, Math.round((w.throughSec - w.atSec) * 1000))]),
+  );
   return flowWalks(flows, route).map((w) => ({
     letter: variantLetter(w.index),
     sessionIds: [...w.sessionIds],
     steps: w.steps.map(toStep),
+    // Dropped, never zeroed — a zero would read as an instantaneous recording
+    // and would drag a printed range's floor to 0.0s.
+    totalsMs: w.sessionIds.flatMap((id) => {
+      const ms = totalMs.get(id);
+      return ms === undefined ? [] : [ms];
+    }),
   }));
+}
+
+/**
+ * Where the ways fork, as the screen's own shape.
+ *
+ * Indices, not embedded steps: `way` indexes what `habitWays` returned for the
+ * same route, and `step` indexes that way's steps. `FlowStep.index` IS the
+ * step's position in its way — `stepsFor` mints it from the edge order — so the
+ * mapping is a read, not a search.
+ */
+export function habitFork(flows: FlowsDTO, route: FlowRouteDTO): HabitForkDTO | null {
+  const fork = wayFork({ flows, route });
+  if (fork === null) return null;
+  const rows: HabitForkRowDTO[] = fork.rows.map((row) =>
+    row.kind === "spine"
+      ? {
+          kind: "spine",
+          from: row.from,
+          to: row.to,
+          at: row.at.map((a) => ({ way: a.wayIndex, step: a.step.index })),
+        }
+      : {
+          kind: "fork",
+          after: row.after,
+          runs: row.runs.map((r) => ({
+            way: r.wayIndex,
+            steps: r.steps.map((st) => st.index),
+            phrase: runPhrase(r, row.after),
+          })),
+        },
+  );
+  return { rows, verdict: fork.verdict };
 }
 
 /** A's strict-prefix relation, as the screen's own shape. */

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { droppedEarlyOf, habitWays, walkFits } from "../app/src/main/habit-marks.js";
-import type { FlowsDTO, GraphEdgeDTO, GraphNodeDTO } from "@shared/types";
+import { droppedEarlyOf, habitFork, habitWays, walkFits } from "../app/src/main/habit-marks.js";
+import type { FlowRouteDTO, FlowsDTO, GraphEdgeDTO, GraphNodeDTO } from "@shared/types";
 
 /**
  * The mapping from B's projection to the three DTO fields the screen draws.
@@ -104,6 +104,75 @@ function once(): FlowsDTO {
   return f;
 }
 
+/**
+ * TWO ways over one route, with DISTINCT EDGE IDS PER SESSION — the real
+ * store's shape, and the whole reason the fork aligns on places rather than
+ * edges. The two ways share `Calculator → Calculator` and nothing else.
+ */
+function buildTwoWayRoute(): { flows: FlowsDTO; route: FlowRouteDTO } {
+  const mk = (
+    id: string,
+    from: string,
+    to: string,
+    sources: { sessionId: string; startedAt: number; atSec: number; throughSec: number }[],
+  ): GraphEdgeDTO => ({
+    id,
+    from,
+    to,
+    actions: [],
+    back: false,
+    provenance: "recorded",
+    observations: Math.max(1, sources.length),
+    sources,
+  });
+  const at = (sessionId: string, day: number, atSec: number, throughSec: number) => ({
+    sessionId,
+    startedAt: T_TUE + day * DAY_MS,
+    atSec,
+    throughSec,
+  });
+
+  const route: FlowRouteDTO = {
+    id: "Calculator → TextEdit",
+    count: 2,
+    label: "Calculator → TextEdit",
+    name: null,
+    nameObservations: 0,
+    nodeIds: ["n0", "n1", "n2"],
+    edgeIds: ["s1:e0", "s1:e1", "s2:e0", "s2:e1", "s2:e2"],
+    sessionIds: ["s1", "s2"],
+    variants: [],
+    walks: [
+      { sessionId: "s1", edgeIds: ["s1:e0", "s1:e1"], atSec: 0, throughSec: 8 },
+      { sessionId: "s2", edgeIds: ["s2:e0", "s2:e1", "s2:e2"], atSec: 0, throughSec: 12 },
+    ],
+  };
+  return {
+    flows: {
+      graph: {
+        id: "g",
+        entry: "n0",
+        nodes: [
+          node("n0", "Calculator", { app: "Calculator" }),
+          node("n1", "TextEdit", { app: "TextEdit" }),
+          node("n2", "Finder", { app: "Finder" }),
+        ],
+        edges: [
+          mk("s1:e0", "n0", "n0", [at("s1", 0, 0, 5)]),
+          mk("s1:e1", "n0", "n1", [at("s1", 0, 5, 8)]),
+          mk("s2:e0", "n0", "n0", [at("s2", 1, 0, 4)]),
+          mk("s2:e1", "n0", "n2", [at("s2", 1, 4, 9)]),
+          mk("s2:e2", "n2", "n1", [at("s2", 1, 9, 12)]),
+        ],
+        slots: [],
+      },
+      excludedApps: [],
+      routes: [route],
+    },
+    route,
+  };
+}
+
 describe("walkFits", () => {
   it("gives one fit per recording that walked the route", () => {
     const f = divergent();
@@ -197,5 +266,42 @@ describe("droppedEarlyOf", () => {
       walks: [],
     });
     expect(droppedEarlyOf(f, f.routes[0]!)).toEqual([{ places: ["Calculator"], count: 2 }]);
+  });
+});
+
+describe("habitFork", () => {
+  it("is null for a single-way route", () => {
+    const { flows, route } = buildTwoWayRoute();
+    const one = { ...route, count: 1, sessionIds: ["s1"], walks: [route.walks[0]!] };
+    expect(habitFork(flows, one)).toBeNull();
+  });
+
+  it("references steps by index, never by embedding them", () => {
+    const { flows, route } = buildTwoWayRoute();
+    const fork = habitFork(flows, route)!;
+    const ways = habitWays(flows, route);
+    for (const row of fork.rows) {
+      if (row.kind === "spine") {
+        for (const a of row.at) expect(ways[a.way]?.steps[a.step]).toBeDefined();
+      } else {
+        for (const r of row.runs)
+          for (const st of r.steps) expect(ways[r.way]?.steps[st]).toBeDefined();
+      }
+    }
+  });
+
+  it("carries the run phrase so the screen composes no words of its own", () => {
+    const { flows, route } = buildTwoWayRoute();
+    const fork = habitFork(flows, route)!;
+    const forks = fork.rows.filter((r) => r.kind === "fork");
+    expect(forks.length).toBeGreaterThan(0);
+    for (const row of forks) {
+      if (row.kind === "fork") for (const r of row.runs) expect(r.phrase.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("fills each way's own totals", () => {
+    const { flows, route } = buildTwoWayRoute();
+    expect(habitWays(flows, route).map((w) => w.totalsMs)).toEqual([[8000], [12000]]);
   });
 });
