@@ -843,3 +843,47 @@ describe("## When it happens", () => {
     expect(rec(f)).not.toMatch(/## When it happens/);
   });
 });
+
+describe("work started and dropped early", () => {
+  const withPrefix = (): FlowsDTO => {
+    const f = divergent();
+    // A SHORTER route whose places are a strict prefix of this one's.
+    f.routes.push({
+      id: "Calculator",
+      count: 2,
+      label: "Calculator",
+      name: null,
+      nameObservations: 0,
+      nodeIds: ["n0"],
+      edgeIds: [],
+      sessionIds: ["s8", "s9"],
+      variants: [],
+      walks: [],
+    });
+    return f;
+  };
+
+  it("discloses it as a caution, in the record", () => {
+    expect(rec(withPrefix())).toMatch(
+      /started and dropped early 2 further times|dropped early/i,
+    );
+  });
+
+  it("does not change the recording count", () => {
+    // A DISCLOSURE, never a merge. route.count is the number of recordings that
+    // walked THIS route, and the prefix relation must not touch it.
+    const f = withPrefix();
+    expect(f.routes[0]!.count).toBe(3);
+    expect(rec(f)).toMatch(/Recorded 3 times/);
+  });
+
+  it("says nothing when no route is a prefix of this one", () => {
+    expect(rec(divergent())).not.toMatch(/dropped early/i);
+  });
+
+  it("keeps cautionsFor callable with three arguments", () => {
+    // The 4th parameter is optional so no existing caller moves.
+    const f = flows();
+    expect(() => cautionsFor(f, f.routes[0]!, flowWalks(f, f.routes[0]!))).not.toThrow();
+  });
+});

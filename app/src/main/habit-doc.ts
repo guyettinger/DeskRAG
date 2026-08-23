@@ -35,6 +35,7 @@ import {
 import type { HabitBinding } from "./habit-bind.js";
 import {
   walkAnalysis,
+  type PrefixFact,
   type RhythmFacts,
   type StepCost,
   type WalkAnalysis,
@@ -91,6 +92,16 @@ export function cautionsFor(
   flows: FlowsDTO,
   route: FlowRouteDTO,
   walks: readonly FlowWalk[],
+  /**
+   * Routes whose places are a strict PREFIX of this one's — the same work begun
+   * and abandoned partway.
+   *
+   * Passed in rather than computed here, and OPTIONAL so no existing caller
+   * moves. A's committed carry-over: the fact reaches `get_habit` before any
+   * pixel exists, because both the record and the model's brief already read
+   * this function.
+   */
+  droppedEarly: readonly PrefixFact[] = [],
 ): string[] {
   const out: string[] = [];
   const many = walks.length > 1;
@@ -200,6 +211,20 @@ export function cautionsFor(
   if (vague.length > 0) {
     out.push(
       `${vague.length} of the ${route.nodeIds.length} states on this route are identified only by which application was in front. An agent can confirm it arrived in one, but cannot find it on screen.`,
+    );
+  }
+
+  // A DISCLOSURE, in the shape of `duplicates`, and never a merge: `route.count`
+  // is untouched and nothing is folded in. DeskRAG's route partition gives every
+  // recording exactly one route key, which is what makes `bindHabit`'s
+  // strict-majority rule a proof rather than a threshold — and it is also why
+  // abandonment is invisible from the full route's side without this line.
+  for (const p of droppedEarly) {
+    const n = p.count;
+    out.push(
+      `This work was started and dropped early ${n} further time${n === 1 ? "" : "s"}: ` +
+        `${n === 1 ? "a recording" : `${n} recordings`} went as far as ${p.places.join(" → ")} ` +
+        `and stopped. Those are not counted among the ${route.count} above.`,
     );
   }
 
@@ -510,7 +535,7 @@ export function recordedBlocks(input: RecordedInput): string {
 
   out.push(...rhythmBlock(analysis.rhythm));
 
-  const cautions = cautionsFor(flows, route, walks);
+  const cautions = cautionsFor(flows, route, walks, analysis.droppedEarly);
   if (cautions.length > 0) {
     out.push("## What this evidence does not say");
     out.push("");
@@ -728,7 +753,8 @@ export function briefFor(
   const walks = flowWalks(flows, route);
   const many = walks.length > 1;
   const { first, last } = span(allSteps(walks));
-  const cautions = cautionsFor(flows, route, walks);
+  const analysis = walkAnalysis({ flows, route });
+  const cautions = cautionsFor(flows, route, walks, analysis.droppedEarly);
   if (binding?.note != null) cautions.push(binding.note);
 
   // The variant is carried IN the step line rather than as a new `HabitBrief`
