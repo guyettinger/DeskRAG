@@ -178,6 +178,17 @@ continues.
 - `scripts/queue-handoff-probe.mjs` is the one that RECORDS: it proves a second
   recording can start while the first indexes, and that the queue yields to it.
   Two short real captures land in the library.
+- `scripts/habits-screen-probe.mjs` reads C2's three habit readings off the
+  REAL store: the portrait band, the rhythm strip, and the "Not walked lately"
+  band. Read-only — it navigates and clicks one row, and writes nothing. Two of
+  its three subjects were expected to be SILENT on a young library, and it
+  checks the silence rather than skipping it: the rhythm strip must state its
+  reason, and the fade line must appear on exactly the banded rows and no
+  others. Writing it that way has already paid — the spec predicted the strip
+  would refuse (3 walks, 2 days) and the library grew to 4 walks across 3 days
+  before the code shipped, so the grid drew and the OTHER branch is what ran.
+  It prints the corpus FIRST, so every number below is read against the library
+  that produced it.
 
 **Do not write `page.waitForFunction(async () => ...)`.** An async predicate
 returns a PROMISE, which is always truthy, so the wait resolves on its first
