@@ -227,12 +227,22 @@ document**, never faked from the label.
 
 Top level: habit id, slug, version, `routeKey`, and the Ways.
 
-**`showSamples` is honoured exactly as the record honours it.** Slot **names**
-always; recorded **values** only when the habit has samples on. The record
-withholds them because "they are verbatim keystrokes from the recordings and may
-include anything that was typed, including a password", and a JSON sibling that
-walked past that toggle would be a genuine leak rather than a formatting
-difference. This gets its own test.
+**Slot NAMES only. No recorded value ever appears in `steps.json`, and
+`showSamples` is not consulted.**
+
+This is stricter than "honour the toggle", and the reason is a rule already in
+force one level down. `habit-marks.ts` drops the samples when it builds
+`HabitStepDTO` and says why: *"Whether the rendered FILE prints values is a
+per-habit toggle, and the DTO that feeds a pixel has no toggle — so it carries
+no values at all."* The record is a file a person deliberately turned values on
+for; a JSON payload handed to a background process over a socket is not. Gating
+this on the toggle would be the weaker of the two available guarantees, and it
+would put the leak one boolean away instead of zero.
+
+So `HabitStepDTO.actions` gains `slot?: { name: string }` — the **name**, which
+the record already prints unconditionally, and never the samples. The test is
+therefore the stronger one: with `showSamples` **on**, no recorded value appears
+anywhere in the JSON.
 
 ## The catalogue picks up B's and C's disclosures
 
@@ -258,7 +268,9 @@ Nothing here computes anything new; every field already crosses the seam.
 | --- | --- |
 | `app/src/main/mcp/habit-search.ts` | **new** — tokenizer, BM25, fusion, the corpus disclosure, the skipped-lane sentence |
 | `app/src/main/mcp/habit-step.ts` | **new** — step address resolution, keyframe pick, the rendered step |
-| `app/src/main/mcp/habit-steps-json.ts` | **new** — the JSON projection, samples-aware |
+| `app/src/main/mcp/habit-steps-json.ts` | **new** — the JSON projection, values-free by construction |
+| `app/src/shared/types.ts` | `HabitStepDTO.actions[].slot?: {name}` and `liftWarnings` |
+| `app/src/main/habit-marks.ts` | `toStep` carries the slot NAME and the lift warnings |
 | `app/src/main/mcp/habit-text.ts` | the catalogue's new disclosure lines |
 | `app/src/main/mcp/tools.ts` | three `ToolDef`s; `TOOLS` and `SERVER_INSTRUCTIONS` |
 | `app/src/main/mcp/reader.ts` | two reader methods, two named return types, three `ServiceReads` members |
@@ -330,9 +342,10 @@ it with no Electron and no store:
   table above; that the keyframe pick is at-or-before; that the before-first
   case is disclosed; that regions carry role, label and bbox.
 - **`test/mcp.habit-steps-json.test.ts`** — the shape; predicates present for a
-  live edge and **absent and stated** for a missing one; and the leak test:
-  with `showSamples` off, no recorded value appears anywhere in the JSON, using
-  a fixture whose slot samples are a distinctive string.
+  live edge and **absent and stated** for a missing one; that an orphaned habit
+  is refused with its reason rather than answered from a stale snapshot; and
+  the leak test, in its strong form: with `showSamples` **on**, no recorded
+  value appears anywhere in the JSON.
 - **`test/mcp.tools.test.ts`** — eleven tools, each still a read.
 - **`test/mcp.readonly.test.ts`** — unchanged, and must stay green untouched.
   If it needs an edit, the design is wrong.
