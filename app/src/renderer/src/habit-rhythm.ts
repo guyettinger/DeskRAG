@@ -111,3 +111,95 @@ export function rhythmNote(grid: PhaseGrid): string {
 export function rhythmLabel(grid: PhaseGrid): string {
   return `Walks by hour of the week. ${rhythmNote(grid)}`;
 }
+
+const MS_PER_MIN = 60_000;
+const MS_PER_HOUR = 60 * MS_PER_MIN;
+const MS_PER_DAY = 24 * MS_PER_HOUR;
+const MS_PER_WEEK = 7 * MS_PER_DAY;
+
+/**
+ * THE ABSOLUTE FLOOR, and the only thing between this band and the day-one
+ * backfire `post.md` warns about.
+ *
+ * A rule made purely of a habit's own cadence adapts to any rhythm and needs no
+ * arbitrary constant — and on the author's real store it calls a healthy
+ * three-day-old habit fading within about two days, because its median gap is
+ * ~36h. The four-recordings-in-four-minutes cluster sets a ~1-minute cadence
+ * and would have that route marked fading by lunch.
+ *
+ * SHIPS UNSWEPT, and is recorded as such in `docs/todo.md`. A six-day library
+ * cannot falsify it.
+ */
+export const FADE_FLOOR_MS = 4 * MS_PER_WEEK;
+
+/** Multiples of its OWN rhythm a habit must exceed. One cycle late is DUE. */
+export const FADE_MULTIPLE = 3;
+
+/** Two walks give ONE gap, and one gap is not a cadence. */
+export const FADE_MIN_WALKS = 3;
+
+export interface Cadence {
+  /** Median gap between consecutive walks. Null below `FADE_MIN_WALKS`. */
+  medianGapMs: number | null;
+  /** Time since the LAST walk. Null with no walks. */
+  quietMs: number | null;
+}
+
+/**
+ * MEDIAN, never mean. The four-in-four-minutes cluster is exactly the shape
+ * that drags a mean toward zero, and a manufactured cadence is a manufactured
+ * verdict. Sorted first: `binding.walks` is documented oldest-first, and a
+ * rule this consequential should not depend on a caller honouring that.
+ */
+export function cadenceOf(walks: readonly WalkMarkDTO[], now: number): Cadence {
+  if (walks.length === 0) return { medianGapMs: null, quietMs: null };
+  const at = walks.map((w) => w.at).sort((a, b) => a - b);
+  const quietMs = now - at[at.length - 1]!;
+  if (walks.length < FADE_MIN_WALKS) return { medianGapMs: null, quietMs };
+
+  const gaps: number[] = [];
+  for (let i = 1; i < at.length; i += 1) gaps.push(at[i]! - at[i - 1]!);
+  gaps.sort((a, b) => a - b);
+  const mid = gaps.length >> 1;
+  return {
+    medianGapMs: gaps.length % 2 === 1 ? gaps[mid]! : (gaps[mid - 1]! + gaps[mid]!) / 2,
+    quietMs,
+  };
+}
+
+/** Both guards, and both are load-bearing. See `FADE_FLOOR_MS`. */
+export function hasFaded(walks: readonly WalkMarkDTO[], now: number): boolean {
+  const { medianGapMs, quietMs } = cadenceOf(walks, now);
+  if (medianGapMs === null || quietMs === null) return false;
+  return quietMs > Math.max(FADE_MULTIPLE * medianGapMs, FADE_FLOOR_MS);
+}
+
+/**
+ * A duration in ONE unit at one decimal.
+ *
+ * Mechanical on purpose, so a test can pin every boundary. "about every day and
+ * a half" reads better and cannot be pinned; the mono meta line this sits in
+ * already prints digits everywhere else (`evidenceLine`, `walkSpan`).
+ */
+export function approxDuration(ms: number): string {
+  const scale = (n: number, unit: string): string => {
+    const r = Number(n.toFixed(1));
+    return `${r} ${unit}${r === 1 ? "" : "s"}`;
+  };
+  if (ms < MS_PER_HOUR) return scale(ms / MS_PER_MIN, "minute");
+  if (ms < 2 * MS_PER_DAY) return scale(ms / MS_PER_HOUR, "hour");
+  if (ms < 2 * MS_PER_WEEK) return scale(ms / MS_PER_DAY, "day");
+  return scale(ms / MS_PER_WEEK, "week");
+}
+
+/**
+ * The FACT, never a verdict: what its rhythm was, and how long it has been.
+ *
+ * "last walked 6 weeks ago" is a fact; "6 weeks behind" would be a scoreboard,
+ * and this repo prints no score. Null when the habit has not faded.
+ */
+export function fadeLine(walks: readonly WalkMarkDTO[], now: number): string | null {
+  if (!hasFaded(walks, now)) return null;
+  const { medianGapMs, quietMs } = cadenceOf(walks, now);
+  return `about every ${approxDuration(medianGapMs!)} · last walked ${approxDuration(quietMs!)} ago`;
+}
