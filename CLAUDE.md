@@ -87,6 +87,19 @@ npm run probe:routes          # which mining rule turns many recordings into the
                               # computed. PRINTS THE CORPUS FIRST and says so when it is
                               # too small to be a measurement -- the numbers quoted in
                               # graph-view.ts came from a 9-recording store that is gone.
+npm run probe:baseline        # which rule a habit's walks should be measured against.
+                              # walk-analysis.ts ships three -- majority, recent, none --
+                              # and each is wrong differently: majority calls a recently
+                              # adopted better path the deviation, recent lets one fumbled
+                              # session become the standard, none cannot say WHEN the
+                              # variation happened. Read-only and HEADLESS for probe:routes'
+                              # reason: the app takes no single-instance lock and WRITES on
+                              # startup, so launching it would make a second owner of SQLite.
+                              # PRINTS THE CORPUS FIRST and exits 1 when no route was walked
+                              # more than once -- there all three rules coincide and the
+                              # table is not a measurement. Also reports how many baselines
+                              # were chosen by TIEBREAK, which is the fragility that matters:
+                              # a standard picked that way is one recording from moving.
 npm run probe:transfer        # does a kept habit still resolve against a recording it was
                               # NOT built from -- the decisive question, and the one nothing
                               # else answers. Verifies each route state against the held-out

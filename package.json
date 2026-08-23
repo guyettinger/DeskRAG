@@ -40,6 +40,7 @@
     "probe:reflect": "npm run app:build && node scripts/reflect-probe.mjs",
     "probe:stability": "npm run app:build && node scripts/stability-probe.mjs",
     "probe:routes": "tsx scripts/routes-probe.ts",
+    "probe:baseline": "tsx scripts/baseline-probe.ts",
     "probe:transfer": "tsx scripts/transfer-probe.ts",
     "probe:highlight": "node scripts/highlight-probe.mjs",
     "probe:patchgeom": "node scripts/patch-geometry-probe.mjs",
