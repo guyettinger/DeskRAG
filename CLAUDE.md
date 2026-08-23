@@ -100,6 +100,24 @@ npm run probe:baseline        # which rule a habit's walks should be measured ag
                               # table is not a measurement. Also reports how many baselines
                               # were chosen by TIEBREAK, which is the fragility that matters:
                               # a standard picked that way is one recording from moving.
+npm run probe:fork            # where a habit's ways actually fork, on the library that
+                              # exists. Read-only and HEADLESS for probe:baseline's reason:
+                              # the app takes no single-instance lock and WRITES on startup.
+                              # PRINTS THE CORPUS FIRST and exits 1 when no route has more
+                              # than one way -- there is no fork to measure and the output
+                              # would be an empty table wearing a verdict. The fold is
+                              # proven by the suite; what this answers is whether it yields
+                              # a READING, which is how the prefix/suffix design was
+                              # falsified (Way C begins at `n0 - no state`, so the common
+                              # PREFIX across the four real ways is empty).
+                              # IT PASSES BOTH RESOLVERS, and both were paid for: with no
+                              # sessionStart `toEdgeSources` drops every source silently,
+                              # and with no laneOrigin it read Way C at 28.1s where the
+                              # SCREEN read 26.6s -- `laneSec` clamps at 0, so a walk that
+                              # begins before its video's first frame has atSec pulled to 0
+                              # while throughSec is not. Check every probe's resolvers: a
+                              # probe measuring nothing looks exactly like one that found
+                              # nothing.
 npm run probe:transfer        # does a kept habit still resolve against a recording it was
                               # NOT built from -- the decisive question, and the one nothing
                               # else answers. Verifies each route state against the held-out
