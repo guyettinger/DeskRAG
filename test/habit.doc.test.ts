@@ -802,3 +802,44 @@ describe("## Where the time goes", () => {
     expect(block).not.toMatch(/total|average|mean|median|fastest|slowest/i);
   });
 });
+
+describe("## When it happens", () => {
+  it("reports the weekday shape and an hour range", () => {
+    // NOT a literal hour: RhythmFacts reads LOCAL time and the suite runs in
+    // whatever zone the machine is in. The fixture's midday-mid-week timestamps
+    // are what make the WEEKDAY half safe under a ±14h shift; the hour half is
+    // asserted structurally for the same reason.
+    const md = rec(divergent());
+    expect(md).toMatch(/## When it happens/);
+    expect(md).toMatch(/All 3 recordings on a weekday/);
+    expect(md).toMatch(/(between \d\d:\d\d and \d\d:\d\d|around \d\d:\d\d) local time/);
+  });
+
+  it("reports the gaps between recordings", () => {
+    expect(rec(divergent())).toMatch(/Gaps between them: 1 day, 1 day/);
+  });
+
+  it("states that the cue cannot be recovered, whenever the block renders", () => {
+    // Measured: for all 3 recordings of the real store's only recurring route,
+    // the sole application in front before the work is DeskRAG's own Recorder.
+    // Without this paragraph an absent cue reads as "there was no cue".
+    const md = rec(divergent());
+    expect(md).toMatch(/recording starts when you press record/);
+    expect(md).toMatch(/cannot be recovered/);
+  });
+
+  it("never claims what preceded the work", () => {
+    const md = rec(divergent());
+    expect(md).not.toMatch(/## What preceded it/);
+    expect(md).not.toMatch(/after (Mail|Slack|Finder|DeskRAG|Electron)/i);
+  });
+
+  it("renders nothing when fewer than two recordings can be dated", () => {
+    const f = divergent();
+    f.graph.edges = f.graph.edges.map((e) => ({ ...e, sources: e.sources.slice(0, 1) }));
+    f.routes[0]!.walks = [{ sessionId: "s1", edgeIds: ["e0"], atSec: 2, throughSec: 6 }];
+    f.routes[0]!.sessionIds = ["s1"];
+    f.routes[0]!.count = 1;
+    expect(rec(f)).not.toMatch(/## When it happens/);
+  });
+});

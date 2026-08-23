@@ -35,6 +35,7 @@ import {
 import type { HabitBinding } from "./habit-bind.js";
 import {
   walkAnalysis,
+  type RhythmFacts,
   type StepCost,
   type WalkAnalysis,
   type WalkFit,
@@ -329,6 +330,70 @@ function timeBlock(steps: readonly StepCost[], baseWay: FlowWalk | undefined): s
   return out;
 }
 
+/** Sat and Sun as `Date#getDay` numbers them. Local, like everything in `RhythmFacts`. */
+const WEEKEND = new Set([0, 6]);
+
+const pad2 = (n: number): string => String(n).padStart(2, "0");
+
+/** A gap in whole days, or in hours when it is under one. */
+const gapText = (ms: number): string => {
+  const hours = Math.round(ms / 3_600_000);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"}`;
+  const days = Math.round(ms / 86_400_000);
+  return `${days} day${days === 1 ? "" : "s"}`;
+};
+
+/**
+ * When the work happens, and why nothing says what preceded it.
+ *
+ * The second paragraph is the POINT of this block, not a footnote. A's
+ * `AntecedentFact` anticipated an app cue reached through `antecedentAt`, and
+ * against the real store the naive implementation is wrong in a way no corpus
+ * growth fixes: for all three recordings of the only recurring route, the only
+ * application in front before the work begins is DeskRAG's own Recorder. That is
+ * structural — a recording begins when you press record, so the cue happens
+ * before the evidence exists — and reporting it would violate "the recorder is
+ * not part of the work it records". Excluding it, as that invariant requires,
+ * leaves null every time. So the block says so, because an absent cue and an
+ * unobservable one are different facts.
+ *
+ * Weekday-shape and an hour RANGE are the two statements this data supports.
+ * Anything sharper ("every Tuesday at 9") needs a corpus this library does not
+ * have, and is C's rhythm strip to draw rather than this file's to assert.
+ */
+function rhythmBlock(rhythm: RhythmFacts): string[] {
+  const n = rhythm.days.length;
+  if (n < 2) return [];
+
+  const weekend = rhythm.days.filter((d) => WEEKEND.has(d)).length;
+  const shape =
+    weekend === 0
+      ? "on a weekday"
+      : weekend === n
+        ? "at the weekend"
+        : `on ${n - weekend} weekday${n - weekend === 1 ? "" : "s"} and ${weekend} weekend day${weekend === 1 ? "" : "s"}`;
+
+  const lo = Math.min(...rhythm.hours);
+  const hi = Math.max(...rhythm.hours);
+  const when =
+    rhythm.hours.length === 0
+      ? ""
+      : lo === hi
+        ? `, around ${pad2(lo)}:00 local time`
+        : `, between ${pad2(lo)}:00 and ${pad2(hi + 1)}:00 local time`;
+
+  const out = ["## When it happens", "", `All ${n} recordings ${shape}${when}.`];
+  if (rhythm.intervalsMs.length > 0) {
+    out.push(`Gaps between them: ${rhythm.intervalsMs.map(gapText).join(", ")}.`);
+  }
+  out.push(
+    "",
+    "The application in front beforehand cannot be recovered: recording starts when you press record, so a recording contains no evidence of what preceded it.",
+    "",
+  );
+  return out;
+}
+
 /**
  * The record: steps, what varies, what the evidence does not say, evidence.
  *
@@ -442,6 +507,8 @@ export function recordedBlocks(input: RecordedInput): string {
   // Only when there is a second recording to read a duration AGAINST. One
   // recording's timings are a fact about one afternoon, not about a habit.
   if (route.count > 1) out.push(...timeBlock(analysis.steps, baseWay));
+
+  out.push(...rhythmBlock(analysis.rhythm));
 
   const cautions = cautionsFor(flows, route, walks);
   if (cautions.length > 0) {
