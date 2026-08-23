@@ -73,6 +73,7 @@ import { SignalTally } from "./recording-activity.js";
 import { IndexWorker } from "./index-worker.js";
 import { frequentRoutes, toGraphDTO } from "./graph-view.js";
 import { flowApps } from "./flow-steps.js";
+import { droppedEarlyOf, habitWays, walkFits } from "./habit-marks.js";
 import {
   bindHabit,
   duplicateHabits,
@@ -1845,7 +1846,19 @@ export class DeskRagService {
     // The live route's walks carry WHERE inside each recording it was walked.
     // With no live route there are none, and every mark is drawn without a
     // moment to open rather than with an invented one.
-    const walks = walkMarks(walkIds, startedAt, gained, bound.route?.walks ?? []);
+    // The fits come from the LIVE route, because that is what the ledger is
+    // drawn against. With no live route there is nothing to compare and every
+    // mark carries `fit: null` — which the screen draws as "no standard", never
+    // as "conformant".
+    const fits =
+      flows !== null && bound.route !== null ? walkFits(flows, bound.route) : new Map();
+    const walks = walkMarks(
+      walkIds,
+      startedAt,
+      gained,
+      bound.route?.walks ?? [],
+      fits,
+    );
 
     const binding: HabitBindingDTO = {
       state: bound.state,
@@ -1907,6 +1920,9 @@ export class DeskRagService {
       // A duplicate is a relation between two habits and cannot be computed
       // from one, so this is empty here rather than guessed.
       duplicates: [],
+      ways: flows !== null && bound.route !== null ? habitWays(flows, bound.route) : [],
+      droppedEarly:
+        flows !== null && bound.route !== null ? droppedEarlyOf(flows, bound.route) : [],
       markdown,
       binding,
     };
@@ -1972,7 +1988,16 @@ export class DeskRagService {
         sessionIds: [...route.sessionIds],
         // Never `gained`: nobody has kept this, so there is no keeping act for a
         // recording to have arrived after.
-        walks: walkMarks(route.sessionIds, startedAt, new Set(), route.walks),
+        // Never `gained`: nobody has kept this, so there is no keeping act for
+        // a recording to have arrived after. The fits are real either way — a
+        // proposal's recordings diverged or they did not.
+        walks: walkMarks(
+          route.sessionIds,
+          startedAt,
+          new Set(),
+          route.walks,
+          flows === null ? new Map() : walkFits(flows, route),
+        ),
         apps: flows === null ? [] : flowApps(flows, route),
         // The record it WOULD produce, so Accept is never a blind act.
         preview:

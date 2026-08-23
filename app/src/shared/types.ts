@@ -1266,6 +1266,26 @@ export type HabitBindState = "exact" | "rebound" | "ambiguous" | "orphaned";
  *
  * A count is a summary of this array and never the other way round.
  */
+/**
+ * How one recording's walk compared to the standard — COUNTS, never a verdict.
+ *
+ * The three counts and `reachedEnd` are what `WalkFit` carries; the display
+ * state is derived in `habits-view.ts`, which is `.ts` so the root suite can
+ * watch it change. A `kind: "deviated"` field here would put that decision in
+ * main, where no root test can see it.
+ *
+ * There is deliberately no ratio and no fitness float. `Baseline.reason` says
+ * the standard is chosen from the recordings themselves and is frequently
+ * tiebroken, so a deviation may be the BETTER path — a number would grade
+ * something the record declines to grade.
+ */
+export interface WalkFitDTO {
+  inserted: number;
+  skipped: number;
+  reordered: number;
+  reachedEnd: boolean;
+}
+
 export interface WalkMarkDTO {
   sessionId: string;
   /** Wall clock of the recording's start. Display only, like `startedAt`. */
@@ -1285,6 +1305,16 @@ export interface WalkMarkDTO {
    * rule). A mark with no walk is still DRAWN; it is never offered as a link.
    */
   walk: { atSec: number; throughSec: number; steps: number } | null;
+  /**
+   * How this recording compared to the standard, or null when there is no
+   * standard to compare against.
+   *
+   * NULL IS NOT "CONFORMANT". A habit recorded once has nothing to be
+   * consistent with, and drawing it in the canonical hue would claim it passed
+   * a check that was never run. Null under the same guard the record uses:
+   * fewer than two recordings, or no baseline way.
+   */
+  fit: WalkFitDTO | null;
   /**
    * Recorded AFTER the habit was kept — the same set as `gainedSessionIds`.
    *
@@ -1338,6 +1368,46 @@ export interface HabitRevisionDTO {
   what: string;
 }
 
+/** One step of one Way, structured so it can be drawn as an instrument. */
+export interface HabitStepDTO {
+  index: number;
+  edgeId: string;
+  from: string;
+  to: string;
+  actions: { action: string; target: string }[];
+  observations: number;
+  everyRecording: boolean;
+  /** The edge is not in the graph — an index defect, carried rather than dropped. */
+  missing: boolean;
+  /**
+   * The earliest recording that walked it, in LANE seconds. Null when the edge
+   * carries no sources, and then the step is drawn with its reason and nothing
+   * to open — the `StageSpec.skipReason` rule.
+   */
+  firstAt: { sessionId: string; startedAt: number; atSec: number } | null;
+}
+
+/** One distinct path through the route, with the recordings that took it. */
+export interface HabitWayDTO {
+  /** "A", "B", … — the same letter the record prints. */
+  letter: string;
+  sessionIds: string[];
+  steps: HabitStepDTO[];
+}
+
+/**
+ * A shorter route whose places are a strict PREFIX of this one's — the same
+ * work begun and abandoned partway.
+ *
+ * A DISCLOSURE and never a merge. Those recordings walked a DIFFERENT route
+ * with its own key, so they are not in `binding.walks` and must never be drawn
+ * on this habit's ledger; `binding.recordings` is untouched.
+ */
+export interface DroppedEarlyDTO {
+  places: string[];
+  count: number;
+}
+
 export interface HabitDTO {
   id: string;
   state: HabitState;
@@ -1377,6 +1447,10 @@ export interface HabitDTO {
    * merge is a human act, because prose is the one thing nothing can remake.
    */
   duplicates: string[];
+  /** The record's Ways, structured, so its steps can open their own moment. */
+  ways: HabitWayDTO[];
+  /** Empty is the common case. See `DroppedEarlyDTO`. */
+  droppedEarly: DroppedEarlyDTO[];
   /**
    * The whole HABIT.md.
    *

@@ -21,7 +21,7 @@
  * Pure: plain objects in, plain objects out. Root-tested.
  */
 
-import type { FlowRouteDTO, RouteWalkDTO, WalkMarkDTO } from "@shared/types";
+import type { FlowRouteDTO, RouteWalkDTO, WalkFitDTO, WalkMarkDTO } from "@shared/types";
 
 /** What was true at the moment the user kept this habit. Never rewritten here. */
 export interface HabitBindingDoc {
@@ -244,6 +244,13 @@ export function walkMarks(
   startedAt: ReadonlyMap<string, number>,
   gained: ReadonlySet<string>,
   walks: readonly RouteWalkDTO[] = [],
+  /**
+   * How each recording compared to the standard, keyed by session.
+   *
+   * Absent for a proposal and for an orphaned habit, and a session missing from
+   * it gets `fit: null` — which means NO STANDARD EXISTED, not "it conformed".
+   */
+  fits: ReadonlyMap<string, WalkFitDTO> = new Map(),
 ): WalkMarkDTO[] {
   const walked = new Map(walks.map((w) => [w.sessionId, w]));
   const out: WalkMarkDTO[] = [];
@@ -255,6 +262,7 @@ export function walkMarks(
       sessionId,
       at,
       gained: gained.has(sessionId),
+      fit: fits.get(sessionId) ?? null,
       walk:
         w === undefined
           ? null

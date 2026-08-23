@@ -54,6 +54,8 @@ const habit = (over: Partial<HabitDTO> = {}): HabitDTO => ({
   version: "0.1.0",
   history: [],
   duplicates: [],
+  ways: [],
+  droppedEarly: [],
   slug: "a-habit",
   title: "A habit",
   description: "Use when.",
@@ -273,6 +275,7 @@ describe("the recurrence ledger", () => {
     sessionId: `s${at}`,
     at,
     gained,
+    fit: null,
     walk: { atSec: 0, throughSec: 1, steps: 2 },
   });
 
@@ -301,7 +304,7 @@ describe("the recurrence ledger", () => {
 
   it("says when, where inside the recording, and what it walked", () => {
     const out = markReadout(
-      { sessionId: "s1", at: 1000, gained: false, walk: { atSec: 4, throughSec: 9, steps: 3 } },
+      { sessionId: "s1", at: 1000, gained: false, fit: null, walk: { atSec: 4, throughSec: 9, steps: 3 } },
       fmt,
     );
     expect(out).toEqual({
@@ -316,7 +319,7 @@ describe("the recurrence ledger", () => {
   it("counts one step in the singular", () => {
     expect(
       markReadout(
-        { sessionId: "s1", at: 1, gained: false, walk: { atSec: 0, throughSec: 1, steps: 1 } },
+        { sessionId: "s1", at: 1, gained: false, fit: null, walk: { atSec: 0, throughSec: 1, steps: 1 } },
         fmt,
       ).steps,
     ).toBe("1 step");
@@ -327,7 +330,7 @@ describe("the recurrence ledger", () => {
   it("names a recording made since the habit was kept", () => {
     expect(
       markReadout(
-        { sessionId: "s1", at: 1, gained: true, walk: { atSec: 0, throughSec: 1, steps: 2 } },
+        { sessionId: "s1", at: 1, gained: true, fit: null, walk: { atSec: 0, throughSec: 1, steps: 2 } },
         fmt,
       ).note,
     ).toBe("Recorded since you kept this");
@@ -339,7 +342,7 @@ describe("the recurrence ledger", () => {
    * indistinguishable from one nobody implemented, the `skipReason` rule.
    */
   it("states the reason rather than offering a dead link", () => {
-    const out = markReadout({ sessionId: "s1", at: 1, gained: false, walk: null }, fmt);
+    const out = markReadout({ sessionId: "s1", at: 1, gained: false, fit: null, walk: null }, fmt);
     expect(out.at).toBeNull();
     expect(out.steps).toBeNull();
     expect(out.action).toBeNull();
@@ -353,7 +356,7 @@ describe("the recurrence ledger", () => {
     expect(
       markLabel(
         markReadout(
-          { sessionId: "s1", at: 1, gained: true, walk: { atSec: 0, throughSec: 1, steps: 2 } },
+          { sessionId: "s1", at: 1, gained: true, fit: null, walk: { atSec: 0, throughSec: 1, steps: 2 } },
           fmt,
         ),
       ),
