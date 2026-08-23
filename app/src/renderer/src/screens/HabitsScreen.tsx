@@ -19,6 +19,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   HabitDTO,
+  HabitForkDTO,
   HabitPatch,
   HabitProposalDTO,
   HabitsDTO,
@@ -26,6 +27,7 @@ import type {
   WalkMarkDTO,
 } from "@shared/types";
 import { api, timecode, wallClock } from "../api.js";
+import { foldFork, waySecs, type ForkRunView } from "../way-fork-view.js";
 import { GhostLottie } from "../brand/GhostLottie.js";
 import {
   bandHabits,
@@ -45,6 +47,8 @@ import {
 } from "../habits-view.js";
 import type { LedgerMark } from "../habits-view.js";
 import { clampTip } from "./hover-card.js";
+import { DAYS, fadeLine, rhythmLabel, rhythmNote, rhythmOf } from "../habit-rhythm.js";
+import { placeLabel, portraitOf } from "../habit-portrait.js";
 
 /** Distance from the mark to its card, and from the card to the window edge —
     the rail's two constants, which the shared `clampTip` reads. */
@@ -124,7 +128,10 @@ export function HabitsScreen({
     );
   }
 
-  const bands = bandHabits(data.habits);
+  // Read once per render. The threshold is four weeks, so a stale read cannot
+  // move a row; a `useMemo` keyed on nothing would be the thing that could.
+  const now = Date.now();
+  const bands = bandHabits(data.habits, now);
   const seen = bandProposals(data.proposals);
   const nothing = data.habits.length === 0 && data.proposals.length === 0;
 
@@ -171,6 +178,8 @@ export function HabitsScreen({
         </div>
       </Head>
 
+      <Portrait data={data} />
+
       <div className="habits__stage">
         <aside className="habits__list">
           {bands.attention.length > 0 && (
@@ -190,6 +199,23 @@ export function HabitsScreen({
           {bands.mine.length > 0 && (
             <Band title="Kept">
               {bands.mine.map((s) => (
+                <HabitRow
+                  key={s.id}
+                  habit={s}
+                  domain={data.domain}
+                  active={habit?.id === s.id}
+                  onSelect={() => setSelected({ kind: "habit", id: s.id })}
+                />
+              ))}
+            </Band>
+          )}
+
+          {/* Below Kept, because these ARE kept — what changed is that they
+              stopped. The head states the fact and declines the verdict:
+              a standard that moves is not a streak that broke. */}
+          {bands.fading.length > 0 && (
+            <Band title="Not walked lately">
+              {bands.fading.map((s) => (
                 <HabitRow
                   key={s.id}
                   habit={s}
@@ -503,6 +529,61 @@ function MarkCard({
  * through the ordering alone — this is the one place in the sub-project where
  * the no-grade rule is carried by prose rather than by structure.
  */
+/**
+ * Where in the WEEK, beside the ledger's where in your life.
+ *
+ * The ledger draws an absolute wall clock shared by every row, which is what
+ * makes a habit practised last week read differently from one practised in
+ * March. It cannot say that a habit happens every Tuesday at 9am — and context
+ * stability is the measured driver of automaticity, so a habit in phase and one
+ * at random currently draw identically.
+ *
+ * BELOW THE FLOOR IT DRAWS NOTHING AND SAYS WHY. Three walks in 168 cells is
+ * decoration, and the author's real kept habit is exactly that case. A strip
+ * that merely never appeared would be indistinguishable from one nobody
+ * implemented — the `StageSpec.skipReason` rule, one screen over.
+ *
+ * One hue, `--data-0`, for the reason `Portrait` uses one.
+ */
+function Rhythm({ walks }: { walks: readonly WalkMarkDTO[] }): React.JSX.Element | null {
+  // Nothing to place at all. Rendered as nothing, exactly as `Ledger` returns
+  // null at zero marks — the editor is already saying there are no recordings.
+  if (walks.length === 0) return null;
+  const rhythm = rhythmOf(walks);
+  return (
+    <div className="rhythm">
+      <span className="eyebrow">In phase</span>
+      {rhythm.kind === "too-few" ? (
+        <p className="rhythm__note">{rhythm.reason}</p>
+      ) : (
+        <>
+          <div className="rhythm__grid" role="img" aria-label={rhythmLabel(rhythm.grid)}>
+            {rhythm.grid.cells.map((row, day) => (
+              <React.Fragment key={DAYS[day]}>
+                <span className="rhythm__day mono">{DAYS[day]}</span>
+                {row.map((count, hour) => (
+                  <span
+                    key={hour}
+                    className="rhythm__cell"
+                    style={
+                      count === 0
+                        ? undefined
+                        : {
+                            background: `color-mix(in oklab, var(--data-0) ${25 + Math.round(65 * (count / rhythm.grid.peak))}%, transparent)`,
+                          }
+                    }
+                  />
+                ))}
+              </React.Fragment>
+            ))}
+          </div>
+          <p className="rhythm__note">{rhythmNote(rhythm.grid)}</p>
+        </>
+      )}
+    </div>
+  );
+}
+
 function LedgerLegend(): React.JSX.Element {
   return (
     <div className="ledger-legend">
@@ -524,6 +605,107 @@ function LedgerLegend(): React.JSX.Element {
 }
 
 /**
+ * Where the ways fork.
+ *
+ * COLOUR CARRIES SPINE-VERSUS-FORK, NEVER WAY IDENTITY. Ways are told apart by
+ * their printed letter and their lane position, so hue is never the only
+ * channel and the palette does not have to stretch to N ways. The band is
+ * `--data-6`, the one unclaimed indexed slot — `--data-0` is C2's portrait,
+ * `--data-2`/`--data-3` are C1's deviated and short, and 1/4/5/7 are the
+ * semantic aliases.
+ *
+ * A step keeps its "Open" wherever it is drawn: C1's rule that the record is
+ * verifiable rather than merely trusted does not weaken inside a fork.
+ */
+function WayForkView({
+  ways,
+  fork,
+  onOpen,
+}: {
+  ways: readonly HabitWayDTO[];
+  fork: HabitForkDTO;
+  onOpen: (sessionId: string, atSec: number) => void;
+}): React.JSX.Element {
+  const view = foldFork(fork, ways);
+  return (
+    <div className="wayfork">
+      <p className="wayfork__lead">
+        These recordings took different paths. The numbered steps are the part every way has in
+        common; the band beneath a step is where they differ.
+      </p>
+      <div className="wayfork__chips">
+        {ways.map((w) => (
+          <span key={w.letter} className="wayfork__chip">
+            <b>Way {w.letter}</b> · {w.steps.length} step{w.steps.length === 1 ? "" : "s"} ·{" "}
+            {w.sessionIds.length === 1 ? "1 recording" : `${w.sessionIds.length} recordings`}
+            {w.totalsMs.length > 0 && <> · {w.totalsMs.map(waySecs).join(", ")}</>}
+          </span>
+        ))}
+      </div>
+      {view.leading.length > 0 && <ForkBand runs={view.leading} />}
+      <ol className="wayfork__spine">
+        {view.steps.map((s) => (
+          <li key={s.n} className="wayfork__step">
+            <span className="wayfork__places">
+              {/* The number is DRAWN, not left to the <ol> marker: the row is a
+                  flex container, which removes the list-item display and takes
+                  the marker with it. The lead sentence and the rendered file
+                  both say "the numbered steps", so a silent marker would make
+                  the screen contradict the file it is drawn beside. */}
+              <span className="wayfork__n">{s.n}.</span> {s.from} → {s.to}
+            </span>
+            <div className="wayfork__ats">
+              {s.at.map((a) => {
+                const at = ways[a.way]?.steps[a.step]?.firstAt ?? null;
+                return (
+                  <span key={a.way} className="wayfork__at">
+                    Way {a.letter}
+                    {at === null ? (
+                      <span className="wayfork__noopen">no moment to open</span>
+                    ) : (
+                      <button
+                        type="button"
+                        className="btn ghost wayfork__open"
+                        onClick={() => onOpen(at.sessionId, at.atSec)}
+                      >
+                        Open
+                      </button>
+                    )}
+                  </span>
+                );
+              })}
+            </div>
+            {s.after.length > 0 && <ForkBand runs={s.after} />}
+          </li>
+        ))}
+      </ol>
+      <p className="wayfork__verdict">
+        {fork.verdict.kind === "named" ? fork.verdict.text : fork.verdict.reason}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * One gap, one line per way. Every way appears, empty run included.
+ *
+ * `ForkBand`, not `Band`: this file already has a `Band` for the list's own
+ * sections. A class name is a repo-wide identifier in `styles.css` and a
+ * component name is a file-wide one here.
+ */
+function ForkBand({ runs }: { runs: readonly ForkRunView[] }): React.JSX.Element {
+  return (
+    <div className="wayfork__band">
+      {runs.map((r) => (
+        <p key={r.way} className="wayfork__run">
+          Way {r.letter}: {r.phrase}
+        </p>
+      ))}
+    </div>
+  );
+}
+
+/**
  * The recorded steps, as an instrument rather than as text.
  *
  * Ledger marks have been able to open a recording since `c205413`; the steps —
@@ -540,29 +722,25 @@ function LedgerLegend(): React.JSX.Element {
  */
 function RecordedSteps({
   ways,
+  fork,
   onOpen,
 }: {
   ways: readonly HabitWayDTO[];
+  fork: HabitForkDTO | null;
   onOpen: (sessionId: string, atSec: number) => void;
 }): React.JSX.Element | null {
   if (ways.length === 0) return null;
-  const many = ways.length > 1;
+  // Several ways get the fork instrument INSTEAD of the side-by-side lists,
+  // which is what asked a reader to diff N procedures by eye. ONE way is the
+  // healthy case and renders exactly as it always did.
+  if (fork !== null) return <WayForkView ways={ways} fork={fork} onOpen={onOpen} />;
+  // Below here there is exactly ONE way, so the per-way heading and the
+  // "they did not take the same path" lead are gone with the branch that used
+  // to need them.
   return (
     <div className="habitsteps">
-      {many && (
-        <p className="habitsteps__ways">
-          The recordings did not take the same path. Each way below is a complete walk that a
-          recording actually made — follow one of them, not all of them in sequence.
-        </p>
-      )}
       {ways.map((way) => (
         <section key={way.letter} className="habitsteps__way">
-          {many && (
-            <h4 className="habitsteps__wayhead">
-              Way {way.letter} — {way.steps.length} step{way.steps.length === 1 ? "" : "s"},{" "}
-              {way.sessionIds.length === 1 ? "1 recording" : `${way.sessionIds.length} recordings`}
-            </h4>
-          )}
           <ol className="habitsteps__list">
             {way.steps.map((step) => (
               <li key={`${way.letter}-${step.index}`} className="habitsteps__step">
@@ -613,6 +791,59 @@ function RecordedSteps({
   );
 }
 
+/**
+ * The answer to the question the `<h1>` has always asked.
+ *
+ * "What you do repeatedly" has headed a file list since Habits shipped. This
+ * says where that repeated work actually happens, and how much of what you
+ * record recurs at all — `post.md`'s second lesson, made glanceable.
+ *
+ * A BAR CARRIES NO PRINTED NUMBER. The bar length is the reading and
+ * `placeLabel` is the fact, exactly as a ledger mark is a position and
+ * `markLabel` is the sentence — so a pointer and a screen reader are told the
+ * same thing. A count in the gutter would be the `×N` glyph again, which was
+ * deleted for being the one of three statements that could only be read as a
+ * number.
+ *
+ * ONE HUE at varying lightness, never the indexed palette: C1 owns `--data-2`
+ * and `--data-3` for conformance, and a violet app bar a few hundred pixels
+ * above a violet "went another way" mark would assert a relationship that does
+ * not exist.
+ */
+function Portrait({ data }: { data: HabitsDTO }): React.JSX.Element | null {
+  const portrait = portraitOf(data);
+  // Nothing recurs. The band draws nothing rather than an empty frame — this
+  // is not an insufficiency state, because there is no reading being withheld.
+  if (portrait.empty) return null;
+  return (
+    <section className="portrait" aria-label="Where your repeated work happens">
+      <ul className="portrait__places">
+        {portrait.places.map((place) => {
+          const label = placeLabel(place);
+          return (
+            <li key={place.app} className="portrait__place" title={label} aria-label={label}>
+              <span className="portrait__app">{place.app}</span>
+              <span className="portrait__bar">
+                <span
+                  className="portrait__fill"
+                  style={{
+                    // A floor of 2%, so the lightest place is still a mark
+                    // rather than nothing. It never reaches zero because a
+                    // place with no recordings is not in `places` at all.
+                    width: `${Math.max(place.share * 100, 2)}%`,
+                    background: `color-mix(in oklab, var(--data-0) ${25 + Math.round(65 * place.share)}%, transparent)`,
+                  }}
+                />
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+      <p className="portrait__coverage mono">{portrait.coverage}</p>
+    </section>
+  );
+}
+
 function Band({ title, children }: { title: string; children: React.ReactNode }): React.JSX.Element {
   return (
     <div className="habits__band">
@@ -640,6 +871,9 @@ function HabitRow({
   // The same work begun and abandoned partway. A DISCLOSURE beside the count,
   // never folded into it: those recordings walked a different route.
   const dropped = droppedEarlyLine(habit);
+  // Null unless this row is in the "Not walked lately" band, so the band head
+  // and the line can never disagree — both ask `hasFaded`.
+  const faded = fadeLine(habit.binding.walks, Date.now());
   return (
     <li>
       <button className={`habit${active ? " is-active" : ""}`} onClick={onSelect}>
@@ -652,6 +886,7 @@ function HabitRow({
         <span className="habit__meta">
           <span className="mono">{evidenceLine(habit)}</span>
           {dropped !== null && <span className="mono">{dropped}</span>}
+          {faded !== null && <span className="mono">{faded}</span>}
           {span !== null && <span className="mono">{span}</span>}
           {habit.edited && <span className="habit__tag mono">edited</span>}
           {habit.pinned && <span className="habit__tag mono">pinned</span>}
@@ -825,6 +1060,7 @@ function HabitEditor({
             {span !== null && ` · ${span}`}
           </p>
         {b.walks.some((w) => w.fit !== null) && <LedgerLegend />}
+          <Rhythm walks={b.walks} />
         </div>
       </header>
 
@@ -1005,7 +1241,7 @@ function HabitEditor({
       <div className="habitedit__recordhead habitedit__recordhead--cut">
         <span className="eyebrow">The record — the recording, not editable</span>
       </div>
-      <RecordedSteps ways={habit.ways} onOpen={onOpenRecording} />
+      <RecordedSteps ways={habit.ways} fork={habit.fork} onOpen={onOpenRecording} />
       {record !== "" && <pre className="habitedit__record mono">{record}</pre>}
 
       {/* The reason in WORDS, not a greyed control with no explanation. */}

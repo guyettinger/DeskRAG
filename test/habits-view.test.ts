@@ -60,7 +60,9 @@ const habit = (over: Partial<HabitDTO> = {}): HabitDTO => ({
   history: [],
   duplicates: [],
   ways: [],
+  fork: null,
   droppedEarly: [],
+  apps: [],
   slug: "a-habit",
   title: "A habit",
   description: "Use when.",
@@ -75,15 +77,18 @@ const habit = (over: Partial<HabitDTO> = {}): HabitDTO => ({
   ...over,
 });
 
+/** A fixed clock. Every band test that does not care about time uses it. */
+const NOW = new Date(2026, 7, 23, 12).getTime();
+
 describe("bandOf", () => {
   it("puts anything whose route moved into Needs attention", () => {
     for (const state of ["rebound", "ambiguous", "orphaned"] as const) {
-      expect(bandOf(habit({ binding: binding({ state }) }))).toBe("attention");
+      expect(bandOf(habit({ binding: binding({ state }) }), NOW)).toBe("attention");
     }
   });
 
   it("leaves an intact habit in Mine", () => {
-    expect(bandOf(habit())).toBe("mine");
+    expect(bandOf(habit(), NOW)).toBe("mine");
   });
 
   /**
@@ -92,11 +97,11 @@ describe("bandOf", () => {
    * resolve it, which is what Needs attention means.
    */
   it("puts a duplicated habit into Needs attention even though its binding is exact", () => {
-    expect(bandOf(habit({ duplicates: ["k2"] }))).toBe("attention");
+    expect(bandOf(habit({ duplicates: ["k2"] }), NOW)).toBe("attention");
   });
 
   it("keeps archived out of the way even when its binding moved", () => {
-    expect(bandOf(habit({ state: "archived", binding: binding({ state: "orphaned" }) }))).toBe(
+    expect(bandOf(habit({ state: "archived", binding: binding({ state: "orphaned" }) }), NOW)).toBe(
       "archived",
     );
   });
@@ -104,7 +109,7 @@ describe("bandOf", () => {
 
 describe("bandHabits", () => {
   it("drops dismissals — they are suppressed proposals, not habits", () => {
-    const b = bandHabits([habit({ id: "a" }), habit({ id: "b", state: "dismissed" })]);
+    const b = bandHabits([habit({ id: "a" }), habit({ id: "b", state: "dismissed" })], NOW);
     expect([...b.attention, ...b.mine, ...b.archived].map((s) => s.id)).toEqual(["a"]);
   });
 });
@@ -497,7 +502,7 @@ describe("the mark says how it compared", () => {
 
 describe("recordTail", () => {
   // The steps become an instrument, so the <pre> holds the record FROM THE NEXT
-  // HEADING DOWN. `## How the recordings differ` only exists at count >= 2, so
+  // HEADING DOWN. `## Where the ways fork` only exists at count >= 2, so
   // the tail cannot be found by name — it is the first heading after the steps.
   const doc = (...sections: string[]): string =>
     ["---", "name: x", "---", "", "Prose.", "", ...sections].join("\n");
@@ -508,7 +513,7 @@ describe("recordTail", () => {
   });
 
   it("finds it whatever the next heading is called", () => {
-    // A single-recording habit has no "How the recordings differ" section.
+    // A single-recording habit has no "Where the ways fork" section.
     const md = doc("## Recorded steps", "", "1. A → B", "", "## Evidence", "", "Once.");
     expect(recordTail(md)).toMatch(/^## Evidence/);
   });
@@ -523,7 +528,7 @@ describe("recordTail", () => {
       "",
       "1. A → B",
       "",
-      "## How the recordings differ",
+      "## Where the ways fork",
       "",
       "All 2 recordings took the same path.",
       "",
@@ -532,7 +537,7 @@ describe("recordTail", () => {
       "Recorded twice.",
     );
     const tail = recordTail(md);
-    expect(tail).toMatch(/## How the recordings differ/);
+    expect(tail).toMatch(/## Where the ways fork/);
     expect(tail).toMatch(/## Evidence/);
     expect(tail).not.toMatch(/## Recorded steps/);
   });
@@ -579,5 +584,65 @@ describe("droppedEarlyLine", () => {
     // A DISCLOSURE, never a merge: those recordings walked a different route.
     const h = habit({ droppedEarly: [{ places: ["Calculator"], count: 5 }] });
     expect(evidenceLine(h)).toBe(evidenceLine(habit()));
+  });
+});
+
+describe("the Not walked lately band", () => {
+  /** Three walks a week apart, ending 2026-08-17. */
+  const weekly = [
+    walk({ sessionId: "w1", at: new Date(2026, 7, 3, 10).getTime() }),
+    walk({ sessionId: "w2", at: new Date(2026, 7, 10, 10).getTime() }),
+    walk({ sessionId: "w3", at: new Date(2026, 7, 17, 10).getTime() }),
+  ];
+  const quiet = (weeks: number): number =>
+    new Date(2026, 7, 17, 10).getTime() + weeks * 7 * 24 * 3_600_000;
+
+  const kept = habit({ binding: binding({ walks: weekly, recordings: 3 }) });
+
+  it("leaves a habit walked recently in Kept", () => {
+    expect(bandOf(kept, quiet(1))).toBe("mine");
+  });
+
+  it("moves a habit that has gone quiet past both guards", () => {
+    expect(bandOf(kept, quiet(6))).toBe("fading");
+  });
+
+  /**
+   * A moved binding is the one thing on this screen that can be silently
+   * WRONG. A habit that is both unresolved and quiet reads better as
+   * unresolved: fixing the binding may well reveal it was walked last week.
+   */
+  it("puts a habit that is both re-bound and quiet into Needs attention", () => {
+    const both = habit({
+      binding: binding({ state: "rebound", walks: weekly, recordings: 3 }),
+    });
+    expect(bandOf(both, quiet(6))).toBe("attention");
+  });
+
+  /** Archiving is a deliberate setting-aside. Calling it fading relitigates it. */
+  it("never fades an archived habit", () => {
+    const shelved = habit({ state: "archived", binding: binding({ walks: weekly }) });
+    expect(bandOf(shelved, quiet(52))).toBe("archived");
+  });
+
+  it("gives bandHabits a fading bucket, and drops dismissals from all of them", () => {
+    const b = bandHabits(
+      [kept, habit({ id: "d", state: "dismissed", binding: binding({ walks: weekly }) })],
+      quiet(6),
+    );
+    expect(b.fading.map((h) => h.id)).toEqual(["k1"]);
+    expect(b.mine).toEqual([]);
+    expect(b.attention).toEqual([]);
+    expect(b.archived).toEqual([]);
+  });
+
+  it("leaves a habit with too few walks to have a cadence in Kept forever", () => {
+    const twice = habit({
+      binding: binding({
+        walks: [weekly[0]!, weekly[1]!],
+        recordings: 2,
+      }),
+    });
+    expect(bandOf(twice, quiet(52))).toBe("mine");
   });
 });

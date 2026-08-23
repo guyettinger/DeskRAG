@@ -73,7 +73,7 @@ import { SignalTally } from "./recording-activity.js";
 import { IndexWorker } from "./index-worker.js";
 import { frequentRoutes, toGraphDTO } from "./graph-view.js";
 import { flowApps } from "./flow-steps.js";
-import { droppedEarlyOf, habitWays, walkFits } from "./habit-marks.js";
+import { droppedEarlyOf, habitFork, habitWays, walkFits } from "./habit-marks.js";
 import {
   bindHabit,
   duplicateHabits,
@@ -1920,7 +1920,9 @@ export class DeskRagService {
       // A duplicate is a relation between two habits and cannot be computed
       // from one, so this is empty here rather than guessed.
       duplicates: [],
+      apps: flows !== null && bound.route !== null ? flowApps(flows, bound.route) : [],
       ways: flows !== null && bound.route !== null ? habitWays(flows, bound.route) : [],
+      fork: flows !== null && bound.route !== null ? habitFork(flows, bound.route) : null,
       droppedEarly:
         flows !== null && bound.route !== null ? droppedEarlyOf(flows, bound.route) : [],
       markdown,

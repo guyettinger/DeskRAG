@@ -54,8 +54,55 @@ try {
     console.log("\nNo trace graph. Record a session and let indexing finish, then run this again.");
     process.exitCode = 1;
   } else {
-    const routes = frequentRoutes(graph);
-    const flows: FlowsDTO = { graph: toGraphDTO(graph), routes, excludedApps: [] };
+    // AND the lane origin, the same resolver `DeskRagService.flows()` passes.
+    // `laneSec` clamps at zero, so a walk beginning before its video's first
+    // frame has its `atSec` pulled to 0 while its `throughSec` is not — without
+    // this the probe reads the raw t_mono span where the app reads the lane
+    // span, and the two disagree about when a recording walked a route.
+    const origin = new Map(
+      (
+        db
+          .prepare(
+            `SELECT s.id AS id,
+                    (SELECT b.t_mono_start FROM blob b
+                      WHERE b.session_id = s.id AND b.media = 'screen'
+                      ORDER BY b.t_mono_start ASC LIMIT 1) AS t
+               FROM session s`,
+          )
+          .all() as { id: string; t: number | null }[]
+      ).map((r) => [r.id, r.t ?? 0]),
+    );
+    const routes = frequentRoutes(
+      graph,
+      undefined,
+      undefined,
+      (sessionId) => origin.get(sessionId) ?? 0,
+    );
+    // WITHOUT this resolver `toEdgeSources` drops EVERY source — it flatMaps
+    // away any whose session it cannot date — so every edge arrives with
+    // `sources: []` and every `firstAt` is null. It read that way until
+    // 2026-08-23, and it was NOT only the "Other readings" section: measured on
+    // the real store, adding the resolver moved the deviation table itself from
+    // 14/20 to 12/22, because a walk with no date cannot be ordered and the
+    // baseline lands somewhere else. The rule that ships was unchanged — both
+    // `majority` and `recent` still call 3 of 4 walks deviant, still by tiebreak
+    // — but every count printed before this date was against an empty graph.
+    const startedAt = new Map(
+      (
+        db.prepare("SELECT id, started_at FROM session").all() as {
+          id: string;
+          started_at: number;
+        }[]
+      ).map((r) => [r.id, r.started_at]),
+    );
+    const flows: FlowsDTO = {
+      graph: toGraphDTO(graph, {
+        sessionStart: (id) => startedAt.get(id),
+        laneOrigin: (id) => origin.get(id) ?? 0,
+      }),
+      routes,
+      excludedApps: [],
+    };
     const repeated = routes.filter((r) => r.walks.length > 1);
     const inGraph = new Set(routes.flatMap((r) => r.sessionIds));
 

@@ -1393,6 +1393,43 @@ export interface HabitWayDTO {
   letter: string;
   sessionIds: string[];
   steps: HabitStepDTO[];
+  /**
+   * Each recording's own WHOLE-WALK duration, in `sessionIds` order. A session
+   * with no walk span is dropped rather than zeroed, so this may be shorter
+   * than `sessionIds` — a zero would read as an instantaneous recording.
+   *
+   * Whole-walk, never a sum of step durations: the ways share no steps
+   * (measured — four real ways share exactly one edge), so there is nothing to
+   * add up across them.
+   */
+  totalsMs: number[];
+}
+
+/**
+ * One row of the fork picture: a step every way took, or the gap after it.
+ *
+ * Steps are referenced BY INDEX into `HabitDTO.ways`, never embedded. `way`
+ * indexes `ways`; `step` indexes `ways[way].steps`. That keeps the payload
+ * small and makes the two structures provably consistent — the fork cannot
+ * name a step the ways do not have.
+ */
+export type HabitForkRowDTO =
+  | { kind: "spine"; from: string; to: string; at: { way: number; step: number }[] }
+  /** The gap AFTER spine position `after`. `-1` is the gap before the first. */
+  | { kind: "fork"; after: number; runs: { way: number; steps: number[]; phrase: string }[] };
+
+/**
+ * Where the ways fork, and whether one of them was faster.
+ *
+ * Null when the route has fewer than two ways, which is the healthy case. The
+ * `phrase` on a run and the verdict text are both composed in
+ * `app/src/main/way-fork.ts` rather than here or in the renderer, so the
+ * rendered file and the screen cannot disagree about the words — the same
+ * reason `differBlock` printed `Baseline.reason` verbatim.
+ */
+export interface HabitForkDTO {
+  rows: HabitForkRowDTO[];
+  verdict: { kind: "named"; text: string } | { kind: "withheld"; reason: string };
 }
 
 /**
@@ -1447,8 +1484,20 @@ export interface HabitDTO {
    * merge is a human act, because prose is the one thing nothing can remake.
    */
   duplicates: string[];
+  /**
+   * Every application this habit's route passes through, in order reached.
+   *
+   * The same `flowApps` projection `HabitProposalDTO.apps` already carries, so
+   * the portrait band can weigh a kept habit and an unkept proposal on one
+   * scale. Empty when there is no live route — an orphaned habit's places are
+   * not knowable, and inventing them from the bind-time label would put a
+   * guess in a picture.
+   */
+  apps: string[];
   /** The record's Ways, structured, so its steps can open their own moment. */
   ways: HabitWayDTO[];
+  /** Where the Ways fork. Null below two Ways. See `HabitForkDTO`. */
+  fork: HabitForkDTO | null;
   /** Empty is the common case. See `DroppedEarlyDTO`. */
   droppedEarly: DroppedEarlyDTO[];
   /**
