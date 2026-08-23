@@ -19,6 +19,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   HabitDTO,
+  HabitForkDTO,
   HabitPatch,
   HabitProposalDTO,
   HabitsDTO,
@@ -26,6 +27,7 @@ import type {
   WalkMarkDTO,
 } from "@shared/types";
 import { api, timecode, wallClock } from "../api.js";
+import { foldFork, waySecs, type ForkRunView } from "../way-fork-view.js";
 import { GhostLottie } from "../brand/GhostLottie.js";
 import {
   bandHabits,
@@ -603,6 +605,107 @@ function LedgerLegend(): React.JSX.Element {
 }
 
 /**
+ * Where the ways fork.
+ *
+ * COLOUR CARRIES SPINE-VERSUS-FORK, NEVER WAY IDENTITY. Ways are told apart by
+ * their printed letter and their lane position, so hue is never the only
+ * channel and the palette does not have to stretch to N ways. The band is
+ * `--data-6`, the one unclaimed indexed slot — `--data-0` is C2's portrait,
+ * `--data-2`/`--data-3` are C1's deviated and short, and 1/4/5/7 are the
+ * semantic aliases.
+ *
+ * A step keeps its "Open" wherever it is drawn: C1's rule that the record is
+ * verifiable rather than merely trusted does not weaken inside a fork.
+ */
+function WayForkView({
+  ways,
+  fork,
+  onOpen,
+}: {
+  ways: readonly HabitWayDTO[];
+  fork: HabitForkDTO;
+  onOpen: (sessionId: string, atSec: number) => void;
+}): React.JSX.Element {
+  const view = foldFork(fork, ways);
+  return (
+    <div className="wayfork">
+      <p className="wayfork__lead">
+        These recordings took different paths. The numbered steps are the part every way has in
+        common; the band beneath a step is where they differ.
+      </p>
+      <div className="wayfork__chips">
+        {ways.map((w) => (
+          <span key={w.letter} className="wayfork__chip">
+            <b>Way {w.letter}</b> · {w.steps.length} step{w.steps.length === 1 ? "" : "s"} ·{" "}
+            {w.sessionIds.length === 1 ? "1 recording" : `${w.sessionIds.length} recordings`}
+            {w.totalsMs.length > 0 && <> · {w.totalsMs.map(waySecs).join(", ")}</>}
+          </span>
+        ))}
+      </div>
+      {view.leading.length > 0 && <ForkBand runs={view.leading} />}
+      <ol className="wayfork__spine">
+        {view.steps.map((s) => (
+          <li key={s.n} className="wayfork__step">
+            <span className="wayfork__places">
+              {/* The number is DRAWN, not left to the <ol> marker: the row is a
+                  flex container, which removes the list-item display and takes
+                  the marker with it. The lead sentence and the rendered file
+                  both say "the numbered steps", so a silent marker would make
+                  the screen contradict the file it is drawn beside. */}
+              <span className="wayfork__n">{s.n}.</span> {s.from} → {s.to}
+            </span>
+            <div className="wayfork__ats">
+              {s.at.map((a) => {
+                const at = ways[a.way]?.steps[a.step]?.firstAt ?? null;
+                return (
+                  <span key={a.way} className="wayfork__at">
+                    Way {a.letter}
+                    {at === null ? (
+                      <span className="wayfork__noopen">no moment to open</span>
+                    ) : (
+                      <button
+                        type="button"
+                        className="btn ghost wayfork__open"
+                        onClick={() => onOpen(at.sessionId, at.atSec)}
+                      >
+                        Open
+                      </button>
+                    )}
+                  </span>
+                );
+              })}
+            </div>
+            {s.after.length > 0 && <ForkBand runs={s.after} />}
+          </li>
+        ))}
+      </ol>
+      <p className="wayfork__verdict">
+        {fork.verdict.kind === "named" ? fork.verdict.text : fork.verdict.reason}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * One gap, one line per way. Every way appears, empty run included.
+ *
+ * `ForkBand`, not `Band`: this file already has a `Band` for the list's own
+ * sections. A class name is a repo-wide identifier in `styles.css` and a
+ * component name is a file-wide one here.
+ */
+function ForkBand({ runs }: { runs: readonly ForkRunView[] }): React.JSX.Element {
+  return (
+    <div className="wayfork__band">
+      {runs.map((r) => (
+        <p key={r.way} className="wayfork__run">
+          Way {r.letter}: {r.phrase}
+        </p>
+      ))}
+    </div>
+  );
+}
+
+/**
  * The recorded steps, as an instrument rather than as text.
  *
  * Ledger marks have been able to open a recording since `c205413`; the steps —
@@ -619,29 +722,25 @@ function LedgerLegend(): React.JSX.Element {
  */
 function RecordedSteps({
   ways,
+  fork,
   onOpen,
 }: {
   ways: readonly HabitWayDTO[];
+  fork: HabitForkDTO | null;
   onOpen: (sessionId: string, atSec: number) => void;
 }): React.JSX.Element | null {
   if (ways.length === 0) return null;
-  const many = ways.length > 1;
+  // Several ways get the fork instrument INSTEAD of the side-by-side lists,
+  // which is what asked a reader to diff N procedures by eye. ONE way is the
+  // healthy case and renders exactly as it always did.
+  if (fork !== null) return <WayForkView ways={ways} fork={fork} onOpen={onOpen} />;
+  // Below here there is exactly ONE way, so the per-way heading and the
+  // "they did not take the same path" lead are gone with the branch that used
+  // to need them.
   return (
     <div className="habitsteps">
-      {many && (
-        <p className="habitsteps__ways">
-          The recordings did not take the same path. Each way below is a complete walk that a
-          recording actually made — follow one of them, not all of them in sequence.
-        </p>
-      )}
       {ways.map((way) => (
         <section key={way.letter} className="habitsteps__way">
-          {many && (
-            <h4 className="habitsteps__wayhead">
-              Way {way.letter} — {way.steps.length} step{way.steps.length === 1 ? "" : "s"},{" "}
-              {way.sessionIds.length === 1 ? "1 recording" : `${way.sessionIds.length} recordings`}
-            </h4>
-          )}
           <ol className="habitsteps__list">
             {way.steps.map((step) => (
               <li key={`${way.letter}-${step.index}`} className="habitsteps__step">
@@ -1142,7 +1241,7 @@ function HabitEditor({
       <div className="habitedit__recordhead habitedit__recordhead--cut">
         <span className="eyebrow">The record — the recording, not editable</span>
       </div>
-      <RecordedSteps ways={habit.ways} onOpen={onOpenRecording} />
+      <RecordedSteps ways={habit.ways} fork={habit.fork} onOpen={onOpenRecording} />
       {record !== "" && <pre className="habitedit__record mono">{record}</pre>}
 
       {/* The reason in WORDS, not a greyed control with no explanation. */}

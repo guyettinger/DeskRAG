@@ -4305,8 +4305,6 @@ select {
    record verbatim; this half is drawn from the DTO because a step that cannot
    be opened is a record you must take on trust. */
 .habitsteps { display: flex; flex-direction: column; gap: var(--s3); }
-.habitsteps__ways { margin: 0; font-size: var(--t-meta); color: var(--muted); }
-.habitsteps__wayhead { margin: 0 0 var(--s2); font-size: var(--t-body); }
 .habitsteps__list { margin: 0; padding-left: var(--s4); display: flex; flex-direction: column; gap: var(--s2); }
 .habitsteps__head { display: flex; align-items: baseline; gap: var(--s2); flex-wrap: wrap; }
 .habitsteps__places { font-weight: 600; }
@@ -4314,6 +4312,59 @@ select {
 .habitsteps__noopen { font-size: var(--t-nano); color: var(--muted); }
 .habitsteps__action { margin: 0; font-size: var(--t-meta); color: var(--muted); }
 .habitsteps__count { margin: 0; font-size: var(--t-nano); color: var(--muted); font-style: italic; }
+
+/* Where the ways fork (C3). --data-6 is the one unclaimed indexed slot, and the
+   palette's own note at the top of this file calls it an instrument colour and a
+   lane colour. Colour carries SPINE vs FORK; a way is identified by its printed
+   letter, never by hue. */
+.wayfork { display: flex; flex-direction: column; gap: var(--s3); }
+.wayfork__lead { margin: 0; font-size: var(--t-meta); color: var(--muted); }
+.wayfork__chips { display: flex; flex-wrap: wrap; gap: var(--s2); }
+.wayfork__chip {
+  font-size: var(--t-meta);
+  padding: var(--s1) var(--s2);
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklab, var(--data-6) 12%, transparent);
+}
+.wayfork__spine {
+  margin: 0;
+  padding-left: var(--s4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+.wayfork__step { display: flex; flex-direction: column; gap: var(--s1); }
+.wayfork__places { font-weight: 600; }
+.wayfork__n { color: var(--muted); font-variant-numeric: tabular-nums; }
+.wayfork__ats { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: baseline; }
+.wayfork__at {
+  display: inline-flex;
+  gap: var(--s1);
+  align-items: baseline;
+  font-size: var(--t-meta);
+  color: var(--muted);
+}
+/* Said in words, never a greyed control with no reason. */
+.wayfork__noopen { font-size: var(--t-nano); color: var(--muted); }
+.wayfork__band {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  padding: var(--s1) var(--s2);
+  border-left: 2px solid color-mix(in oklab, var(--data-6) 55%, transparent);
+  background: color-mix(in oklab, var(--data-6) 8%, transparent);
+}
+.wayfork__run { margin: 0; font-size: var(--t-meta); color: var(--muted); }
+/* The button is the LEAST important thing in its row and was the loudest —
+   measured in the running app, four full-size `btn`s per step read as four
+   identical controls and buried the Way letters they belong to. The letter is
+   what tells the ways apart, so it is what must be legible first. */
+.wayfork__open {
+  padding: var(--s1) var(--s2);
+  font-size: var(--t-meta);
+  font-weight: 550;
+}
+.wayfork__verdict { margin: 0; font-size: var(--t-meta); }
 .habitedit__toggle {
   display: flex; gap: var(--s2); align-items: flex-start;
   font-size: var(--t-meta); color: var(--muted); line-height: 1.45;
