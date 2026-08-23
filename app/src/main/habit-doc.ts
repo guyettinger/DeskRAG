@@ -34,6 +34,7 @@ import {
   type FlowWalk,
 } from "./flow-steps.js";
 import type { HabitBinding } from "./habit-bind.js";
+import { runPhrase, secs, wayFork, type WayFork } from "./way-fork.js";
 import {
   walkAnalysis,
   type PrefixFact,
@@ -246,66 +247,65 @@ export interface RecordedInput {
   showSamples: boolean;
 }
 
-/** One decimal and a unit. Durations are read beside each other, so the width matters. */
-const secs = (ms: number): string => `${(ms / 1000).toFixed(1)}s`;
-
 /** A recording's name in a record block: its date, or its id when nothing can date it. */
 const walkName = (w: WalkFit): string => (w.at === null ? w.sessionId : iso(w.at));
 
 /**
- * How each recording differed from the standard.
+ * Where the ways fork.
  *
- * COUNTS PER RECORDING, never a bullet per deviation. Measured on the real
- * store: the one recurring route yields 9 skipped and 16 inserted across two
- * deviant walks, which is 25 bullets for three recordings. `cautionsFor` already
- * paid for that shape once — a per-step bullet fired on nearly every step of
- * every variant and printed one fact TWELVE times in an eighteen-bullet section
- * — and the fix there was to state it once about the route.
+ * REPLACES `## How the recordings differ`, and nothing is lost. That block
+ * reported per-RECORDING deviation counts against a baseline which, on the real
+ * store, is chosen by tiebreak and moves between runs; this names which
+ * recordings took each way directly and needs no standard at all. Keeping both
+ * would print one fact twice — `cautionsFor` already paid for that shape once,
+ * printing one fact TWELVE times in an eighteen-bullet section.
  *
- * The lead is `Baseline.reason` VERBATIM rather than a second sentence saying
- * the same thing, so this file and `probe:baseline` cannot disagree about how
- * the standard was picked. That string was written for a probe and is
- * user-facing from here on.
+ * The agreement sentence is preserved verbatim, for `differBlock`'s own stated
+ * reason: going silent when they all did the same thing would make that
+ * indistinguishable from nothing having been measured.
  */
-function differBlock(analysis: WalkAnalysis, count: number): string[] {
-  // Nothing to compare against: one recording, or a rule that names no standard.
-  if (count < 2 || analysis.baseline.wayIndex === null) return [];
-  if (analysis.walks.length < 2) return [];
-
-  const out = ["## How the recordings differ", ""];
-
-  const deviant = analysis.walks.filter((w) => w.deviations.length > 0 || !w.reachedEnd);
-  if (deviant.length === 0) {
-    // The agreement case IS the finding. Going silent here would make "they all
-    // did the same thing" indistinguishable from "nothing was measured".
-    out.push(`All ${analysis.walks.length} recordings took the same path.`, "");
-    return out;
+function forkBlock(fork: WayFork | null, count: number): string[] {
+  if (count < 2) return [];
+  if (fork === null) {
+    return ["## Where the ways fork", "", `All ${count} recordings took the same path.`, ""];
   }
 
-  const tied = /tie at /.test(analysis.baseline.reason);
-  out.push(
-    `The standard below is chosen from the recordings themselves. ${analysis.baseline.reason}` +
-      (tied ? " A different recording could become the standard as soon as one more is made." : ""),
+  const out = [
+    "## Where the ways fork",
     "",
-  );
-
-  for (const w of analysis.walks) {
-    const inserted = w.deviations.filter((d) => d.kind === "inserted").length;
-    const skipped = w.deviations.filter((d) => d.kind === "skipped").length;
-    const moved = w.deviations.filter((d) => d.kind === "reordered").length;
-    const bits: string[] = [];
-    if (inserted > 0) bits.push(`${inserted} step${inserted === 1 ? "" : "s"} not in the standard`);
-    if (skipped > 0) {
-      bits.push(`${skipped} of the standard's steps not taken`);
-    }
-    if (moved > 0) bits.push(`${moved} step${moved === 1 ? "" : "s"} taken in a different order`);
-
-    const head = bits.length === 0 ? "followed the standard" : bits.join(", ");
-    // `reachedEnd` is only news when it is false, or when it is true DESPITE
-    // deviations — on a walk that followed the standard it says nothing.
-    const tail = !w.reachedEnd ? " Stopped before the end." : bits.length > 0 ? " Reached the end." : "";
-    out.push(`- ${walkName(w)} — ${head}.${tail}`);
+    "The numbered steps are the part every way has in common. The indented lines are where they differ — a way with nothing indented under a step did only that step there.",
+    "",
+  ];
+  for (const w of fork.ways) {
+    const n = w.sessionIds.length;
+    const times = w.totalsMs.length === 0 ? "no timed recording" : w.totalsMs.map(secs).join(", ");
+    out.push(
+      `- **Way ${w.letter}** — ${w.steps} step${w.steps === 1 ? "" : "s"}, ` +
+        `${n === 1 ? "1 recording" : `${n} recordings`}, ${times}`,
+    );
   }
+  out.push("");
+
+  const letterOf = new Map(fork.ways.map((w) => [w.wayIndex, w.letter]));
+  let n = 0;
+  for (const row of fork.rows) {
+    if (row.kind === "spine") {
+      n += 1;
+      out.push(`${n}. **${row.from} → ${row.to}**`);
+      continue;
+    }
+    for (const run of row.runs) {
+      if (run.steps.length === 0) continue;
+      const letter = letterOf.get(run.wayIndex) ?? String(run.wayIndex);
+      // A leading fork has no numbered step to sit under, so it is a top-level
+      // bullet. Everything else indents beneath the step it followed.
+      const indent = row.after < 0 ? "- " : "   - ";
+      out.push(`${indent}Way ${letter}: ${runPhrase(run, row.after)}`);
+    }
+  }
+
+  out.push("");
+  out.push(fork.verdict.kind === "named" ? fork.verdict.text : fork.verdict.reason);
   out.push("");
   return out;
 }
@@ -324,15 +324,28 @@ function differBlock(analysis: WalkAnalysis, count: number): string[] {
  * is also one drift hazard fewer: `walk-analysis.ts` has its own `edgeLabel`,
  * and two functions naming one edge is the `ax-dump`/`ax-exec` shape.
  */
-function timeBlock(steps: readonly StepCost[], baseWay: FlowWalk | undefined): string[] {
+function timeBlock(
+  steps: readonly StepCost[],
+  baseWay: FlowWalk | undefined,
+  letter: string,
+): string[] {
   if (baseWay === undefined) return [];
   const rows = steps.filter((s) => s.durations.length > 0);
   if (rows.length === 0) return [];
 
+  // EVERY row holding exactly one duration is the normal case on a real store
+  // and it is not obvious from the output: the comma list reads like a
+  // comparison. Measured — the ways share no steps, so a step's durations can
+  // only ever come from the recordings of the ONE way it belongs to.
+  const single = rows.every((r) => r.durations.length === 1);
+
   const out = [
     "## Where the time goes",
     "",
-    "Each recording's own time on each step, from the recorded spans. These are durations, not targets.",
+    `These are Way ${letter}'s steps, each with its own recorded span. They are durations, not targets.` +
+      (single
+        ? " Every step below was walked by one recording each, so these are observations rather than a comparison."
+        : ""),
     "",
   ];
   for (const cost of rows) {
@@ -521,12 +534,15 @@ export function recordedBlocks(input: RecordedInput): string {
   // guarantee: `recordedBlocks` takes no body, no prose and no provider, and
   // that is what makes "a model cannot rewrite the record" structural.
   const analysis = walkAnalysis({ flows, route });
-  out.push(...differBlock(analysis, route.count));
+  out.push(...forkBlock(wayFork({ flows, route }), route.count));
 
-  const baseWay = analysis.baseline.wayIndex === null ? undefined : walks[analysis.baseline.wayIndex];
+  const baseIndex = analysis.baseline.wayIndex;
+  const baseWay = baseIndex === null ? undefined : walks[baseIndex];
   // Only when there is a second recording to read a duration AGAINST. One
   // recording's timings are a fact about one afternoon, not about a habit.
-  if (route.count > 1) out.push(...timeBlock(analysis.steps, baseWay));
+  if (route.count > 1 && baseIndex !== null) {
+    out.push(...timeBlock(analysis.steps, baseWay, variantLetter(baseIndex)));
+  }
 
   out.push(...rhythmBlock(analysis.rhythm));
 
