@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { forkRows, placeKey, runPhrase, spineOf } from "../app/src/main/way-fork.js";
+import {
+  FORK_VERDICT_MIN_WALKS,
+  forkRows,
+  placeKey,
+  runPhrase,
+  spineOf,
+  verdictFor,
+  type WaySummary,
+} from "../app/src/main/way-fork.js";
 import type { FlowStep, FlowWalk } from "../app/src/main/flow-steps.js";
 
 /**
@@ -188,5 +196,67 @@ describe("runPhrase", () => {
 
   it("says nothing happened rather than going blank", () => {
     expect(runPhrase({ wayIndex: 1, steps: [] }, 0)).toBe("nothing here");
+  });
+});
+
+const summary = (letter: string, totalsMs: number[], wayIndex = 0): WaySummary => ({
+  wayIndex,
+  letter,
+  steps: 4,
+  sessionIds: totalsMs.map((_, i) => `${letter}${i}`),
+  totalsMs,
+});
+
+describe("verdictFor", () => {
+  it("withholds, with a reason, when there is only one way", () => {
+    const v = verdictFor([summary("A", [1000, 2000])]);
+    expect(v.kind).toBe("withheld");
+    expect(v.kind === "withheld" && v.reason).toMatch(/only one way/i);
+  });
+
+  it("withholds below the floor and NAMES the thin ways", () => {
+    // This is the real store as of 2026-08-23: four ways, one recording each.
+    const v = verdictFor([summary("A", [39300]), summary("B", [24000], 1)]);
+    expect(v.kind).toBe("withheld");
+    expect(v.kind === "withheld" && v.reason).toBe(
+      "Way A, Way B have fewer than 2 timed recordings, so nothing here says one way is better.",
+    );
+  });
+
+  it("withholds on OVERLAPPING ranges and prints both", () => {
+    const v = verdictFor([summary("A", [24000, 39300]), summary("B", [22100, 39900], 1)]);
+    expect(v.kind).toBe("withheld");
+    expect(v.kind === "withheld" && v.reason).toBe(
+      "Their times overlap (B 22.1–39.9s, A 24.0–39.3s), so these recordings do not say one is faster.",
+    );
+  });
+
+  it("fires only when the SLOWEST of one beat the FASTEST of every other", () => {
+    const v = verdictFor([summary("B", [22100, 25900]), summary("D", [60200, 62300], 1)]);
+    expect(v).toEqual({
+      kind: "named",
+      text: "Every recording of Way B (22.1–25.9s) was faster than every recording of Way D (60.2–62.3s).",
+    });
+  });
+
+  it("lists every other way when there are more than two", () => {
+    const v = verdictFor([
+      summary("B", [22100, 25900]),
+      summary("A", [30000, 39300], 1),
+      summary("D", [60200, 62300], 2),
+    ]);
+    expect(v.kind === "named" && v.text).toBe(
+      "Every recording of Way B (22.1–25.9s) was faster than every recording of Way A (30.0–39.3s) and Way D (60.2–62.3s).",
+    );
+  });
+
+  it("withholds when fewer than two ways have any timed recording", () => {
+    const v = verdictFor([summary("A", [22100, 25900]), summary("B", [], 1)]);
+    expect(v.kind).toBe("withheld");
+    expect(v.kind === "withheld" && v.reason).toMatch(/timed recording/i);
+  });
+
+  it("holds the floor at 2", () => {
+    expect(FORK_VERDICT_MIN_WALKS).toBe(2);
   });
 });

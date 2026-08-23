@@ -201,3 +201,122 @@ export function runPhrase(run: ForkRun, after: number): string {
   const via = [...new Set(run.steps.map((s) => s.to))].join(", ");
   return `${lead}${n} steps, via ${via}`;
 }
+
+/**
+ * Recordings a Way needs before it may take part in a comparison.
+ *
+ * UNSWEPT. It needs a route walked several times along at least two Ways, and
+ * the library that exists holds four Ways of one recording each — so on the
+ * store this shipped against, the floor is what speaks, every time. Two is the
+ * smallest number for which "every recording of B beat every recording of D"
+ * says anything at all; one recording each is one afternoon against another.
+ * Re-read this when the library grows, the way C2's two floors want re-reading.
+ */
+export const FORK_VERDICT_MIN_WALKS = 2;
+
+/** One decimal and a unit. Durations are read beside each other, so width matters. */
+export const secs = (ms: number): string => `${(ms / 1000).toFixed(1)}s`;
+
+/**
+ * The same number with the unit withheld, for the LOW end of a printed range.
+ *
+ * `22.1–25.9s` carries its unit once, at the end, the way a range is read
+ * aloud. `22.1s–25.9s` prints it twice and reads as two separate figures.
+ */
+const bare = (ms: number): string => (ms / 1000).toFixed(1);
+
+export interface WaySummary {
+  wayIndex: number;
+  letter: string;
+  steps: number;
+  sessionIds: string[];
+  /** Each recording's own whole-walk duration, in the Way's session order. */
+  totalsMs: number[];
+}
+
+/**
+ * Whether one Way was faster, or why that cannot be said.
+ *
+ * `withheld.reason` is REQUIRED and is never an enum. A surface that merely
+ * goes quiet is indistinguishable from one nobody implemented — the
+ * `StageSpec.skipReason` rule, which the Indexing ladder pays for one screen
+ * over.
+ */
+export type Verdict = { kind: "named"; text: string } | { kind: "withheld"; reason: string };
+
+const range = (w: WaySummary): { letter: string; lo: number; hi: number } => ({
+  letter: w.letter,
+  lo: Math.min(...w.totalsMs),
+  hi: Math.max(...w.totalsMs),
+});
+
+const printed = (r: { letter: string; lo: number; hi: number }): string =>
+  `Way ${r.letter} (${bare(r.lo)}–${secs(r.hi)})`;
+
+/**
+ * TWO GATES, and neither is a statistic.
+ *
+ * A floor of `FORK_VERDICT_MIN_WALKS` recordings per Way, then a
+ * NON-OVERLAPPING RANGE test: the verdict fires only where the slowest
+ * recording of one Way beat the fastest recording of every other. No mean, no
+ * median, no ratio, no significance test — a rule a person can check against
+ * the numbers printed beside it, which is the standard `FrameResult.score`
+ * established when the UI chose rank and evidence over the figure.
+ *
+ * The times themselves are printed beside every Way regardless of both gates.
+ * Facts always; a verdict only when it is earned.
+ */
+export function verdictFor(ways: readonly WaySummary[]): Verdict {
+  if (ways.length < 2) {
+    return {
+      kind: "withheld",
+      reason: "There is only one way through this route, so there is nothing to compare.",
+    };
+  }
+  const timed = ways.filter((w) => w.totalsMs.length > 0);
+  if (timed.length < 2) {
+    return {
+      kind: "withheld",
+      reason: "Fewer than two ways have a timed recording, so nothing here says one way is better.",
+    };
+  }
+  const thin = timed.filter((w) => w.totalsMs.length < FORK_VERDICT_MIN_WALKS);
+  if (thin.length > 0) {
+    const names = thin.map((w) => `Way ${w.letter}`).join(", ");
+    return {
+      kind: "withheld",
+      reason:
+        `${names} ${thin.length === 1 ? "has" : "have"} fewer than ${FORK_VERDICT_MIN_WALKS} ` +
+        `timed recordings, so nothing here says one way is better.`,
+    };
+  }
+
+  // Sorted by the FASTEST recording each way managed, which is also the order
+  // an overlapping set is read in. Whichever way can beat every other
+  // necessarily holds the lowest floor as well as the lowest ceiling, so this
+  // ordering finds the candidate whenever one exists.
+  const ranges = timed
+    .map(range)
+    .sort((a, b) => a.lo - b.lo || a.hi - b.hi || a.letter.localeCompare(b.letter));
+  const fastest = ranges[0]!;
+  const rest = ranges.slice(1);
+  const overlapping = rest.filter((r) => r.lo <= fastest.hi);
+  if (overlapping.length > 0) {
+    const shown = [fastest, ...overlapping]
+      .map((r) => `${r.letter} ${bare(r.lo)}–${secs(r.hi)}`)
+      .join(", ");
+    return {
+      kind: "withheld",
+      reason: `Their times overlap (${shown}), so these recordings do not say one is faster.`,
+    };
+  }
+
+  const others =
+    rest.length === 1
+      ? printed(rest[0]!)
+      : `${rest.slice(0, -1).map(printed).join(", ")} and ${printed(rest[rest.length - 1]!)}`;
+  return {
+    kind: "named",
+    text: `Every recording of ${printed(fastest)} was faster than every recording of ${others}.`,
+  };
+}
