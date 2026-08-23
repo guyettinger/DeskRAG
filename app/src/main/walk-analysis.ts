@@ -252,6 +252,31 @@ export function chooseBaseline(
   };
 }
 
+/**
+ * "Place 1 → Place 2" for an edge, or a named absence.
+ *
+ * The absence is spelled out rather than skipped, for `FlowStep.missing`'s
+ * reason: a step that vanished makes a flow read as shorter than it was, and a
+ * deviation that vanished makes a walk read as closer to the standard than it
+ * was — which is the one direction this module must never err in.
+ */
+function edgeLabel(flows: FlowsDTO, edgeId: string): string {
+  const edge = flows.graph.edges.find((e) => e.id === edgeId);
+  if (edge === undefined) return `edge ${edgeId} is not in the graph`;
+  const label = (id: string): string => flows.graph.nodes.find((n) => n.id === id)?.label ?? id;
+  return `${label(edge.from)} → ${label(edge.to)}`;
+}
+
+/** Every recording's own edge sequence, in the order `frequentRoutes` recorded it. */
+function walkedEdges(route: FlowRouteDTO): { sessionId: string; edgeIds: readonly string[] }[] {
+  if (route.walks.length > 0) {
+    return route.walks.map((w) => ({ sessionId: w.sessionId, edgeIds: w.edgeIds }));
+  }
+  // `flowWalks` degrades the same way for the one input that cannot distinguish
+  // a route with no walks from a route walked once — a hand-built fixture.
+  return [{ sessionId: route.sessionIds[0] ?? "", edgeIds: route.edgeIds }];
+}
+
 export function walkAnalysis(
   input: WalkAnalysisInput,
   _hooks?: WalkAnalysisHooks,
@@ -262,9 +287,39 @@ export function walkAnalysis(
   const startedAt = sessionStartedAt(flows);
   const baseline = chooseBaseline(ways, rule, startedAt);
 
+  const baseWay = baseline.wayIndex === null ? null : (ways[baseline.wayIndex] ?? null);
+  const baseEdges = baseWay === null ? null : baseWay.steps.map((s) => s.edgeId);
+
+  const walks: WalkFit[] = walkedEdges(route).map(({ sessionId, edgeIds }) => {
+    const at = startedAt.get(sessionId) ?? null;
+    if (baseEdges === null) {
+      // `none` names no end, so `reachedEnd` is vacuous rather than false —
+      // false would assert the walk fell short of a standard that does not
+      // exist.
+      return { sessionId, at, reachedEnd: true, deviations: [] };
+    }
+    const aligned = alignWalk(baseEdges, edgeIds);
+    return {
+      sessionId,
+      at,
+      reachedEnd: aligned.reachedEnd,
+      deviations: aligned.deviations.map((d) => ({ ...d, label: edgeLabel(flows, d.edgeId) })),
+    };
+  });
+
+  // Oldest first, and an UNDATED walk sorts last rather than first: a missing
+  // date is not a very old one, and letting null sort to the front would put
+  // deleted evidence at the head of a ledger that reads left-to-right in time.
+  walks.sort((a, b) => {
+    if (a.at === null && b.at === null) return a.sessionId.localeCompare(b.sessionId);
+    if (a.at === null) return 1;
+    if (b.at === null) return -1;
+    return a.at - b.at || a.sessionId.localeCompare(b.sessionId);
+  });
+
   return {
     baseline,
-    walks: [],
+    walks,
     steps: [],
     antecedents: [],
     rhythm: { intervalsMs: [], hours: [], days: [] },

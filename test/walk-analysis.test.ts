@@ -208,3 +208,97 @@ describe("walkAnalysis", () => {
     expect(out.baseline.wayIndex).toBe(0);
   });
 });
+
+describe("walkAnalysis — walks", () => {
+  it("returns one fit per RECORDING, not one per Way", () => {
+    // Two recordings walked identically, so `flowWalks` collapses them into one
+    // Way. A fit is per recording: the count is what the recurrence argument
+    // rests on, and reporting one row for two walks would lose a recording.
+    const f = fixture(2, [
+      { sessionId: "s1", edgeIds: ["e0", "e1"], startedAt: T0 },
+      { sessionId: "s2", edgeIds: ["e0", "e1"], startedAt: T0 + DAY },
+    ]);
+    const out = walkAnalysis(input(f));
+    expect(out.walks.map((w) => w.sessionId)).toEqual(["s1", "s2"]);
+  });
+
+  it("orders oldest first", () => {
+    const f = fixture(1, [
+      { sessionId: "late", edgeIds: ["e0"], startedAt: T0 + DAY },
+      { sessionId: "early", edgeIds: ["e0"], startedAt: T0 },
+    ]);
+    expect(walkAnalysis(input(f)).walks.map((w) => w.sessionId)).toEqual(["early", "late"]);
+  });
+
+  it("names a skipped step against the baseline, with the label the record prints", () => {
+    const f = fixture(3, [
+      { sessionId: "s1", edgeIds: ["e0", "e1", "e2"], startedAt: T0 },
+      { sessionId: "s2", edgeIds: ["e0", "e1", "e2"], startedAt: T0 + DAY },
+      { sessionId: "s3", edgeIds: ["e0", "e2"], startedAt: T0 + 2 * DAY },
+    ]);
+    const out = walkAnalysis(input(f));
+    const odd = out.walks.find((w) => w.sessionId === "s3");
+    expect(odd?.deviations).toEqual([
+      { kind: "skipped", stepIndex: 1, edgeId: "e1", label: "Place 1 → Place 2" },
+    ]);
+    expect(odd?.reachedEnd).toBe(true);
+  });
+
+  it("gives the baseline's own recordings no deviations", () => {
+    const f = fixture(3, [
+      { sessionId: "s1", edgeIds: ["e0", "e1", "e2"], startedAt: T0 },
+      { sessionId: "s2", edgeIds: ["e0", "e1", "e2"], startedAt: T0 + DAY },
+      { sessionId: "s3", edgeIds: ["e0", "e2"], startedAt: T0 + 2 * DAY },
+    ]);
+    const out = walkAnalysis(input(f));
+    expect(out.walks.filter((w) => w.deviations.length === 0).map((w) => w.sessionId)).toEqual([
+      "s1",
+      "s2",
+    ]);
+  });
+
+  it("labels an edge missing from the graph rather than dropping the deviation", () => {
+    // `FlowStep.missing` exists because a step that vanished makes a flow read
+    // as shorter than it was. The same holds for a deviation.
+    const f = fixture(2, [
+      { sessionId: "s1", edgeIds: ["e0", "e1"], startedAt: T0 },
+      { sessionId: "s2", edgeIds: ["e0", "e1"], startedAt: T0 + DAY },
+    ]);
+    f.route.walks.push(routeWalk("s3", ["e0", "gone"]));
+    f.route.sessionIds.push("s3");
+    const out = walkAnalysis(input(f));
+    const odd = out.walks.find((w) => w.sessionId === "s3");
+    expect(odd?.deviations).toContainEqual({
+      kind: "inserted",
+      stepIndex: 1,
+      edgeId: "gone",
+      label: "edge gone is not in the graph",
+    });
+  });
+
+  it("carries a null wall clock rather than inventing one", () => {
+    const f = fixture(1, [{ sessionId: "s1", edgeIds: ["e0"], startedAt: T0 }]);
+    f.route.walks.push(routeWalk("ghost", ["e0"]));
+    f.route.sessionIds.push("ghost");
+    const out = walkAnalysis(input(f));
+    expect(out.walks.find((w) => w.sessionId === "ghost")?.at).toBeNull();
+  });
+
+  it("sorts undated walks LAST, so an unknown date never reads as the oldest", () => {
+    const f = fixture(1, [{ sessionId: "s1", edgeIds: ["e0"], startedAt: T0 }]);
+    f.route.walks.unshift(routeWalk("ghost", ["e0"]));
+    f.route.sessionIds.unshift("ghost");
+    expect(walkAnalysis(input(f)).walks.map((w) => w.sessionId)).toEqual(["s1", "ghost"]);
+  });
+
+  it("calls no walk deviant under `none`", () => {
+    const f = fixture(2, [
+      { sessionId: "s1", edgeIds: ["e0", "e1"], startedAt: T0 },
+      { sessionId: "s2", edgeIds: ["e0"], startedAt: T0 + DAY },
+    ]);
+    const out = walkAnalysis(input(f, "none"));
+    expect(out.walks).toHaveLength(2);
+    expect(out.walks.every((w) => w.deviations.length === 0)).toBe(true);
+    expect(out.walks.every((w) => w.reachedEnd)).toBe(true);
+  });
+});
