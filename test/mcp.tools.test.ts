@@ -176,16 +176,19 @@ const textOf = (r: { content: { type: string; text?: string }[] }): string =>
     .join("\n");
 
 describe("the tool surface", () => {
-  it("exposes exactly the eight read-only tools", () => {
+  it("exposes exactly the eleven read-only tools", () => {
     expect(TOOLS.map((t) => t.name).sort()).toEqual([
       "get_flow",
       "get_habit",
+      "get_habit_step",
+      "get_habit_steps",
       "get_moment",
       "get_recording_outline",
       "list_flows",
       "list_habits",
       "list_recordings",
       "search_experience",
+      "search_habits",
     ]);
   });
 
@@ -896,5 +899,62 @@ describe("the duplicates differentiator", () => {
     h.habits = [h.habits[0]!];
     const out = await callTool(withHabits(h), "list_habits", {});
     expect(out.content[0]!.text).toMatch(/nobody has merged them/);
+  });
+});
+
+describe("search_habits", () => {
+  const vec = (xs: number[]): Float32Array => new Float32Array(xs);
+
+  it("requires a non-empty situation", async () => {
+    const out = await callTool(withHabits({ ...noHabits(), habits: [habit()] }), "search_habits", {});
+    expect(out.isError).toBe(true);
+    expect(textOf(out)).toMatch(/`situation` is required/);
+  });
+
+  it("ranks with both lanes when a model answers", async () => {
+    const reader = fakeReader({
+      habits: () => ({ ...noHabits(), habits: [habit()] }),
+      // One document, one query: identical direction, so the dense lane ranks it #1.
+      embed: async (texts) => texts.map(() => vec([1, 0])),
+    });
+    const out = await callTool(reader, "search_habits", { situation: "file a bug" });
+    expect(out.isError).toBeUndefined();
+    expect(textOf(out)).toMatch(/prose #1/);
+  });
+
+  it("says the prose lane was skipped when no model answers", async () => {
+    const reader = fakeReader({
+      habits: () => ({ ...noHabits(), habits: [habit({ markdown: "file a bug report" })] }),
+      embed: async () => null,
+    });
+    const out = await callTool(reader, "search_habits", { situation: "bug report" });
+    expect(textOf(out)).toMatch(/prose lane was skipped/);
+    expect(textOf(out)).toMatch(/exact terms #1/);
+  });
+
+  it("skips the dense lane rather than failing when the embedder returns the wrong count", async () => {
+    // A provider that answers with fewer vectors than documents would silently
+    // mis-pair habit to vector — every rank after the gap would name the wrong
+    // habit. Refusing the lane is the only honest response.
+    const reader = fakeReader({
+      habits: () => ({
+        ...noHabits(),
+        habits: [habit({ markdown: "bug" }), habit({ id: "B2", slug: "b2", markdown: "bug" })],
+      }),
+      embed: async () => [vec([1, 0])],
+    });
+    const out = await callTool(reader, "search_habits", { situation: "bug" });
+    expect(out.isError).toBeUndefined();
+    expect(textOf(out)).toMatch(/prose lane was skipped/);
+  });
+
+  it("shows no score", async () => {
+    const reader = fakeReader({
+      habits: () => ({ ...noHabits(), habits: [habit()] }),
+      embed: async (texts) => texts.map(() => vec([1, 0])),
+    });
+    expect(textOf(await callTool(reader, "search_habits", { situation: "bug" }))).not.toMatch(
+      /\d\.\d{2,}/,
+    );
   });
 });
