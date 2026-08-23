@@ -3,6 +3,7 @@ import {
   bandOf,
   bandHabits,
   bindingChip,
+  droppedEarlyLine,
   evidenceLine,
   generateDisabledReason,
   orderHabits,
@@ -542,5 +543,41 @@ describe("recordTail", () => {
     // not.
     const md = doc("## Something else", "", "text");
     expect(recordTail(md)).toBe(md);
+  });
+});
+
+describe("droppedEarlyLine", () => {
+  it("is null when nothing was dropped early", () => {
+    expect(droppedEarlyLine(habit())).toBeNull();
+  });
+
+  it("says how many times, and stops there", () => {
+    // ON THE ROW, where the decision to open is made — the same argument that
+    // put RECORDED ONCE into list_habits rather than only into the file.
+    const h = habit({ droppedEarly: [{ places: ["Calculator"], count: 2 }] });
+    expect(droppedEarlyLine(h)).toBe("also started and dropped early 2 further times");
+  });
+
+  it("says it in the singular when it happened once", () => {
+    const h = habit({ droppedEarly: [{ places: ["Calculator"], count: 1 }] });
+    expect(droppedEarlyLine(h)).toBe("also started and dropped early 1 further time");
+  });
+
+  it("sums several prefix routes rather than listing them", () => {
+    // The row is not the place for the places. The record already names each
+    // one; a row that listed three would push the evidence line off the card.
+    const h = habit({
+      droppedEarly: [
+        { places: ["Calculator"], count: 2 },
+        { places: ["Calculator", "TextEdit"], count: 1 },
+      ],
+    });
+    expect(droppedEarlyLine(h)).toBe("also started and dropped early 3 further times");
+  });
+
+  it("never touches the recording count", () => {
+    // A DISCLOSURE, never a merge: those recordings walked a different route.
+    const h = habit({ droppedEarly: [{ places: ["Calculator"], count: 5 }] });
+    expect(evidenceLine(h)).toBe(evidenceLine(habit()));
   });
 });

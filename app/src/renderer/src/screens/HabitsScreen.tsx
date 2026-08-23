@@ -31,6 +31,7 @@ import {
   bandHabits,
   bandProposals,
   bindingChip,
+  droppedEarlyLine,
   evidenceLine,
   generateDisabledReason,
   ledgerMarks,
@@ -636,6 +637,9 @@ function HabitRow({
 }): React.JSX.Element {
   const chip = bindingChip(habit);
   const span = walkSpan(habit.binding.walks);
+  // The same work begun and abandoned partway. A DISCLOSURE beside the count,
+  // never folded into it: those recordings walked a different route.
+  const dropped = droppedEarlyLine(habit);
   return (
     <li>
       <button className={`habit${active ? " is-active" : ""}`} onClick={onSelect}>
@@ -647,6 +651,7 @@ function HabitRow({
         <Ledger walks={habit.binding.walks} domain={domain} />
         <span className="habit__meta">
           <span className="mono">{evidenceLine(habit)}</span>
+          {dropped !== null && <span className="mono">{dropped}</span>}
           {span !== null && <span className="mono">{span}</span>}
           {habit.edited && <span className="habit__tag mono">edited</span>}
           {habit.pinned && <span className="habit__tag mono">pinned</span>}

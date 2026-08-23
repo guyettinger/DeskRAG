@@ -112,6 +112,25 @@ export function evidenceLine(habit: HabitDTO): string {
 }
 
 /**
+ * The same work begun and abandoned partway, said on the ROW.
+ *
+ * The record already discloses it through `cautionsFor`, but that is behind a
+ * selection and the row is where the decision to open is made — the argument
+ * that put `RECORDED ONCE` into `list_habits`. Saying it in both the row and the
+ * editor masthead would be one fact stated three times on one screen, which is
+ * what the `×N` glyph was deleted for.
+ *
+ * SUMMED, not listed: the record names each prefix route, and a row that listed
+ * three would push the evidence line off the card. Never folded into the count —
+ * those recordings walked a DIFFERENT route.
+ */
+export function droppedEarlyLine(habit: HabitDTO): string | null {
+  const n = habit.droppedEarly.reduce((sum, d) => sum + d.count, 0);
+  if (n === 0) return null;
+  return `also started and dropped early ${n} further time${n === 1 ? "" : "s"}`;
+}
+
+/**
  * What the count MEANS, in words.
  *
  * There was a `×N` glyph here too, in muted mono in the row's gutter. It is
