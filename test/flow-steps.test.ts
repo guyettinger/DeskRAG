@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { allSteps, flowApps, flowVariables, flowWalks } from "../app/src/main/flow-steps.js";
+import {
+  allSteps,
+  flowApps,
+  flowVariables,
+  flowWalks,
+  stepsFor,
+} from "../app/src/main/flow-steps.js";
 import type { FlowsDTO, GraphEdgeDTO, GraphNodeDTO } from "@shared/types";
 
 /**
@@ -230,5 +236,76 @@ describe("flowApps", () => {
     const f = flows();
     delete f.graph.nodes[0]!.app;
     expect(flowApps(f, f.routes[0]!)).toEqual(["Google Chrome"]);
+  });
+});
+
+/**
+ * Two states, one edge, one source — the smallest graph `stepsFor` resolves.
+ *
+ * Separate from `flows()` because these cases rewrite `sources` wholesale, and
+ * doing that to the shared fixture would change what every other case reads.
+ */
+function oneEdgeFlows(): FlowsDTO {
+  return {
+    graph: {
+      id: "g",
+      entry: "n0",
+      nodes: [
+        node("n0", "TextEdit", { app: "TextEdit" }),
+        node("n1", "Preview", { app: "Preview" }),
+      ],
+      edges: [
+        edge("e0", "n0", "n1", {
+          sources: [{ sessionId: "s1", startedAt: 1_754_000_000_000, atSec: 2, throughSec: 5 }],
+        }),
+      ],
+      slots: [],
+    },
+    excludedApps: [],
+    routes: [],
+  };
+}
+
+describe("firstAt is the EARLIEST source, not the first merged", () => {
+  // Sources accumulate in merge order as the graph is rebuilt, so `sources[0]`
+  // is whichever session was merged first — which is not the earliest whenever
+  // a recording is re-indexed, or indexed out of order. The field's own name
+  // promises otherwise, and Task 5 turns that promise into a link.
+  const outOfOrder = (): FlowsDTO => {
+    const f = oneEdgeFlows();
+    f.graph.edges[0]!.sources = [
+      { sessionId: "late", startedAt: 2_000_000_000_000, atSec: 1, throughSec: 2 },
+      { sessionId: "early", startedAt: 1_000_000_000_000, atSec: 5, throughSec: 9 },
+    ];
+    return f;
+  };
+
+  it("picks the earliest by wall clock, whatever the array order", () => {
+    const step = stepsFor(outOfOrder(), ["e0"], 2)[0]!;
+    expect(step.firstAt?.sessionId).toBe("early");
+    expect(step.firstAt?.startedAt).toBe(1_000_000_000_000);
+  });
+
+  it("carries the session id, because a moment needs a recording to open in", () => {
+    const step = stepsFor(oneEdgeFlows(), ["e0"], 1)[0]!;
+    expect(typeof step.firstAt?.sessionId).toBe("string");
+    expect(step.firstAt?.sessionId).not.toBe("");
+  });
+
+  it("compares the MOMENT, not the recording's start", () => {
+    // Two recordings on one day: the one that started later reached this edge
+    // first. `startedAt` alone would pick the wrong one.
+    const f = oneEdgeFlows();
+    f.graph.edges[0]!.sources = [
+      { sessionId: "a", startedAt: 1_000_000_000_000, atSec: 900, throughSec: 905 },
+      { sessionId: "b", startedAt: 1_000_000_060_000, atSec: 2, throughSec: 6 },
+    ];
+    expect(stepsFor(f, ["e0"], 2)[0]!.firstAt?.sessionId).toBe("b");
+  });
+
+  it("is null when the edge carries no sources at all", () => {
+    const f = oneEdgeFlows();
+    f.graph.edges[0]!.sources = [];
+    expect(stepsFor(f, ["e0"], 1)[0]!.firstAt).toBeNull();
   });
 });
