@@ -45,6 +45,7 @@ import {
 } from "../habits-view.js";
 import type { LedgerMark } from "../habits-view.js";
 import { clampTip } from "./hover-card.js";
+import { fadeLine } from "../habit-rhythm.js";
 
 /** Distance from the mark to its card, and from the card to the window edge —
     the rail's two constants, which the shared `clampTip` reads. */
@@ -124,7 +125,10 @@ export function HabitsScreen({
     );
   }
 
-  const bands = bandHabits(data.habits);
+  // Read once per render. The threshold is four weeks, so a stale read cannot
+  // move a row; a `useMemo` keyed on nothing would be the thing that could.
+  const now = Date.now();
+  const bands = bandHabits(data.habits, now);
   const seen = bandProposals(data.proposals);
   const nothing = data.habits.length === 0 && data.proposals.length === 0;
 
@@ -190,6 +194,23 @@ export function HabitsScreen({
           {bands.mine.length > 0 && (
             <Band title="Kept">
               {bands.mine.map((s) => (
+                <HabitRow
+                  key={s.id}
+                  habit={s}
+                  domain={data.domain}
+                  active={habit?.id === s.id}
+                  onSelect={() => setSelected({ kind: "habit", id: s.id })}
+                />
+              ))}
+            </Band>
+          )}
+
+          {/* Below Kept, because these ARE kept — what changed is that they
+              stopped. The head states the fact and declines the verdict:
+              a standard that moves is not a streak that broke. */}
+          {bands.fading.length > 0 && (
+            <Band title="Not walked lately">
+              {bands.fading.map((s) => (
                 <HabitRow
                   key={s.id}
                   habit={s}
@@ -640,6 +661,9 @@ function HabitRow({
   // The same work begun and abandoned partway. A DISCLOSURE beside the count,
   // never folded into it: those recordings walked a different route.
   const dropped = droppedEarlyLine(habit);
+  // Null unless this row is in the "Not walked lately" band, so the band head
+  // and the line can never disagree — both ask `hasFaded`.
+  const faded = fadeLine(habit.binding.walks, Date.now());
   return (
     <li>
       <button className={`habit${active ? " is-active" : ""}`} onClick={onSelect}>
@@ -652,6 +676,7 @@ function HabitRow({
         <span className="habit__meta">
           <span className="mono">{evidenceLine(habit)}</span>
           {dropped !== null && <span className="mono">{dropped}</span>}
+          {faded !== null && <span className="mono">{faded}</span>}
           {span !== null && <span className="mono">{span}</span>}
           {habit.edited && <span className="habit__tag mono">edited</span>}
           {habit.pinned && <span className="habit__tag mono">pinned</span>}

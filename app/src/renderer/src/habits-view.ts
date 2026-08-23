@@ -13,6 +13,7 @@ import type {
   WalkFitDTO,
   WalkMarkDTO,
 } from "@shared/types";
+import { hasFaded } from "./habit-rhythm.js";
 
 /**
  * Which band a habit is drawn in.
@@ -20,19 +21,26 @@ import type {
  * "Needs attention" leads, because a habit whose evidence moved is the only
  * thing on this screen that can be silently wrong, and a band that sorts below
  * the ones that are fine would hide exactly that.
+ *
+ * "Not walked lately" sits BELOW Kept and is checked after attention: a habit
+ * that is both unresolved and quiet reads better as unresolved, because fixing
+ * the binding may reveal it was walked last week.
  */
-export type HabitBand = "attention" | "mine" | "archived";
+export type HabitBand = "attention" | "mine" | "fading" | "archived";
 
 const NEEDS_ATTENTION: readonly HabitBindState[] = ["rebound", "ambiguous", "orphaned"];
 
-export function bandOf(habit: HabitDTO): HabitBand {
+export function bandOf(habit: HabitDTO, now: number): HabitBand {
   if (habit.state === "archived") return "archived";
   // A duplicate needs attention for the same reason a re-bind does: something
   // about this habit is unresolved and only a person can resolve it. It is not
   // a binding STATE — the binding is exact and correct on both halves — so it
   // is checked separately rather than folded into `HabitBindState`.
   if (habit.duplicates.length > 0) return "attention";
-  return NEEDS_ATTENTION.includes(habit.binding.state) ? "attention" : "mine";
+  if (NEEDS_ATTENTION.includes(habit.binding.state)) return "attention";
+  // `now` is INJECTED rather than read here, so a root test can place a habit
+  // six weeks in the past without touching the wall clock.
+  return hasFaded(habit.binding.walks, now) ? "fading" : "mine";
 }
 
 /**
@@ -50,15 +58,16 @@ export function orderHabits(habits: readonly HabitDTO[]): HabitDTO[] {
 export interface HabitBands {
   attention: HabitDTO[];
   mine: HabitDTO[];
+  fading: HabitDTO[];
   archived: HabitDTO[];
 }
 
-/** Active and archived split, dismissals dropped — they are not habits. */
-export function bandHabits(habits: readonly HabitDTO[]): HabitBands {
-  const out: HabitBands = { attention: [], mine: [], archived: [] };
+/** Active, quiet and archived split, dismissals dropped — they are not habits. */
+export function bandHabits(habits: readonly HabitDTO[], now: number): HabitBands {
+  const out: HabitBands = { attention: [], mine: [], fading: [], archived: [] };
   for (const s of orderHabits(habits)) {
     if (s.state === "dismissed") continue;
-    out[bandOf(s)].push(s);
+    out[bandOf(s, now)].push(s);
   }
   return out;
 }
