@@ -887,3 +887,32 @@ describe("work started and dropped early", () => {
     expect(() => cautionsFor(f, f.routes[0]!, flowWalks(f, f.routes[0]!))).not.toThrow();
   });
 });
+
+describe("briefFor carries consistency", () => {
+  it("states how many recordings took the standard way", () => {
+    const f = divergent();
+    const b = briefFor(f, f.routes[0]!);
+    expect(b.consistency.join(" ")).toMatch(/3 recordings/);
+    expect(b.consistency.join(" ")).toMatch(/different path/);
+  });
+
+  it("says they agreed when they did", () => {
+    const f = flows();
+    expect(briefFor(f, f.routes[0]!).consistency.join(" ")).toMatch(/same path/);
+  });
+
+  it("is empty for a habit recorded once", () => {
+    const f = flows();
+    f.routes[0]!.count = 1;
+    f.routes[0]!.sessionIds = ["s1"];
+    f.routes[0]!.walks = [{ sessionId: "s1", edgeIds: ["e0"], atSec: 0, throughSec: 0 }];
+    expect(briefFor(f, f.routes[0]!).consistency).toEqual([]);
+  });
+
+  it("carries no percentage and no sample", () => {
+    const f = divergent();
+    const b = briefFor(f, f.routes[0]!);
+    expect(b.consistency.join(" ")).not.toMatch(/\d+%/);
+    expect(b.consistency.join(" ")).not.toContain(SECRET);
+  });
+});

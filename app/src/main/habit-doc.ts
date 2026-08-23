@@ -730,6 +730,28 @@ export function templateBody(flows: FlowsDTO, route: FlowRouteDTO): HabitProse {
 }
 
 /**
+ * The consistency facts a model may state.
+ *
+ * COUNTS, and deliberately not the per-recording breakdown the record carries:
+ * the model is writing four short prose fields, and handing it three lines per
+ * recording invites it to narrate the ledger instead of describing the work.
+ */
+function consistencyFacts(analysis: WalkAnalysis, count: number): string[] {
+  if (count < 2 || analysis.baseline.wayIndex === null || analysis.walks.length < 2) return [];
+  const deviant = analysis.walks.filter((w) => w.deviations.length > 0 || !w.reachedEnd).length;
+  const out = [
+    deviant === 0
+      ? `All ${analysis.walks.length} recordings took the same path.`
+      : `${deviant} of the ${analysis.walks.length} recordings took a different path from the standard.`,
+  ];
+  const days = analysis.rhythm.days;
+  if (days.length >= 2 && days.every((d) => d !== 0 && d !== 6)) {
+    out.push("Every recording was made on a weekday.");
+  }
+  return out;
+}
+
+/**
  * What a model is told about this route.
  *
  * **Names and counts, never a sample.** Whether the rendered file prints
@@ -783,6 +805,7 @@ export function briefFor(
       samples: v.samples.length,
     })),
     cautions,
+    consistency: consistencyFacts(analysis, route.count),
     reflections: [...reflections],
   };
 }
