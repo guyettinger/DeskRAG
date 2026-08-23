@@ -302,3 +302,67 @@ describe("walkAnalysis — walks", () => {
     expect(out.walks.every((w) => w.reachedEnd)).toBe(true);
   });
 });
+
+describe("walkAnalysis — steps", () => {
+  it("measures a step by its OWN span, not by the gap to the next edge", () => {
+    // `EdgeSourceDTO` carries atSec AND throughSec per recording, so a step's
+    // extent is its own. Differencing consecutive atSec would fold the idle
+    // time before the next step into this one's cost and hide the hesitation.
+    const f = fixture(2, [
+      { sessionId: "s1", edgeIds: ["e0", "e1"], startedAt: T0, secPerStep: 5 },
+    ]);
+    const out = walkAnalysis(input(f));
+    // sources are atSec = i*5, throughSec = i*5 + 1 -> every step lasts 1s
+    expect(out.steps.map((s) => s.durations)).toEqual([
+      [{ sessionId: "s1", ms: 1000 }],
+      [{ sessionId: "s1", ms: 1000 }],
+    ]);
+  });
+
+  it("reports the idle between steps separately", () => {
+    const f = fixture(2, [
+      { sessionId: "s1", edgeIds: ["e0", "e1"], startedAt: T0, secPerStep: 5 },
+    ]);
+    const out = walkAnalysis(input(f));
+    // e0 ends at 1s, e1 begins at 5s -> 4s of hesitation
+    expect(out.steps[0]?.gapsAfter).toEqual([{ sessionId: "s1", ms: 4000 }]);
+    expect(out.steps[1]?.gapsAfter).toEqual([]);
+  });
+
+  it("omits a recording that did not walk the step, rather than recording a zero", () => {
+    const f = fixture(3, [
+      { sessionId: "s1", edgeIds: ["e0", "e1", "e2"], startedAt: T0 },
+      { sessionId: "s2", edgeIds: ["e0", "e1", "e2"], startedAt: T0 + DAY },
+      { sessionId: "s3", edgeIds: ["e0", "e2"], startedAt: T0 + 2 * DAY },
+    ]);
+    const out = walkAnalysis(input(f));
+    expect(out.steps[1]?.durations.map((d) => d.sessionId)).toEqual(["s1", "s2"]);
+  });
+
+  it("indexes and identifies each step against the baseline Way", () => {
+    const f = fixture(2, [
+      { sessionId: "s1", edgeIds: ["e0", "e1"], startedAt: T0 },
+    ]);
+    const out = walkAnalysis(input(f));
+    expect(out.steps.map((s) => [s.stepIndex, s.edgeId])).toEqual([
+      [0, "e0"],
+      [1, "e1"],
+    ]);
+  });
+
+  it("has no steps under `none`, because there is no baseline to have them", () => {
+    const f = fixture(2, [{ sessionId: "s1", edgeIds: ["e0", "e1"], startedAt: T0 }]);
+    expect(walkAnalysis(input(f, "none")).steps).toEqual([]);
+  });
+
+  it("orders durations oldest recording first, matching `walks`", () => {
+    const f = fixture(1, [
+      { sessionId: "late", edgeIds: ["e0"], startedAt: T0 + DAY },
+      { sessionId: "early", edgeIds: ["e0"], startedAt: T0 },
+    ]);
+    expect(walkAnalysis(input(f)).steps[0]?.durations.map((d) => d.sessionId)).toEqual([
+      "early",
+      "late",
+    ]);
+  });
+});

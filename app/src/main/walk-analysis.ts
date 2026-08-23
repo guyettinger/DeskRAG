@@ -277,6 +277,84 @@ function walkedEdges(route: FlowRouteDTO): { sessionId: string; edgeIds: readonl
   return [{ sessionId: route.sessionIds[0] ?? "", edgeIds: route.edgeIds }];
 }
 
+const MS_PER_SEC = 1000;
+
+/**
+ * Every recording's source on one edge, keyed by session.
+ *
+ * `EdgeSourceDTO` is where BOTH the wall clock and the extent live; `atSec` on
+ * `RouteWalkDTO` is the whole walk's span and cannot answer for a single step.
+ */
+function sourcesOf(
+  flows: FlowsDTO,
+  edgeId: string,
+): Map<string, { atSec: number; throughSec: number }> {
+  const out = new Map<string, { atSec: number; throughSec: number }>();
+  const edge = flows.graph.edges.find((e) => e.id === edgeId);
+  if (edge === undefined) return out;
+  for (const s of edge.sources) {
+    if (!out.has(s.sessionId)) out.set(s.sessionId, { atSec: s.atSec, throughSec: s.throughSec });
+  }
+  return out;
+}
+
+/**
+ * The baseline's steps, costed per recording.
+ *
+ * `order` is the session order `walks` already settled on, so a reader
+ * comparing a step's durations against the ledger sees the same recordings in
+ * the same sequence. Two orders for one set is the drift `shared/evidence.ts`
+ * exists to stop.
+ */
+function stepCosts(
+  flows: FlowsDTO,
+  baseEdges: readonly string[],
+  order: readonly string[],
+): StepCost[] {
+  const rank = new Map(order.map((id, i) => [id, i]));
+  const bySession = baseEdges.map((edgeId) => sourcesOf(flows, edgeId));
+  const byRank = <T extends { sessionId: string }>(list: T[]): T[] =>
+    list.sort(
+      (a, b) =>
+        (rank.get(a.sessionId) ?? Number.MAX_SAFE_INTEGER) -
+          (rank.get(b.sessionId) ?? Number.MAX_SAFE_INTEGER) ||
+        a.sessionId.localeCompare(b.sessionId),
+    );
+
+  return baseEdges.map((edgeId, i) => {
+    const here = bySession[i]!;
+    const next = i + 1 < baseEdges.length ? bySession[i + 1] : undefined;
+
+    const durations = byRank(
+      [...here.entries()].map(([sessionId, s]) => ({
+        sessionId,
+        ms: Math.max(0, Math.round((s.throughSec - s.atSec) * MS_PER_SEC)),
+      })),
+    );
+
+    const gapsAfter =
+      next === undefined
+        ? []
+        : byRank(
+            [...here.entries()].flatMap(([sessionId, s]) => {
+              const after = next.get(sessionId);
+              if (after === undefined) return [];
+              // Clamped at zero rather than dropped: overlapping spans mean the
+              // recording did the next thing before this one finished, which is
+              // a real shape and not a negative pause.
+              return [
+                {
+                  sessionId,
+                  ms: Math.max(0, Math.round((after.atSec - s.throughSec) * MS_PER_SEC)),
+                },
+              ];
+            }),
+          );
+
+    return { stepIndex: i, edgeId, durations, gapsAfter };
+  });
+}
+
 export function walkAnalysis(
   input: WalkAnalysisInput,
   _hooks?: WalkAnalysisHooks,
@@ -317,10 +395,13 @@ export function walkAnalysis(
     return a.at - b.at || a.sessionId.localeCompare(b.sessionId);
   });
 
+  const order = walks.map((w) => w.sessionId);
+  const steps = baseEdges === null ? [] : stepCosts(flows, baseEdges, order);
+
   return {
     baseline,
     walks,
-    steps: [],
+    steps,
     antecedents: [],
     rhythm: { intervalsMs: [], hours: [], days: [] },
     droppedEarly: [],
