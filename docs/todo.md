@@ -11,3 +11,50 @@
 - HABIT INSIGHT, SUB-PROJECT C — the Habits screen becomes a mirror. `post.md` gives three lessons and the screen serves one: consistency is thorough (bands, ledger, RECORDED ONCE), while "your routines are proof of who you are" and "change the small daily habits" have no surface at all. Wants: conformance on the ledger (marks already carry `markReadout`; a fill for canonical / deviated / dropped, colours from `--data-*`, and one more clause in `markLabel` — the picture must stay sayable); steps that OPEN THEIR MOMENT (`FlowStep.firstAt` exists; ledger marks can already open a recording and steps cannot, so the record is trusted rather than verifiable); a Way A/B aligned fork diff, which also answers whether B is BETTER; a rhythm strip in PHASE (hour-of-day x day-of-week) beside the existing absolute-wall-clock ledger, because a habit done every Tuesday at 9am currently draws identically to one done at random and context stability is the measured driver of automaticity; a portrait band under the existing `<h1>What you do repeatedly</h1>`, which today heads a file list; a fading band ("was weekly, not walked in six weeks"); and the started-and-dropped band from A's prefix relation. HAZARD, and it is measured not hypothetical: streak-shaped UI backfires, and this repo already refuses to print a score. Readings, never prompts; no number, no scoreboard.
 - HABIT INSIGHT, SUB-PROJECT D — the agent surface. `find_habit(situation)` over the habit corpus with the existing ONNX text embedder (skill retrieval is a long-document matching problem — median composite name|description|body ~1,583 tokens — and `list_habits` currently makes an agent read the whole catalogue); `get_habit_step`, returning one step's keyframe, AX labels and region highlights, because an agent stuck at step 4 has nowhere to look and a step lookup is a READ so it stays inside `test/mcp.readonly.test.ts`; a `steps.json` sibling carrying edges, targets, slots and anchors, since agents parse prose badly and progressive disclosure (metadata, then body, then bundled files) is the SKILL.md convention; and the catalogue picking up B's new disclosures. NOT IN SCOPE WITHOUT A DELIBERATE DECISION: outcome reporting. `habit-doc.ts` says outright that `TraceEdge.outcomes` is `{0,0}` forever because passive recording cannot observe failure, and an agent that followed a habit is the ONLY thing that could ever fill it — which breaks MCP read-only-by-construction.
 - HABIT INSIGHT, SUB-PROJECT C2 — SHIPPED 2026-08-23 (`design/habit-portrait-rhythm`). The h1 is answered: a portrait band names the applications recurring routes pass through, weighted by recordings, with one line saying how much of what is recorded recurs at all. A 7×24 phase grid sits beside the lead ledger, and a fourth band, "Not walked lately", holds kept habits that had a cadence and stopped. TWO UNSWEPT FLOORS ship with it and both need a bigger library to falsify. The RHYTHM floor is `>= 4` walks across `>= 3` distinct calendar days (`RHYTHM_MIN_WALKS` / `RHYTHM_MIN_DAYS` in `habit-rhythm.ts`); the day half is not taste — this store holds FOUR RECORDINGS INSIDE FOUR MINUTES (2026-08-20 11:00–11:04), which passes any walk-count floor and is one sitting. The FADE floor is `quiet > max(3 × median gap, 4 weeks)` (`FADE_MULTIPLE` / `FADE_FLOOR_MS`); the absolute four weeks is the whole rule — without it the real kept habit, median gap ~36h and quiet 72h, is called fading within two days, which is post.md's measured backfire on day one. ONE FIRING PATH SHIPS UNEXERCISED, joining B's `droppedEarly` and idle line and C1's two: the fade band has never spoken, because the library is six days old and the floor is four weeks. The GRID, predicted by the spec to be unexercised too, ALREADY DRAWS — the library grew from 3 walks/2 days to 4 walks/3 days between the spec and the code, and its first real reading is the finding case, "4 walks across 3 days, no two in the same hour of the week", i.e. this habit recurs but is NOT in phase. That is the whole distinction the strip was built to draw, and it took six days to falsify a prediction made in a spec — treat every other "unexercised" note above with the same suspicion. `node .claude/skills/run-app/scripts/habits-screen-probe.mjs` checks BOTH branches of both surfaces against the real store, so it keeps working rather than starting to fail as the library ages. Nothing here reaches HABIT.md. NOT DONE, still C3 (the Way A/B fork diff) and D (the agent surface).
+- HABIT INSIGHT, SUB-PROJECT C3 — SHIPPED 2026-08-23 (`design/habit-way-fork`). The record
+  and the screen now draw WHERE THE WAYS FORK instead of listing them side by side.
+  `way-fork.ts` folds a pairwise LCS across the ways' PLACE-STEP sequences — not edge ids,
+  and that is measured rather than preferred: the four real ways of the one multi-way route
+  share EXACTLY ONE EDGE, so an edge-level alignment is two disjoint lists with zero matches.
+  It is structural and no corpus growth fixes it (a node's identity is what the task does
+  next), and it is the same fact that made `FlowRouteDTO.id` a place-label sequence.
+  On the real store the spine is THREE steps — Calculator work, hand off, TextEdit work —
+  and the three forks are exactly the three real differences: Way C started from
+  `n0 — no state`, Way C did one fewer Calculator step, Way D took a nine-step excursion
+  through Finder and came back. `## How the recordings differ` is REPLACED, its agreement
+  sentence preserved verbatim; `Baseline.reason` no longer reaches the file, because the
+  fork names which recordings took each way without needing a standard at all.
+  TWO THINGS THE SUITE COULD NOT SEE were found by driving the app, which is the pattern
+  CLAUDE.md warns about holding again: the lead sentence says "the numbered steps" and the
+  `<ol>` marker was GONE (the row is a flex container, which removes the list-item display),
+  and four full-size Open buttons per step outweighed the Way letters they belong to. Both
+  are geometry, and no DOM assertion in the suite can reach either.
+  ONE UNSWEPT FLOOR ships with it, joining C2's two and the four fixture-tested paths from
+  B and C1: `FORK_VERDICT_MIN_WALKS = 2`. Every way on this store has ONE recording, so the
+  verdict has never fired and the floor's reason is the only thing that has ever printed.
+  The second gate — the verdict fires only where the slowest recording of one way beat the
+  FASTEST of every other — has likewise never been exercised on real data. It needs a route
+  walked several times along at least two ways.
+  `npm run probe:fork` prints the fold against the real store and exits 1 when no route has
+  two ways, so it stays a measurement rather than becoming a green no-op.
+  NOT DONE, still D (the agent surface).
+- A ZERO-PREDICATE HEAD SURVIVES ON ONE REAL WALK. `liftTrace` takes `startTMono` to stop
+  minting `n0 — no state`, and CLAUDE.md records that as fixed — but Way C of the
+  Calculator → TextEdit route still begins `n0 — no state → Calculator` (session
+  01M0P5D7B3XMMR8FY5FRPSA8MW). Read it before trusting the invariant; a zero-predicate node
+  is vacuously true of every desktop, which is what made `matchNode` merge every session's
+  first node into a fake root.
+- PROBES WERE READING A DIFFERENT STORE FROM THE APP, and it was two resolvers, not one.
+  `probe:baseline` called `toGraphDTO(graph)` with NEITHER. Missing `sessionStart`,
+  `toEdgeSources` flatMaps away every source whose session it cannot date, so every edge had
+  `sources: []` and every `firstAt` was null — and this was NOT confined to the "Other
+  readings" section as first assumed: it moved the DEVIATION TABLE from 14/20 to 12/22,
+  because an undated walk cannot be ordered and the baseline lands elsewhere. (The rule that
+  ships is unchanged: majority and recent still call 3 of 4 walks deviant, still by
+  tiebreak.) Missing `laneOrigin`, `frequentRoutes` mints raw t_mono spans where the app
+  mints LANE spans, and `laneSec` clamps at 0 — so a walk beginning before its video's first
+  frame loses the clamped stretch off its `atSec` only. Measured: `probe:fork` read Way C at
+  28.1s where the screen read 26.6s. Both probes now pass both resolvers. CHECK EVERY
+  PROBE'S RESOLVERS: a probe that silently measures something else looks exactly like a
+  probe that found something.
+
