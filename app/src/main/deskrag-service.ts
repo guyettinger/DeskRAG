@@ -1920,6 +1920,7 @@ export class DeskRagService {
       // A duplicate is a relation between two habits and cannot be computed
       // from one, so this is empty here rather than guessed.
       duplicates: [],
+      apps: flows !== null && bound.route !== null ? flowApps(flows, bound.route) : [],
       ways: flows !== null && bound.route !== null ? habitWays(flows, bound.route) : [],
       droppedEarly:
         flows !== null && bound.route !== null ? droppedEarlyOf(flows, bound.route) : [],

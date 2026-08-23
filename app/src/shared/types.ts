@@ -1447,6 +1447,16 @@ export interface HabitDTO {
    * merge is a human act, because prose is the one thing nothing can remake.
    */
   duplicates: string[];
+  /**
+   * Every application this habit's route passes through, in order reached.
+   *
+   * The same `flowApps` projection `HabitProposalDTO.apps` already carries, so
+   * the portrait band can weigh a kept habit and an unkept proposal on one
+   * scale. Empty when there is no live route — an orphaned habit's places are
+   * not knowable, and inventing them from the bind-time label would put a
+   * guess in a picture.
+   */
+  apps: string[];
   /** The record's Ways, structured, so its steps can open their own moment. */
   ways: HabitWayDTO[];
   /** Empty is the common case. See `DroppedEarlyDTO`. */

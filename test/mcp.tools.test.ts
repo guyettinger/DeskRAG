@@ -522,6 +522,7 @@ const habit = (over: Partial<HabitDTO> = {}): HabitDTO => ({
   duplicates: [],
   ways: [],
   droppedEarly: [],
+  apps: [],
   slug: "file-a-bug-report",
   title: "File a bug report",
   description: "Use when filing a GitHub issue on a repo you already have open.",
