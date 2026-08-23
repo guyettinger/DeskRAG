@@ -28,7 +28,8 @@
  * comparing printed ranges.
  */
 
-import type { FlowStep, FlowWalk } from "./flow-steps.js";
+import type { FlowRouteDTO, FlowsDTO } from "@shared/types";
+import { flowWalks, variantLetter, type FlowStep, type FlowWalk } from "./flow-steps.js";
 
 /**
  * A step's place identity: where it came from and where it went.
@@ -318,5 +319,58 @@ export function verdictFor(ways: readonly WaySummary[]): Verdict {
   return {
     kind: "named",
     text: `Every recording of ${printed(fastest)} was faster than every recording of ${others}.`,
+  };
+}
+
+export interface WayFork {
+  ways: WaySummary[];
+  rows: ForkRow[];
+  verdict: Verdict;
+}
+
+export interface WayForkInput {
+  flows: FlowsDTO;
+  route: FlowRouteDTO;
+}
+
+/**
+ * The fork, or null when there is no fork to draw.
+ *
+ * Null below two Ways, which is the healthy case and the one every route with
+ * a single procedure is in — the caller keeps drawing exactly what it drew
+ * before. Shaped like `walkAnalysis({flows, route})` on purpose: one input
+ * object, so a third reader cannot be built that takes a different one.
+ *
+ * A Way's total is the WHOLE-WALK span from `RouteWalkDTO`, never a sum of step
+ * durations. Steps are not shared between Ways — measured, the four real Ways
+ * share exactly one edge — so a per-step comparison across Ways has nothing to
+ * compare. The whole walk does.
+ */
+export function wayFork(input: WayForkInput): WayFork | null {
+  const { flows, route } = input;
+  const ways = flowWalks(flows, route);
+  if (ways.length < 2) return null;
+
+  const totalMs = new Map(
+    route.walks.map((w) => [w.sessionId, Math.max(0, Math.round((w.throughSec - w.atSec) * 1000))]),
+  );
+
+  const summaries: WaySummary[] = ways.map((w) => ({
+    wayIndex: w.index,
+    letter: variantLetter(w.index),
+    steps: w.steps.length,
+    sessionIds: [...w.sessionIds],
+    totalsMs: w.sessionIds.flatMap((id) => {
+      const ms = totalMs.get(id);
+      // A session with no walk span is DROPPED, never zeroed. A zero would read
+      // as an instantaneous recording and would drag a range's floor to 0.0s.
+      return ms === undefined ? [] : [ms];
+    }),
+  }));
+
+  return {
+    ways: summaries,
+    rows: forkRows(ways, spineOf(ways)),
+    verdict: verdictFor(summaries),
   };
 }

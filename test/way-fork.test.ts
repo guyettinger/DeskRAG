@@ -8,7 +8,16 @@ import {
   verdictFor,
   type WaySummary,
 } from "../app/src/main/way-fork.js";
+import { wayFork } from "../app/src/main/way-fork.js";
 import type { FlowStep, FlowWalk } from "../app/src/main/flow-steps.js";
+import type {
+  EdgeSourceDTO,
+  FlowRouteDTO,
+  FlowsDTO,
+  GraphEdgeDTO,
+  GraphNodeDTO,
+  RouteWalkDTO,
+} from "@shared/types";
 
 /**
  * The four Ways below are the REAL ones, read off the store on 2026-08-23:
@@ -258,5 +267,109 @@ describe("verdictFor", () => {
 
   it("holds the floor at 2", () => {
     expect(FORK_VERDICT_MIN_WALKS).toBe(2);
+  });
+});
+
+const gnode = (id: string, label: string): GraphNodeDTO => ({
+  id,
+  label,
+  chip: id,
+  observations: 1,
+  predicates: ["app(Test)"],
+  locatable: true,
+  intervene: "none",
+  rank: 0,
+  sources: [],
+});
+const gedge = (id: string, from: string, to: string, sources: EdgeSourceDTO[]): GraphEdgeDTO => ({
+  id,
+  from,
+  to,
+  actions: [],
+  back: false,
+  provenance: "recorded",
+  observations: Math.max(1, sources.length),
+  sources,
+});
+const rwalk = (
+  sessionId: string,
+  edgeIds: string[],
+  atSec: number,
+  throughSec: number,
+): RouteWalkDTO => ({ sessionId, edgeIds, atSec, throughSec });
+
+describe("wayFork", () => {
+  /**
+   * Two recordings over the places Calc, Calc, TextEdit — one of which takes a
+   * detour through Finder before arriving. Distinct EDGE ids per session,
+   * because that is what the real store holds and it is the whole reason the
+   * alignment is on places.
+   */
+  const build = (): { flows: FlowsDTO; route: FlowRouteDTO } => {
+    const nodes = [gnode("c", "Calculator"), gnode("t", "TextEdit"), gnode("f", "Finder")];
+    const edges = [
+      gedge("s1:e0", "c", "c", [{ sessionId: "s1", startedAt: 1000, atSec: 0, throughSec: 5 }]),
+      gedge("s1:e1", "c", "t", [{ sessionId: "s1", startedAt: 1000, atSec: 5, throughSec: 8 }]),
+      gedge("s2:e0", "c", "c", [{ sessionId: "s2", startedAt: 2000, atSec: 0, throughSec: 4 }]),
+      gedge("s2:e1", "c", "f", [{ sessionId: "s2", startedAt: 2000, atSec: 4, throughSec: 9 }]),
+      gedge("s2:e2", "f", "t", [{ sessionId: "s2", startedAt: 2000, atSec: 9, throughSec: 12 }]),
+    ];
+    const route: FlowRouteDTO = {
+      id: "Calculator → TextEdit",
+      count: 2,
+      label: "Calculator → TextEdit",
+      name: null,
+      nameObservations: 0,
+      edgeIds: edges.map((e) => e.id),
+      nodeIds: ["c", "t", "f"],
+      sessionIds: ["s1", "s2"],
+      variants: [],
+      walks: [
+        rwalk("s1", ["s1:e0", "s1:e1"], 0, 8),
+        rwalk("s2", ["s2:e0", "s2:e1", "s2:e2"], 0, 12),
+      ],
+    };
+    return {
+      flows: {
+        graph: { id: "g", entry: "c", nodes, edges, slots: [] },
+        routes: [route],
+        excludedApps: [],
+      },
+      route,
+    };
+  };
+
+  it("is null when the route has a single way", () => {
+    const { flows, route } = build();
+    const one: FlowRouteDTO = { ...route, count: 1, sessionIds: ["s1"], walks: [route.walks[0]!] };
+    expect(wayFork({ flows, route: one })).toBeNull();
+  });
+
+  it("letters the ways the same way the record does", () => {
+    const { flows, route } = build();
+    expect(wayFork({ flows, route })?.ways.map((w) => w.letter)).toEqual(["A", "B"]);
+  });
+
+  it("carries each recording's own whole-walk total", () => {
+    const { flows, route } = build();
+    const ways = wayFork({ flows, route })!.ways;
+    expect(ways.map((w) => w.totalsMs)).toEqual([[8000], [12000]]);
+  });
+
+  it("finds the shared spine and puts the detour in a fork", () => {
+    const { flows, route } = build();
+    const fork = wayFork({ flows, route })!;
+    const spines = fork.rows.filter((r) => r.kind === "spine");
+    expect(spines).toHaveLength(1);
+    expect(spines[0]?.kind === "spine" && `${spines[0].from}>${spines[0].to}`).toBe(
+      "Calculator>Calculator",
+    );
+    const forks = fork.rows.filter((r) => r.kind === "fork");
+    expect(forks).toHaveLength(1);
+  });
+
+  it("withholds the verdict at one recording per way", () => {
+    const { flows, route } = build();
+    expect(wayFork({ flows, route })!.verdict.kind).toBe("withheld");
   });
 });
