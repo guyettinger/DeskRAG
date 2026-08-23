@@ -406,7 +406,7 @@ export function markLabel(readout: MarkReadout): string {
  * replaces, and it lives here rather than in the `.tsx` so the root suite can
  * hold it to the cases below.
  *
- * The tail cannot be found by NAME: `## How the recordings differ` renders only
+ * The tail cannot be found by NAME: `## Where the ways fork` renders only
  * at two or more recordings, so a habit recorded once would fall through to the
  * whole document.
  */

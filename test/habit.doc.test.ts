@@ -202,6 +202,80 @@ function divergent(): FlowsDTO {
  * OMITTED rather than given a zero.
  */
 
+/**
+ * TWO ways over one route, with DISTINCT EDGE IDS PER SESSION.
+ *
+ * That is the real store's shape and it is the whole reason the fork aligns on
+ * places rather than edges: measured on 2026-08-23, the four real ways of the
+ * one multi-way route share exactly one edge between them. It is also the only
+ * fixture here in which every `## Where the time goes` row carries a single
+ * duration, because a step belongs to exactly one way.
+ *
+ *   s1 (Tue) Calculator → Calculator, Calculator → TextEdit          8s
+ *   s2 (Wed) Calculator → Calculator, Calculator → Finder → TextEdit 12s
+ */
+function forked(): FlowsDTO {
+  const mk = (
+    id: string,
+    from: string,
+    to: string,
+    sources: { sessionId: string; startedAt: number; atSec: number; throughSec: number }[],
+  ): GraphEdgeDTO => ({
+    id,
+    from,
+    to,
+    actions: [],
+    back: false,
+    provenance: "recorded",
+    observations: Math.max(1, sources.length),
+    sources,
+  });
+  const at = (sessionId: string, day: number, atSec: number, throughSec: number) => ({
+    sessionId,
+    startedAt: T_TUE + day * DAY_MS,
+    atSec,
+    throughSec,
+  });
+
+  return {
+    graph: {
+      id: "g",
+      entry: "n0",
+      nodes: [
+        node("n0", "Calculator", { app: "Calculator" }),
+        node("n1", "TextEdit", { app: "TextEdit" }),
+        node("n2", "Finder", { app: "Finder" }),
+      ],
+      edges: [
+        mk("s1:e0", "n0", "n0", [at("s1", 0, 0, 5)]),
+        mk("s1:e1", "n0", "n1", [at("s1", 0, 5, 8)]),
+        mk("s2:e0", "n0", "n0", [at("s2", 1, 0, 4)]),
+        mk("s2:e1", "n0", "n2", [at("s2", 1, 4, 9)]),
+        mk("s2:e2", "n2", "n1", [at("s2", 1, 9, 12)]),
+      ],
+      slots: [],
+    },
+    excludedApps: [],
+    routes: [
+      {
+        id: "Calculator → TextEdit",
+        count: 2,
+        label: "Calculator → TextEdit",
+        name: null,
+        nameObservations: 0,
+        nodeIds: ["n0", "n1", "n2"],
+        edgeIds: ["s1:e0", "s1:e1", "s2:e0", "s2:e1", "s2:e2"],
+        sessionIds: ["s1", "s2"],
+        variants: [],
+        walks: [
+          { sessionId: "s1", edgeIds: ["s1:e0", "s1:e1"], atSec: 0, throughSec: 8 },
+          { sessionId: "s2", edgeIds: ["s2:e0", "s2:e1", "s2:e2"], atSec: 0, throughSec: 12 },
+        ],
+      },
+    ],
+  };
+}
+
 const rec = (f: FlowsDTO): string =>
   recordedBlocks({ flows: f, route: f.routes[0]!, showSamples: false });
 
@@ -682,14 +756,20 @@ describe("mergedBody", () => {
   });
 });
 
-describe("## How the recordings differ", () => {
-  it("says they did not differ, rather than going silent", () => {
+describe("## Where the ways fork", () => {
+  it("replaces the old heading entirely", () => {
+    const md = rec(divergent());
+    expect(md).not.toContain("## How the recordings differ");
+    expect(md).toContain("## Where the ways fork");
+  });
+
+  it("keeps the agreement sentence when there is one way", () => {
     // The agreement case is the Consistency Wins statement and is the single
-    // most valuable line in the block. Silence here would make "no deviations"
-    // and "not enough recordings to compare" look identical.
+    // most valuable line in the block. Going silent here would make "they all
+    // did the same thing" indistinguishable from "nothing was measured".
     const md = rec(flows());
-    expect(md).toMatch(/## How the recordings differ/);
-    expect(md).toMatch(/All 2 recordings took the same path\./);
+    expect(md).toMatch(/## Where the ways fork/);
+    expect(md).toContain("All 2 recordings took the same path.");
   });
 
   it("renders nothing at all for a habit recorded once", () => {
@@ -697,54 +777,32 @@ describe("## How the recordings differ", () => {
     f.routes[0]!.count = 1;
     f.routes[0]!.sessionIds = ["s1"];
     f.routes[0]!.walks = [{ sessionId: "s1", edgeIds: ["e0"], atSec: 0, throughSec: 0 }];
-    expect(rec(f)).not.toMatch(/## How the recordings differ/);
+    expect(rec(f)).not.toMatch(/## Where the ways fork/);
   });
 
-  it("prints ONE line per recording, never one per deviation", () => {
-    // `cautionsFor` already paid for the alternative: a per-step bullet printed
-    // one fact TWELVE times in an eighteen-bullet section.
+  it("lists each way with its step count, recordings and own times", () => {
+    const md = rec(forked());
+    expect(md).toMatch(/- \*\*Way A\*\* — \d+ steps?, \d+ recordings?, [\d.]+s/);
+    expect(md).toContain("- **Way B** — 3 steps, 1 recording, 12.0s");
+  });
+
+  it("numbers the spine and indents the forks under it", () => {
+    const md = rec(forked());
+    expect(md).toMatch(/^1\. \*\*.+ → .+\*\*$/m);
+    expect(md).toMatch(/^ {3}- Way [A-Z]: /m);
+  });
+
+  it("puts a leading fork at the top level, because no step precedes it", () => {
+    // Way C of the real route begins at `n0 — no state` while the others begin
+    // at Calculator, so the gap BEFORE the first shared step is a real case.
     const md = rec(divergent());
-    const block = md.split("## How the recordings differ")[1]!.split("\n## ")[0]!;
-    expect(block.split("\n").filter((l) => l.startsWith("- "))).toHaveLength(3);
+    const block = md.split("## Where the ways fork")[1]!.split("\n## ")[0]!;
+    expect(block).not.toMatch(/^ {3}- Way [A-Z]: first, /m);
   });
 
-  it("carries Baseline.reason verbatim, so the file and the probe agree", () => {
-    const md = rec(divergent());
-    // Three ways, one recording each: a tie, decided by the newest walk.
-    expect(md).toMatch(/Ways tie at 1 recording each; the standard is the one holding the newest walk\./);
-  });
-
-  it("warns that a tiebroken standard can move, and only on a tie", () => {
-    expect(rec(divergent())).toMatch(/could become the standard as soon as one more is made/);
-    expect(rec(flows())).not.toMatch(/could become the standard/);
-  });
-
-  it("names each recording by date, and counts what it did differently", () => {
-    const md = rec(divergent());
-    expect(md).toMatch(/- 2026-03-03 — 1 of the standard's steps not taken\./);
-    expect(md).toMatch(/- 2026-03-04 — 1 step not in the standard, 2 of the standard's steps not taken\./);
-  });
-
-  it("says when a recording stopped before the end", () => {
-    // s1 and s2 both stop short of the baseline's last step.
-    const md = rec(divergent());
-    const block = md.split("## How the recordings differ")[1]!.split("\n## ")[0]!;
-    expect(block.match(/Stopped before the end\./g)).toHaveLength(2);
-  });
-
-  it("says a recording followed the standard when it did", () => {
-    // s3 IS the baseline, so it can only agree with itself.
-    expect(rec(divergent())).toMatch(/- 2026-03-05 — followed the standard\./);
-  });
-
-  it("names an undated recording by its session id rather than inventing a date", () => {
-    const f = divergent();
-    // Strip s3's only source, so nothing can date it.
-    f.graph.edges = f.graph.edges.map((e) => ({
-      ...e,
-      sources: e.sources.filter((s) => s.sessionId !== "s3"),
-    }));
-    expect(rec(f)).toMatch(/- s3 — /);
+  it("prints the withheld reason when the verdict cannot fire", () => {
+    const md = rec(forked());
+    expect(md).toMatch(/nothing here says one way is better\./);
   });
 
   it("prints no score, ratio or percentage", () => {
@@ -755,6 +813,24 @@ describe("## How the recordings differ", () => {
 });
 
 describe("## Where the time goes", () => {
+  it("names the way it is about", () => {
+    expect(rec(forked())).toMatch(/These are Way [A-Z]'s steps/);
+  });
+
+  it("discloses that every row holds a single observation", () => {
+    // Measured on the real store: the ways share no steps, so every row has
+    // exactly one duration and the comma list READS like a comparison.
+    expect(rec(forked())).toContain(
+      "one recording each, so these are observations rather than a comparison",
+    );
+  });
+
+  it("stays quiet about it where a row really does compare recordings", () => {
+    // `flows()` has ONE way walked twice, so its single step carries two
+    // durations and the clause would be false.
+    expect(rec(flows())).not.toContain("observations rather than a comparison");
+  });
+
   it("gives each recording's own duration for each step", () => {
     // The fixture's one edge runs 2s→6s for s1 and 3s→7s for s2.
     const md = rec(flows());
@@ -916,3 +992,4 @@ describe("briefFor carries consistency", () => {
     expect(b.consistency.join(" ")).not.toContain(SECRET);
   });
 });
+

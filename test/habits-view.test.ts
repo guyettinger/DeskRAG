@@ -60,6 +60,7 @@ const habit = (over: Partial<HabitDTO> = {}): HabitDTO => ({
   history: [],
   duplicates: [],
   ways: [],
+  fork: null,
   droppedEarly: [],
   apps: [],
   slug: "a-habit",
@@ -501,7 +502,7 @@ describe("the mark says how it compared", () => {
 
 describe("recordTail", () => {
   // The steps become an instrument, so the <pre> holds the record FROM THE NEXT
-  // HEADING DOWN. `## How the recordings differ` only exists at count >= 2, so
+  // HEADING DOWN. `## Where the ways fork` only exists at count >= 2, so
   // the tail cannot be found by name — it is the first heading after the steps.
   const doc = (...sections: string[]): string =>
     ["---", "name: x", "---", "", "Prose.", "", ...sections].join("\n");
@@ -512,7 +513,7 @@ describe("recordTail", () => {
   });
 
   it("finds it whatever the next heading is called", () => {
-    // A single-recording habit has no "How the recordings differ" section.
+    // A single-recording habit has no "Where the ways fork" section.
     const md = doc("## Recorded steps", "", "1. A → B", "", "## Evidence", "", "Once.");
     expect(recordTail(md)).toMatch(/^## Evidence/);
   });
@@ -527,7 +528,7 @@ describe("recordTail", () => {
       "",
       "1. A → B",
       "",
-      "## How the recordings differ",
+      "## Where the ways fork",
       "",
       "All 2 recordings took the same path.",
       "",
@@ -536,7 +537,7 @@ describe("recordTail", () => {
       "Recorded twice.",
     );
     const tail = recordTail(md);
-    expect(tail).toMatch(/## How the recordings differ/);
+    expect(tail).toMatch(/## Where the ways fork/);
     expect(tail).toMatch(/## Evidence/);
     expect(tail).not.toMatch(/## Recorded steps/);
   });
