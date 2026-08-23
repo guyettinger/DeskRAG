@@ -45,7 +45,7 @@ import {
 } from "../habits-view.js";
 import type { LedgerMark } from "../habits-view.js";
 import { clampTip } from "./hover-card.js";
-import { fadeLine } from "../habit-rhythm.js";
+import { DAYS, fadeLine, rhythmLabel, rhythmNote, rhythmOf } from "../habit-rhythm.js";
 import { placeLabel, portraitOf } from "../habit-portrait.js";
 
 /** Distance from the mark to its card, and from the card to the window edge —
@@ -527,6 +527,61 @@ function MarkCard({
  * through the ordering alone — this is the one place in the sub-project where
  * the no-grade rule is carried by prose rather than by structure.
  */
+/**
+ * Where in the WEEK, beside the ledger's where in your life.
+ *
+ * The ledger draws an absolute wall clock shared by every row, which is what
+ * makes a habit practised last week read differently from one practised in
+ * March. It cannot say that a habit happens every Tuesday at 9am — and context
+ * stability is the measured driver of automaticity, so a habit in phase and one
+ * at random currently draw identically.
+ *
+ * BELOW THE FLOOR IT DRAWS NOTHING AND SAYS WHY. Three walks in 168 cells is
+ * decoration, and the author's real kept habit is exactly that case. A strip
+ * that merely never appeared would be indistinguishable from one nobody
+ * implemented — the `StageSpec.skipReason` rule, one screen over.
+ *
+ * One hue, `--data-0`, for the reason `Portrait` uses one.
+ */
+function Rhythm({ walks }: { walks: readonly WalkMarkDTO[] }): React.JSX.Element | null {
+  // Nothing to place at all. Rendered as nothing, exactly as `Ledger` returns
+  // null at zero marks — the editor is already saying there are no recordings.
+  if (walks.length === 0) return null;
+  const rhythm = rhythmOf(walks);
+  return (
+    <div className="rhythm">
+      <span className="eyebrow">In phase</span>
+      {rhythm.kind === "too-few" ? (
+        <p className="rhythm__note">{rhythm.reason}</p>
+      ) : (
+        <>
+          <div className="rhythm__grid" role="img" aria-label={rhythmLabel(rhythm.grid)}>
+            {rhythm.grid.cells.map((row, day) => (
+              <React.Fragment key={DAYS[day]}>
+                <span className="rhythm__day mono">{DAYS[day]}</span>
+                {row.map((count, hour) => (
+                  <span
+                    key={hour}
+                    className="rhythm__cell"
+                    style={
+                      count === 0
+                        ? undefined
+                        : {
+                            background: `color-mix(in oklab, var(--data-0) ${25 + Math.round(65 * (count / rhythm.grid.peak))}%, transparent)`,
+                          }
+                    }
+                  />
+                ))}
+              </React.Fragment>
+            ))}
+          </div>
+          <p className="rhythm__note">{rhythmNote(rhythm.grid)}</p>
+        </>
+      )}
+    </div>
+  );
+}
+
 function LedgerLegend(): React.JSX.Element {
   return (
     <div className="ledger-legend">
@@ -906,6 +961,7 @@ function HabitEditor({
             {span !== null && ` · ${span}`}
           </p>
         {b.walks.some((w) => w.fit !== null) && <LedgerLegend />}
+          <Rhythm walks={b.walks} />
         </div>
       </header>
 

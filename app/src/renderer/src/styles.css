@@ -4236,6 +4236,23 @@ select {
   flex-basis: 100%; margin: 0; font-size: var(--t-meta); color: var(--muted);
 }
 
+/* Where in the WEEK. 7 rows of 24, Monday first, beside the lead ledger's
+   absolute wall clock. Cells are set into `--sunken` so an empty week reads as
+   an instrument with nothing in it rather than as a missing element. */
+.rhythm { display: flex; flex-direction: column; gap: var(--s1); margin-top: var(--s2); }
+.rhythm__grid {
+  display: grid; grid-template-columns: max-content repeat(24, 1fr);
+  gap: 2px; align-items: center; max-width: 400px;
+}
+.rhythm__day {
+  font-size: var(--t-nano); color: var(--muted); padding-right: var(--s1);
+  text-align: right;
+}
+.rhythm__cell {
+  aspect-ratio: 1; border-radius: 2px; background: var(--sunken);
+}
+.rhythm__note { margin: 0; font-size: var(--t-meta); color: var(--muted); }
+
 .habitedit {
   flex: 1; min-width: 0; min-height: 0; overflow-y: auto;
   border: 1px solid var(--hairline); border-radius: var(--radius); background: var(--panel);
