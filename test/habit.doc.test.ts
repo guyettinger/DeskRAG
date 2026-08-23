@@ -513,10 +513,14 @@ describe("recordings that did NOT take the same path", () => {
     const md = recordedBlocks({ flows: f, route: f.routes[0]!, showSamples: false });
     expect(md).toMatch(/### Way A — 2 steps, 1 recording/);
     expect(md).toMatch(/### Way B — 2 steps, 1 recording/);
+    // Scoped to the steps section: `## Where the time goes` numbers the
+    // baseline's steps too, and this assertion is about the procedure, not
+    // about every numeral in the file.
+    const steps = md.split("## What varies")[0]!;
     // The union has three edges; NO way is three steps long, so no "3." exists.
-    expect(md).not.toMatch(/^3\. /m);
+    expect(steps).not.toMatch(/^3\. /m);
     // Each way restarts at 1 — they are alternatives, not a continued sequence.
-    expect(md.match(/^1\. /gm)).toHaveLength(2);
+    expect(steps.match(/^1\. /gm)).toHaveLength(2);
   });
 
   it("tells the reader to follow ONE way, not all of them in sequence", () => {
@@ -747,5 +751,54 @@ describe("## How the recordings differ", () => {
     const md = rec(divergent());
     expect(md).not.toMatch(/\d+%/);
     expect(md).not.toMatch(/consisten(t|cy) (score|rating)/i);
+  });
+});
+
+describe("## Where the time goes", () => {
+  it("gives each recording's own duration for each step", () => {
+    // The fixture's one edge runs 2s→6s for s1 and 3s→7s for s2.
+    const md = rec(flows());
+    expect(md).toMatch(/## Where the time goes/);
+    expect(md).toMatch(/4\.0s, 4\.0s/);
+  });
+
+  it("says these are durations and not targets, IN THE FILE", () => {
+    // The file is the thing that gets pasted somewhere else — the same reason
+    // the showSamples warning travels in the file rather than only in the UI.
+    expect(rec(flows())).toMatch(/durations, not targets/);
+  });
+
+  it("renders nothing for a habit recorded once", () => {
+    const f = flows();
+    f.routes[0]!.count = 1;
+    f.routes[0]!.sessionIds = ["s1"];
+    f.routes[0]!.walks = [{ sessionId: "s1", edgeIds: ["e0"], atSec: 0, throughSec: 0 }];
+    expect(rec(f)).not.toMatch(/## Where the time goes/);
+  });
+
+  it("omits a recording that did not walk the step instead of writing a zero", () => {
+    // Zero is a real duration. Only s1 and s2 walk e0, so its list has two
+    // entries even though the route has three recordings.
+    // The baseline's step 2 (e1) was walked by s1 and s3 but not s2, so its
+    // list carries two durations for a route with three recordings.
+    const md = rec(divergent());
+    const block = md.split("## Where the time goes")[1]!.split("\n## ")[0]!;
+    const second = block.split("\n").find((l) => l.startsWith("2. "))!;
+    expect(second.match(/\d+\.\ds/g)).toHaveLength(2);
+  });
+
+  it("names the step by the places it moves between", () => {
+    expect(rec(flows())).toMatch(/1\. Ghostty → Google Chrome — github\.com\/user\/repo — /);
+  });
+
+  it("reports the idle between steps separately from the steps", () => {
+    // s1 and s3 both leave 2s between e0 ending and e1 starting.
+    expect(rec(divergent())).toMatch(/idle before the next step: 2\.0s, 2\.0s/);
+  });
+
+  it("prints no total, no average and no fastest", () => {
+    const md = rec(divergent());
+    const block = md.split("## Where the time goes")[1]!.split("\n## ")[0]!;
+    expect(block).not.toMatch(/total|average|mean|median|fastest|slowest/i);
   });
 });

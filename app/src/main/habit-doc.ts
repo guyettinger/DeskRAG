@@ -33,7 +33,12 @@ import {
   type FlowWalk,
 } from "./flow-steps.js";
 import type { HabitBinding } from "./habit-bind.js";
-import { walkAnalysis, type WalkAnalysis, type WalkFit } from "./walk-analysis.js";
+import {
+  walkAnalysis,
+  type StepCost,
+  type WalkAnalysis,
+  type WalkFit,
+} from "./walk-analysis.js";
 
 /** Frontmatter `name`: lowercase, hyphens, and never empty. */
 export function slugify(text: string): string {
@@ -285,6 +290,46 @@ function differBlock(analysis: WalkAnalysis, count: number): string[] {
 }
 
 /**
+ * Each recording's own time on each step.
+ *
+ * A step's duration is its OWN span (`throughSec - atSec` from that recording's
+ * `EdgeSourceDTO`), never the gap to the next step — differencing consecutive
+ * starts folds the idle before the next step into this one's cost and hides the
+ * hesitation. The idle is reported separately, and only when some of it is
+ * non-zero: a tight sequence should not carry a row of noughts.
+ *
+ * `StepCost.stepIndex` indexes the BASELINE Way's steps, so the label is read
+ * from that Way directly rather than looked up from the graph. One lookup fewer
+ * is also one drift hazard fewer: `walk-analysis.ts` has its own `edgeLabel`,
+ * and two functions naming one edge is the `ax-dump`/`ax-exec` shape.
+ */
+function timeBlock(steps: readonly StepCost[], baseWay: FlowWalk | undefined): string[] {
+  if (baseWay === undefined) return [];
+  const rows = steps.filter((s) => s.durations.length > 0);
+  if (rows.length === 0) return [];
+
+  const out = [
+    "## Where the time goes",
+    "",
+    "Each recording's own time on each step, from the recorded spans. These are durations, not targets.",
+    "",
+  ];
+  for (const cost of rows) {
+    const step = baseWay.steps[cost.stepIndex];
+    const label =
+      step === undefined || step.missing
+        ? `edge \`${cost.edgeId}\` is not in the graph`
+        : `${step.from} → ${step.to}`;
+    out.push(`${cost.stepIndex + 1}. ${label} — ${cost.durations.map((d) => secs(d.ms)).join(", ")}`);
+    if (cost.gapsAfter.some((g) => g.ms > 0)) {
+      out.push(`   *idle before the next step: ${cost.gapsAfter.map((g) => secs(g.ms)).join(", ")}*`);
+    }
+  }
+  out.push("");
+  return out;
+}
+
+/**
  * The record: steps, what varies, what the evidence does not say, evidence.
  *
  * Generated from the graph and NOTHING ELSE. This function does not take prose,
@@ -392,6 +437,11 @@ export function recordedBlocks(input: RecordedInput): string {
   // that is what makes "a model cannot rewrite the record" structural.
   const analysis = walkAnalysis({ flows, route });
   out.push(...differBlock(analysis, route.count));
+
+  const baseWay = analysis.baseline.wayIndex === null ? undefined : walks[analysis.baseline.wayIndex];
+  // Only when there is a second recording to read a duration AGAINST. One
+  // recording's timings are a fact about one afternoon, not about a habit.
+  if (route.count > 1) out.push(...timeBlock(analysis.steps, baseWay));
 
   const cautions = cautionsFor(flows, route, walks);
   if (cautions.length > 0) {
