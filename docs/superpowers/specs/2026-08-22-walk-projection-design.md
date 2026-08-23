@@ -124,11 +124,16 @@ export interface WalkAnalysis {
 ```ts
 export type DeviationKind = "skipped" | "inserted" | "reordered";
 
-export interface Deviation {
+/** What the DTO-free core returns. No label — it cannot see one. */
+export interface EdgeDeviation {
   kind: DeviationKind;
   /** Index into the BASELINE's steps. */
   stepIndex: number;
   edgeId: string;
+}
+
+/** The same, with the step label `walk-analysis.ts` resolves from the graph. */
+export interface Deviation extends EdgeDeviation {
   /** "Google Chrome → Ghostty", from the same labelling the record uses. */
   label: string;
 }
@@ -158,19 +163,25 @@ Counts and names. `deviations.length` is a fact; there is no ratio and no normal
 export interface StepCost {
   stepIndex: number;
   edgeId: string;
+  /** The step's own extent, per recording that walked it. */
   durations: { sessionId: string; ms: number }[];
-  /**
-   * True for a walk's FINAL step, which has no successor edge to measure
-   * against. Its extent is bounded by the walk's `throughSec` and is
-   * DISCLOSED, never estimated — the `clippedStart`/`clippedEnd` rule.
-   */
-  openEnded: boolean;
+  /** Idle between this step ending and the next beginning. Empty on the last. */
+  gapsAfter: { sessionId: string; ms: number }[];
 }
 ```
 
-Durations come from consecutive edge `atSec` within one walk. A step present in the baseline
-and absent from a walk contributes no entry, so `durations.length` can be below the walk
-count and that difference is itself readable.
+**A step's duration is its OWN span, never a difference between consecutive edges.**
+`EdgeSourceDTO` carries `{ sessionId, startedAt, atSec, throughSec }` per recording, so the
+extent is `throughSec - atSec` for this walk's session — which means the final step has an
+extent like any other and there is nothing to disclose as open-ended.
+
+Differencing consecutive `atSec` would have conflated two different facts: time spent
+*performing* a step and time spent between steps. Both are worth having and separating them
+is free, so `gapsAfter` carries the second. Hesitation before a step is a real reading of
+where the time goes, and folding it into the preceding step's duration would have hidden it.
+
+A step present in the baseline and absent from a walk contributes no entry, so
+`durations.length` can be below the walk count and that difference is itself readable.
 
 ### `AntecedentFact` — the cue
 
@@ -300,9 +311,16 @@ are reachable there because both files are `.ts` under `app/src/main/`.
 Fixtures alone are not sufficient and this repo has three bugs on record that prove it —
 synthetic fixtures agree with whatever the code assumes. So:
 
-**`npm run probe:baseline`** — read-only. Launches the real app and reads `flows.graph()`
-over IPC exactly as `scripts/routes-probe.ts` does; opens SQLite readonly; writes nothing.
-It:
+**`npm run probe:baseline`** — read-only and **headless**, exactly as
+`scripts/routes-probe.ts` is, for the reason that file states outright: DeskRAGApp takes no
+single-instance lock, so launching it against the real data dir makes a **second owner** of
+SQLite and LanceDB, and it *writes* on startup (`adoptUnclosedSessions`, the index worker).
+Opening `app.db` with `better-sqlite3` in `readonly` mode and marshalling the `trace_*` tables
+through `scripts/lib/read-store.ts`'s `readGraph` is the only way in that cannot change what
+it is measuring. It never constructs a `DualStore`, which drops retired vector spaces on open.
+
+It calls the app's own `frequentRoutes` and `toGraphDTO` — no second implementation of the
+mining anywhere in it, so what it measures is what ships. It:
 
 1. **Prints the corpus FIRST**, and says plainly when it is too small to be a measurement.
    `probe:routes` carries this warning for a reason: the numbers quoted in `graph-view.ts`
@@ -310,8 +328,12 @@ It:
 2. Runs all three rules over every route with two or more walks, reporting for each: how many
    walks are called deviant, the total deviation count by kind, and how many routes have no
    qualifying baseline at all.
-3. Reports **baseline stability** across the re-mine that `probe:stability` already performs —
-   a baseline that moves between re-indexes is a baseline that cannot be quoted in a file.
+3. Reports **how many routes reach the baseline by a TIEBREAK rather than by a majority** —
+   under `majority`, a tie means the tiebreak ("the Way holding the newest walk") is carrying
+   the entire decision, and a standard chosen that way is one more recording away from
+   changing. This is the fragility that matters and it is measurable headlessly. It does
+   **not** attempt cross-re-index stability: that needs a re-mine against a clone, which is
+   `probe:stability`'s job and which a read-only headless probe cannot do.
 
 The probe ships **with** A, not after it. Choosing three rules is only meaningful if
 something measures them; without the probe the default is picked by argument, which is the
