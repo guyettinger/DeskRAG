@@ -366,3 +366,51 @@ describe("walkAnalysis — steps", () => {
     ]);
   });
 });
+
+describe("walkAnalysis — rhythm", () => {
+  it("reports the gaps between consecutive walks, oldest first", () => {
+    const f = fixture(1, [
+      { sessionId: "s1", edgeIds: ["e0"], startedAt: T0 },
+      { sessionId: "s2", edgeIds: ["e0"], startedAt: T0 + DAY },
+      { sessionId: "s3", edgeIds: ["e0"], startedAt: T0 + 4 * DAY },
+    ]);
+    expect(walkAnalysis(input(f)).rhythm.intervalsMs).toEqual([DAY, 3 * DAY]);
+  });
+
+  it("has no intervals below two dated walks", () => {
+    const f = fixture(1, [{ sessionId: "s1", edgeIds: ["e0"], startedAt: T0 }]);
+    expect(walkAnalysis(input(f)).rhythm.intervalsMs).toEqual([]);
+  });
+
+  it("reports each walk's local hour and day", () => {
+    const f = fixture(1, [
+      { sessionId: "s1", edgeIds: ["e0"], startedAt: T0 },
+      { sessionId: "s2", edgeIds: ["e0"], startedAt: T0 + DAY },
+    ]);
+    const { hours, days } = walkAnalysis(input(f)).rhythm;
+    expect(hours).toHaveLength(2);
+    expect(days).toHaveLength(2);
+    // Local, deliberately: the question is when in this person's day it
+    // happened. Asserted against Date rather than a constant so the suite is
+    // not pinned to the machine's zone.
+    expect(hours[0]).toBe(new Date(T0).getHours());
+    expect(days[0]).toBe(new Date(T0).getDay());
+    // Consecutive days differ by one, whatever the zone.
+    expect((days[0]! + 1) % 7).toBe(days[1]);
+  });
+
+  it("excludes an undated walk from every rhythm reading", () => {
+    // An interval computed across a gap of unknown length is not a long gap,
+    // it is no measurement at all.
+    const f = fixture(1, [
+      { sessionId: "s1", edgeIds: ["e0"], startedAt: T0 },
+      { sessionId: "s2", edgeIds: ["e0"], startedAt: T0 + DAY },
+    ]);
+    f.route.walks.push(routeWalk("ghost", ["e0"]));
+    f.route.sessionIds.push("ghost");
+    const r = walkAnalysis(input(f)).rhythm;
+    expect(r.intervalsMs).toEqual([DAY]);
+    expect(r.hours).toHaveLength(2);
+    expect(r.days).toHaveLength(2);
+  });
+});

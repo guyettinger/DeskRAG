@@ -355,6 +355,36 @@ function stepCosts(
   });
 }
 
+/**
+ * When the walks happened, as raw facts.
+ *
+ * NO automaticity score and no regularity coefficient. The habit literature's
+ * numbers — a median around 66 days to automaticity, over a range of 18 to 254 —
+ * are population statistics and say nothing about one person's one route.
+ * Turning them into a per-habit figure would be the invented confidence this
+ * module refuses everywhere else.
+ *
+ * LOCAL time on purpose: the question a rhythm answers is when in a person's
+ * day and week this happened. Nothing in the store records the zone the
+ * recording was made in, so a route walked at 09:00 in two zones reports two
+ * phases — named in the spec's open requirements, not solved here.
+ */
+function rhythmOf(walks: readonly WalkFit[]): RhythmFacts {
+  const dated = walks
+    .map((w) => w.at)
+    .filter((at): at is number => at !== null)
+    .sort((a, b) => a - b);
+
+  const intervalsMs: number[] = [];
+  for (let i = 1; i < dated.length; i += 1) intervalsMs.push(dated[i]! - dated[i - 1]!);
+
+  return {
+    intervalsMs,
+    hours: dated.map((at) => new Date(at).getHours()),
+    days: dated.map((at) => new Date(at).getDay()),
+  };
+}
+
 export function walkAnalysis(
   input: WalkAnalysisInput,
   _hooks?: WalkAnalysisHooks,
@@ -403,7 +433,7 @@ export function walkAnalysis(
     walks,
     steps,
     antecedents: [],
-    rhythm: { intervalsMs: [], hours: [], days: [] },
+    rhythm: rhythmOf(walks),
     droppedEarly: [],
   };
 }
