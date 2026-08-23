@@ -33,6 +33,7 @@ import {
   type FlowWalk,
 } from "./flow-steps.js";
 import type { HabitBinding } from "./habit-bind.js";
+import { walkAnalysis, type WalkAnalysis, type WalkFit } from "./walk-analysis.js";
 
 /** Frontmatter `name`: lowercase, hyphens, and never empty. */
 export function slugify(text: string): string {
@@ -219,6 +220,70 @@ export interface RecordedInput {
   showSamples: boolean;
 }
 
+/** One decimal and a unit. Durations are read beside each other, so the width matters. */
+const secs = (ms: number): string => `${(ms / 1000).toFixed(1)}s`;
+
+/** A recording's name in a record block: its date, or its id when nothing can date it. */
+const walkName = (w: WalkFit): string => (w.at === null ? w.sessionId : iso(w.at));
+
+/**
+ * How each recording differed from the standard.
+ *
+ * COUNTS PER RECORDING, never a bullet per deviation. Measured on the real
+ * store: the one recurring route yields 9 skipped and 16 inserted across two
+ * deviant walks, which is 25 bullets for three recordings. `cautionsFor` already
+ * paid for that shape once — a per-step bullet fired on nearly every step of
+ * every variant and printed one fact TWELVE times in an eighteen-bullet section
+ * — and the fix there was to state it once about the route.
+ *
+ * The lead is `Baseline.reason` VERBATIM rather than a second sentence saying
+ * the same thing, so this file and `probe:baseline` cannot disagree about how
+ * the standard was picked. That string was written for a probe and is
+ * user-facing from here on.
+ */
+function differBlock(analysis: WalkAnalysis, count: number): string[] {
+  // Nothing to compare against: one recording, or a rule that names no standard.
+  if (count < 2 || analysis.baseline.wayIndex === null) return [];
+  if (analysis.walks.length < 2) return [];
+
+  const out = ["## How the recordings differ", ""];
+
+  const deviant = analysis.walks.filter((w) => w.deviations.length > 0 || !w.reachedEnd);
+  if (deviant.length === 0) {
+    // The agreement case IS the finding. Going silent here would make "they all
+    // did the same thing" indistinguishable from "nothing was measured".
+    out.push(`All ${analysis.walks.length} recordings took the same path.`, "");
+    return out;
+  }
+
+  const tied = /tie at /.test(analysis.baseline.reason);
+  out.push(
+    `The standard below is chosen from the recordings themselves. ${analysis.baseline.reason}` +
+      (tied ? " A different recording could become the standard as soon as one more is made." : ""),
+    "",
+  );
+
+  for (const w of analysis.walks) {
+    const inserted = w.deviations.filter((d) => d.kind === "inserted").length;
+    const skipped = w.deviations.filter((d) => d.kind === "skipped").length;
+    const moved = w.deviations.filter((d) => d.kind === "reordered").length;
+    const bits: string[] = [];
+    if (inserted > 0) bits.push(`${inserted} step${inserted === 1 ? "" : "s"} not in the standard`);
+    if (skipped > 0) {
+      bits.push(`${skipped} of the standard's steps not taken`);
+    }
+    if (moved > 0) bits.push(`${moved} step${moved === 1 ? "" : "s"} taken in a different order`);
+
+    const head = bits.length === 0 ? "followed the standard" : bits.join(", ");
+    // `reachedEnd` is only news when it is false, or when it is true DESPITE
+    // deviations — on a walk that followed the standard it says nothing.
+    const tail = !w.reachedEnd ? " Stopped before the end." : bits.length > 0 ? " Reached the end." : "";
+    out.push(`- ${walkName(w)} — ${head}.${tail}`);
+  }
+  out.push("");
+  return out;
+}
+
 /**
  * The record: steps, what varies, what the evidence does not say, evidence.
  *
@@ -319,6 +384,14 @@ export function recordedBlocks(input: RecordedInput): string {
     for (const v of vars) out.push(varLine(v.name, v.samples, showSamples));
   }
   out.push("");
+
+  // The projection needs exactly `flows` and `route`, which this function already
+  // holds — so it is computed HERE rather than passed in. A `WalkAnalysis`
+  // parameter would be the first crack in the property this signature exists to
+  // guarantee: `recordedBlocks` takes no body, no prose and no provider, and
+  // that is what makes "a model cannot rewrite the record" structural.
+  const analysis = walkAnalysis({ flows, route });
+  out.push(...differBlock(analysis, route.count));
 
   const cautions = cautionsFor(flows, route, walks);
   if (cautions.length > 0) {
