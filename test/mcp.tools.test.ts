@@ -614,6 +614,79 @@ describe("list_habits", () => {
     expect(out.content[0]!.text).not.toMatch(/file-a-bug-report/);
   });
 
+  it("names the applications the route passes through", async () => {
+    const out = await callTool(
+      withHabits({ ...noHabits(), habits: [habit({ apps: ["Calculator", "TextEdit"] })] }),
+      "list_habits",
+      {},
+    );
+    expect(textOf(out)).toContain("passes through: Calculator → TextEdit");
+  });
+
+  it("discloses that the recordings did not take the same path", async () => {
+    const ways = [
+      { letter: "A", sessionIds: ["s1"], steps: [], totalsMs: [39_300] },
+      { letter: "B", sessionIds: ["s2"], steps: [], totalsMs: [24_000] },
+    ];
+    const out = await callTool(
+      withHabits({ ...noHabits(), habits: [habit({ ways })] }),
+      "list_habits",
+      {},
+    );
+    expect(textOf(out)).toContain("2 WAYS recorded");
+  });
+
+  it("prints a named fork verdict, and a withheld one's reason verbatim", async () => {
+    const named = await callTool(
+      withHabits({
+        ...noHabits(),
+        habits: [habit({ fork: { rows: [], verdict: { kind: "named", text: "Way B is faster." } } })],
+      }),
+      "list_habits",
+      {},
+    );
+    expect(textOf(named)).toContain("Way B is faster.");
+
+    const withheld = await callTool(
+      withHabits({
+        ...noHabits(),
+        habits: [
+          habit({
+            fork: { rows: [], verdict: { kind: "withheld", reason: "fewer than 2 timed recordings" } },
+          }),
+        ],
+      }),
+      "list_habits",
+      {},
+    );
+    // The REASON, verbatim. A withheld verdict that says only "withheld" is the
+    // failure `StageSpec.skipReason` exists to prevent.
+    expect(textOf(withheld)).toContain("fewer than 2 timed recordings");
+  });
+
+  it("discloses recordings that started this work and dropped it", async () => {
+    const out = await callTool(
+      withHabits({
+        ...noHabits(),
+        habits: [habit({ droppedEarly: [{ places: ["Calculator"], count: 2 }] })],
+      }),
+      "list_habits",
+      {},
+    );
+    expect(textOf(out)).toContain("STARTED AND DROPPED — 2 recording(s)");
+  });
+
+  it("says when the prose is the user's own words", async () => {
+    const out = await callTool(
+      withHabits({ ...noHabits(), habits: [habit({ edited: true })] }),
+      "list_habits",
+      {},
+    );
+    expect(textOf(out)).toContain("Hand-edited");
+    const clean = await callTool(withHabits({ ...noHabits(), habits: [habit()] }), "list_habits", {});
+    expect(textOf(clean)).not.toContain("Hand-edited");
+  });
+
   // THREE empty states, never one — the `search_experience` rule. Each names a
   // different remedy, and an agent handed a bare empty list reports the wrong one.
   it("distinguishes no graph from no routes from nothing kept", async () => {

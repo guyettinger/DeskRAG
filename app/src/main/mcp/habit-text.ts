@@ -21,11 +21,23 @@ const PREAMBLE =
   "they actually walked, so it is evidence about what they did rather than general knowledge " +
   "about how software works. get_habit returns the file verbatim.";
 
-function lines(s: HabitDTO, others: ReadonlyMap<string, HabitDTO>): string[] {
+/**
+ * One habit's block in the catalogue, and the same block a search result draws.
+ *
+ * EXPORTED so `habit-search.ts` renders from this function rather than a second
+ * copy of it — the `wayFork` rule. A disclosure added here appears in both
+ * surfaces or in neither, which is the only way the two can be made unable to
+ * disagree.
+ */
+export function habitLines(s: HabitDTO, others: ReadonlyMap<string, HabitDTO>): string[] {
   const b = s.binding;
   const out = [s.slug === "" ? s.title : s.slug];
   out.push(`  id: ${s.id}`);
   if (s.description !== "") out.push(`  ${s.description}`);
+  // Concrete situational anchoring, and the cheapest disclosure on this list: an
+  // agent deciding whether a habit is relevant asks "is this about the app I am
+  // in?" before it asks anything else.
+  if (s.apps.length > 0) out.push(`  passes through: ${s.apps.join(" → ")}`);
 
   const bits = [
     `v${s.version}`,
@@ -35,6 +47,35 @@ function lines(s: HabitDTO, others: ReadonlyMap<string, HabitDTO>): string[] {
   if (s.pinned) bits.push("pinned");
   if (s.state === "archived") bits.push("archived");
   out.push(`  ${bits.join(" · ")}`);
+  // The recordings disagreed. An agent that follows a multi-way file top to
+  // bottom performs two procedures in sequence, which is why the record prints
+  // "follow one of them, not all of them in sequence" — said here too, because
+  // the catalogue is where the agent decides whether to fetch.
+  if (s.ways.length > 1) {
+    out.push(
+      `  ${s.ways.length} WAYS recorded — the recordings did not take the same path. ` +
+        `Follow ONE way, not all of them; \`get_habit_step\` needs a way letter.`,
+    );
+  }
+  if (s.fork !== null) {
+    // The withheld reason VERBATIM. `Verdict.withheld.reason` is a required
+    // string precisely so it can be printed rather than summarised.
+    out.push(
+      s.fork.verdict.kind === "named"
+        ? `  ${s.fork.verdict.text}`
+        : `  No way is established as better: ${s.fork.verdict.reason}`,
+    );
+  }
+  const dropped = s.droppedEarly.reduce((n, d) => n + d.count, 0);
+  if (dropped > 0) {
+    out.push(
+      `  STARTED AND DROPPED — ${dropped} recording(s) began this work and stopped partway. ` +
+        `They walked a different route and are NOT counted in the recordings above.`,
+    );
+  }
+  // Who is speaking in the file. `prose: llm` in the bits above says a model
+  // wrote it; this says a person has since taken it over.
+  if (s.edited) out.push("  Hand-edited — the prose is the user's own words, not a model's.");
 
   // The two disclosures an agent actually needs to weigh the file, stated in the
   // LIST so it can choose before fetching. One recording is not a habit, and an
@@ -99,7 +140,7 @@ const MAX_CANDIDATES = 10;
  *
  * Recurrence is the whole disclosure, so the partition is by recurrence:
  * routes walked more than once are NAMED, routes walked once are COUNTED and
- * not named. That is `lines()`'s RECORDED ONCE rule applied one level up — a
+ * not named. That is `habitLines`'s RECORDED ONCE rule applied one level up — a
  * single walk is an observation, and presenting it beside a repeated route as
  * though the two were the same kind of thing is the misreading the whole file
  * exists to prevent. Counting them rather than dropping them keeps the
@@ -165,7 +206,7 @@ export function renderHabitList(habits: HabitsDTO, noGraph: string): string {
   // members are present, but reading from the wider set means a filter change
   // upstream cannot silently turn every differentiator back into a bare id.
   const byId = new Map(habits.habits.map((h) => [h.id, h]));
-  const body = kept.map((s) => lines(s, byId).join("\n")).join("\n\n");
+  const body = kept.map((s) => habitLines(s, byId).join("\n")).join("\n\n");
   const hidden = habits.habits.length - kept.length;
   const foot =
     hidden > 0 ? "\n\nDismissed proposals are not listed." : "";
