@@ -17,6 +17,9 @@ import type { ExperienceReader } from "./reader.js";
 import { renderOutline, stamp } from "./outline.js";
 import { findRoute, renderFlow, renderFlowList } from "./flow-text.js";
 import { findHabit, renderHabitList } from "./habit-text.js";
+import { denseRanking, habitDocs, renderHabitSearch, type DenseLane } from "./habit-search.js";
+import { renderStep, resolveStep } from "./habit-step.js";
+import { habitStepsJson } from "./habit-steps-json.js";
 
 export interface ToolContent {
   type: "text" | "image";
@@ -66,7 +69,10 @@ Start with search_experience for "when did I…", list_recordings for what exist
 get_recording_outline for what one recording was about, and list_flows/get_flow for a \
 task the user has performed more than once. get_moment returns the actual screenshot. \
 list_habits/get_habit return HABIT.md files the user has kept from their own recorded \
-flows — use one when you are about to repeat something they have done before.
+flows — use one when you are about to repeat something they have done before, and \
+search_habits finds the right one from a description of your situation. get_habit_step shows \
+what one step of a habit actually looked like on screen, and get_habit_steps returns its \
+steps as JSON.
 
 This server is read-only: it cannot record, delete, re-index, or control the desktop.`;
 
@@ -418,6 +424,86 @@ const listHabitsTool: ToolDef = {
   },
 };
 
+const searchHabitsTool: ToolDef = {
+  name: "search_habits",
+  title: "Find a kept habit for a situation",
+  description:
+    "Find the kept habits that best fit a situation, described in your own words. Use this " +
+    "before repeating work the user may already have a recorded procedure for — it is the " +
+    "cheap way in, where list_habits makes you read the whole catalogue. Two lanes are " +
+    "matched: the habit's own description and prose, and the exact terms in its recorded " +
+    "steps. There is no score; the reply names which lanes each habit appeared in and how " +
+    "many habits it was ranked among.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      situation: {
+        type: "string",
+        description: "What you are about to do, in your own words.",
+      },
+      limit: { type: "number", description: "How many to return. Default 8, max 50." },
+    },
+    required: ["situation"],
+    additionalProperties: false,
+  },
+  async run(reader, args) {
+    const situation = str(args, "situation");
+    if (situation === null) {
+      return fail("`situation` is required and must be a non-empty string.");
+    }
+    const habits = reader.habits();
+    const kept = habits.habits.filter((h) => h.state !== "dismissed");
+    const docs = habitDocs(kept);
+
+    let dense: DenseLane = { kind: "skipped", reason: "there are no habits to embed" };
+    if (docs.length > 0) {
+      // One call for the documents and the query together, so both go through
+      // the same session — and the ROLE differs, because nomic and
+      // EmbeddingGemma are both asymmetric and degrade quietly without their
+      // task prefixes.
+      const docVectors = await reader.embed(
+        docs.map((d) => d.dense),
+        "document",
+      );
+      const queryVectors = await reader.embed([situation], "query");
+      const queryVector = queryVectors?.[0];
+      if (docVectors === null || queryVectors === null || queryVector === undefined) {
+        dense = {
+          kind: "skipped",
+          reason:
+            "no local text model answered — open DeskRAG → Settings → Providers and check the text model has downloaded",
+        };
+      } else if (docVectors.length !== docs.length) {
+        // Fewer vectors than documents would mis-pair habit to vector by
+        // position, and every rank past the gap would name the wrong habit.
+        dense = {
+          kind: "skipped",
+          reason: `the text model returned ${docVectors.length} vectors for ${docs.length} habits`,
+        };
+      } else {
+        dense = {
+          kind: "ranked",
+          ids: denseRanking(
+            docs.map((d) => d.id),
+            docVectors,
+            queryVector,
+          ),
+        };
+      }
+    }
+
+    return text(
+      renderHabitSearch({
+        habits,
+        query: situation,
+        limit: limitOf(args),
+        dense,
+        noGraph: NO_GRAPH,
+      }),
+    );
+  },
+};
+
 const getHabitTool: ToolDef = {
   name: "get_habit",
   title: "Get one habit as HABIT.md",
@@ -447,6 +533,93 @@ const getHabitTool: ToolDef = {
   },
 };
 
+const getHabitStepTool: ToolDef = {
+  name: "get_habit_step",
+  title: "Look at one step of a habit",
+  description:
+    "One step of a kept habit, as text plus the screenshot of what was on screen when it ran " +
+    "and the accessibility labels visible at that moment. Use it when you are following a " +
+    "HABIT.md and a step does not tell you enough. `step` is the number the file prints, " +
+    "counting from 1; `way` is the letter, and is required for a habit whose recordings took " +
+    "different paths.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      habitId: { type: "string", description: "A habit id from list_habits or search_habits." },
+      step: { type: "number", description: "The step number the file prints, from 1." },
+      way: {
+        type: "string",
+        description: 'The way letter, e.g. "A". Required for a multi-way habit.',
+      },
+    },
+    required: ["habitId", "step"],
+    additionalProperties: false,
+  },
+  async run(reader, args) {
+    const habitId = str(args, "habitId");
+    if (habitId === null) return fail("`habitId` is required and must be a non-empty string.");
+    const stepNo = args["step"];
+    if (typeof stepNo !== "number" || !Number.isFinite(stepNo) || stepNo < 1) {
+      return fail("`step` is required and must be a number of 1 or more.");
+    }
+    const habit = findHabit(reader.habits(), habitId);
+    if (habit === undefined) {
+      return fail(`No habit ${habitId}. Habit ids come from list_habits.`);
+    }
+    const found = resolveStep(habit, Math.floor(stepNo), str(args, "way"));
+    if (found.kind === "error") return fail(found.message);
+
+    const at = found.step.firstAt;
+    const moment = at === null ? null : reader.momentAt(at.sessionId, at.atSec);
+    const body = renderStep({
+      habit,
+      wayLetter: found.wayLetter,
+      manyWays: found.manyWays,
+      step: found.step,
+      moment,
+    });
+    if (moment === null) return text(body);
+
+    const image = await reader.frameImage(moment.frameId);
+    if (image === null) return text(body);
+    return {
+      content: [
+        { type: "text", text: body },
+        { type: "image", data: image.base64, mimeType: image.mimeType },
+      ],
+    };
+  },
+};
+
+const getHabitStepsTool: ToolDef = {
+  name: "get_habit_steps",
+  title: "Get a habit's steps as JSON",
+  description:
+    "A kept habit's recorded steps as JSON, to write as `steps.json` beside the HABIT.md that " +
+    "`get_habit` returns. Carries each step's edge, actions and targets, the state it arrives " +
+    "in and whether that state can be recognised at all. Slot names only — no recorded " +
+    "keystroke value is ever included.",
+  inputSchema: {
+    type: "object",
+    properties: { habitId: { type: "string", description: "A habit id from list_habits." } },
+    required: ["habitId"],
+    additionalProperties: false,
+  },
+  async run(reader, args) {
+    const habitId = str(args, "habitId");
+    if (habitId === null) return fail("`habitId` is required and must be a non-empty string.");
+    const habit = findHabit(reader.habits(), habitId);
+    if (habit === undefined) {
+      return fail(`No habit ${habitId}. Habit ids come from list_habits.`);
+    }
+    const doc = habitStepsJson(habit, reader.flows());
+    // RAW JSON with no preamble, for `get_habit`'s reason: the value of this
+    // tool is that its output IS a file, and a sentence in front of the `{`
+    // corrupts a paste to disk.
+    return typeof doc === "string" ? text(doc) : fail(doc.error);
+  },
+};
+
 export const TOOLS: readonly ToolDef[] = [
   searchTool,
   momentTool,
@@ -455,7 +628,10 @@ export const TOOLS: readonly ToolDef[] = [
   listFlowsTool,
   getFlowTool,
   listHabitsTool,
+  searchHabitsTool,
   getHabitTool,
+  getHabitStepTool,
+  getHabitStepsTool,
 ];
 
 export function toolByName(name: string): ToolDef | undefined {

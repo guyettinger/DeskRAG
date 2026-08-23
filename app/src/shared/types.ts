@@ -1374,9 +1374,19 @@ export interface HabitStepDTO {
   edgeId: string;
   from: string;
   to: string;
-  actions: { action: string; target: string }[];
+  /**
+   * The recorded actions.
+   *
+   * The slot's NAME travels; its SAMPLES never do. `habit-marks.ts` states the
+   * rule: whether the rendered FILE prints recorded values is a per-habit
+   * toggle, and a DTO has no toggle — so it carries no values at all. A name is
+   * not a value, and the record prints names unconditionally.
+   */
+  actions: { action: string; target: string; slot?: { name: string } }[];
   observations: number;
   everyRecording: boolean;
+  /** What lifting could not do here, e.g. a dropped wait. */
+  liftWarnings: string[];
   /** The edge is not in the graph — an index defect, carried rather than dropped. */
   missing: boolean;
   /**

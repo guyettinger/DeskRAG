@@ -14,6 +14,7 @@ const way = (letter: string, n: number): HabitWayDTO => ({
     actions: [],
     observations: 1,
     everyRecording: true,
+    liftWarnings: [],
     missing: false,
     firstAt: null,
   })),

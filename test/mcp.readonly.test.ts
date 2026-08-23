@@ -138,4 +138,23 @@ describe("the reader's interfaces are the read-only contract", () => {
       /\bclose\b|\bdelete|\bremove|startRecording|stopRecording|reindex|\bopen\(/i,
     );
   });
+
+  it("declares the two methods the habit tools read through", () => {
+    // Named, because their ABSENCE is what a future refactor would produce and
+    // the tools would then fail at runtime rather than at typecheck.
+    const src = read("reader.ts");
+    const iface = /export interface ExperienceReader \{([\s\S]*?)\n\}/.exec(src)?.[1];
+    expect(iface!).toMatch(/\bembed\(/);
+    expect(iface!).toMatch(/\bmomentAt\(/);
+  });
+
+  it("names the embedder's parameter something other than `inputs`", () => {
+    // `EmbeddingProvider.embed(inputs: string[])` cannot be mirrored verbatim:
+    // the guard above has no word boundaries, so `inPUTs` matches `put` and the
+    // whole interface fails. Likewise no inline `startedAt`, which matches
+    // `start`. This asserts the trap stays sprung rather than silently loosened.
+    const src = read("reader.ts");
+    const iface = /export interface ExperienceReader \{([\s\S]*?)\n\}/.exec(src)?.[1];
+    expect(iface!).not.toMatch(/inputs/);
+  });
 });

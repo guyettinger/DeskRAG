@@ -6,7 +6,7 @@
  * only issues JSON-RPC and screenshots. It exists because the suite cannot see
  * any of this — there is no renderer in vitest, and the app-side integration
  * test runs against a FAKE reader. What is checked here is the one thing
- * neither can reach: the six tools answering from a real store, in whatever
+ * neither can reach: the eleven tools answering from a real store, in whatever
  * provider configuration this machine is actually set to.
  */
 
@@ -199,6 +199,75 @@ try {
     console.log(head(doc, 12));
   } else {
     console.log("(no habit kept — nothing to fetch)");
+  }
+
+  // The three tools sub-project D added. This is the ONLY place they meet a
+  // real store: the suite drives a fake reader, so a one-habit corpus, an
+  // orphaned binding and a route with four ways are all things only this sees.
+  console.log("\n=== search_habits ===");
+  const situation = process.env.MCP_PROBE_SITUATION ?? "add some numbers and write them down";
+  const found = textOf(await call(url, "search_habits", { situation, limit: 3 }));
+  console.log(head(found, 20));
+  // The disclosure is the whole reason this tool can ship against this store.
+  const corpusDisclosed = /kept habit/.test(found);
+  console.log(`corpus disclosed before the ranking: ${corpusDisclosed}`);
+  // No score, ever. A decimal with two or more places is the shape of one — but
+  // the VERSION is not one, and `v0.1.10` matches that shape exactly. Measured:
+  // this check read false against a real habit at v0.1.10 while the reply
+  // contained no score at all. The suite's fixture sits at v0.1.0 and could
+  // never have shown it.
+  const scoreShaped = found.replace(/\bv\d+\.\d+\.\d+\b/g, "v-");
+  console.log(`no score printed: ${!/\d\.\d{2,}/.test(scoreShaped)}`);
+
+  console.log("\n=== get_habit_step ===");
+  if (habitId) {
+    // The MULTI-WAY refusal, which the real store CAN reach: the kept habit
+    // binds to a route with four ways, so omitting `way` must be refused with
+    // the letters named rather than silently answered about way A.
+    const bare = await call(url, "get_habit_step", { habitId, step: 1 });
+    const bareText = textOf(bare);
+    console.log(head(bareText, 8));
+    const many = /`way` is required/.test(bareText);
+    console.log(`multi-way refusal reached: ${many}`);
+    const step = await call(url, "get_habit_step", {
+      habitId,
+      step: 1,
+      ...(many ? { way: "A" } : {}),
+    });
+    const image = (step?.result?.content ?? []).find((c) => c.type === "image");
+    console.log(head(textOf(step), 16));
+    console.log(
+      image
+        ? `[image ${image.mimeType}, ${Math.round((image.data.length * 3) / 4 / 1024)} kB]`
+        : "[no image — the step has no moment, or the recording has no keyframe]",
+    );
+  } else {
+    console.log("(no habit kept — nothing to step through)");
+  }
+
+  console.log("\n=== get_habit_steps ===");
+  if (habitId) {
+    const raw = textOf(await call(url, "get_habit_steps", { habitId }));
+    let parsed = null;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      /* left null; reported below */
+    }
+    console.log(`parses as JSON: ${parsed !== null}`);
+    if (parsed) {
+      const steps = (parsed.ways ?? []).flatMap((w) => w.steps ?? []);
+      const resolved = steps.filter((s) => Array.isArray(s.arrivesWhen)).length;
+      console.log(
+        `${parsed.ways.length} way(s), ${steps.length} step(s), ` +
+          `${resolved} with a resolved destination state`,
+      );
+      // The strong guarantee, checked against the file rather than the fixture.
+      console.log(`slot values absent: ${!/"samples"/.test(raw)}`);
+    }
+    console.log(head(raw, 24));
+  } else {
+    console.log("(no habit kept)");
   }
 
   // The log had better show every one of those calls.

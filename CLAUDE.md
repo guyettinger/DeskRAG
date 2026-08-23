@@ -43,10 +43,15 @@ npm run smoke:onnx-electron   # ColModernVBERT x3 under the Electron allocator �
 npm run probe:latency         # capture delivery latency: --device for the real screen,
                               # default is a synthetic barcode bench with ground truth.
                               # Read-only; the device mode counts gray bytes, never reads them.
-npm run probe:mcp             # drive the real app and call all eight MCP tools over a real
+npm run probe:mcp             # drive the real app and call all eleven MCP tools over a real
                               # socket, plus the three guard checks. The ONLY place the tools
                               # meet a real store — the app-side integration test uses a fake
-                              # reader. Read-only; every tool it calls is a read.
+                              # reader. Read-only; every tool it calls is a read. It also
+                              # checks the three habit-agent guarantees that only real data
+                              # can reach: search_habits discloses the corpus and prints no
+                              # score, get_habit_step REFUSES a multi-way habit with no `way`
+                              # (the one kept habit binds to a four-way route), and
+                              # get_habit_steps carries no slot values.
 npm run probe:habits          # keep a real route as a HABIT.md and read what it renders to.
                               # The ONLY check that the clipboard string and get_habit's are
                               # byte-identical, and that the RECORD survives a real model call.
@@ -282,7 +287,7 @@ before you change anything — most of them were paid for twice, and several wer
 - **Bytes don't go over IPC**: `deskrag://frame/<blobId>` buffers, `deskrag://media/<blobId>` streams with `Range` → `206`.
 - **REFLECTING IS THE ONE MODEL-ONLY STAGE, and the only one whose absence costs a whole artefact rather than its prose.** Every other derived row is a measurement and *none of them can say a session went badly* — a habit built from them alone can only describe a task as though it went smoothly. So a reflection is a judgement, and nothing templates one: with no summary model there is no note, and the ladder draws the stage skipped with its reason. It runs after `compose` and reads the composed ROOT's own children as the steps; **fewer than two steps and there is no note**, because one step can only be restated. `session_reflection` hangs off `segment(id) ON DELETE CASCADE` so a purge reaches it for free, carries **no timestamp** (it inherits the session's `t_mono` through the root), and its `source` is the MODEL that wrote it, not `'llm' | 'template'` — there being no template path, `'llm'` would say nothing. A note reaches a habit only as an **opinion** in `habitPrompt`, labelled *not part of the record*; `recordedBlocks()` still takes the route and nothing else.
 - **A HABIT IS AUTHORED: no purge, re-index or trace rebuild may touch it, and its binding is DISCLOSED, never silently repaired.** `AUTHORED_TABLES` is a fifth `schema.ts` bucket because the question a purge asks is *can it be remade* — prose a person wrote cannot. A route's key is its place-label sequence, so one extra app hop renames it and every re-index re-keys everything; `bindHabit` re-resolves by strict-majority session overlap (the sessionIds PARTITION, so a majority has at most one winner mathematically) and **declines on a tie**. The bound session ids are JSON, never an FK, or deleting a recording would cascade away the user's writing instead of just changing what the habit reports. **A model writes the PROSE and never the record**: `recordedBlocks()` takes the route and nothing else, so there is no path by which model output reaches the steps — asserted against an adversarial body in the suite, and against a real 30B model by `probe:habits`.
-- **The MCP endpoint is READ-ONLY BY CONSTRUCTION**, guarded by `test/mcp.readonly.test.ts`. **The Host check is what closes DNS rebinding** — the Origin check cannot. There is deliberately no token, and it shows no score.
+- **The MCP endpoint is READ-ONLY BY CONSTRUCTION**, guarded by `test/mcp.readonly.test.ts`. **The Host check is what closes DNS rebinding** — the Origin check cannot. There is deliberately no token, and it shows no score. **Eleven tools, and the guard's `^(search|get|list)_` rule NAMED one of them**: `find_habit` could not ship, because widening that prefix to admit `find_` would trade a structural property for a word. The guard also reads the `ExperienceReader` body with NO word boundaries, so an `inputs` parameter fails on `put` and an inline `startedAt` fails on `start` — the reader takes `texts` and declares its return types outside the interface. **`search_habits` discloses the corpus BEFORE the ranking** (`RANKING_MIN_HABITS = 5`, unswept), and **`steps.json` carries no recorded slot value at all**, `showSamples` unconsulted — `habit-marks.ts`'s rule, that a payload has no toggle so it carries no values.
 
 ### The app's renderer → [app-ui.md](docs/internals/app-ui.md)
 - **NOTHING TRUNCATES.** A label either fits or is withheld (`labelFits`), because an ellipsis hides a broken layout. There is no `text-overflow: ellipsis` in the rail.

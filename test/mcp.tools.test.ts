@@ -163,6 +163,8 @@ function fakeReader(over: Partial<ExperienceReader> = {}): ExperienceReader {
         laneOrigin: 0,
       }),
     flows: () => flows(),
+    embed: async () => null,
+    momentAt: () => null,
     ...over,
   };
 }
@@ -174,16 +176,19 @@ const textOf = (r: { content: { type: string; text?: string }[] }): string =>
     .join("\n");
 
 describe("the tool surface", () => {
-  it("exposes exactly the eight read-only tools", () => {
+  it("exposes exactly the eleven read-only tools", () => {
     expect(TOOLS.map((t) => t.name).sort()).toEqual([
       "get_flow",
       "get_habit",
+      "get_habit_step",
+      "get_habit_steps",
       "get_moment",
       "get_recording_outline",
       "list_flows",
       "list_habits",
       "list_recordings",
       "search_experience",
+      "search_habits",
     ]);
   });
 
@@ -614,6 +619,79 @@ describe("list_habits", () => {
     expect(out.content[0]!.text).not.toMatch(/file-a-bug-report/);
   });
 
+  it("names the applications the route passes through", async () => {
+    const out = await callTool(
+      withHabits({ ...noHabits(), habits: [habit({ apps: ["Calculator", "TextEdit"] })] }),
+      "list_habits",
+      {},
+    );
+    expect(textOf(out)).toContain("passes through: Calculator → TextEdit");
+  });
+
+  it("discloses that the recordings did not take the same path", async () => {
+    const ways = [
+      { letter: "A", sessionIds: ["s1"], steps: [], totalsMs: [39_300] },
+      { letter: "B", sessionIds: ["s2"], steps: [], totalsMs: [24_000] },
+    ];
+    const out = await callTool(
+      withHabits({ ...noHabits(), habits: [habit({ ways })] }),
+      "list_habits",
+      {},
+    );
+    expect(textOf(out)).toContain("2 WAYS recorded");
+  });
+
+  it("prints a named fork verdict, and a withheld one's reason verbatim", async () => {
+    const named = await callTool(
+      withHabits({
+        ...noHabits(),
+        habits: [habit({ fork: { rows: [], verdict: { kind: "named", text: "Way B is faster." } } })],
+      }),
+      "list_habits",
+      {},
+    );
+    expect(textOf(named)).toContain("Way B is faster.");
+
+    const withheld = await callTool(
+      withHabits({
+        ...noHabits(),
+        habits: [
+          habit({
+            fork: { rows: [], verdict: { kind: "withheld", reason: "fewer than 2 timed recordings" } },
+          }),
+        ],
+      }),
+      "list_habits",
+      {},
+    );
+    // The REASON, verbatim. A withheld verdict that says only "withheld" is the
+    // failure `StageSpec.skipReason` exists to prevent.
+    expect(textOf(withheld)).toContain("fewer than 2 timed recordings");
+  });
+
+  it("discloses recordings that started this work and dropped it", async () => {
+    const out = await callTool(
+      withHabits({
+        ...noHabits(),
+        habits: [habit({ droppedEarly: [{ places: ["Calculator"], count: 2 }] })],
+      }),
+      "list_habits",
+      {},
+    );
+    expect(textOf(out)).toContain("STARTED AND DROPPED — 2 recording(s)");
+  });
+
+  it("says when the prose is the user's own words", async () => {
+    const out = await callTool(
+      withHabits({ ...noHabits(), habits: [habit({ edited: true })] }),
+      "list_habits",
+      {},
+    );
+    expect(textOf(out)).toContain("Hand-edited");
+    const clean = await callTool(withHabits({ ...noHabits(), habits: [habit()] }), "list_habits", {});
+    expect(textOf(clean)).not.toContain("Hand-edited");
+  });
+
   // THREE empty states, never one — the `search_experience` rule. Each names a
   // different remedy, and an agent handed a bare empty list reports the wrong one.
   it("distinguishes no graph from no routes from nothing kept", async () => {
@@ -821,5 +899,162 @@ describe("the duplicates differentiator", () => {
     h.habits = [h.habits[0]!];
     const out = await callTool(withHabits(h), "list_habits", {});
     expect(out.content[0]!.text).toMatch(/nobody has merged them/);
+  });
+});
+
+describe("search_habits", () => {
+  const vec = (xs: number[]): Float32Array => new Float32Array(xs);
+
+  it("requires a non-empty situation", async () => {
+    const out = await callTool(withHabits({ ...noHabits(), habits: [habit()] }), "search_habits", {});
+    expect(out.isError).toBe(true);
+    expect(textOf(out)).toMatch(/`situation` is required/);
+  });
+
+  it("ranks with both lanes when a model answers", async () => {
+    const reader = fakeReader({
+      habits: () => ({ ...noHabits(), habits: [habit()] }),
+      // One document, one query: identical direction, so the dense lane ranks it #1.
+      embed: async (texts) => texts.map(() => vec([1, 0])),
+    });
+    const out = await callTool(reader, "search_habits", { situation: "file a bug" });
+    expect(out.isError).toBeUndefined();
+    expect(textOf(out)).toMatch(/prose #1/);
+  });
+
+  it("says the prose lane was skipped when no model answers", async () => {
+    const reader = fakeReader({
+      habits: () => ({ ...noHabits(), habits: [habit({ markdown: "file a bug report" })] }),
+      embed: async () => null,
+    });
+    const out = await callTool(reader, "search_habits", { situation: "bug report" });
+    expect(textOf(out)).toMatch(/prose lane was skipped/);
+    expect(textOf(out)).toMatch(/exact terms #1/);
+  });
+
+  it("skips the dense lane rather than failing when the embedder returns the wrong count", async () => {
+    // A provider that answers with fewer vectors than documents would silently
+    // mis-pair habit to vector — every rank after the gap would name the wrong
+    // habit. Refusing the lane is the only honest response.
+    const reader = fakeReader({
+      habits: () => ({
+        ...noHabits(),
+        habits: [habit({ markdown: "bug" }), habit({ id: "B2", slug: "b2", markdown: "bug" })],
+      }),
+      embed: async () => [vec([1, 0])],
+    });
+    const out = await callTool(reader, "search_habits", { situation: "bug" });
+    expect(out.isError).toBeUndefined();
+    expect(textOf(out)).toMatch(/prose lane was skipped/);
+  });
+
+  it("shows no score", async () => {
+    const reader = fakeReader({
+      habits: () => ({ ...noHabits(), habits: [habit()] }),
+      embed: async (texts) => texts.map(() => vec([1, 0])),
+    });
+    expect(textOf(await callTool(reader, "search_habits", { situation: "bug" }))).not.toMatch(
+      /\d\.\d{2,}/,
+    );
+  });
+});
+
+describe("get_habit_step", () => {
+  it("refuses a habit with no live route, and says which situation it is", async () => {
+    const out = await callTool(withHabits({ ...noHabits(), habits: [habit()] }), "get_habit_step", {
+      habitId: habit().id,
+      step: 1,
+    });
+    expect(out.isError).toBe(true);
+    expect(textOf(out)).toMatch(/no longer in the trace graph/);
+  });
+
+  it("returns the step and its keyframe as an image", async () => {
+    const ways = [
+      {
+        letter: "A",
+        sessionIds: ["s1"],
+        totalsMs: [39_300],
+        steps: [
+          {
+            index: 0,
+            edgeId: "e0",
+            from: "Calculator",
+            to: "TextEdit",
+            actions: [{ action: "click", target: 'Button "="' }],
+            observations: 2,
+            everyRecording: true,
+            missing: false,
+            liftWarnings: [],
+            firstAt: { sessionId: "s1", startedAt: EPOCH, atSec: 22.157 },
+          },
+        ],
+      },
+    ];
+    const reader = fakeReader({
+      habits: () => ({ ...noHabits(), habits: [habit({ ways })] }),
+      momentAt: () => ({
+        frameId: "f1",
+        offsetSec: 22,
+        after: false,
+        regions: [{ role: "Button", label: "=", bbox: { x: 1, y: 2, w: 3, h: 4 } }],
+      }),
+    });
+    const out = await callTool(reader, "get_habit_step", { habitId: habit().id, step: 1 });
+    expect(out.isError).toBeUndefined();
+    expect(textOf(out)).toMatch(/Calculator → TextEdit/);
+    expect(out.content.some((c) => c.type === "image")).toBe(true);
+  });
+
+  it("requires a step number of 1 or more", async () => {
+    const out = await callTool(withHabits({ ...noHabits(), habits: [habit()] }), "get_habit_step", {
+      habitId: habit().id,
+      step: 0,
+    });
+    expect(out.isError).toBe(true);
+    expect(textOf(out)).toMatch(/must be a number of 1 or more/);
+  });
+});
+
+describe("get_habit_steps", () => {
+  it("returns raw JSON with no preamble", async () => {
+    const ways = [
+      {
+        letter: "A",
+        sessionIds: ["s1"],
+        totalsMs: [1000],
+        steps: [
+          {
+            index: 0,
+            edgeId: "e0",
+            from: "Calculator",
+            to: "TextEdit",
+            actions: [{ action: "click", target: 'Button "="' }],
+            observations: 2,
+            everyRecording: true,
+            missing: false,
+            liftWarnings: [],
+            firstAt: { sessionId: "s1", startedAt: EPOCH, atSec: 1 },
+          },
+        ],
+      },
+    ];
+    const out = await callTool(
+      withHabits({ ...noHabits(), habits: [habit({ ways })] }),
+      "get_habit_steps",
+      { habitId: habit().id },
+    );
+    expect(out.isError).toBeUndefined();
+    const body = textOf(out);
+    expect(body.startsWith("{")).toBe(true);
+    expect(() => JSON.parse(body)).not.toThrow();
+  });
+
+  it("refuses an orphaned habit rather than answering from a stale copy", async () => {
+    const out = await callTool(withHabits({ ...noHabits(), habits: [habit()] }), "get_habit_steps", {
+      habitId: habit().id,
+    });
+    expect(out.isError).toBe(true);
+    expect(textOf(out)).toMatch(/no longer in the trace graph/);
   });
 });
