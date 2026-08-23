@@ -385,9 +385,57 @@ function rhythmOf(walks: readonly WalkFit[]): RhythmFacts {
   };
 }
 
+/**
+ * What preceded the work, with the agreement it was observed at.
+ *
+ * `of` is EVERY walk asked, including the ones the hook could not answer for.
+ * Two of three walks showing Slack is a different claim from two of two, and
+ * shrinking the denominator to the walks that answered would report unanimity
+ * nobody observed — the `nameObservations` versus `count` rule, one level down.
+ *
+ * The hook is asked at the moment THIS recording walked the route, which is
+ * `RouteWalkDTO.atSec` — lane seconds, the axis the rail is drawn in. Never
+ * `tMono / 1000`: that was the measured Flows bug that landed every jump ~1.9s
+ * early.
+ */
+function antecedentsOf(
+  route: FlowRouteDTO,
+  order: readonly string[],
+  hooks: WalkAnalysisHooks | undefined,
+): AntecedentFact[] {
+  const ask = hooks?.antecedentAt;
+  if (ask === undefined) return [];
+
+  const atSecOf = new Map(route.walks.map((w) => [w.sessionId, w.atSec]));
+  const counts = new Map<string, AntecedentFact>();
+  let of = 0;
+
+  for (const sessionId of order) {
+    of += 1;
+    const found = ask(sessionId, atSecOf.get(sessionId) ?? 0);
+    if (found === null) continue;
+    // A space is an unambiguous delimiter here: `kind` is a closed set of
+    // three tokens and none contains one, so no two distinct pairs collide.
+    const key = `${found.kind} ${found.what}`;
+    const seen = counts.get(key);
+    if (seen === undefined) {
+      counts.set(key, { what: found.what, kind: found.kind, observations: 1, of: 0 });
+    } else {
+      seen.observations += 1;
+    }
+  }
+
+  const out = [...counts.values()].map((f) => ({ ...f, of }));
+  out.sort(
+    (a, b) =>
+      b.observations - a.observations || a.what.localeCompare(b.what) || a.kind.localeCompare(b.kind),
+  );
+  return out;
+}
+
 export function walkAnalysis(
   input: WalkAnalysisInput,
-  _hooks?: WalkAnalysisHooks,
+  hooks?: WalkAnalysisHooks,
 ): WalkAnalysis {
   const { flows, route } = input;
   const rule = input.rule ?? DEFAULT_RULE;
@@ -432,7 +480,7 @@ export function walkAnalysis(
     baseline,
     walks,
     steps,
-    antecedents: [],
+    antecedents: antecedentsOf(route, order, hooks),
     rhythm: rhythmOf(walks),
     droppedEarly: [],
   };

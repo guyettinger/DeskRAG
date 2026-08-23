@@ -414,3 +414,74 @@ describe("walkAnalysis — rhythm", () => {
     expect(r.days).toHaveLength(2);
   });
 });
+
+describe("walkAnalysis — antecedents", () => {
+  const f3 = () =>
+    fixture(1, [
+      { sessionId: "s1", edgeIds: ["e0"], startedAt: T0 },
+      { sessionId: "s2", edgeIds: ["e0"], startedAt: T0 + DAY },
+      { sessionId: "s3", edgeIds: ["e0"], startedAt: T0 + 2 * DAY },
+    ]);
+
+  it("is empty with no hook — never a guess", () => {
+    expect(walkAnalysis(input(f3())).antecedents).toEqual([]);
+  });
+
+  it("counts agreement across walks and carries the denominator", () => {
+    const out = walkAnalysis(input(f3()), {
+      antecedentAt: (sessionId) =>
+        sessionId === "s3" ? { what: "Mail", kind: "app" } : { what: "Slack", kind: "app" },
+    });
+    expect(out.antecedents).toEqual([
+      { what: "Slack", kind: "app", observations: 2, of: 3 },
+      { what: "Mail", kind: "app", observations: 1, of: 3 },
+    ]);
+  });
+
+  it("counts a walk that returned null in the denominator, not out of it", () => {
+    // Two of three walks showed Slack is a different claim from two of two.
+    // Dropping the silent walk would report unanimity that was not observed.
+    const out = walkAnalysis(input(f3()), {
+      antecedentAt: (sessionId) => (sessionId === "s1" ? null : { what: "Slack", kind: "app" }),
+    });
+    expect(out.antecedents).toEqual([{ what: "Slack", kind: "app", observations: 2, of: 3 }]);
+  });
+
+  it("keeps the same text under two kinds apart", () => {
+    const out = walkAnalysis(input(f3()), {
+      antecedentAt: (sessionId) =>
+        sessionId === "s1"
+          ? { what: "Slack", kind: "app" }
+          : { what: "Slack", kind: "place" },
+    });
+    expect(out.antecedents).toEqual([
+      { what: "Slack", kind: "place", observations: 2, of: 3 },
+      { what: "Slack", kind: "app", observations: 1, of: 3 },
+    ]);
+  });
+
+  it("is asked at the moment THIS recording walked the route", () => {
+    const f = f3();
+    f.route.walks[1] = { sessionId: "s2", edgeIds: ["e0"], atSec: 42, throughSec: 50 };
+    const asked: { sessionId: string; atSec: number }[] = [];
+    walkAnalysis(input(f), {
+      antecedentAt: (sessionId, atSec) => {
+        asked.push({ sessionId, atSec });
+        return null;
+      },
+    });
+    expect(asked).toContainEqual({ sessionId: "s2", atSec: 42 });
+  });
+
+  it("orders most-observed first, ties broken on the text so the order is stable", () => {
+    const out = walkAnalysis(input(f3()), {
+      antecedentAt: (sessionId) =>
+        sessionId === "s1"
+          ? { what: "Zed", kind: "app" }
+          : sessionId === "s2"
+            ? { what: "Ada", kind: "app" }
+            : { what: "Mail", kind: "app" },
+    });
+    expect(out.antecedents.map((a) => a.what)).toEqual(["Ada", "Mail", "Zed"]);
+  });
+});
