@@ -18,6 +18,7 @@ import { renderOutline, stamp } from "./outline.js";
 import { findRoute, renderFlow, renderFlowList } from "./flow-text.js";
 import { findHabit, renderHabitList } from "./habit-text.js";
 import { denseRanking, habitDocs, renderHabitSearch, type DenseLane } from "./habit-search.js";
+import { renderStep, resolveStep } from "./habit-step.js";
 
 export interface ToolContent {
   type: "text" | "image";
@@ -531,6 +532,64 @@ const getHabitTool: ToolDef = {
   },
 };
 
+const getHabitStepTool: ToolDef = {
+  name: "get_habit_step",
+  title: "Look at one step of a habit",
+  description:
+    "One step of a kept habit, as text plus the screenshot of what was on screen when it ran " +
+    "and the accessibility labels visible at that moment. Use it when you are following a " +
+    "HABIT.md and a step does not tell you enough. `step` is the number the file prints, " +
+    "counting from 1; `way` is the letter, and is required for a habit whose recordings took " +
+    "different paths.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      habitId: { type: "string", description: "A habit id from list_habits or search_habits." },
+      step: { type: "number", description: "The step number the file prints, from 1." },
+      way: {
+        type: "string",
+        description: 'The way letter, e.g. "A". Required for a multi-way habit.',
+      },
+    },
+    required: ["habitId", "step"],
+    additionalProperties: false,
+  },
+  async run(reader, args) {
+    const habitId = str(args, "habitId");
+    if (habitId === null) return fail("`habitId` is required and must be a non-empty string.");
+    const stepNo = args["step"];
+    if (typeof stepNo !== "number" || !Number.isFinite(stepNo) || stepNo < 1) {
+      return fail("`step` is required and must be a number of 1 or more.");
+    }
+    const habit = findHabit(reader.habits(), habitId);
+    if (habit === undefined) {
+      return fail(`No habit ${habitId}. Habit ids come from list_habits.`);
+    }
+    const found = resolveStep(habit, Math.floor(stepNo), str(args, "way"));
+    if (found.kind === "error") return fail(found.message);
+
+    const at = found.step.firstAt;
+    const moment = at === null ? null : reader.momentAt(at.sessionId, at.atSec);
+    const body = renderStep({
+      habit,
+      wayLetter: found.wayLetter,
+      manyWays: found.manyWays,
+      step: found.step,
+      moment,
+    });
+    if (moment === null) return text(body);
+
+    const image = await reader.frameImage(moment.frameId);
+    if (image === null) return text(body);
+    return {
+      content: [
+        { type: "text", text: body },
+        { type: "image", data: image.base64, mimeType: image.mimeType },
+      ],
+    };
+  },
+};
+
 export const TOOLS: readonly ToolDef[] = [
   searchTool,
   momentTool,
@@ -541,6 +600,7 @@ export const TOOLS: readonly ToolDef[] = [
   listHabitsTool,
   searchHabitsTool,
   getHabitTool,
+  getHabitStepTool,
 ];
 
 export function toolByName(name: string): ToolDef | undefined {

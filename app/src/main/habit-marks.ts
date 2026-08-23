@@ -56,10 +56,11 @@ export function walkFits(flows: FlowsDTO, route: FlowRouteDTO): Map<string, Walk
 /**
  * A step, stripped to what the instrument draws.
  *
- * `FlowStepAction` carries a `slot` with its recorded `samples`; this drops it.
- * Whether the rendered FILE prints values is a per-habit toggle, and the DTO
- * that feeds a pixel has no toggle — so it carries no values at all, the same
- * rule `HabitBrief` holds against the model.
+ * `FlowStepAction` carries a `slot` with its recorded `samples`; this keeps the
+ * NAME and drops the samples. Whether the rendered FILE prints values is a
+ * per-habit toggle, and the DTO that feeds a pixel has no toggle — so it
+ * carries no values at all, the same rule `HabitBrief` holds against the model.
+ * A name is not a value: the record prints slot names unconditionally.
  */
 function toStep(step: FlowStep): HabitStepDTO {
   return {
@@ -67,9 +68,15 @@ function toStep(step: FlowStep): HabitStepDTO {
     edgeId: step.edgeId,
     from: step.from,
     to: step.to,
-    actions: step.actions.map((a) => ({ action: a.action, target: a.target })),
+    actions: step.actions.map((a) => ({
+      action: a.action,
+      target: a.target,
+      // `exactOptionalPropertyTypes` — a conditional spread, never `slot: undefined`.
+      ...(a.slot !== undefined ? { slot: { name: a.slot.name } } : {}),
+    })),
     observations: step.observations,
     everyRecording: step.everyRecording,
+    liftWarnings: [...step.liftWarnings],
     missing: step.missing,
     firstAt:
       step.firstAt === null

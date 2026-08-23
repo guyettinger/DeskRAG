@@ -958,3 +958,60 @@ describe("search_habits", () => {
     );
   });
 });
+
+describe("get_habit_step", () => {
+  it("refuses a habit with no live route, and says which situation it is", async () => {
+    const out = await callTool(withHabits({ ...noHabits(), habits: [habit()] }), "get_habit_step", {
+      habitId: habit().id,
+      step: 1,
+    });
+    expect(out.isError).toBe(true);
+    expect(textOf(out)).toMatch(/no longer in the trace graph/);
+  });
+
+  it("returns the step and its keyframe as an image", async () => {
+    const ways = [
+      {
+        letter: "A",
+        sessionIds: ["s1"],
+        totalsMs: [39_300],
+        steps: [
+          {
+            index: 0,
+            edgeId: "e0",
+            from: "Calculator",
+            to: "TextEdit",
+            actions: [{ action: "click", target: 'Button "="' }],
+            observations: 2,
+            everyRecording: true,
+            missing: false,
+            liftWarnings: [],
+            firstAt: { sessionId: "s1", startedAt: EPOCH, atSec: 22.157 },
+          },
+        ],
+      },
+    ];
+    const reader = fakeReader({
+      habits: () => ({ ...noHabits(), habits: [habit({ ways })] }),
+      momentAt: () => ({
+        frameId: "f1",
+        offsetSec: 22,
+        after: false,
+        regions: [{ role: "Button", label: "=", bbox: { x: 1, y: 2, w: 3, h: 4 } }],
+      }),
+    });
+    const out = await callTool(reader, "get_habit_step", { habitId: habit().id, step: 1 });
+    expect(out.isError).toBeUndefined();
+    expect(textOf(out)).toMatch(/Calculator → TextEdit/);
+    expect(out.content.some((c) => c.type === "image")).toBe(true);
+  });
+
+  it("requires a step number of 1 or more", async () => {
+    const out = await callTool(withHabits({ ...noHabits(), habits: [habit()] }), "get_habit_step", {
+      habitId: habit().id,
+      step: 0,
+    });
+    expect(out.isError).toBe(true);
+    expect(textOf(out)).toMatch(/must be a number of 1 or more/);
+  });
+});
