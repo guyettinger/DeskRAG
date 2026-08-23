@@ -35,6 +35,7 @@ import {
   ledgerMarks,
   markLabel,
   markReadout,
+  markStates,
   proposalEvidence,
   proposalTitle,
   walkSpan,
@@ -351,16 +352,27 @@ function Ledger({
   if (marks.length === 0) return null;
   // A single mark is drawn HOLLOW. It is the one visual difference between an
   // observation and a habit, and it has to survive being glanced at.
-  const lone = marks.length === 1;
-  const tone = (m: LedgerMark): string =>
-    `ledger__mark${lone ? " is-lone" : ""}${m.gained ? " is-gained" : ""}`;
+  const states = markStates(marks);
+  const tone = (m: LedgerMark, i: number): string => {
+    const state = states[i];
+    return [
+      "ledger__mark",
+      state === "lone" ? "is-lone" : "",
+      state === "deviated" ? "is-deviated" : "",
+      state === "short" ? "is-short" : "",
+      // Last, so the ring composes over whichever fill the state chose.
+      m.gained ? "is-gained" : "",
+    ]
+      .filter((c) => c !== "")
+      .join(" ");
+  };
 
   if (onOpen === undefined) {
     return (
       <span className={`ledger ledger--${size}`} aria-hidden="true">
         <span className="ledger__axis" />
-        {marks.map((m) => (
-          <span key={m.sessionId} className={tone(m)} style={{ left: `${m.x * 100}%` }} />
+        {marks.map((m, i) => (
+          <span key={m.sessionId} className={tone(m, i)} style={{ left: `${m.x * 100}%` }} />
         ))}
       </span>
     );
@@ -381,7 +393,7 @@ function Ledger({
       onMouseLeave={() => setHover(null)}
     >
       <span className="ledger__axis" />
-      {marks.map((m) => {
+      {marks.map((m, i) => {
         const label = markLabel(markReadout(m.walk, { wallClock, timecode }));
         const walk = m.walk.walk;
         return (
@@ -407,7 +419,7 @@ function Ledger({
               if (walk !== null) onOpen(m.sessionId, walk.atSec);
             }}
           >
-            <span className={tone(m)} />
+            <span className={tone(m, i)} />
           </button>
         );
       })}
@@ -469,8 +481,41 @@ function MarkCard({
           {readout.steps !== null && ` · ${readout.steps}`}
         </div>
       )}
+      {readout.fit !== null && <div className="ledger__tip-fit">{readout.fit}</div>}
       {readout.note !== null && <div className="ledger__tip-note">{readout.note}</div>}
       {readout.action !== null && <div className="ledger__tip-go">{readout.action}</div>}
+    </div>
+  );
+}
+
+/**
+ * What the three hues mean, said once.
+ *
+ * Beside the LEAD ledger only, never per row: four legends down a list is
+ * chrome, and a row's ledger is `aria-hidden` decoration beside words that
+ * already state the fact.
+ *
+ * The last sentence is load-bearing and is not decoration. A key reading
+ * "followed / differed / stopped short" and stopping smuggles a grade back in
+ * through the ordering alone — this is the one place in the sub-project where
+ * the no-grade rule is carried by prose rather than by structure.
+ */
+function LedgerLegend(): React.JSX.Element {
+  return (
+    <div className="ledger-legend">
+      <span className="ledger-legend__item">
+        <span className="ledger__mark ledger-legend__swatch" /> followed the standard
+      </span>
+      <span className="ledger-legend__item">
+        <span className="ledger__mark ledger-legend__swatch is-deviated" /> went another way
+      </span>
+      <span className="ledger-legend__item">
+        <span className="ledger__mark ledger-legend__swatch is-short" /> stopped before the end
+      </span>
+      <p className="ledger-legend__note">
+        The standard is whichever way these recordings most agreed on, and it moves as you
+        record more. Going another way is not a mistake.
+      </p>
     </div>
   );
 }
@@ -683,6 +728,7 @@ function HabitEditor({
             {evidenceLine(habit)}
             {span !== null && ` · ${span}`}
           </p>
+        {b.walks.some((w) => w.fit !== null) && <LedgerLegend />}
         </div>
       </header>
 
