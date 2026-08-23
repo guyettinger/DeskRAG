@@ -93,3 +93,111 @@ export function spineOf(ways: readonly FlowWalk[]): string[] {
   }
   return spine;
 }
+
+/** One Way's own step at a spine position. */
+export interface SpineAt {
+  wayIndex: number;
+  step: FlowStep;
+}
+
+/** What one Way did in the gap between two spine positions. May be empty. */
+export interface ForkRun {
+  wayIndex: number;
+  steps: FlowStep[];
+}
+
+export type ForkRow =
+  /** A place-step every Way took, with each Way's own step at that position. */
+  | { kind: "spine"; from: string; to: string; at: SpineAt[] }
+  /** The gap AFTER spine position `after`. `-1` is the gap before the first. */
+  | { kind: "fork"; after: number; runs: ForkRun[] };
+
+/**
+ * One Way scanned forward against the spine.
+ *
+ * Greedy leftmost matching, which always succeeds when the spine is a
+ * subsequence of the Way — and `spineOf` guarantees that it is, so `at` is
+ * fully populated. `runs` has `spine.length + 1` entries: `runs[k]` is what
+ * this Way did BEFORE spine position `k`, and `runs[spine.length]` is what it
+ * did after the last one.
+ */
+function scan(
+  steps: readonly FlowStep[],
+  spine: readonly string[],
+): { at: (FlowStep | undefined)[]; runs: FlowStep[][] } {
+  const at = new Array<FlowStep | undefined>(spine.length).fill(undefined);
+  const runs: FlowStep[][] = Array.from({ length: spine.length + 1 }, () => []);
+  let k = 0;
+  for (const s of steps) {
+    if (k < spine.length && placeKey(s) === spine[k]) {
+      at[k] = s;
+      k += 1;
+    } else {
+      runs[k]!.push(s);
+    }
+  }
+  return { at, runs };
+}
+
+/**
+ * The spine and its forks, as one ordered list a formatter can walk.
+ *
+ * A fork row is emitted ONLY where at least one Way filled the gap — a row of
+ * four "nothing here"s is noise, and `cautionsFor` already paid for that shape
+ * once by printing one fact twelve times in an eighteen-bullet section. But
+ * within a row that IS drawn, every Way appears, empty run and all: "B did
+ * nothing here" and "B is not in this picture" are different facts.
+ */
+export function forkRows(ways: readonly FlowWalk[], spine: readonly string[]): ForkRow[] {
+  const scans = ways.map((w) => scan(w.steps, spine));
+  const out: ForkRow[] = [];
+
+  const gap = (k: number): void => {
+    const runs = scans.map((s, i) => ({ wayIndex: ways[i]!.index, steps: s.runs[k]! }));
+    if (runs.some((r) => r.steps.length > 0)) out.push({ kind: "fork", after: k - 1, runs });
+  };
+
+  for (let k = 0; k < spine.length; k += 1) {
+    gap(k);
+    const at: SpineAt[] = [];
+    for (let i = 0; i < ways.length; i += 1) {
+      const s = scans[i]!.at[k];
+      // Cannot be undefined — the spine is a subsequence of every Way and
+      // greedy leftmost matching of a subsequence always succeeds. Guarded
+      // rather than asserted so a future spine rule that breaks the invariant
+      // degrades to a thinner row instead of throwing at render time.
+      if (s !== undefined) at.push({ wayIndex: ways[i]!.index, step: s });
+    }
+    const first = at[0];
+    out.push({
+      kind: "spine",
+      from: first?.step.from ?? "",
+      to: first?.step.to ?? "",
+      at,
+    });
+  }
+  gap(spine.length);
+  return out;
+}
+
+/**
+ * What one Way did in a gap, in words.
+ *
+ * The words live HERE rather than in either formatter, so the file and the
+ * screen cannot disagree about them — the same reason `differBlock` prints
+ * `Baseline.reason` verbatim.
+ *
+ * A single step names BOTH its places, because on the real store the one
+ * single-step run is Way C's `n0 — no state → Calculator`, where the FROM is
+ * the entire news. A longer run names its distinct destinations instead: nine
+ * lines of `TextEdit → TextEdit` is not a reading.
+ */
+export function runPhrase(run: ForkRun, after: number): string {
+  const lead = after < 0 ? "first, " : "then ";
+  const n = run.steps.length;
+  if (n === 0) return "nothing here";
+  const one = run.steps[0]!;
+  if (n === 1) return `${lead}1 step: ${one.from} → ${one.to}`;
+  const via = [...new Set(run.steps.map((s) => s.to))].join(", ");
+  return `${lead}${n} steps, via ${via}`;
+}

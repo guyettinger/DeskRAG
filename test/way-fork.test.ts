@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { placeKey, spineOf } from "../app/src/main/way-fork.js";
+import { forkRows, placeKey, runPhrase, spineOf } from "../app/src/main/way-fork.js";
 import type { FlowStep, FlowWalk } from "../app/src/main/flow-steps.js";
 
 /**
@@ -124,5 +124,69 @@ describe("spineOf", () => {
       for (const key of keys) if (k < spine.length && key === spine[k]) k += 1;
       expect(k).toBe(spine.length);
     }
+  });
+});
+
+describe("forkRows", () => {
+  const rows = forkRows([WAY_A, WAY_B, WAY_C, WAY_D], spineOf([WAY_A, WAY_B, WAY_C, WAY_D]));
+  const spines = rows.filter((r) => r.kind === "spine");
+  const forks = rows.filter((r) => r.kind === "fork");
+
+  it("emits one spine row per spine position, in order", () => {
+    expect(spines.map((r) => (r.kind === "spine" ? `${r.from}>${r.to}` : ""))).toEqual([
+      `${CALC}>${CALC}`,
+      `${CALC}>${TE}`,
+      `${TE}>${TE}`,
+    ]);
+  });
+
+  it("carries EVERY way's own step on a spine row", () => {
+    // The step differs per way even where the PLACES agree — this is what lets
+    // both surfaces show that one recording pasted where another retyped.
+    const first = spines[0];
+    expect(first?.kind === "spine" && first.at.map((a) => a.wayIndex)).toEqual([0, 1, 2, 3]);
+  });
+
+  it("emits a fork row only where at least one way filled the gap", () => {
+    // Gap 0 (Way C's `n0` head), gap 1 (the extra Calculator step), and the
+    // trailing gap. The gap between `Calculator → TextEdit` and
+    // `TextEdit → TextEdit` is empty in all four and must not be drawn.
+    expect(forks.map((r) => (r.kind === "fork" ? r.after : NaN))).toEqual([-1, 0, 2]);
+  });
+
+  it("keeps a way with nothing to add PRESENT with an empty run", () => {
+    // "B did nothing here" and "B is not in this picture" are different facts.
+    const leading = forks[0];
+    expect(leading?.kind === "fork" && leading.runs.map((r) => r.steps.length)).toEqual([0, 0, 1, 0]);
+  });
+
+  it("attributes the whole Finder excursion to one trailing run", () => {
+    const trailing = forks[2];
+    const d = trailing?.kind === "fork" ? trailing.runs.find((r) => r.wayIndex === 3) : undefined;
+    expect(d?.steps).toHaveLength(9);
+  });
+
+  it("draws no fork rows at all when the ways agree", () => {
+    const same = forkRows([WAY_B, { ...WAY_B, index: 1, sessionIds: ["sX"] }], spineOf([WAY_B]));
+    expect(same.every((r) => r.kind === "spine")).toBe(true);
+  });
+});
+
+describe("runPhrase", () => {
+  it("names both places for a single step, because the FROM is the news", () => {
+    // Way C's leading run: the interesting fact is that it came from no state.
+    expect(runPhrase({ wayIndex: 2, steps: [step(0, NO, CALC)] }, -1)).toBe(
+      `first, 1 step: ${NO} → ${CALC}`,
+    );
+  });
+
+  it("counts and lists the places for a run of several", () => {
+    expect(
+      runPhrase({ wayIndex: 3, steps: [step(0, TE, TE), step(1, TE, FI), step(2, FI, TE)] }, 2),
+    ).toBe(`then 3 steps, via ${TE}, ${FI}`);
+  });
+
+  it("says nothing happened rather than going blank", () => {
+    expect(runPhrase({ wayIndex: 1, steps: [] }, 0)).toBe("nothing here");
   });
 });
