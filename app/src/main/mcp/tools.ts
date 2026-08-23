@@ -19,6 +19,7 @@ import { findRoute, renderFlow, renderFlowList } from "./flow-text.js";
 import { findHabit, renderHabitList } from "./habit-text.js";
 import { denseRanking, habitDocs, renderHabitSearch, type DenseLane } from "./habit-search.js";
 import { renderStep, resolveStep } from "./habit-step.js";
+import { habitStepsJson } from "./habit-steps-json.js";
 
 export interface ToolContent {
   type: "text" | "image";
@@ -590,6 +591,35 @@ const getHabitStepTool: ToolDef = {
   },
 };
 
+const getHabitStepsTool: ToolDef = {
+  name: "get_habit_steps",
+  title: "Get a habit's steps as JSON",
+  description:
+    "A kept habit's recorded steps as JSON, to write as `steps.json` beside the HABIT.md that " +
+    "`get_habit` returns. Carries each step's edge, actions and targets, the state it arrives " +
+    "in and whether that state can be recognised at all. Slot names only — no recorded " +
+    "keystroke value is ever included.",
+  inputSchema: {
+    type: "object",
+    properties: { habitId: { type: "string", description: "A habit id from list_habits." } },
+    required: ["habitId"],
+    additionalProperties: false,
+  },
+  async run(reader, args) {
+    const habitId = str(args, "habitId");
+    if (habitId === null) return fail("`habitId` is required and must be a non-empty string.");
+    const habit = findHabit(reader.habits(), habitId);
+    if (habit === undefined) {
+      return fail(`No habit ${habitId}. Habit ids come from list_habits.`);
+    }
+    const doc = habitStepsJson(habit, reader.flows());
+    // RAW JSON with no preamble, for `get_habit`'s reason: the value of this
+    // tool is that its output IS a file, and a sentence in front of the `{`
+    // corrupts a paste to disk.
+    return typeof doc === "string" ? text(doc) : fail(doc.error);
+  },
+};
+
 export const TOOLS: readonly ToolDef[] = [
   searchTool,
   momentTool,
@@ -601,6 +631,7 @@ export const TOOLS: readonly ToolDef[] = [
   searchHabitsTool,
   getHabitTool,
   getHabitStepTool,
+  getHabitStepsTool,
 ];
 
 export function toolByName(name: string): ToolDef | undefined {

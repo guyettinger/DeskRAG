@@ -1015,3 +1015,46 @@ describe("get_habit_step", () => {
     expect(textOf(out)).toMatch(/must be a number of 1 or more/);
   });
 });
+
+describe("get_habit_steps", () => {
+  it("returns raw JSON with no preamble", async () => {
+    const ways = [
+      {
+        letter: "A",
+        sessionIds: ["s1"],
+        totalsMs: [1000],
+        steps: [
+          {
+            index: 0,
+            edgeId: "e0",
+            from: "Calculator",
+            to: "TextEdit",
+            actions: [{ action: "click", target: 'Button "="' }],
+            observations: 2,
+            everyRecording: true,
+            missing: false,
+            liftWarnings: [],
+            firstAt: { sessionId: "s1", startedAt: EPOCH, atSec: 1 },
+          },
+        ],
+      },
+    ];
+    const out = await callTool(
+      withHabits({ ...noHabits(), habits: [habit({ ways })] }),
+      "get_habit_steps",
+      { habitId: habit().id },
+    );
+    expect(out.isError).toBeUndefined();
+    const body = textOf(out);
+    expect(body.startsWith("{")).toBe(true);
+    expect(() => JSON.parse(body)).not.toThrow();
+  });
+
+  it("refuses an orphaned habit rather than answering from a stale copy", async () => {
+    const out = await callTool(withHabits({ ...noHabits(), habits: [habit()] }), "get_habit_steps", {
+      habitId: habit().id,
+    });
+    expect(out.isError).toBe(true);
+    expect(textOf(out)).toMatch(/no longer in the trace graph/);
+  });
+});
