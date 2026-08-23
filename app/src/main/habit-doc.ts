@@ -28,6 +28,7 @@ import {
   flowApps,
   flowVariables,
   flowWalks,
+  variantLetter,
   type FlowStep,
   type FlowStepAction,
   type FlowWalk,
@@ -42,6 +43,12 @@ import {
   type WalkFit,
 } from "./walk-analysis.js";
 
+/**
+ * Re-exported from its new home in `flow-steps.ts`, which owns `FlowWalk.index`.
+ * It moved because `way-fork.ts` needs it and this file imports `way-fork.ts`.
+ */
+export { variantLetter } from "./flow-steps.js";
+
 /** Frontmatter `name`: lowercase, hyphens, and never empty. */
 export function slugify(text: string): string {
   const s = text
@@ -54,18 +61,6 @@ export function slugify(text: string): string {
 }
 
 const iso = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
-
-/**
- * A variant's label: A, B, C…
- *
- * A LETTER, never a number, because the steps inside a variant are numbered and
- * "2.3" would read as a sub-step of a single procedure — which is the exact
- * misreading this whole change exists to stop. Past Z it falls back to the
- * index, which no real route reaches and which is still unambiguous.
- */
-export function variantLetter(index: number): string {
-  return index < 26 ? String.fromCharCode(65 + index) : `#${index + 1}`;
-}
 
 function stepAt(step: FlowStep): number | null {
   return step.firstAt === null ? null : step.firstAt.startedAt + step.firstAt.atSec * 1000;

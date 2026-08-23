@@ -21,8 +21,7 @@ import type {
   HabitWayDTO,
   WalkFitDTO,
 } from "@shared/types";
-import { flowWalks, type FlowStep } from "./flow-steps.js";
-import { variantLetter } from "./habit-doc.js";
+import { flowWalks, variantLetter, type FlowStep } from "./flow-steps.js";
 import { walkAnalysis } from "./walk-analysis.js";
 
 /**

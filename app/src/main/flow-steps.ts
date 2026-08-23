@@ -161,6 +161,24 @@ export function allSteps(walks: readonly FlowWalk[]): FlowStep[] {
 }
 
 /**
+ * A variant's label: A, B, C…
+ *
+ * A LETTER, never a number, because the steps inside a variant are numbered and
+ * "2.3" would read as a sub-step of a single procedure — which is the exact
+ * misreading the variant machinery exists to stop. Past Z it falls back to the
+ * index, which no real route reaches and which is still unambiguous.
+ *
+ * It lives HERE rather than in `habit-doc.ts` because this file owns
+ * `FlowWalk.index`, whose comment already says that index exists so a formatter
+ * can label variants without knowing how they were ordered — and because
+ * `way-fork.ts` needs it while `habit-doc.ts` imports `way-fork.ts`, so leaving
+ * it there is an import cycle.
+ */
+export function variantLetter(index: number): string {
+  return index < 26 ? String.fromCharCode(65 + index) : `#${index + 1}`;
+}
+
+/**
  * An explicit edge list, in order, resolved against the graph.
  *
  * `recordings` is the ROUTE's count, not the variant's, and decides
