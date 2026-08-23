@@ -45,7 +45,7 @@ DTO-free. Two edge-id sequences in, a named deviation list out. This is the only
   - `interface Alignment { deviations: EdgeDeviation[]; reachedEnd: boolean }`
   - `function alignWalk(baseline: readonly string[], walk: readonly string[]): Alignment`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `test/walk-align.test.ts`:
 
@@ -144,12 +144,12 @@ describe("alignWalk", () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npx vitest run test/walk-align.test.ts`
 Expected: FAIL — `Failed to resolve import "../app/src/main/walk-align.js"`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Create `app/src/main/walk-align.ts`:
 
@@ -305,17 +305,17 @@ function collapseReordered(
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run test/walk-align.test.ts`
 Expected: PASS, 11 tests.
 
-- [ ] **Step 5: Run the gate**
+- [x] **Step 5: Run the gate**
 
 Run: `npm run typecheck && npm test`
 Expected: both pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add app/src/main/walk-align.ts test/walk-align.test.ts
@@ -361,7 +361,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
   - `function chooseBaseline(ways: readonly FlowWalk[], rule: BaselineRule, startedAt: ReadonlyMap<string, number>): Baseline`
   - `function walkAnalysis(input: WalkAnalysisInput, hooks?: WalkAnalysisHooks): WalkAnalysis`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `test/walk-analysis.test.ts`. This file grows in every later task; the fixture builders at the top are used by all of them, so write them now exactly as given.
 
@@ -578,12 +578,12 @@ describe("walkAnalysis", () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npx vitest run test/walk-analysis.test.ts`
 Expected: FAIL — `Failed to resolve import "../app/src/main/walk-analysis.js"`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Create `app/src/main/walk-analysis.ts`. Later tasks fill the fields returned empty here; do not delete the empty initialisers, replace them.
 
@@ -863,17 +863,17 @@ export function walkAnalysis(
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run test/walk-analysis.test.ts`
 Expected: PASS, 8 tests.
 
-- [ ] **Step 5: Run the gate**
+- [x] **Step 5: Run the gate**
 
 Run: `npm run typecheck && npm test`
 Expected: both pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add app/src/main/walk-analysis.ts test/walk-analysis.test.ts
@@ -903,7 +903,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Consumes: `alignWalk` (Task 1); `chooseBaseline`, `sessionStartedAt`, `WalkFit`, `Deviation` (Task 2).
 - Produces: `WalkAnalysis.walks` populated — one `WalkFit` per recording, oldest first, dated walks before undated.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `test/walk-analysis.test.ts`:
 
@@ -1003,12 +1003,12 @@ describe("walkAnalysis — walks", () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npx vitest run test/walk-analysis.test.ts -t "walks"`
 Expected: FAIL — the first case gets `[]` instead of `["s1", "s2"]`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 In `app/src/main/walk-analysis.ts`, add these helpers above `walkAnalysis`:
 
@@ -1093,17 +1093,17 @@ export function walkAnalysis(
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run test/walk-analysis.test.ts`
 Expected: PASS, 16 tests.
 
-- [ ] **Step 5: Run the gate**
+- [x] **Step 5: Run the gate**
 
 Run: `npm run typecheck && npm test`
 Expected: both pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add app/src/main/walk-analysis.ts test/walk-analysis.test.ts
@@ -1132,7 +1132,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Consumes: `Baseline`, `StepCost` (Task 2); the baseline Way computed in `walkAnalysis` (Task 3).
 - Produces: `WalkAnalysis.steps` populated — one `StepCost` per baseline step, empty under `none`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `test/walk-analysis.test.ts`:
 
@@ -1202,12 +1202,12 @@ describe("walkAnalysis — steps", () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npx vitest run test/walk-analysis.test.ts -t "steps"`
 Expected: FAIL — `out.steps` is `[]`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Add above `walkAnalysis`:
 
@@ -1307,17 +1307,17 @@ Then, inside `walkAnalysis`, after `walks.sort(...)`, replace `steps: []` with a
   };
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run test/walk-analysis.test.ts`
 Expected: PASS, 22 tests.
 
-- [ ] **Step 5: Run the gate**
+- [x] **Step 5: Run the gate**
 
 Run: `npm run typecheck && npm test`
 Expected: both pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add app/src/main/walk-analysis.ts test/walk-analysis.test.ts
@@ -1347,7 +1347,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Consumes: `walks: WalkFit[]` (Task 3), already sorted oldest first with undated last.
 - Produces: `WalkAnalysis.rhythm` populated.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `test/walk-analysis.test.ts`:
 
@@ -1401,12 +1401,12 @@ describe("walkAnalysis — rhythm", () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npx vitest run test/walk-analysis.test.ts -t "rhythm"`
 Expected: FAIL — `intervalsMs` is `[]`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Add above `walkAnalysis`:
 
@@ -1448,17 +1448,17 @@ In `walkAnalysis`, replace the `rhythm` initialiser:
     rhythm: rhythmOf(walks),
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run test/walk-analysis.test.ts`
 Expected: PASS, 26 tests.
 
-- [ ] **Step 5: Run the gate**
+- [x] **Step 5: Run the gate**
 
 Run: `npm run typecheck && npm test`
 Expected: both pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add app/src/main/walk-analysis.ts test/walk-analysis.test.ts
@@ -1486,7 +1486,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Consumes: `WalkAnalysisHooks`, `Antecedent`, `AntecedentFact` (Task 2); `walks` order (Task 3).
 - Produces: `WalkAnalysis.antecedents` populated — most-observed first, with `observations` and `of`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `test/walk-analysis.test.ts`:
 
@@ -1563,12 +1563,12 @@ describe("walkAnalysis — antecedents", () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npx vitest run test/walk-analysis.test.ts -t "antecedents"`
 Expected: FAIL — the second case gets `[]`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Add above `walkAnalysis`:
 
@@ -1628,17 +1628,17 @@ In `walkAnalysis`, rename the second parameter from `_hooks` to `hooks` and repl
     antecedents: antecedentsOf(route, order, hooks),
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run test/walk-analysis.test.ts`
 Expected: PASS, 32 tests.
 
-- [ ] **Step 5: Run the gate**
+- [x] **Step 5: Run the gate**
 
 Run: `npm run typecheck && npm test`
 Expected: both pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add app/src/main/walk-analysis.ts test/walk-analysis.test.ts
@@ -1668,7 +1668,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Consumes: `PrefixFact` (Task 2); `FlowsDTO.routes` (existing).
 - Produces: `WalkAnalysis.droppedEarly` populated — strict prefixes only, longest first.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `test/walk-analysis.test.ts`:
 
@@ -1751,12 +1751,12 @@ describe("walkAnalysis — droppedEarly", () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npx vitest run test/walk-analysis.test.ts -t "droppedEarly"`
 Expected: FAIL — `droppedEarly` is `[]`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Add above `walkAnalysis`:
 
@@ -1812,17 +1812,17 @@ In `walkAnalysis`, replace the `droppedEarly` initialiser:
     droppedEarly: prefixRoutes(flows, route),
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run test/walk-analysis.test.ts`
 Expected: PASS, 39 tests.
 
-- [ ] **Step 5: Run the gate**
+- [x] **Step 5: Run the gate**
 
 Run: `npm run typecheck && npm test`
 Expected: both pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add app/src/main/walk-analysis.ts test/walk-analysis.test.ts
@@ -1857,7 +1857,7 @@ The projection is finished. This is what decides which rule ships, and it is the
 - Consumes: `walkAnalysis`, `BaselineRule` (Tasks 2–7); `readGraph`, `DEFAULT_DB` from `./lib/read-store.js` (existing); `frequentRoutes`, `toGraphDTO` from `../app/src/main/graph-view.js` (existing).
 - Produces: an `npm run probe:baseline` script. No importable API.
 
-- [ ] **Step 1: Write the probe**
+- [x] **Step 1: Write the probe**
 
 There is no unit test for a probe — `scripts/routes-probe.ts` has none either, and the gate for this task is that it runs against the real store and prints an honest report. Create `scripts/baseline-probe.ts`:
 
@@ -2014,7 +2014,7 @@ try {
 }
 ```
 
-- [ ] **Step 2: Add the npm script**
+- [x] **Step 2: Add the npm script**
 
 In `package.json`, add the entry immediately after `"probe:routes"` so the probes stay grouped:
 
@@ -2022,12 +2022,12 @@ In `package.json`, add the entry immediately after `"probe:routes"` so the probe
     "probe:baseline": "tsx scripts/baseline-probe.ts",
 ```
 
-- [ ] **Step 3: Run the typecheck**
+- [x] **Step 3: Run the typecheck**
 
 Run: `npm run typecheck`
 Expected: PASS. (`scripts` is in the root `tsconfig.json` `include`, so the probe is gated like every other `.ts` probe.)
 
-- [ ] **Step 4: Run the probe against the real store**
+- [x] **Step 4: Run the probe against the real store**
 
 Run: `npm run probe:baseline`
 
@@ -2037,7 +2037,7 @@ Expected: it prints `Store`, `Corpus`, `Rules`, `Fragility (majority)` and `Othe
 - *No route walked more than once* — exit code 1, and the honest report is "the store cannot answer this yet." Do NOT change the default rule on this run.
 - *Routes walked 2+ times* — the table is real. Record the numbers in the commit message.
 
-- [ ] **Step 5: Document the probe in `CLAUDE.md`**
+- [x] **Step 5: Document the probe in `CLAUDE.md`**
 
 Add this entry to the commands block, immediately after the `npm run probe:routes` entry, matching the surrounding voice (a rule, then the measurement behind it):
 
@@ -2057,12 +2057,12 @@ npm run probe:baseline        # which rule a habit's walks should be measured ag
                               # a standard picked that way is one recording from moving.
 ```
 
-- [ ] **Step 6: Run the gate**
+- [x] **Step 6: Run the gate**
 
 Run: `npm run typecheck && npm test`
 Expected: both pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 Replace the bracketed figures with what the probe actually printed. If the corpus was too small to measure, say that instead of quoting a table — an unmeasured number in a commit message is how `graph-view.ts` came to quote a store that no longer exists.
 
