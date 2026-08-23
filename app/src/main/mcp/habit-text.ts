@@ -21,7 +21,7 @@ const PREAMBLE =
   "they actually walked, so it is evidence about what they did rather than general knowledge " +
   "about how software works. get_habit returns the file verbatim.";
 
-function lines(s: HabitDTO): string[] {
+function lines(s: HabitDTO, others: ReadonlyMap<string, HabitDTO>): string[] {
   const b = s.binding;
   const out = [s.slug === "" ? s.title : s.slug];
   out.push(`  id: ${s.id}`);
@@ -52,9 +52,24 @@ function lines(s: HabitDTO): string[] {
   // Two files describing one procedure. Said in the list because an agent that
   // fetches both and finds them near-identical cannot tell whether that is a
   // duplicate or two genuinely different ways of doing the same work.
+  //
+  // Their RECORDS are byte-identical by construction — both are re-rendered from
+  // the same live route, which is what made them duplicates — so the only thing
+  // that CAN differ is the prose. Naming the ids alone left an agent with two
+  // opaque keys and nothing to choose with.
   if (s.duplicates.length > 0) {
+    const named = s.duplicates.map((id) => {
+      const other = others.get(id);
+      return other === undefined || other.slug === "" ? id : `${other.slug} (${id})`;
+    });
+    const quoted = s.duplicates
+      .map((id) => others.get(id))
+      .find((o) => o !== undefined && o.description !== "");
     out.push(
-      `  ALSO DESCRIBED BY — ${s.duplicates.join(", ")}. These habits answer to the same recorded route; nobody has merged them.`,
+      `  ALSO DESCRIBED BY — ${named.join(", ")}. The recorded steps are identical; ` +
+        (quoted === undefined
+          ? "these habits answer to the same recorded route; nobody has merged them."
+          : `these two differ only in how they are described. That one says: ${JSON.stringify(quoted.description)}`),
     );
   }
 
@@ -145,7 +160,12 @@ export function renderHabitList(habits: HabitsDTO, noGraph: string): string {
     );
   }
 
-  const body = kept.map((s) => lines(s).join("\n")).join("\n\n");
+  // Keyed by id, because `duplicates` holds ids. Built from `habits.habits`
+  // rather than `kept`: `duplicateHabits` pairs only ACTIVE habits, so both
+  // members are present, but reading from the wider set means a filter change
+  // upstream cannot silently turn every differentiator back into a bare id.
+  const byId = new Map(habits.habits.map((h) => [h.id, h]));
+  const body = kept.map((s) => lines(s, byId).join("\n")).join("\n\n");
   const hidden = habits.habits.length - kept.length;
   const foot =
     hidden > 0 ? "\n\nDismissed proposals are not listed." : "";

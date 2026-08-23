@@ -33,6 +33,14 @@ import {
   type FlowWalk,
 } from "./flow-steps.js";
 import type { HabitBinding } from "./habit-bind.js";
+import {
+  walkAnalysis,
+  type PrefixFact,
+  type RhythmFacts,
+  type StepCost,
+  type WalkAnalysis,
+  type WalkFit,
+} from "./walk-analysis.js";
 
 /** Frontmatter `name`: lowercase, hyphens, and never empty. */
 export function slugify(text: string): string {
@@ -84,6 +92,16 @@ export function cautionsFor(
   flows: FlowsDTO,
   route: FlowRouteDTO,
   walks: readonly FlowWalk[],
+  /**
+   * Routes whose places are a strict PREFIX of this one's — the same work begun
+   * and abandoned partway.
+   *
+   * Passed in rather than computed here, and OPTIONAL so no existing caller
+   * moves. A's committed carry-over: the fact reaches `get_habit` before any
+   * pixel exists, because both the record and the model's brief already read
+   * this function.
+   */
+  droppedEarly: readonly PrefixFact[] = [],
 ): string[] {
   const out: string[] = [];
   const many = walks.length > 1;
@@ -196,6 +214,20 @@ export function cautionsFor(
     );
   }
 
+  // A DISCLOSURE, in the shape of `duplicates`, and never a merge: `route.count`
+  // is untouched and nothing is folded in. DeskRAG's route partition gives every
+  // recording exactly one route key, which is what makes `bindHabit`'s
+  // strict-majority rule a proof rather than a threshold — and it is also why
+  // abandonment is invisible from the full route's side without this line.
+  for (const p of droppedEarly) {
+    const n = p.count;
+    out.push(
+      `This work was started and dropped early ${n} further time${n === 1 ? "" : "s"}: ` +
+        `${n === 1 ? "a recording" : `${n} recordings`} went as far as ${p.places.join(" → ")} ` +
+        `and stopped. Those are not counted among the ${route.count} above.`,
+    );
+  }
+
   return out;
 }
 
@@ -217,6 +249,174 @@ export interface RecordedInput {
   route: FlowRouteDTO;
   /** When true, print recorded keystrokes. Off by default; see the warning. */
   showSamples: boolean;
+}
+
+/** One decimal and a unit. Durations are read beside each other, so the width matters. */
+const secs = (ms: number): string => `${(ms / 1000).toFixed(1)}s`;
+
+/** A recording's name in a record block: its date, or its id when nothing can date it. */
+const walkName = (w: WalkFit): string => (w.at === null ? w.sessionId : iso(w.at));
+
+/**
+ * How each recording differed from the standard.
+ *
+ * COUNTS PER RECORDING, never a bullet per deviation. Measured on the real
+ * store: the one recurring route yields 9 skipped and 16 inserted across two
+ * deviant walks, which is 25 bullets for three recordings. `cautionsFor` already
+ * paid for that shape once — a per-step bullet fired on nearly every step of
+ * every variant and printed one fact TWELVE times in an eighteen-bullet section
+ * — and the fix there was to state it once about the route.
+ *
+ * The lead is `Baseline.reason` VERBATIM rather than a second sentence saying
+ * the same thing, so this file and `probe:baseline` cannot disagree about how
+ * the standard was picked. That string was written for a probe and is
+ * user-facing from here on.
+ */
+function differBlock(analysis: WalkAnalysis, count: number): string[] {
+  // Nothing to compare against: one recording, or a rule that names no standard.
+  if (count < 2 || analysis.baseline.wayIndex === null) return [];
+  if (analysis.walks.length < 2) return [];
+
+  const out = ["## How the recordings differ", ""];
+
+  const deviant = analysis.walks.filter((w) => w.deviations.length > 0 || !w.reachedEnd);
+  if (deviant.length === 0) {
+    // The agreement case IS the finding. Going silent here would make "they all
+    // did the same thing" indistinguishable from "nothing was measured".
+    out.push(`All ${analysis.walks.length} recordings took the same path.`, "");
+    return out;
+  }
+
+  const tied = /tie at /.test(analysis.baseline.reason);
+  out.push(
+    `The standard below is chosen from the recordings themselves. ${analysis.baseline.reason}` +
+      (tied ? " A different recording could become the standard as soon as one more is made." : ""),
+    "",
+  );
+
+  for (const w of analysis.walks) {
+    const inserted = w.deviations.filter((d) => d.kind === "inserted").length;
+    const skipped = w.deviations.filter((d) => d.kind === "skipped").length;
+    const moved = w.deviations.filter((d) => d.kind === "reordered").length;
+    const bits: string[] = [];
+    if (inserted > 0) bits.push(`${inserted} step${inserted === 1 ? "" : "s"} not in the standard`);
+    if (skipped > 0) {
+      bits.push(`${skipped} of the standard's steps not taken`);
+    }
+    if (moved > 0) bits.push(`${moved} step${moved === 1 ? "" : "s"} taken in a different order`);
+
+    const head = bits.length === 0 ? "followed the standard" : bits.join(", ");
+    // `reachedEnd` is only news when it is false, or when it is true DESPITE
+    // deviations — on a walk that followed the standard it says nothing.
+    const tail = !w.reachedEnd ? " Stopped before the end." : bits.length > 0 ? " Reached the end." : "";
+    out.push(`- ${walkName(w)} — ${head}.${tail}`);
+  }
+  out.push("");
+  return out;
+}
+
+/**
+ * Each recording's own time on each step.
+ *
+ * A step's duration is its OWN span (`throughSec - atSec` from that recording's
+ * `EdgeSourceDTO`), never the gap to the next step — differencing consecutive
+ * starts folds the idle before the next step into this one's cost and hides the
+ * hesitation. The idle is reported separately, and only when some of it is
+ * non-zero: a tight sequence should not carry a row of noughts.
+ *
+ * `StepCost.stepIndex` indexes the BASELINE Way's steps, so the label is read
+ * from that Way directly rather than looked up from the graph. One lookup fewer
+ * is also one drift hazard fewer: `walk-analysis.ts` has its own `edgeLabel`,
+ * and two functions naming one edge is the `ax-dump`/`ax-exec` shape.
+ */
+function timeBlock(steps: readonly StepCost[], baseWay: FlowWalk | undefined): string[] {
+  if (baseWay === undefined) return [];
+  const rows = steps.filter((s) => s.durations.length > 0);
+  if (rows.length === 0) return [];
+
+  const out = [
+    "## Where the time goes",
+    "",
+    "Each recording's own time on each step, from the recorded spans. These are durations, not targets.",
+    "",
+  ];
+  for (const cost of rows) {
+    const step = baseWay.steps[cost.stepIndex];
+    const label =
+      step === undefined || step.missing
+        ? `edge \`${cost.edgeId}\` is not in the graph`
+        : `${step.from} → ${step.to}`;
+    out.push(`${cost.stepIndex + 1}. ${label} — ${cost.durations.map((d) => secs(d.ms)).join(", ")}`);
+    if (cost.gapsAfter.some((g) => g.ms > 0)) {
+      out.push(`   *idle before the next step: ${cost.gapsAfter.map((g) => secs(g.ms)).join(", ")}*`);
+    }
+  }
+  out.push("");
+  return out;
+}
+
+/** Sat and Sun as `Date#getDay` numbers them. Local, like everything in `RhythmFacts`. */
+const WEEKEND = new Set([0, 6]);
+
+const pad2 = (n: number): string => String(n).padStart(2, "0");
+
+/** A gap in whole days, or in hours when it is under one. */
+const gapText = (ms: number): string => {
+  const hours = Math.round(ms / 3_600_000);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"}`;
+  const days = Math.round(ms / 86_400_000);
+  return `${days} day${days === 1 ? "" : "s"}`;
+};
+
+/**
+ * When the work happens, and why nothing says what preceded it.
+ *
+ * The second paragraph is the POINT of this block, not a footnote. A's
+ * `AntecedentFact` anticipated an app cue reached through `antecedentAt`, and
+ * against the real store the naive implementation is wrong in a way no corpus
+ * growth fixes: for all three recordings of the only recurring route, the only
+ * application in front before the work begins is DeskRAG's own Recorder. That is
+ * structural — a recording begins when you press record, so the cue happens
+ * before the evidence exists — and reporting it would violate "the recorder is
+ * not part of the work it records". Excluding it, as that invariant requires,
+ * leaves null every time. So the block says so, because an absent cue and an
+ * unobservable one are different facts.
+ *
+ * Weekday-shape and an hour RANGE are the two statements this data supports.
+ * Anything sharper ("every Tuesday at 9") needs a corpus this library does not
+ * have, and is C's rhythm strip to draw rather than this file's to assert.
+ */
+function rhythmBlock(rhythm: RhythmFacts): string[] {
+  const n = rhythm.days.length;
+  if (n < 2) return [];
+
+  const weekend = rhythm.days.filter((d) => WEEKEND.has(d)).length;
+  const shape =
+    weekend === 0
+      ? "on a weekday"
+      : weekend === n
+        ? "at the weekend"
+        : `on ${n - weekend} weekday${n - weekend === 1 ? "" : "s"} and ${weekend} weekend day${weekend === 1 ? "" : "s"}`;
+
+  const lo = Math.min(...rhythm.hours);
+  const hi = Math.max(...rhythm.hours);
+  const when =
+    rhythm.hours.length === 0
+      ? ""
+      : lo === hi
+        ? `, around ${pad2(lo)}:00 local time`
+        : `, between ${pad2(lo)}:00 and ${pad2(hi + 1)}:00 local time`;
+
+  const out = ["## When it happens", "", `All ${n} recordings ${shape}${when}.`];
+  if (rhythm.intervalsMs.length > 0) {
+    out.push(`Gaps between them: ${rhythm.intervalsMs.map(gapText).join(", ")}.`);
+  }
+  out.push(
+    "",
+    "The application in front beforehand cannot be recovered: recording starts when you press record, so a recording contains no evidence of what preceded it.",
+    "",
+  );
+  return out;
 }
 
 /**
@@ -320,7 +520,22 @@ export function recordedBlocks(input: RecordedInput): string {
   }
   out.push("");
 
-  const cautions = cautionsFor(flows, route, walks);
+  // The projection needs exactly `flows` and `route`, which this function already
+  // holds — so it is computed HERE rather than passed in. A `WalkAnalysis`
+  // parameter would be the first crack in the property this signature exists to
+  // guarantee: `recordedBlocks` takes no body, no prose and no provider, and
+  // that is what makes "a model cannot rewrite the record" structural.
+  const analysis = walkAnalysis({ flows, route });
+  out.push(...differBlock(analysis, route.count));
+
+  const baseWay = analysis.baseline.wayIndex === null ? undefined : walks[analysis.baseline.wayIndex];
+  // Only when there is a second recording to read a duration AGAINST. One
+  // recording's timings are a fact about one afternoon, not about a habit.
+  if (route.count > 1) out.push(...timeBlock(analysis.steps, baseWay));
+
+  out.push(...rhythmBlock(analysis.rhythm));
+
+  const cautions = cautionsFor(flows, route, walks, analysis.droppedEarly);
   if (cautions.length > 0) {
     out.push("## What this evidence does not say");
     out.push("");
@@ -515,6 +730,28 @@ export function templateBody(flows: FlowsDTO, route: FlowRouteDTO): HabitProse {
 }
 
 /**
+ * The consistency facts a model may state.
+ *
+ * COUNTS, and deliberately not the per-recording breakdown the record carries:
+ * the model is writing four short prose fields, and handing it three lines per
+ * recording invites it to narrate the ledger instead of describing the work.
+ */
+function consistencyFacts(analysis: WalkAnalysis, count: number): string[] {
+  if (count < 2 || analysis.baseline.wayIndex === null || analysis.walks.length < 2) return [];
+  const deviant = analysis.walks.filter((w) => w.deviations.length > 0 || !w.reachedEnd).length;
+  const out = [
+    deviant === 0
+      ? `All ${analysis.walks.length} recordings took the same path.`
+      : `${deviant} of the ${analysis.walks.length} recordings took a different path from the standard.`,
+  ];
+  const days = analysis.rhythm.days;
+  if (days.length >= 2 && days.every((d) => d !== 0 && d !== 6)) {
+    out.push("Every recording was made on a weekday.");
+  }
+  return out;
+}
+
+/**
  * What a model is told about this route.
  *
  * **Names and counts, never a sample.** Whether the rendered file prints
@@ -538,7 +775,8 @@ export function briefFor(
   const walks = flowWalks(flows, route);
   const many = walks.length > 1;
   const { first, last } = span(allSteps(walks));
-  const cautions = cautionsFor(flows, route, walks);
+  const analysis = walkAnalysis({ flows, route });
+  const cautions = cautionsFor(flows, route, walks, analysis.droppedEarly);
   if (binding?.note != null) cautions.push(binding.note);
 
   // The variant is carried IN the step line rather than as a new `HabitBrief`
@@ -567,6 +805,7 @@ export function briefFor(
       samples: v.samples.length,
     })),
     cautions,
+    consistency: consistencyFacts(analysis, route.count),
     reflections: [...reflections],
   };
 }

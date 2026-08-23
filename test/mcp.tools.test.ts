@@ -752,3 +752,70 @@ describe("get_habit", () => {
     expect(out.isError).toBe(true);
   });
 });
+
+const ID_A = "01JQ3WVX9K2M7N5P8R4T6Y0ZAA";
+const ID_B = "01JQ3WVX9K2M7N5P8R4T6Y0ZBB";
+
+/** Two ACTIVE habits on one live route — what `duplicateHabits` pairs. */
+const twoOnOneRoute = (): HabitsDTO => ({
+  ...noHabits(),
+  habits: [
+    habit({
+      id: ID_A,
+      slug: "compute-sum-paste",
+      title: "Compute a sum and paste it",
+      description: "Use when you need to add up a column and paste the result.",
+      duplicates: [ID_B],
+    }),
+    habit({
+      id: ID_B,
+      slug: "total-and-note",
+      title: "Total and note",
+      description: "Use when you need to total a column and drop it into a note.",
+      duplicates: [ID_A],
+    }),
+  ],
+});
+
+/** The one habit's entry in the catalogue — entries are separated by a blank line. */
+const entryFor = (text: string, slug: string): string =>
+  text.split("\n\n").find((chunk) => chunk.startsWith(slug))!;
+
+describe("the duplicates differentiator", () => {
+  it("names the other habit's slug and quotes what it says", async () => {
+    // Two habits on one route have BYTE-IDENTICAL records: the record is
+    // re-rendered from the same live route either way. So the only thing that
+    // can differ is prose, and an agent handed two ULIDs has nothing to choose
+    // with — the resolution-ambiguity failure named in the skill-retrieval work.
+    const out = await callTool(withHabits(twoOnOneRoute()), "list_habits", {});
+    const text = out.content[0]!.text!;
+    expect(text).toMatch(/ALSO DESCRIBED BY — compute-sum-paste \(/);
+    expect(text).toMatch(/The recorded steps are identical/);
+    expect(text).toMatch(/differ only in how they are described/);
+    expect(text).toMatch(/That one says: "Use when you need to total a column/);
+  });
+
+  it("keeps the id as well as the slug, because get_habit takes the id", async () => {
+    const out = await callTool(withHabits(twoOnOneRoute()), "list_habits", {});
+    expect(out.content[0]!.text).toMatch(/\(01[0-9A-HJKMNP-TV-Z]+\)/);
+  });
+
+  it("degrades to the plain sentence when the other description is empty", async () => {
+    const h = twoOnOneRoute();
+    h.habits[1]!.description = "";
+    const out = await callTool(withHabits(h), "list_habits", {});
+    // Scoped to the entry whose OTHER habit lost its description. The catalogue
+    // renders both, and the second still has something to quote.
+    const entry = entryFor(out.content[0]!.text!, "compute-sum-paste");
+    expect(entry).toMatch(/answer to the same recorded route; nobody has merged them/);
+    expect(entry).not.toMatch(/That one says/);
+  });
+
+  it("degrades to the plain sentence when the other habit is not in the set", async () => {
+    // A lookup that cannot fail is a lookup that will.
+    const h = twoOnOneRoute();
+    h.habits = [h.habits[0]!];
+    const out = await callTool(withHabits(h), "list_habits", {});
+    expect(out.content[0]!.text).toMatch(/nobody has merged them/);
+  });
+});

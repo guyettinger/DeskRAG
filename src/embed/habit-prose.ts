@@ -56,6 +56,16 @@ export interface HabitBrief {
   /** What the evidence does not say, already in words. */
   cautions: string[];
   /**
+   * Neutral counts about how consistently this route was walked.
+   *
+   * Facts, in the shape `cautions` already uses. The prose may STATE them and
+   * may not assess them — the record prints the same counts a few lines below,
+   * so a sentence here can only agree with something the reader can check
+   * directly. Empty for a habit recorded once: one walk has nothing to be
+   * consistent WITH.
+   */
+  consistency: string[];
+  /**
    * The reflection written after each recording this route was built from —
    * what the session was for, what stalled, what order would have been better.
    *
@@ -106,6 +116,10 @@ export const HABIT_SYSTEM =
   "will be visible. If the record is thin, say less.\n" +
   "Never guess what a variable contained: you are given names and counts on " +
   "purpose, and the values are withheld.\n" +
+  "You may be told how consistently the task was done. State it as fact and " +
+  "never as an assessment: no \"reliable\", \"inconsistent\", \"messy\" or " +
+  "\"error-prone\", and no advice about doing it better. The same counts are " +
+  "printed in the record below your text, where a reader can check them.\n" +
   'Reply with JSON only: {"title":"...","description":"...","overview":"...",' +
   '"whenToUse":"..."}. `title` is a short noun phrase naming the task. ' +
   "`description` is ONE sentence beginning \"Use when\" — it is how an agent " +
@@ -141,6 +155,11 @@ export function habitPrompt(b: HabitBrief): string {
           : `- ${v.name}: 1 value, typed once — not established as a variable`,
       );
     }
+  }
+
+  if (b.consistency.length > 0) {
+    out.push("", "How consistently it was done (state these as facts; do not grade them):");
+    for (const c of b.consistency) out.push(`- ${c}`);
   }
 
   if (b.cautions.length > 0) {

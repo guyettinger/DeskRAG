@@ -3,6 +3,7 @@ import {
   FakeHabitProseProvider,
   parseHabitResponse,
   habitPrompt,
+  HABIT_SYSTEM,
   type HabitBrief,
 } from "../src/embed/habit-prose.js";
 import { OllamaHabitProseProvider } from "../src/embed/ollama-habit-prose.js";
@@ -35,6 +36,7 @@ const brief: HabitBrief = {
     { name: "command", samples: 1 },
   ],
   cautions: ["Step 3 was in 4 of the 5 recordings."],
+  consistency: [],
   reflections: [],
 };
 
@@ -224,5 +226,28 @@ describe("FakeHabitProseProvider", () => {
     expect(await p.write(brief)).toEqual(a);
     expect(a.title).toBe("file a bug report");
     expect(a.whenToUse).toContain(brief.routeLabel);
+  });
+});
+
+describe("consistency facts", () => {
+  it("reaches the prompt as facts under their own heading", () => {
+    const p = habitPrompt({ ...brief, consistency: ["2 of the 3 recordings took a different path."] });
+    expect(p).toMatch(/How consistently it was done/);
+    expect(p).toMatch(/2 of the 3 recordings took a different path\./);
+  });
+
+  it("tells the model to state variation and never to assess it", () => {
+    expect(HABIT_SYSTEM).toMatch(/state it as fact|never as an assessment/i);
+  });
+
+  it("says nothing at all when there are no consistency facts", () => {
+    expect(habitPrompt({ ...brief, consistency: [] })).not.toMatch(/How consistently/);
+  });
+
+  it("still carries no recorded value", () => {
+    // The rule this module exists for. A new field is a new way to leak one.
+    const p = habitPrompt({ ...brief, consistency: ["3 recordings, all the same path."] });
+    expect(p).not.toContain(SECRET_A);
+    expect(p).not.toContain(SECRET_B);
   });
 });

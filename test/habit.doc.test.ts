@@ -106,6 +106,105 @@ function flows(): FlowsDTO {
   };
 }
 
+/**
+ * A three-hop route walked three different ways.
+ *
+ * Timestamps are midday UTC on a Tuesday, Wednesday and Thursday ON PURPOSE:
+ * `RhythmFacts` reads LOCAL time and the suite runs in whatever zone the machine
+ * is in, so a ±14h shift must not be able to move the weekday. Midday mid-week
+ * survives it; 23:00 on a Friday would not.
+ */
+const T_TUE = Date.UTC(2026, 2, 3, 12, 0, 0);
+const DAY_MS = 86_400_000;
+
+function divergent(): FlowsDTO {
+  const mk = (
+    id: string,
+    from: string,
+    to: string,
+    sources: { sessionId: string; startedAt: number; atSec: number; throughSec: number }[],
+  ): GraphEdgeDTO => ({
+    id,
+    from,
+    to,
+    actions: [],
+    back: false,
+    provenance: "recorded",
+    observations: Math.max(1, sources.length),
+    sources,
+  });
+  const at = (sessionId: string, day: number, atSec: number, throughSec: number) => ({
+    sessionId,
+    startedAt: T_TUE + day * DAY_MS,
+    atSec,
+    throughSec,
+  });
+
+  // THREE DISTINCT edge sequences, one recording each. That is what produces a
+  // TIE, and the tie is what several assertions below are about — two
+  // recordings walking the SAME sequence would be collapsed into one Way by
+  // `flowWalks` and the majority rule would pick it outright.
+  //
+  //   s1 (Tue) e0,e1        — stops one step short
+  //   s2 (Wed) e0,e3        — substitutes e3 for e1, then stops
+  //   s3 (Thu) e0,e1,e2     — NEWEST, so the tiebreak makes it the standard
+  return {
+    graph: {
+      id: "g",
+      entry: "n0",
+      nodes: [
+        node("n0", "Calculator", { app: "Calculator" }),
+        node("n1", "TextEdit", { app: "TextEdit" }),
+        node("n2", "Finder", { app: "Finder" }),
+      ],
+      edges: [
+        mk("e0", "n0", "n1", [at("s1", 0, 2, 6), at("s2", 1, 2, 5), at("s3", 2, 2, 6)]),
+        mk("e1", "n1", "n2", [at("s1", 0, 8, 12), at("s3", 2, 8, 11)]),
+        mk("e2", "n2", "n0", [at("s3", 2, 14, 18)]),
+        mk("e3", "n1", "n0", [at("s2", 1, 9, 10)]),
+      ],
+      slots: [],
+    },
+    excludedApps: [],
+    routes: [
+      {
+        id: "Calculator → TextEdit",
+        count: 3,
+        label: "Calculator → TextEdit",
+        name: null,
+        nameObservations: 0,
+        nodeIds: ["n0", "n1", "n2"],
+        edgeIds: ["e0", "e1", "e2", "e3"],
+        sessionIds: ["s1", "s2", "s3"],
+        variants: [],
+        walks: [
+          { sessionId: "s1", edgeIds: ["e0", "e1"], atSec: 2, throughSec: 12 },
+          { sessionId: "s2", edgeIds: ["e0", "e3"], atSec: 2, throughSec: 10 },
+          { sessionId: "s3", edgeIds: ["e0", "e1", "e2"], atSec: 2, throughSec: 18 },
+        ],
+      },
+    ],
+  };
+}
+
+/**
+ * What the fixture aligns to, traced by hand so the assertions below are not
+ * guesses. Baseline is s3's way `[e0, e1, e2]` (three Ways tie at one recording
+ * each; the newest holds the tiebreak).
+ *
+ *   s1 [e0,e1]    e0 ok, e1 ok, e2 unreached  -> 1 skipped,               stops short
+ *   s2 [e0,e3]    e0 ok, e1/e3 SUBSTITUTION,
+ *                 e2 unreached                -> 2 skipped, 1 inserted,   stops short
+ *   s3 [e0,e1,e2] exact                       -> followed the standard
+ *
+ * Durations on the baseline's steps: e0 has all three recordings, e1 has two
+ * (s1, s3), e2 has one (s3). Step 2 is therefore the case where a recording is
+ * OMITTED rather than given a zero.
+ */
+
+const rec = (f: FlowsDTO): string =>
+  recordedBlocks({ flows: f, route: f.routes[0]!, showSamples: false });
+
 const docInput = (over: Partial<HabitDocInput> = {}): HabitDocInput => {
   const f = flows();
   return {
@@ -414,10 +513,14 @@ describe("recordings that did NOT take the same path", () => {
     const md = recordedBlocks({ flows: f, route: f.routes[0]!, showSamples: false });
     expect(md).toMatch(/### Way A — 2 steps, 1 recording/);
     expect(md).toMatch(/### Way B — 2 steps, 1 recording/);
+    // Scoped to the steps section: `## Where the time goes` numbers the
+    // baseline's steps too, and this assertion is about the procedure, not
+    // about every numeral in the file.
+    const steps = md.split("## What varies")[0]!;
     // The union has three edges; NO way is three steps long, so no "3." exists.
-    expect(md).not.toMatch(/^3\. /m);
+    expect(steps).not.toMatch(/^3\. /m);
     // Each way restarts at 1 — they are alternatives, not a continued sequence.
-    expect(md.match(/^1\. /gm)).toHaveLength(2);
+    expect(steps.match(/^1\. /gm)).toHaveLength(2);
   });
 
   it("tells the reader to follow ONE way, not all of them in sequence", () => {
@@ -576,5 +679,240 @@ describe("mergedBody", () => {
     const attack = renderHabitMarkdown(docInput({ body }));
     const tail = (md: string): string => md.slice(md.lastIndexOf("## Recorded steps"));
     expect(tail(attack)).toBe(tail(honest));
+  });
+});
+
+describe("## How the recordings differ", () => {
+  it("says they did not differ, rather than going silent", () => {
+    // The agreement case is the Consistency Wins statement and is the single
+    // most valuable line in the block. Silence here would make "no deviations"
+    // and "not enough recordings to compare" look identical.
+    const md = rec(flows());
+    expect(md).toMatch(/## How the recordings differ/);
+    expect(md).toMatch(/All 2 recordings took the same path\./);
+  });
+
+  it("renders nothing at all for a habit recorded once", () => {
+    const f = flows();
+    f.routes[0]!.count = 1;
+    f.routes[0]!.sessionIds = ["s1"];
+    f.routes[0]!.walks = [{ sessionId: "s1", edgeIds: ["e0"], atSec: 0, throughSec: 0 }];
+    expect(rec(f)).not.toMatch(/## How the recordings differ/);
+  });
+
+  it("prints ONE line per recording, never one per deviation", () => {
+    // `cautionsFor` already paid for the alternative: a per-step bullet printed
+    // one fact TWELVE times in an eighteen-bullet section.
+    const md = rec(divergent());
+    const block = md.split("## How the recordings differ")[1]!.split("\n## ")[0]!;
+    expect(block.split("\n").filter((l) => l.startsWith("- "))).toHaveLength(3);
+  });
+
+  it("carries Baseline.reason verbatim, so the file and the probe agree", () => {
+    const md = rec(divergent());
+    // Three ways, one recording each: a tie, decided by the newest walk.
+    expect(md).toMatch(/Ways tie at 1 recording each; the standard is the one holding the newest walk\./);
+  });
+
+  it("warns that a tiebroken standard can move, and only on a tie", () => {
+    expect(rec(divergent())).toMatch(/could become the standard as soon as one more is made/);
+    expect(rec(flows())).not.toMatch(/could become the standard/);
+  });
+
+  it("names each recording by date, and counts what it did differently", () => {
+    const md = rec(divergent());
+    expect(md).toMatch(/- 2026-03-03 — 1 of the standard's steps not taken\./);
+    expect(md).toMatch(/- 2026-03-04 — 1 step not in the standard, 2 of the standard's steps not taken\./);
+  });
+
+  it("says when a recording stopped before the end", () => {
+    // s1 and s2 both stop short of the baseline's last step.
+    const md = rec(divergent());
+    const block = md.split("## How the recordings differ")[1]!.split("\n## ")[0]!;
+    expect(block.match(/Stopped before the end\./g)).toHaveLength(2);
+  });
+
+  it("says a recording followed the standard when it did", () => {
+    // s3 IS the baseline, so it can only agree with itself.
+    expect(rec(divergent())).toMatch(/- 2026-03-05 — followed the standard\./);
+  });
+
+  it("names an undated recording by its session id rather than inventing a date", () => {
+    const f = divergent();
+    // Strip s3's only source, so nothing can date it.
+    f.graph.edges = f.graph.edges.map((e) => ({
+      ...e,
+      sources: e.sources.filter((s) => s.sessionId !== "s3"),
+    }));
+    expect(rec(f)).toMatch(/- s3 — /);
+  });
+
+  it("prints no score, ratio or percentage", () => {
+    const md = rec(divergent());
+    expect(md).not.toMatch(/\d+%/);
+    expect(md).not.toMatch(/consisten(t|cy) (score|rating)/i);
+  });
+});
+
+describe("## Where the time goes", () => {
+  it("gives each recording's own duration for each step", () => {
+    // The fixture's one edge runs 2s→6s for s1 and 3s→7s for s2.
+    const md = rec(flows());
+    expect(md).toMatch(/## Where the time goes/);
+    expect(md).toMatch(/4\.0s, 4\.0s/);
+  });
+
+  it("says these are durations and not targets, IN THE FILE", () => {
+    // The file is the thing that gets pasted somewhere else — the same reason
+    // the showSamples warning travels in the file rather than only in the UI.
+    expect(rec(flows())).toMatch(/durations, not targets/);
+  });
+
+  it("renders nothing for a habit recorded once", () => {
+    const f = flows();
+    f.routes[0]!.count = 1;
+    f.routes[0]!.sessionIds = ["s1"];
+    f.routes[0]!.walks = [{ sessionId: "s1", edgeIds: ["e0"], atSec: 0, throughSec: 0 }];
+    expect(rec(f)).not.toMatch(/## Where the time goes/);
+  });
+
+  it("omits a recording that did not walk the step instead of writing a zero", () => {
+    // Zero is a real duration. Only s1 and s2 walk e0, so its list has two
+    // entries even though the route has three recordings.
+    // The baseline's step 2 (e1) was walked by s1 and s3 but not s2, so its
+    // list carries two durations for a route with three recordings.
+    const md = rec(divergent());
+    const block = md.split("## Where the time goes")[1]!.split("\n## ")[0]!;
+    const second = block.split("\n").find((l) => l.startsWith("2. "))!;
+    expect(second.match(/\d+\.\ds/g)).toHaveLength(2);
+  });
+
+  it("names the step by the places it moves between", () => {
+    expect(rec(flows())).toMatch(/1\. Ghostty → Google Chrome — github\.com\/user\/repo — /);
+  });
+
+  it("reports the idle between steps separately from the steps", () => {
+    // s1 and s3 both leave 2s between e0 ending and e1 starting.
+    expect(rec(divergent())).toMatch(/idle before the next step: 2\.0s, 2\.0s/);
+  });
+
+  it("prints no total, no average and no fastest", () => {
+    const md = rec(divergent());
+    const block = md.split("## Where the time goes")[1]!.split("\n## ")[0]!;
+    expect(block).not.toMatch(/total|average|mean|median|fastest|slowest/i);
+  });
+});
+
+describe("## When it happens", () => {
+  it("reports the weekday shape and an hour range", () => {
+    // NOT a literal hour: RhythmFacts reads LOCAL time and the suite runs in
+    // whatever zone the machine is in. The fixture's midday-mid-week timestamps
+    // are what make the WEEKDAY half safe under a ±14h shift; the hour half is
+    // asserted structurally for the same reason.
+    const md = rec(divergent());
+    expect(md).toMatch(/## When it happens/);
+    expect(md).toMatch(/All 3 recordings on a weekday/);
+    expect(md).toMatch(/(between \d\d:\d\d and \d\d:\d\d|around \d\d:\d\d) local time/);
+  });
+
+  it("reports the gaps between recordings", () => {
+    expect(rec(divergent())).toMatch(/Gaps between them: 1 day, 1 day/);
+  });
+
+  it("states that the cue cannot be recovered, whenever the block renders", () => {
+    // Measured: for all 3 recordings of the real store's only recurring route,
+    // the sole application in front before the work is DeskRAG's own Recorder.
+    // Without this paragraph an absent cue reads as "there was no cue".
+    const md = rec(divergent());
+    expect(md).toMatch(/recording starts when you press record/);
+    expect(md).toMatch(/cannot be recovered/);
+  });
+
+  it("never claims what preceded the work", () => {
+    const md = rec(divergent());
+    expect(md).not.toMatch(/## What preceded it/);
+    expect(md).not.toMatch(/after (Mail|Slack|Finder|DeskRAG|Electron)/i);
+  });
+
+  it("renders nothing when fewer than two recordings can be dated", () => {
+    const f = divergent();
+    f.graph.edges = f.graph.edges.map((e) => ({ ...e, sources: e.sources.slice(0, 1) }));
+    f.routes[0]!.walks = [{ sessionId: "s1", edgeIds: ["e0"], atSec: 2, throughSec: 6 }];
+    f.routes[0]!.sessionIds = ["s1"];
+    f.routes[0]!.count = 1;
+    expect(rec(f)).not.toMatch(/## When it happens/);
+  });
+});
+
+describe("work started and dropped early", () => {
+  const withPrefix = (): FlowsDTO => {
+    const f = divergent();
+    // A SHORTER route whose places are a strict prefix of this one's.
+    f.routes.push({
+      id: "Calculator",
+      count: 2,
+      label: "Calculator",
+      name: null,
+      nameObservations: 0,
+      nodeIds: ["n0"],
+      edgeIds: [],
+      sessionIds: ["s8", "s9"],
+      variants: [],
+      walks: [],
+    });
+    return f;
+  };
+
+  it("discloses it as a caution, in the record", () => {
+    expect(rec(withPrefix())).toMatch(
+      /started and dropped early 2 further times|dropped early/i,
+    );
+  });
+
+  it("does not change the recording count", () => {
+    // A DISCLOSURE, never a merge. route.count is the number of recordings that
+    // walked THIS route, and the prefix relation must not touch it.
+    const f = withPrefix();
+    expect(f.routes[0]!.count).toBe(3);
+    expect(rec(f)).toMatch(/Recorded 3 times/);
+  });
+
+  it("says nothing when no route is a prefix of this one", () => {
+    expect(rec(divergent())).not.toMatch(/dropped early/i);
+  });
+
+  it("keeps cautionsFor callable with three arguments", () => {
+    // The 4th parameter is optional so no existing caller moves.
+    const f = flows();
+    expect(() => cautionsFor(f, f.routes[0]!, flowWalks(f, f.routes[0]!))).not.toThrow();
+  });
+});
+
+describe("briefFor carries consistency", () => {
+  it("states how many recordings took the standard way", () => {
+    const f = divergent();
+    const b = briefFor(f, f.routes[0]!);
+    expect(b.consistency.join(" ")).toMatch(/3 recordings/);
+    expect(b.consistency.join(" ")).toMatch(/different path/);
+  });
+
+  it("says they agreed when they did", () => {
+    const f = flows();
+    expect(briefFor(f, f.routes[0]!).consistency.join(" ")).toMatch(/same path/);
+  });
+
+  it("is empty for a habit recorded once", () => {
+    const f = flows();
+    f.routes[0]!.count = 1;
+    f.routes[0]!.sessionIds = ["s1"];
+    f.routes[0]!.walks = [{ sessionId: "s1", edgeIds: ["e0"], atSec: 0, throughSec: 0 }];
+    expect(briefFor(f, f.routes[0]!).consistency).toEqual([]);
+  });
+
+  it("carries no percentage and no sample", () => {
+    const f = divergent();
+    const b = briefFor(f, f.routes[0]!);
+    expect(b.consistency.join(" ")).not.toMatch(/\d+%/);
+    expect(b.consistency.join(" ")).not.toContain(SECRET);
   });
 });
