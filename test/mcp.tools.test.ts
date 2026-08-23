@@ -163,6 +163,8 @@ function fakeReader(over: Partial<ExperienceReader> = {}): ExperienceReader {
         laneOrigin: 0,
       }),
     flows: () => flows(),
+    embed: async () => null,
+    momentAt: () => null,
     ...over,
   };
 }

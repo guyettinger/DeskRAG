@@ -100,7 +100,7 @@ import { OnnxHost } from "./onnx-host.js";
 import { spawnOnnxWorker } from "./onnx-spawn.js";
 import { TRACK_BUCKETS } from "@shared/types";
 import { routeStepSummary, routeWayLengths } from "@shared/route-ways";
-import type { IndexJobRow, SegmentRow, SegmentSummaryRow, HabitRow } from "deskrag";
+import type { IndexJobRow, RegionRow, SegmentRow, SegmentSummaryRow, HabitRow } from "deskrag";
 import type {
   Capabilities,
   FlowsDTO,
@@ -1673,6 +1673,24 @@ export class DeskRagService {
    */
   frameBlobId(frameId: string): string | undefined {
     return this.store.getFrame(frameId)?.blobId ?? undefined;
+  }
+
+  /**
+   * Embed arbitrary text with the configured text model.
+   *
+   * Builds providers per call, exactly as `searchDetached` does — the ONNX
+   * session is cached by `this.onnx`, and a cached provider would go stale the
+   * moment the model setting changed. Throws when no model is available; the
+   * MCP reader turns that into a stated skip.
+   */
+  async embedTexts(texts: string[], role: "document" | "query"): Promise<Float32Array[]> {
+    const prov = await this.buildProviders();
+    return prov.textEmbedder.embed(texts, { role });
+  }
+
+  /** Every proposed region on one frame. A read; the highlighter is not involved. */
+  frameRegions(frameId: string): RegionRow[] {
+    return this.store.getRegionsByFrame(frameId);
   }
 
   /**
