@@ -485,3 +485,80 @@ describe("walkAnalysis — antecedents", () => {
     expect(out.antecedents.map((a) => a.what)).toEqual(["Ada", "Mail", "Zed"]);
   });
 });
+
+/** A bare route carrying only what the prefix scan reads. */
+const otherRoute = (places: string[], sessionIds: string[]): FlowRouteDTO => ({
+  id: places.join(" → "),
+  count: sessionIds.length,
+  label: places.join(" → "),
+  name: null,
+  nameObservations: 0,
+  nodeIds: [],
+  edgeIds: [],
+  sessionIds,
+  walks: [],
+  variants: [],
+});
+
+describe("walkAnalysis — droppedEarly", () => {
+  const base = () =>
+    fixture(
+      3,
+      [{ sessionId: "s1", edgeIds: ["e0", "e1", "e2"], startedAt: T0 }],
+      [
+        otherRoute(["Place 0", "Place 1"], ["a", "b"]),
+        otherRoute(["Place 0", "Place 1", "Place 2"], ["c"]),
+        otherRoute(["Place 0", "Place 9"], ["d"]),
+        otherRoute(["Place 0", "Place 1", "Place 2", "Place 3", "Place 4"], ["e"]),
+      ],
+    );
+
+  it("finds routes whose places are a strict prefix of this route's", () => {
+    const out = walkAnalysis(input(base())).droppedEarly;
+    expect(out.map((p) => p.routeKey)).toEqual([
+      "Place 0 → Place 1 → Place 2",
+      "Place 0 → Place 1",
+    ]);
+  });
+
+  it("carries the shorter route's own count and recordings", () => {
+    const out = walkAnalysis(input(base())).droppedEarly;
+    const two = out.find((p) => p.routeKey === "Place 0 → Place 1");
+    expect(two?.count).toBe(2);
+    expect(two?.sessionIds).toEqual(["a", "b"]);
+    expect(two?.places).toEqual(["Place 0", "Place 1"]);
+  });
+
+  it("excludes a route that diverges, however early", () => {
+    const out = walkAnalysis(input(base())).droppedEarly;
+    expect(out.map((p) => p.routeKey)).not.toContain("Place 0 → Place 9");
+  });
+
+  it("excludes a LONGER route — a prefix is strictly shorter", () => {
+    const out = walkAnalysis(input(base())).droppedEarly;
+    expect(out.map((p) => p.routeKey)).not.toContain(
+      "Place 0 → Place 1 → Place 2 → Place 3 → Place 4",
+    );
+  });
+
+  it("never includes the route itself", () => {
+    const f = base();
+    const out = walkAnalysis(input(f)).droppedEarly;
+    expect(out.map((p) => p.routeKey)).not.toContain(f.route.id);
+  });
+
+  it("does not change the route's own count", () => {
+    // The whole reason this is a disclosure and not a merge: route.count is
+    // what the recurrence argument rests on, and folding a prefix in would
+    // claim recordings that did not do the work.
+    const f = base();
+    const before = f.route.count;
+    walkAnalysis(input(f));
+    expect(f.route.count).toBe(before);
+  });
+
+  it("orders longest first — the nearest miss is the most interesting", () => {
+    const out = walkAnalysis(input(base())).droppedEarly;
+    expect(out.map((p) => p.places.length)).toEqual([3, 2]);
+  });
+});

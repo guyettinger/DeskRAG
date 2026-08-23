@@ -433,6 +433,50 @@ function antecedentsOf(
   return out;
 }
 
+/**
+ * The separator `frequentRoutes` joins a route's places with. Named once.
+ *
+ * `FlowRouteDTO` exposes no `places` array, but its `id` IS
+ * `places.join(" → ")` and the labels are de-duplicated before the join — so
+ * splitting the key recovers the sequence exactly. Safe by definition rather
+ * than by convenience: if the key ever stops being the joined label sequence,
+ * `route-cluster.ts`, `bindHabit` and every stored `routeKey` break with it.
+ */
+const PLACE_SEP = " → ";
+
+/**
+ * Routes whose places are a STRICT prefix of this one's — work begun and
+ * dropped early.
+ *
+ * A DISCLOSURE, in the shape of `duplicates`, and never a merge. Every
+ * recording gets exactly one route key, and that partition is what makes
+ * `bindHabit`'s strict-majority rule a proof rather than a threshold: a session
+ * cannot lie in two routes, so more than half of a set can lie in at most one
+ * part. Folding a prefix into its parent would inflate `route.count` — the one
+ * number the whole recurrence argument rests on — with recordings that did not
+ * do the work.
+ *
+ * Longest first: the nearest miss is the one worth reading.
+ */
+function prefixRoutes(flows: FlowsDTO, route: FlowRouteDTO): PrefixFact[] {
+  const places = route.id.split(PLACE_SEP);
+  const out: PrefixFact[] = [];
+  for (const other of flows.routes) {
+    if (other.id === route.id) continue;
+    const theirs = other.id.split(PLACE_SEP);
+    if (theirs.length >= places.length) continue;
+    if (!theirs.every((p, i) => p === places[i])) continue;
+    out.push({
+      routeKey: other.id,
+      places: theirs,
+      count: other.count,
+      sessionIds: [...other.sessionIds],
+    });
+  }
+  out.sort((a, b) => b.places.length - a.places.length || a.routeKey.localeCompare(b.routeKey));
+  return out;
+}
+
 export function walkAnalysis(
   input: WalkAnalysisInput,
   hooks?: WalkAnalysisHooks,
@@ -482,6 +526,6 @@ export function walkAnalysis(
     steps,
     antecedents: antecedentsOf(route, order, hooks),
     rhythm: rhythmOf(walks),
-    droppedEarly: [],
+    droppedEarly: prefixRoutes(flows, route),
   };
 }
