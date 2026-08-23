@@ -32,7 +32,9 @@
  * same reason.
  */
 
-import type { EdgeActionDTO, FlowRouteDTO, FlowsDTO } from "@shared/types";
+import type { EdgeActionDTO, EdgeSourceDTO, FlowRouteDTO, FlowsDTO } from "@shared/types";
+
+const MS_PER_SEC = 1000;
 
 /** One action on a step, with the slot that varied there if any. */
 export interface FlowStepAction {
@@ -70,13 +72,20 @@ export interface FlowStep {
    */
   everyRecording: boolean;
   /**
-   * The first recording that walked it. Null when the edge carries no sources.
+   * The earliest recording that walked it, and where inside it. Null when the
+   * edge carries no sources.
    *
    * `sources` can be SHORTER than `observations` — a graph lifted before
    * provenance has none at all, and deleting a recording removes its sources
    * while leaving the count it contributed. Never derive one from the other.
+   *
+   * SORTED, not `sources[0]`. Sources accumulate in the order sessions were
+   * merged into the graph, which is not time order once anything is re-indexed;
+   * the field's name promised otherwise and the Habits step instrument turns
+   * that promise into a link. `atSec` is LANE seconds already — `toEdgeSources`
+   * converts through `laneSec`, so nothing downstream may divide `tMono` again.
    */
-  firstAt: { startedAt: number; atSec: number } | null;
+  firstAt: { sessionId: string; startedAt: number; atSec: number } | null;
   /** True when evidence has been deleted since: see `firstAt`. */
   sourcesBelowObservations: boolean;
   /** What lifting could not do here, e.g. a dropped wait. */
@@ -186,7 +195,11 @@ export function stepsFor(
         missing: true,
       };
     }
-    const first = edge.sources[0];
+    // The MOMENT, not the recording's start: a session that began later can
+    // reach this edge first, and a route walked twice in one afternoon is the
+    // ordinary case rather than the exotic one.
+    const moment = (s: EdgeSourceDTO): number => s.startedAt + s.atSec * MS_PER_SEC;
+    const first = [...edge.sources].sort((a, b) => moment(a) - moment(b))[0];
     return {
       index,
       edgeId,
@@ -195,7 +208,10 @@ export function stepsFor(
       actions: edge.actions.map(toAction),
       observations: edge.observations,
       everyRecording: recordings <= 0 || edge.observations >= recordings,
-      firstAt: first === undefined ? null : { startedAt: first.startedAt, atSec: first.atSec },
+      firstAt:
+        first === undefined
+          ? null
+          : { sessionId: first.sessionId, startedAt: first.startedAt, atSec: first.atSec },
       sourcesBelowObservations: edge.sources.length < edge.observations,
       liftWarnings: [...(edge.liftWarnings ?? [])],
       missing: false,

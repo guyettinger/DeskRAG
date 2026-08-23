@@ -4142,9 +4142,24 @@ select {
 .ledger__mark.is-lone {
   background: transparent; border: 1.5px solid var(--muted);
 }
-/* Recorded AFTER the habit was kept — the only evidence on this screen that
-   something is still being practised rather than merely written down. */
-.ledger__mark.is-gained { background: var(--data-ok); }
+/* Recorded AFTER the habit was kept -- the only evidence on this screen that
+   something is still being practised rather than merely written down. A RING
+   now rather than a fill: the fill carries conformance, and this is the channel
+   that loses least, because a recording made after the keep is necessarily
+   rightward on the axis and position already half-tells it. */
+.ledger__mark.is-gained { box-shadow: 0 0 0 1.5px var(--data-ok); }
+
+/* CONFORMANCE, in the NEUTRAL indexed slots and never in warn/alarm.
+   Baseline.reason says the standard is chosen from the recordings themselves
+   and is frequently tiebroken -- the record prints "a different recording could
+   become the standard as soon as one more is made" -- so a deviation may be the
+   BETTER path. Amber would make the screen assert what the file it mirrors
+   deliberately declines to assert, and a graded ledger is the streak-shaped-UI
+   backfire this screen exists to avoid.
+   Canonical is left alone: it keeps --data-signal, so a library where every
+   recording conformed is pixel-identical to before this shipped. */
+.ledger__mark.is-deviated { background: var(--data-2); }
+.ledger__mark.is-short { background: var(--data-3); }
 
 /* ---- the ledger as an instrument ------------------------------------------
    A mark IS a recording, so where the ledger is not inside a row button it can
@@ -4185,8 +4200,21 @@ select {
 .ledger__tip-note { font-size: var(--t-meta); color: var(--muted); margin-top: var(--s1); }
 /* The affordance, said rather than implied — a card that names a recording and
    stops leaves the reader to guess that clicking does anything. */
+.ledger__tip-fit { font-size: var(--t-meta); color: var(--text); margin-top: var(--s1); }
 .ledger__tip-go {
   font-size: var(--t-meta); color: var(--accent); margin-top: var(--s1);
+}
+
+/* Beside the LEAD ledger only. The swatch is the real mark class, so a hue can
+   never be restated here and drift from the thing it explains. */
+.ledger-legend { display: flex; flex-wrap: wrap; gap: var(--s2); margin-top: var(--s2); }
+.ledger-legend__item {
+  display: inline-flex; align-items: center; gap: var(--s1);
+  font-size: var(--t-meta); color: var(--muted);
+}
+.ledger-legend__swatch { position: static; margin: 0; }
+.ledger-legend__note {
+  flex-basis: 100%; margin: 0; font-size: var(--t-meta); color: var(--muted);
 }
 
 .habitedit {
@@ -4236,6 +4264,20 @@ select {
    below it is the recording, which neither of them can edit — the invariant the
    whole table is AUTHORED for. */
 .habitedit__recordhead--cut { border-top: 1px solid var(--hairline); padding-top: var(--s3); }
+
+/* The steps as an instrument. The <pre> below still holds the rest of the
+   record verbatim; this half is drawn from the DTO because a step that cannot
+   be opened is a record you must take on trust. */
+.habitsteps { display: flex; flex-direction: column; gap: var(--s3); }
+.habitsteps__ways { margin: 0; font-size: var(--t-meta); color: var(--muted); }
+.habitsteps__wayhead { margin: 0 0 var(--s2); font-size: var(--t-body); }
+.habitsteps__list { margin: 0; padding-left: var(--s4); display: flex; flex-direction: column; gap: var(--s2); }
+.habitsteps__head { display: flex; align-items: baseline; gap: var(--s2); flex-wrap: wrap; }
+.habitsteps__places { font-weight: 600; }
+/* Said in words, never a greyed control with no reason. */
+.habitsteps__noopen { font-size: var(--t-nano); color: var(--muted); }
+.habitsteps__action { margin: 0; font-size: var(--t-meta); color: var(--muted); }
+.habitsteps__count { margin: 0; font-size: var(--t-nano); color: var(--muted); font-style: italic; }
 .habitedit__toggle {
   display: flex; gap: var(--s2); align-items: flex-start;
   font-size: var(--t-meta); color: var(--muted); line-height: 1.45;

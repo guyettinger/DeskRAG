@@ -3,6 +3,7 @@ import {
   bandOf,
   bandHabits,
   bindingChip,
+  droppedEarlyLine,
   evidenceLine,
   generateDisabledReason,
   orderHabits,
@@ -12,12 +13,16 @@ import {
   ledgerMarks,
   markLabel,
   markReadout,
+  markStates,
+  recordTail,
   walkSpan,
 } from "../app/src/renderer/src/habits-view.js";
+import type { LedgerMark } from "../app/src/renderer/src/habits-view.js";
 import type {
   HabitBindingDTO,
   HabitDTO,
   HabitProposalDTO,
+  WalkFitDTO,
   WalkMarkDTO,
 } from "@shared/types";
 
@@ -54,6 +59,8 @@ const habit = (over: Partial<HabitDTO> = {}): HabitDTO => ({
   version: "0.1.0",
   history: [],
   duplicates: [],
+  ways: [],
+  droppedEarly: [],
   slug: "a-habit",
   title: "A habit",
   description: "Use when.",
@@ -273,6 +280,7 @@ describe("the recurrence ledger", () => {
     sessionId: `s${at}`,
     at,
     gained,
+    fit: null,
     walk: { atSec: 0, throughSec: 1, steps: 2 },
   });
 
@@ -301,13 +309,14 @@ describe("the recurrence ledger", () => {
 
   it("says when, where inside the recording, and what it walked", () => {
     const out = markReadout(
-      { sessionId: "s1", at: 1000, gained: false, walk: { atSec: 4, throughSec: 9, steps: 3 } },
+      { sessionId: "s1", at: 1000, gained: false, fit: null, walk: { atSec: 4, throughSec: 9, steps: 3 } },
       fmt,
     );
     expect(out).toEqual({
       when: "wall(1000)",
       at: "tc(4000) – tc(9000)",
       steps: "3 steps",
+      fit: null,
       note: null,
       action: "Open this recording",
     });
@@ -316,7 +325,7 @@ describe("the recurrence ledger", () => {
   it("counts one step in the singular", () => {
     expect(
       markReadout(
-        { sessionId: "s1", at: 1, gained: false, walk: { atSec: 0, throughSec: 1, steps: 1 } },
+        { sessionId: "s1", at: 1, gained: false, fit: null, walk: { atSec: 0, throughSec: 1, steps: 1 } },
         fmt,
       ).steps,
     ).toBe("1 step");
@@ -327,7 +336,7 @@ describe("the recurrence ledger", () => {
   it("names a recording made since the habit was kept", () => {
     expect(
       markReadout(
-        { sessionId: "s1", at: 1, gained: true, walk: { atSec: 0, throughSec: 1, steps: 2 } },
+        { sessionId: "s1", at: 1, gained: true, fit: null, walk: { atSec: 0, throughSec: 1, steps: 2 } },
         fmt,
       ).note,
     ).toBe("Recorded since you kept this");
@@ -339,7 +348,7 @@ describe("the recurrence ledger", () => {
    * indistinguishable from one nobody implemented, the `skipReason` rule.
    */
   it("states the reason rather than offering a dead link", () => {
-    const out = markReadout({ sessionId: "s1", at: 1, gained: false, walk: null }, fmt);
+    const out = markReadout({ sessionId: "s1", at: 1, gained: false, fit: null, walk: null }, fmt);
     expect(out.at).toBeNull();
     expect(out.steps).toBeNull();
     expect(out.action).toBeNull();
@@ -353,7 +362,7 @@ describe("the recurrence ledger", () => {
     expect(
       markLabel(
         markReadout(
-          { sessionId: "s1", at: 1, gained: true, walk: { atSec: 0, throughSec: 1, steps: 2 } },
+          { sessionId: "s1", at: 1, gained: true, fit: null, walk: { atSec: 0, throughSec: 1, steps: 2 } },
           fmt,
         ),
       ),
@@ -376,5 +385,199 @@ describe("the recurrence ledger", () => {
     expect(one).not.toBeNull();
     expect(one).not.toMatch(/–/);
     expect(walkSpan([w(Date.UTC(2026, 7, 17, 12)), w(Date.UTC(2026, 7, 20, 12))])).toMatch(/–/);
+  });
+});
+
+/** A mark as main hands it over. `fit: null` is the no-standard case. */
+const walk = (over: Partial<WalkMarkDTO> = {}): WalkMarkDTO => ({
+  sessionId: "s1",
+  at: 0,
+  gained: false,
+  fit: null,
+  walk: { atSec: 0, throughSec: 1, steps: 2 },
+  ...over,
+});
+
+const fit = (over: Partial<WalkFitDTO> = {}): WalkFitDTO => ({
+  inserted: 0,
+  skipped: 0,
+  reordered: 0,
+  reachedEnd: true,
+  ...over,
+});
+
+const marksOf = (walks: readonly WalkMarkDTO[]): LedgerMark[] =>
+  ledgerMarks(walks, { from: 0, to: 10_000 });
+
+describe("markStates", () => {
+  it("takes the ROW, because lone is a property of the row", () => {
+    // A per-mark signature could not see it, which is the same positional
+    // coupling `LedgerMark.walk` is carried to avoid.
+    const one = marksOf([walk({ sessionId: "s1", at: 0 })]);
+    expect(markStates(one)).toEqual(["lone"]);
+  });
+
+  it("is null when no standard exists, and null is not canonical", () => {
+    const two = marksOf([
+      walk({ sessionId: "s1", at: 0, fit: null }),
+      walk({ sessionId: "s2", at: 5_000, fit: null }),
+    ]);
+    expect(markStates(two)).toEqual([null, null]);
+  });
+
+  it("calls a clean fit canonical", () => {
+    const two = marksOf([
+      walk({ sessionId: "s1", at: 0, fit: fit() }),
+      walk({ sessionId: "s2", at: 5_000, fit: fit() }),
+    ]);
+    expect(markStates(two)).toEqual(["canonical", "canonical"]);
+  });
+
+  it("calls any non-zero count deviated", () => {
+    const two = marksOf([
+      walk({ sessionId: "s1", at: 0, fit: fit() }),
+      walk({ sessionId: "s2", at: 5_000, fit: fit({ skipped: 1 }) }),
+    ]);
+    expect(markStates(two)[1]).toBe("deviated");
+  });
+
+  it("lets short OUTRANK deviated", () => {
+    // Stopping before the end is the larger fact, and a walk that stopped will
+    // almost always also show skipped steps — reporting it as merely deviated
+    // would bury the reason. The card says both.
+    const two = marksOf([
+      walk({ sessionId: "s1", at: 0, fit: fit() }),
+      walk({ sessionId: "s2", at: 5_000, fit: fit({ skipped: 3, reachedEnd: false }) }),
+    ]);
+    expect(markStates(two)[1]).toBe("short");
+  });
+
+  it("never returns a state for a lone mark, whatever its fit", () => {
+    const one = marksOf([walk({ sessionId: "s1", at: 0, fit: fit({ skipped: 2 }) })]);
+    expect(markStates(one)).toEqual(["lone"]);
+  });
+});
+
+describe("the mark says how it compared", () => {
+  const readoutOf = (w: WalkMarkDTO) =>
+    markReadout(w, { wallClock: () => "18 Aug 2026", timecode: () => "00:00:05" });
+
+  it("says nothing when there is no standard", () => {
+    expect(readoutOf(walk({ sessionId: "s1", at: 0, fit: null })).fit).toBeNull();
+  });
+
+  it("says it followed the standard when it did", () => {
+    expect(readoutOf(walk({ sessionId: "s1", at: 0, fit: fit() })).fit).toMatch(
+      /Followed the standard/,
+    );
+  });
+
+  it("counts what differed, in the record's own words", () => {
+    const r = readoutOf(walk({ sessionId: "s1", at: 0, fit: fit({ inserted: 1, skipped: 2 }) }));
+    expect(r.fit).toMatch(/1 step not in the standard/);
+    expect(r.fit).toMatch(/2 of the standard's steps not taken/);
+  });
+
+  it("says it stopped before the end", () => {
+    const r = readoutOf(walk({ sessionId: "s1", at: 0, fit: fit({ reachedEnd: false }) }));
+    expect(r.fit).toMatch(/Stopped before the end/);
+  });
+
+  it("reaches markLabel, so a screen reader hears it too", () => {
+    const w = walk({ sessionId: "s1", at: 0, fit: fit({ skipped: 1 }) });
+    expect(markLabel(readoutOf(w))).toMatch(/not taken/);
+  });
+
+  it("carries no percentage and no grade", () => {
+    const r = readoutOf(walk({ sessionId: "s1", at: 0, fit: fit({ skipped: 1 }) }));
+    expect(r.fit).not.toMatch(/\d+%/);
+    expect(r.fit).not.toMatch(/wrong|failed|bad|worse|poor/i);
+  });
+});
+
+describe("recordTail", () => {
+  // The steps become an instrument, so the <pre> holds the record FROM THE NEXT
+  // HEADING DOWN. `## How the recordings differ` only exists at count >= 2, so
+  // the tail cannot be found by name — it is the first heading after the steps.
+  const doc = (...sections: string[]): string =>
+    ["---", "name: x", "---", "", "Prose.", "", ...sections].join("\n");
+
+  it("starts at the heading after the recorded steps", () => {
+    const md = doc("## Recorded steps", "", "1. A → B", "", "## What varies", "", "Nothing.");
+    expect(recordTail(md)).toMatch(/^## What varies/);
+  });
+
+  it("finds it whatever the next heading is called", () => {
+    // A single-recording habit has no "How the recordings differ" section.
+    const md = doc("## Recorded steps", "", "1. A → B", "", "## Evidence", "", "Once.");
+    expect(recordTail(md)).toMatch(/^## Evidence/);
+  });
+
+  it("is empty when the record ends at the steps", () => {
+    expect(recordTail(doc("## Recorded steps", "", "1. A → B"))).toBe("");
+  });
+
+  it("keeps every later heading, not just the next one", () => {
+    const md = doc(
+      "## Recorded steps",
+      "",
+      "1. A → B",
+      "",
+      "## How the recordings differ",
+      "",
+      "All 2 recordings took the same path.",
+      "",
+      "## Evidence",
+      "",
+      "Recorded twice.",
+    );
+    const tail = recordTail(md);
+    expect(tail).toMatch(/## How the recordings differ/);
+    expect(tail).toMatch(/## Evidence/);
+    expect(tail).not.toMatch(/## Recorded steps/);
+  });
+
+  it("returns the whole document when there is no steps heading at all", () => {
+    // A defensive case, not a real one: if the record ever stops emitting the
+    // heading, showing everything is the honest failure and showing nothing is
+    // not.
+    const md = doc("## Something else", "", "text");
+    expect(recordTail(md)).toBe(md);
+  });
+});
+
+describe("droppedEarlyLine", () => {
+  it("is null when nothing was dropped early", () => {
+    expect(droppedEarlyLine(habit())).toBeNull();
+  });
+
+  it("says how many times, and stops there", () => {
+    // ON THE ROW, where the decision to open is made — the same argument that
+    // put RECORDED ONCE into list_habits rather than only into the file.
+    const h = habit({ droppedEarly: [{ places: ["Calculator"], count: 2 }] });
+    expect(droppedEarlyLine(h)).toBe("also started and dropped early 2 further times");
+  });
+
+  it("says it in the singular when it happened once", () => {
+    const h = habit({ droppedEarly: [{ places: ["Calculator"], count: 1 }] });
+    expect(droppedEarlyLine(h)).toBe("also started and dropped early 1 further time");
+  });
+
+  it("sums several prefix routes rather than listing them", () => {
+    // The row is not the place for the places. The record already names each
+    // one; a row that listed three would push the evidence line off the card.
+    const h = habit({
+      droppedEarly: [
+        { places: ["Calculator"], count: 2 },
+        { places: ["Calculator", "TextEdit"], count: 1 },
+      ],
+    });
+    expect(droppedEarlyLine(h)).toBe("also started and dropped early 3 further times");
+  });
+
+  it("never touches the recording count", () => {
+    // A DISCLOSURE, never a merge: those recordings walked a different route.
+    const h = habit({ droppedEarly: [{ places: ["Calculator"], count: 5 }] });
+    expect(evidenceLine(h)).toBe(evidenceLine(habit()));
   });
 });

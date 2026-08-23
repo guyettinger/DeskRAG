@@ -22,6 +22,7 @@ import type {
   HabitPatch,
   HabitProposalDTO,
   HabitsDTO,
+  HabitWayDTO,
   WalkMarkDTO,
 } from "@shared/types";
 import { api, timecode, wallClock } from "../api.js";
@@ -30,13 +31,16 @@ import {
   bandHabits,
   bandProposals,
   bindingChip,
+  droppedEarlyLine,
   evidenceLine,
   generateDisabledReason,
   ledgerMarks,
   markLabel,
   markReadout,
+  markStates,
   proposalEvidence,
   proposalTitle,
+  recordTail,
   walkSpan,
 } from "../habits-view.js";
 import type { LedgerMark } from "../habits-view.js";
@@ -351,16 +355,27 @@ function Ledger({
   if (marks.length === 0) return null;
   // A single mark is drawn HOLLOW. It is the one visual difference between an
   // observation and a habit, and it has to survive being glanced at.
-  const lone = marks.length === 1;
-  const tone = (m: LedgerMark): string =>
-    `ledger__mark${lone ? " is-lone" : ""}${m.gained ? " is-gained" : ""}`;
+  const states = markStates(marks);
+  const tone = (m: LedgerMark, i: number): string => {
+    const state = states[i];
+    return [
+      "ledger__mark",
+      state === "lone" ? "is-lone" : "",
+      state === "deviated" ? "is-deviated" : "",
+      state === "short" ? "is-short" : "",
+      // Last, so the ring composes over whichever fill the state chose.
+      m.gained ? "is-gained" : "",
+    ]
+      .filter((c) => c !== "")
+      .join(" ");
+  };
 
   if (onOpen === undefined) {
     return (
       <span className={`ledger ledger--${size}`} aria-hidden="true">
         <span className="ledger__axis" />
-        {marks.map((m) => (
-          <span key={m.sessionId} className={tone(m)} style={{ left: `${m.x * 100}%` }} />
+        {marks.map((m, i) => (
+          <span key={m.sessionId} className={tone(m, i)} style={{ left: `${m.x * 100}%` }} />
         ))}
       </span>
     );
@@ -381,7 +396,7 @@ function Ledger({
       onMouseLeave={() => setHover(null)}
     >
       <span className="ledger__axis" />
-      {marks.map((m) => {
+      {marks.map((m, i) => {
         const label = markLabel(markReadout(m.walk, { wallClock, timecode }));
         const walk = m.walk.walk;
         return (
@@ -407,7 +422,7 @@ function Ledger({
               if (walk !== null) onOpen(m.sessionId, walk.atSec);
             }}
           >
-            <span className={tone(m)} />
+            <span className={tone(m, i)} />
           </button>
         );
       })}
@@ -469,8 +484,131 @@ function MarkCard({
           {readout.steps !== null && ` · ${readout.steps}`}
         </div>
       )}
+      {readout.fit !== null && <div className="ledger__tip-fit">{readout.fit}</div>}
       {readout.note !== null && <div className="ledger__tip-note">{readout.note}</div>}
       {readout.action !== null && <div className="ledger__tip-go">{readout.action}</div>}
+    </div>
+  );
+}
+
+/**
+ * What the three hues mean, said once.
+ *
+ * Beside the LEAD ledger only, never per row: four legends down a list is
+ * chrome, and a row's ledger is `aria-hidden` decoration beside words that
+ * already state the fact.
+ *
+ * The last sentence is load-bearing and is not decoration. A key reading
+ * "followed / differed / stopped short" and stopping smuggles a grade back in
+ * through the ordering alone — this is the one place in the sub-project where
+ * the no-grade rule is carried by prose rather than by structure.
+ */
+function LedgerLegend(): React.JSX.Element {
+  return (
+    <div className="ledger-legend">
+      <span className="ledger-legend__item">
+        <span className="ledger__mark ledger-legend__swatch" /> followed the standard
+      </span>
+      <span className="ledger-legend__item">
+        <span className="ledger__mark ledger-legend__swatch is-deviated" /> went another way
+      </span>
+      <span className="ledger-legend__item">
+        <span className="ledger__mark ledger-legend__swatch is-short" /> stopped before the end
+      </span>
+      <p className="ledger-legend__note">
+        The standard is whichever way these recordings most agreed on, and it moves as you
+        record more. Going another way is not a mistake.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * The recorded steps, as an instrument rather than as text.
+ *
+ * Ledger marks have been able to open a recording since `c205413`; the steps —
+ * the part a person is actually asked to trust — could not, so the record was
+ * trusted rather than verifiable. Drawn from `HabitDTO.ways`, which main built
+ * from the same `FlowWalk[]` the file is rendered from: two renderers of one
+ * thing is a drift hazard, and they are safe only because neither parses the
+ * other's output.
+ *
+ * A step with no moment is DRAWN and states its reason — the
+ * `StageSpec.skipReason` rule, and the same rule that already makes a mark with
+ * no walk say why it cannot be followed. A disabled control with no explanation
+ * is indistinguishable from one nobody implemented.
+ */
+function RecordedSteps({
+  ways,
+  onOpen,
+}: {
+  ways: readonly HabitWayDTO[];
+  onOpen: (sessionId: string, atSec: number) => void;
+}): React.JSX.Element | null {
+  if (ways.length === 0) return null;
+  const many = ways.length > 1;
+  return (
+    <div className="habitsteps">
+      {many && (
+        <p className="habitsteps__ways">
+          The recordings did not take the same path. Each way below is a complete walk that a
+          recording actually made — follow one of them, not all of them in sequence.
+        </p>
+      )}
+      {ways.map((way) => (
+        <section key={way.letter} className="habitsteps__way">
+          {many && (
+            <h4 className="habitsteps__wayhead">
+              Way {way.letter} — {way.steps.length} step{way.steps.length === 1 ? "" : "s"},{" "}
+              {way.sessionIds.length === 1 ? "1 recording" : `${way.sessionIds.length} recordings`}
+            </h4>
+          )}
+          <ol className="habitsteps__list">
+            {way.steps.map((step) => (
+              <li key={`${way.letter}-${step.index}`} className="habitsteps__step">
+                <div className="habitsteps__head">
+                  <span className="habitsteps__places">
+                    {step.missing
+                      ? `edge ${step.edgeId} is not in the graph (index defect)`
+                      : `${step.from} → ${step.to}`}
+                  </span>
+                  {step.firstAt === null ? (
+                    <span className="habitsteps__noopen">
+                      No recording carries this step, so there is no moment to open
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn ghost habitsteps__open"
+                      onClick={() => {
+                        const at = step.firstAt;
+                        if (at !== null) onOpen(at.sessionId, at.atSec);
+                      }}
+                    >
+                      Open this moment
+                    </button>
+                  )}
+                </div>
+                {step.actions.length === 0 ? (
+                  <p className="habitsteps__action muted">(no actions recorded on this edge)</p>
+                ) : (
+                  step.actions.map((a, i) => (
+                    <p key={i} className="habitsteps__action mono">
+                      {a.action}
+                      {a.target === "—" || a.target === "" ? "" : ` — ${a.target}`}
+                    </p>
+                  ))
+                )}
+                <p className="habitsteps__count">
+                  {step.observations === 1
+                    ? "walked once"
+                    : `walked by ${step.observations} recordings`}
+                </p>
+              </li>
+            ))}
+          </ol>
+        </section>
+      ))}
     </div>
   );
 }
@@ -499,6 +637,9 @@ function HabitRow({
 }): React.JSX.Element {
   const chip = bindingChip(habit);
   const span = walkSpan(habit.binding.walks);
+  // The same work begun and abandoned partway. A DISCLOSURE beside the count,
+  // never folded into it: those recordings walked a different route.
+  const dropped = droppedEarlyLine(habit);
   return (
     <li>
       <button className={`habit${active ? " is-active" : ""}`} onClick={onSelect}>
@@ -510,6 +651,7 @@ function HabitRow({
         <Ledger walks={habit.binding.walks} domain={domain} />
         <span className="habit__meta">
           <span className="mono">{evidenceLine(habit)}</span>
+          {dropped !== null && <span className="mono">{dropped}</span>}
           {span !== null && <span className="mono">{span}</span>}
           {habit.edited && <span className="habit__tag mono">edited</span>}
           {habit.pinned && <span className="habit__tag mono">pinned</span>}
@@ -661,8 +803,7 @@ function HabitEditor({
   const [confirmMerge, setConfirmMerge] = useState<string | null>(null);
   // The record is not editable here, and the file says the same thing. Splitting
   // the document at the heading is how the screen shows which half is which.
-  const cut = habit.markdown.lastIndexOf("## Recorded steps");
-  const record = cut < 0 ? habit.markdown : habit.markdown.slice(cut);
+  const record = recordTail(habit.markdown);
 
   const span = walkSpan(b.walks);
 
@@ -683,6 +824,7 @@ function HabitEditor({
             {evidenceLine(habit)}
             {span !== null && ` · ${span}`}
           </p>
+        {b.walks.some((w) => w.fit !== null) && <LedgerLegend />}
         </div>
       </header>
 
@@ -863,7 +1005,8 @@ function HabitEditor({
       <div className="habitedit__recordhead habitedit__recordhead--cut">
         <span className="eyebrow">The record — the recording, not editable</span>
       </div>
-      <pre className="habitedit__record mono">{record}</pre>
+      <RecordedSteps ways={habit.ways} onOpen={onOpenRecording} />
+      {record !== "" && <pre className="habitedit__record mono">{record}</pre>}
 
       {/* The reason in WORDS, not a greyed control with no explanation. */}
       {proseNote !== null && <p className="muted">{proseNote}</p>}
