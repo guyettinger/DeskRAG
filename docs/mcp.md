@@ -21,7 +21,7 @@ Any MCP client that speaks Streamable HTTP works; the transport is stateless, so
 there is nothing to reconnect after DeskRAG restarts. DeskRAGApp must be running
 — it owns the store and the models — but it can be closed to the tray.
 
-## The eight tools
+## The eleven tools
 
 ### `search_experience`
 
@@ -212,6 +212,69 @@ and nothing else at the top level. So a habit destined for a Claude Code skills
 directory is saved at `~/.claude/skills/<name>/SKILL.md`, under the filename that
 directory requires; the frontmatter needs no editing. The rename is what DeskRAG
 calls the thing, not a change to the format.
+
+### `search_habits`
+
+The catalogue is a chooser, and a composite habit runs to roughly 1,500 tokens, so
+an agent that reads `list_habits` to find one habit reads all of them.
+`search_habits` takes a situation in the agent's own words and ranks the kept
+habits against it.
+
+Two lanes are matched and fused by rank. The **prose** lane compares meaning
+against what a person or model wrote — the title, the description, the body, and
+the applications the route passes through. The **exact terms** lane matches
+against the whole file, which is where a button label, a URL or an app name
+actually lives. The reply names which lanes each habit appeared in and where:
+
+```
+matched in: prose #1, exact terms #3
+```
+
+There is no score, for `search_experience`'s reason. What replaces it is the
+**corpus**, stated before the ranking rather than after it. With one kept habit
+the reply says so outright — that habit is the only candidate, and nothing was
+ranked against it. Below five it warns that a corpus that small ranks nearly
+everything. An agent handed an order with no idea how many things were ordered
+will present the first as authoritative.
+
+If no local text model has downloaded, the prose lane is **skipped and says so**,
+and the ranking is exact terms alone. A quietly lexical-only answer is
+indistinguishable from a working one.
+
+### `get_habit_step`
+
+An agent following a HABIT.md and stuck partway has nowhere to look: the file
+says `Calculator — no state → TextEdit — Untitled` and nothing shows what that
+was. This returns one step with the screenshot of what was on screen when it ran,
+plus the accessibility labels visible at that moment.
+
+`step` is the number the file prints, counting from 1. `way` is the letter —
+**required** for a habit whose recordings took different paths, because those are
+different procedures rather than one procedure with options, and guessing would
+answer about a path you did not read.
+
+The screenshot is the last keyframe **at or before** the step began: a step is a
+transition, and its actions want the screen as it was when they started. If the
+step began before the recording's video did, the earliest keyframe is returned
+and the reply says it is *after* the step rather than before it.
+
+### `get_habit_steps`
+
+The same recorded steps as JSON, to write as `steps.json` beside the HABIT.md
+that `get_habit` returns — metadata, then the body, then the bundled file. Raw
+JSON with no preamble, for the same reason `get_habit` has none.
+
+Each step carries its edge, its actions and targets, how many recordings walked
+it, when it was first walked, and **`arrivesWhen`** — the state the step arrives
+in, as the conditions that identify it. That is the answer to "how do I know I
+have got there". When it is `null`, `arrivesWhenAbsent` says why, and
+`locatable: false` says a state can be confirmed but not recognised beyond its
+application.
+
+**No recorded keystroke value appears in this file, ever.** A slot travels as its
+name and nothing else, and the per-habit "show recorded values" toggle is not
+consulted — a file you deliberately turned values on for is not the same as a
+payload handed to a background process over a socket.
 
 ## Read-only, by construction
 
