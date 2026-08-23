@@ -12,12 +12,15 @@ import {
   ledgerMarks,
   markLabel,
   markReadout,
+  markStates,
   walkSpan,
 } from "../app/src/renderer/src/habits-view.js";
+import type { LedgerMark } from "../app/src/renderer/src/habits-view.js";
 import type {
   HabitBindingDTO,
   HabitDTO,
   HabitProposalDTO,
+  WalkFitDTO,
   WalkMarkDTO,
 } from "@shared/types";
 
@@ -311,6 +314,7 @@ describe("the recurrence ledger", () => {
       when: "wall(1000)",
       at: "tc(4000) – tc(9000)",
       steps: "3 steps",
+      fit: null,
       note: null,
       action: "Open this recording",
     });
@@ -379,5 +383,112 @@ describe("the recurrence ledger", () => {
     expect(one).not.toBeNull();
     expect(one).not.toMatch(/–/);
     expect(walkSpan([w(Date.UTC(2026, 7, 17, 12)), w(Date.UTC(2026, 7, 20, 12))])).toMatch(/–/);
+  });
+});
+
+/** A mark as main hands it over. `fit: null` is the no-standard case. */
+const walk = (over: Partial<WalkMarkDTO> = {}): WalkMarkDTO => ({
+  sessionId: "s1",
+  at: 0,
+  gained: false,
+  fit: null,
+  walk: { atSec: 0, throughSec: 1, steps: 2 },
+  ...over,
+});
+
+const fit = (over: Partial<WalkFitDTO> = {}): WalkFitDTO => ({
+  inserted: 0,
+  skipped: 0,
+  reordered: 0,
+  reachedEnd: true,
+  ...over,
+});
+
+const marksOf = (walks: readonly WalkMarkDTO[]): LedgerMark[] =>
+  ledgerMarks(walks, { from: 0, to: 10_000 });
+
+describe("markStates", () => {
+  it("takes the ROW, because lone is a property of the row", () => {
+    // A per-mark signature could not see it, which is the same positional
+    // coupling `LedgerMark.walk` is carried to avoid.
+    const one = marksOf([walk({ sessionId: "s1", at: 0 })]);
+    expect(markStates(one)).toEqual(["lone"]);
+  });
+
+  it("is null when no standard exists, and null is not canonical", () => {
+    const two = marksOf([
+      walk({ sessionId: "s1", at: 0, fit: null }),
+      walk({ sessionId: "s2", at: 5_000, fit: null }),
+    ]);
+    expect(markStates(two)).toEqual([null, null]);
+  });
+
+  it("calls a clean fit canonical", () => {
+    const two = marksOf([
+      walk({ sessionId: "s1", at: 0, fit: fit() }),
+      walk({ sessionId: "s2", at: 5_000, fit: fit() }),
+    ]);
+    expect(markStates(two)).toEqual(["canonical", "canonical"]);
+  });
+
+  it("calls any non-zero count deviated", () => {
+    const two = marksOf([
+      walk({ sessionId: "s1", at: 0, fit: fit() }),
+      walk({ sessionId: "s2", at: 5_000, fit: fit({ skipped: 1 }) }),
+    ]);
+    expect(markStates(two)[1]).toBe("deviated");
+  });
+
+  it("lets short OUTRANK deviated", () => {
+    // Stopping before the end is the larger fact, and a walk that stopped will
+    // almost always also show skipped steps — reporting it as merely deviated
+    // would bury the reason. The card says both.
+    const two = marksOf([
+      walk({ sessionId: "s1", at: 0, fit: fit() }),
+      walk({ sessionId: "s2", at: 5_000, fit: fit({ skipped: 3, reachedEnd: false }) }),
+    ]);
+    expect(markStates(two)[1]).toBe("short");
+  });
+
+  it("never returns a state for a lone mark, whatever its fit", () => {
+    const one = marksOf([walk({ sessionId: "s1", at: 0, fit: fit({ skipped: 2 }) })]);
+    expect(markStates(one)).toEqual(["lone"]);
+  });
+});
+
+describe("the mark says how it compared", () => {
+  const readoutOf = (w: WalkMarkDTO) =>
+    markReadout(w, { wallClock: () => "18 Aug 2026", timecode: () => "00:00:05" });
+
+  it("says nothing when there is no standard", () => {
+    expect(readoutOf(walk({ sessionId: "s1", at: 0, fit: null })).fit).toBeNull();
+  });
+
+  it("says it followed the standard when it did", () => {
+    expect(readoutOf(walk({ sessionId: "s1", at: 0, fit: fit() })).fit).toMatch(
+      /Followed the standard/,
+    );
+  });
+
+  it("counts what differed, in the record's own words", () => {
+    const r = readoutOf(walk({ sessionId: "s1", at: 0, fit: fit({ inserted: 1, skipped: 2 }) }));
+    expect(r.fit).toMatch(/1 step not in the standard/);
+    expect(r.fit).toMatch(/2 of the standard's steps not taken/);
+  });
+
+  it("says it stopped before the end", () => {
+    const r = readoutOf(walk({ sessionId: "s1", at: 0, fit: fit({ reachedEnd: false }) }));
+    expect(r.fit).toMatch(/Stopped before the end/);
+  });
+
+  it("reaches markLabel, so a screen reader hears it too", () => {
+    const w = walk({ sessionId: "s1", at: 0, fit: fit({ skipped: 1 }) });
+    expect(markLabel(readoutOf(w))).toMatch(/not taken/);
+  });
+
+  it("carries no percentage and no grade", () => {
+    const r = readoutOf(walk({ sessionId: "s1", at: 0, fit: fit({ skipped: 1 }) }));
+    expect(r.fit).not.toMatch(/\d+%/);
+    expect(r.fit).not.toMatch(/wrong|failed|bad|worse|poor/i);
   });
 });

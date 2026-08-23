@@ -10,6 +10,7 @@ import type {
   HabitBindState,
   HabitDTO,
   HabitProposalDTO,
+  WalkFitDTO,
   WalkMarkDTO,
 } from "@shared/types";
 
@@ -234,6 +235,35 @@ export function ledgerMarks(
   }));
 }
 
+/**
+ * What a mark says about itself, per row.
+ *
+ * `lone` and conformance are MUTUALLY EXCLUSIVE BY CONSTRUCTION: the ring means
+ * exactly one recording, and a standard needs two walks to exist at all. That is
+ * the only reason a third channel fits on a seven-pixel dot — the ring is free
+ * wherever conformance is possible.
+ *
+ * Takes the ROW, not one mark, because `lone` is a property of the row and a
+ * per-mark signature could not see it.
+ *
+ * NULL IS NOT CANONICAL. Null means no standard existed; canonical means one
+ * existed and this walk matched it. Drawing them alike would claim a habit
+ * recorded once passed a check that was never run.
+ */
+export type MarkState = "lone" | "canonical" | "deviated" | "short" | null;
+
+export function markStates(marks: readonly LedgerMark[]): MarkState[] {
+  if (marks.length === 1) return ["lone"];
+  return marks.map((m) => {
+    const fit = m.walk.fit;
+    if (fit === null) return null;
+    // SHORT OUTRANKS DEVIATED. A walk that stopped will almost always also show
+    // skipped steps, and reporting it as merely deviated buries the reason.
+    if (!fit.reachedEnd) return "short";
+    return fit.inserted + fit.skipped + fit.reordered > 0 ? "deviated" : "canonical";
+  });
+}
+
 const DAY_MONTH = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short" });
 
 /**
@@ -275,10 +305,33 @@ export interface MarkReadout {
   at: string | null;
   /** THIS recording's own path, never the route's union. Null with no walk. */
   steps: string | null;
+  /**
+   * How this recording compared to the standard. Null when none exists.
+   *
+   * Worded from `differBlock`'s own sentences, so the file and the screen cannot
+   * describe one recording differently — the same rule that made `differBlock`
+   * carry `Baseline.reason` verbatim.
+   */
+  fit: string | null;
   /** Recorded since the habit was kept, or why there is nothing to open. */
   note: string | null;
   /** The affordance, in words. Null when there is nothing to open. */
   action: string | null;
+}
+
+/** The fit in words, or null. COUNTS, never a grade — a deviation is not a failure. */
+function fitClause(fit: WalkFitDTO | null): string | null {
+  if (fit === null) return null;
+  const bits: string[] = [];
+  if (fit.inserted > 0) {
+    bits.push(`${fit.inserted} step${fit.inserted === 1 ? "" : "s"} not in the standard`);
+  }
+  if (fit.skipped > 0) bits.push(`${fit.skipped} of the standard's steps not taken`);
+  if (fit.reordered > 0) {
+    bits.push(`${fit.reordered} step${fit.reordered === 1 ? "" : "s"} taken in a different order`);
+  }
+  const head = bits.length === 0 ? "Followed the standard" : bits.join(", ");
+  return fit.reachedEnd ? `${head}.` : `${head}. Stopped before the end.`;
 }
 
 export function markReadout(
@@ -293,6 +346,7 @@ export function markReadout(
         ? null
         : `${fmt.timecode(walk.atSec * 1000)} – ${fmt.timecode(walk.throughSec * 1000)}`,
     steps: walk === null ? null : `${walk.steps} step${walk.steps === 1 ? "" : "s"}`,
+    fit: fitClause(mark.fit),
     // A dead link is worse than none, so a mark that cannot be followed SAYS
     // why rather than going quietly grey — the `StageSpec.skipReason` rule one
     // screen over. It happens to an orphaned or ambiguous habit, whose marks
@@ -309,7 +363,7 @@ export function markReadout(
 
 /** The same readout as one line — a mark's accessible name and its tooltip. */
 export function markLabel(readout: MarkReadout): string {
-  return [readout.when, readout.at, readout.steps, readout.note]
+  return [readout.when, readout.at, readout.steps, readout.fit, readout.note]
     .filter((part): part is string => part !== null)
     .join(" · ");
 }
