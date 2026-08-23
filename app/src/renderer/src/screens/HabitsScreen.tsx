@@ -46,6 +46,7 @@ import {
 import type { LedgerMark } from "../habits-view.js";
 import { clampTip } from "./hover-card.js";
 import { fadeLine } from "../habit-rhythm.js";
+import { placeLabel, portraitOf } from "../habit-portrait.js";
 
 /** Distance from the mark to its card, and from the card to the window edge —
     the rail's two constants, which the shared `clampTip` reads. */
@@ -174,6 +175,8 @@ export function HabitsScreen({
           </span>
         </div>
       </Head>
+
+      <Portrait data={data} />
 
       <div className="habits__stage">
         <aside className="habits__list">
@@ -631,6 +634,59 @@ function RecordedSteps({
         </section>
       ))}
     </div>
+  );
+}
+
+/**
+ * The answer to the question the `<h1>` has always asked.
+ *
+ * "What you do repeatedly" has headed a file list since Habits shipped. This
+ * says where that repeated work actually happens, and how much of what you
+ * record recurs at all — `post.md`'s second lesson, made glanceable.
+ *
+ * A BAR CARRIES NO PRINTED NUMBER. The bar length is the reading and
+ * `placeLabel` is the fact, exactly as a ledger mark is a position and
+ * `markLabel` is the sentence — so a pointer and a screen reader are told the
+ * same thing. A count in the gutter would be the `×N` glyph again, which was
+ * deleted for being the one of three statements that could only be read as a
+ * number.
+ *
+ * ONE HUE at varying lightness, never the indexed palette: C1 owns `--data-2`
+ * and `--data-3` for conformance, and a violet app bar a few hundred pixels
+ * above a violet "went another way" mark would assert a relationship that does
+ * not exist.
+ */
+function Portrait({ data }: { data: HabitsDTO }): React.JSX.Element | null {
+  const portrait = portraitOf(data);
+  // Nothing recurs. The band draws nothing rather than an empty frame — this
+  // is not an insufficiency state, because there is no reading being withheld.
+  if (portrait.empty) return null;
+  return (
+    <section className="portrait" aria-label="Where your repeated work happens">
+      <ul className="portrait__places">
+        {portrait.places.map((place) => {
+          const label = placeLabel(place);
+          return (
+            <li key={place.app} className="portrait__place" title={label} aria-label={label}>
+              <span className="portrait__app">{place.app}</span>
+              <span className="portrait__bar">
+                <span
+                  className="portrait__fill"
+                  style={{
+                    // A floor of 2%, so the lightest place is still a mark
+                    // rather than nothing. It never reaches zero because a
+                    // place with no recordings is not in `places` at all.
+                    width: `${Math.max(place.share * 100, 2)}%`,
+                    background: `color-mix(in oklab, var(--data-0) ${25 + Math.round(65 * place.share)}%, transparent)`,
+                  }}
+                />
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+      <p className="portrait__coverage mono">{portrait.coverage}</p>
+    </section>
   );
 }
 

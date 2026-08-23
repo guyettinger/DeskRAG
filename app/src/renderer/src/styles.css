@@ -4060,6 +4060,25 @@ select {
 .habits__headtext { min-width: 0; }
 .habits__bar { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; }
 
+/* The band under the h1. NOTHING TRUNCATES: an app name either fits its column
+   or wraps, and the column is sized from the longest name rather than clipped.
+   ONE HUE — `--data-0` at varying lightness — because C1 owns `--data-2` and
+   `--data-3` for conformance and a colour's meaning is a repo-wide claim. */
+.portrait { margin-top: var(--s3); display: flex; flex-direction: column; gap: var(--s2); }
+.portrait__places {
+  list-style: none; margin: 0; padding: 0;
+  display: grid; grid-template-columns: max-content 1fr; gap: var(--s1) var(--s2);
+  align-items: center; max-width: 520px;
+}
+.portrait__place { display: contents; }
+.portrait__app { font-size: var(--t-meta); color: var(--text); overflow-wrap: anywhere; }
+.portrait__bar {
+  display: block; height: 6px; border-radius: var(--radius-sm);
+  background: var(--sunken);
+}
+.portrait__fill { display: block; height: 100%; border-radius: var(--radius-sm); }
+.portrait__coverage { font-size: var(--t-meta); color: var(--muted); margin: 0; }
+
 /* List | editor. EVERY link in the height chain needs min-height: 0, and the
    last needs an explicit floor — the trap `.flows__stage` documents, where one
    omission silently restores page scroll instead of scrolling the pane. */
