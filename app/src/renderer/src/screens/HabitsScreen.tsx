@@ -22,6 +22,7 @@ import type {
   HabitPatch,
   HabitProposalDTO,
   HabitsDTO,
+  HabitWayDTO,
   WalkMarkDTO,
 } from "@shared/types";
 import { api, timecode, wallClock } from "../api.js";
@@ -38,6 +39,7 @@ import {
   markStates,
   proposalEvidence,
   proposalTitle,
+  recordTail,
   walkSpan,
 } from "../habits-view.js";
 import type { LedgerMark } from "../habits-view.js";
@@ -520,6 +522,96 @@ function LedgerLegend(): React.JSX.Element {
   );
 }
 
+/**
+ * The recorded steps, as an instrument rather than as text.
+ *
+ * Ledger marks have been able to open a recording since `c205413`; the steps —
+ * the part a person is actually asked to trust — could not, so the record was
+ * trusted rather than verifiable. Drawn from `HabitDTO.ways`, which main built
+ * from the same `FlowWalk[]` the file is rendered from: two renderers of one
+ * thing is a drift hazard, and they are safe only because neither parses the
+ * other's output.
+ *
+ * A step with no moment is DRAWN and states its reason — the
+ * `StageSpec.skipReason` rule, and the same rule that already makes a mark with
+ * no walk say why it cannot be followed. A disabled control with no explanation
+ * is indistinguishable from one nobody implemented.
+ */
+function RecordedSteps({
+  ways,
+  onOpen,
+}: {
+  ways: readonly HabitWayDTO[];
+  onOpen: (sessionId: string, atSec: number) => void;
+}): React.JSX.Element | null {
+  if (ways.length === 0) return null;
+  const many = ways.length > 1;
+  return (
+    <div className="habitsteps">
+      {many && (
+        <p className="habitsteps__ways">
+          The recordings did not take the same path. Each way below is a complete walk that a
+          recording actually made — follow one of them, not all of them in sequence.
+        </p>
+      )}
+      {ways.map((way) => (
+        <section key={way.letter} className="habitsteps__way">
+          {many && (
+            <h4 className="habitsteps__wayhead">
+              Way {way.letter} — {way.steps.length} step{way.steps.length === 1 ? "" : "s"},{" "}
+              {way.sessionIds.length === 1 ? "1 recording" : `${way.sessionIds.length} recordings`}
+            </h4>
+          )}
+          <ol className="habitsteps__list">
+            {way.steps.map((step) => (
+              <li key={`${way.letter}-${step.index}`} className="habitsteps__step">
+                <div className="habitsteps__head">
+                  <span className="habitsteps__places">
+                    {step.missing
+                      ? `edge ${step.edgeId} is not in the graph (index defect)`
+                      : `${step.from} → ${step.to}`}
+                  </span>
+                  {step.firstAt === null ? (
+                    <span className="habitsteps__noopen">
+                      No recording carries this step, so there is no moment to open
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn ghost habitsteps__open"
+                      onClick={() => {
+                        const at = step.firstAt;
+                        if (at !== null) onOpen(at.sessionId, at.atSec);
+                      }}
+                    >
+                      Open this moment
+                    </button>
+                  )}
+                </div>
+                {step.actions.length === 0 ? (
+                  <p className="habitsteps__action muted">(no actions recorded on this edge)</p>
+                ) : (
+                  step.actions.map((a, i) => (
+                    <p key={i} className="habitsteps__action mono">
+                      {a.action}
+                      {a.target === "—" || a.target === "" ? "" : ` — ${a.target}`}
+                    </p>
+                  ))
+                )}
+                <p className="habitsteps__count">
+                  {step.observations === 1
+                    ? "walked once"
+                    : `walked by ${step.observations} recordings`}
+                </p>
+              </li>
+            ))}
+          </ol>
+        </section>
+      ))}
+    </div>
+  );
+}
+
 function Band({ title, children }: { title: string; children: React.ReactNode }): React.JSX.Element {
   return (
     <div className="habits__band">
@@ -706,8 +798,7 @@ function HabitEditor({
   const [confirmMerge, setConfirmMerge] = useState<string | null>(null);
   // The record is not editable here, and the file says the same thing. Splitting
   // the document at the heading is how the screen shows which half is which.
-  const cut = habit.markdown.lastIndexOf("## Recorded steps");
-  const record = cut < 0 ? habit.markdown : habit.markdown.slice(cut);
+  const record = recordTail(habit.markdown);
 
   const span = walkSpan(b.walks);
 
@@ -909,7 +1000,8 @@ function HabitEditor({
       <div className="habitedit__recordhead habitedit__recordhead--cut">
         <span className="eyebrow">The record — the recording, not editable</span>
       </div>
-      <pre className="habitedit__record mono">{record}</pre>
+      <RecordedSteps ways={habit.ways} onOpen={onOpenRecording} />
+      {record !== "" && <pre className="habitedit__record mono">{record}</pre>}
 
       {/* The reason in WORDS, not a greyed control with no explanation. */}
       {proseNote !== null && <p className="muted">{proseNote}</p>}

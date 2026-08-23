@@ -4264,6 +4264,20 @@ select {
    below it is the recording, which neither of them can edit — the invariant the
    whole table is AUTHORED for. */
 .habitedit__recordhead--cut { border-top: 1px solid var(--hairline); padding-top: var(--s3); }
+
+/* The steps as an instrument. The <pre> below still holds the rest of the
+   record verbatim; this half is drawn from the DTO because a step that cannot
+   be opened is a record you must take on trust. */
+.habitsteps { display: flex; flex-direction: column; gap: var(--s3); }
+.habitsteps__ways { margin: 0; font-size: var(--t-meta); color: var(--muted); }
+.habitsteps__wayhead { margin: 0 0 var(--s2); font-size: var(--t-body); }
+.habitsteps__list { margin: 0; padding-left: var(--s4); display: flex; flex-direction: column; gap: var(--s2); }
+.habitsteps__head { display: flex; align-items: baseline; gap: var(--s2); flex-wrap: wrap; }
+.habitsteps__places { font-weight: 600; }
+/* Said in words, never a greyed control with no reason. */
+.habitsteps__noopen { font-size: var(--t-nano); color: var(--muted); }
+.habitsteps__action { margin: 0; font-size: var(--t-meta); color: var(--muted); }
+.habitsteps__count { margin: 0; font-size: var(--t-nano); color: var(--muted); font-style: italic; }
 .habitedit__toggle {
   display: flex; gap: var(--s2); align-items: flex-start;
   font-size: var(--t-meta); color: var(--muted); line-height: 1.45;
