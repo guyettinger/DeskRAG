@@ -53,7 +53,7 @@
 - Consumes: nothing from earlier tasks.
 - Produces: `export function habitLines(s: HabitDTO, others: ReadonlyMap<string, HabitDTO>): string[]` — the per-habit block, first element unindented, the rest indented two spaces.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to `test/mcp.tools.test.ts`, inside the existing `describe("list_habits", ...)`:
 
@@ -132,12 +132,12 @@ Add to `test/mcp.tools.test.ts`, inside the existing `describe("list_habits", ..
   });
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `npx vitest run test/mcp.tools.test.ts`
 Expected: FAIL — five failures, each an assertion that a substring is missing.
 
-- [ ] **Step 3: Rename `lines` to `habitLines`, export it, and add the disclosures**
+- [x] **Step 3: Rename `lines` to `habitLines`, export it, and add the disclosures**
 
 In `app/src/main/mcp/habit-text.ts`, change the declaration:
 
@@ -202,12 +202,12 @@ Then update the one call site at the bottom of `renderHabitList`:
   const body = kept.map((s) => habitLines(s, byId).join("\n")).join("\n\n");
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `npx vitest run test/mcp.tools.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Run the gate**
+- [x] **Step 5: Run the gate**
 
 Run each of these, whole and unpiped:
 ```bash
@@ -217,7 +217,7 @@ npm run build && npm --prefix app run typecheck
 ```
 Expected: all green.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add app/src/main/mcp/habit-text.ts test/mcp.tools.test.ts
@@ -259,7 +259,7 @@ The whole of `search_habits`' logic, with no reader and no tool — the dense la
   - `export interface HabitSearchInput { habits: HabitsDTO; query: string; limit: number; dense: DenseLane; noGraph: string }`
   - `export function renderHabitSearch(input: HabitSearchInput): string`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `test/mcp.habit-search.test.ts`:
 
@@ -529,12 +529,12 @@ describe("renderHabitSearch", () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npx vitest run test/mcp.habit-search.test.ts`
 Expected: FAIL — `Cannot find module '../app/src/main/mcp/habit-search.js'`.
 
-- [ ] **Step 3: Write `habit-search.ts`**
+- [x] **Step 3: Write `habit-search.ts`**
 
 Create `app/src/main/mcp/habit-search.ts`:
 
@@ -792,12 +792,12 @@ export function renderHabitSearch(input: HabitSearchInput): string {
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run test/mcp.habit-search.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Run the gate**
+- [x] **Step 5: Run the gate**
 
 ```bash
 npm test
@@ -806,7 +806,7 @@ npm run build && npm --prefix app run typecheck
 ```
 Expected: all green. `test/mcp.readonly.test.ts` must be green **without being edited** — the new file lives in `app/src/main/mcp/`, so its guard already covers it.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add app/src/main/mcp/habit-search.ts test/mcp.habit-search.test.ts
@@ -858,7 +858,7 @@ Two reader methods and three service reads. Small, but it is the task where the 
   - `sessionDetail(sessionId: string): SessionDetailDTO | null`
   - `frameRegions(frameId: string): RegionRow[]`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to `test/mcp.readonly.test.ts`, inside `describe("the reader's interfaces are the read-only contract", ...)`:
 
@@ -883,12 +883,12 @@ Add to `test/mcp.readonly.test.ts`, inside `describe("the reader's interfaces ar
   });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npx vitest run test/mcp.readonly.test.ts`
 Expected: FAIL — `embed(` and `momentAt(` are not in the interface.
 
-- [ ] **Step 3: Widen the reader and the service**
+- [x] **Step 3: Widen the reader and the service**
 
 In `app/src/main/mcp/reader.ts`, add above `export interface ExperienceReader`:
 
@@ -1040,12 +1040,12 @@ Finally, in `test/mcp.tools.test.ts`, add the two methods to `fakeReader`'s defa
     momentAt: () => null,
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `npx vitest run test/mcp.readonly.test.ts test/mcp.tools.test.ts`
 Expected: PASS. If the read-only guard fails on the interface body, a new name matched `record(`/`delete`/`remove`/`start`/`stop`/`arm`/`execute`/`write`/`put`/`set` — rename it; do not edit the guard.
 
-- [ ] **Step 5: Run the gate**
+- [x] **Step 5: Run the gate**
 
 ```bash
 npm test
@@ -1054,7 +1054,7 @@ npm run build && npm --prefix app run typecheck
 ```
 Expected: all green.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add app/src/main/mcp/reader.ts app/src/main/deskrag-service.ts test/mcp.readonly.test.ts test/mcp.tools.test.ts
@@ -1090,7 +1090,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Consumes: `renderHabitSearch`, `habitDocs`, `denseRanking`, `type DenseLane` from `./habit-search.js`; `reader.embed(texts, role)` from Task 3.
 - Produces: a tool named `search_habits` in `TOOLS`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to `test/mcp.tools.test.ts`. First update the surface assertion:
 
@@ -1175,12 +1175,12 @@ describe("search_habits", () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npx vitest run test/mcp.tools.test.ts -t "search_habits"`
 Expected: FAIL — `No such tool: search_habits`.
 
-- [ ] **Step 3: Add the tool**
+- [x] **Step 3: Add the tool**
 
 In `app/src/main/mcp/tools.ts`, add the import:
 
@@ -1288,12 +1288,12 @@ the right one from a description of your situation. get_habit_step shows what on
 habit actually looked like on screen, and get_habit_steps returns its steps as JSON.
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run test/mcp.tools.test.ts -t "search_habits"`
 Expected: PASS. The "eleven read-only tools" assertion still fails; it is completed in Task 6.
 
-- [ ] **Step 5: Run the gate**
+- [x] **Step 5: Run the gate**
 
 ```bash
 npm test
@@ -1302,7 +1302,7 @@ npm run build && npm --prefix app run typecheck
 ```
 Expected: `npm test` reports exactly one failure — the eleven-tools assertion, which Task 6 completes. Both typechecks green.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add app/src/main/mcp/tools.ts test/mcp.tools.test.ts
@@ -1342,7 +1342,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
   - `export interface StepRenderInput { habit: HabitDTO; wayLetter: string; manyWays: boolean; step: HabitStepDTO; moment: StepMoment | null }`
   - `export function renderStep(input: StepRenderInput): string`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `test/mcp.habit-step.test.ts`:
 
@@ -1567,12 +1567,12 @@ describe("renderStep", () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npx vitest run test/mcp.habit-step.test.ts`
 Expected: FAIL — `Cannot find module '../app/src/main/mcp/habit-step.js'`. It will also fail to typecheck `liftWarnings` on `HabitStepDTO`; Step 3 adds that field.
 
-- [ ] **Step 3: Widen `HabitStepDTO`, then write `habit-step.ts`**
+- [x] **Step 3: Widen `HabitStepDTO`, then write `habit-step.ts`**
 
 First, in `app/src/shared/types.ts`, inside `HabitStepDTO`, change the actions field and add `liftWarnings`:
 
@@ -1793,7 +1793,7 @@ export function renderStep(input: StepRenderInput): string {
 }
 ```
 
-- [ ] **Step 4: Add the tool**
+- [x] **Step 4: Add the tool**
 
 In `app/src/main/mcp/tools.ts`, add the import and the tool:
 
@@ -1860,7 +1860,7 @@ const getHabitStepTool: ToolDef = {
 
 Add `getHabitStepTool` to `TOOLS`, after `searchHabitsTool`.
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `npx vitest run test/mcp.habit-step.test.ts`
 Expected: PASS.
@@ -1931,7 +1931,7 @@ describe("get_habit_step", () => {
 Run: `npx vitest run test/mcp.tools.test.ts -t "get_habit_step"`
 Expected: PASS.
 
-- [ ] **Step 6: Run the gate**
+- [x] **Step 6: Run the gate**
 
 ```bash
 npm test
@@ -1940,7 +1940,7 @@ npm run build && npm --prefix app run typecheck
 ```
 Expected: one remaining failure, the eleven-tools assertion. Both typechecks green.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add app/src/shared/types.ts app/src/main/habit-marks.ts app/src/main/mcp/habit-step.ts app/src/main/mcp/tools.ts test/mcp.habit-step.test.ts test/mcp.tools.test.ts
@@ -1980,7 +1980,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Consumes: `HabitDTO`, `FlowsDTO` from `@shared/types`.
 - Produces: `export function habitStepsJson(habit: HabitDTO, flows: FlowsDTO | null): string | { error: string }`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `test/mcp.habit-steps-json.test.ts`:
 
@@ -2155,12 +2155,12 @@ describe("habitStepsJson", () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npx vitest run test/mcp.habit-steps-json.test.ts`
 Expected: FAIL — `Cannot find module '../app/src/main/mcp/habit-steps-json.js'`.
 
-- [ ] **Step 3: Write `habit-steps-json.ts`**
+- [x] **Step 3: Write `habit-steps-json.ts`**
 
 ```ts
 /**
@@ -2273,7 +2273,7 @@ export function habitStepsJson(habit: HabitDTO, flows: FlowsDTO | null): string 
 }
 ```
 
-- [ ] **Step 4: Add the tool and complete the surface**
+- [x] **Step 4: Add the tool and complete the surface**
 
 In `app/src/main/mcp/tools.ts`:
 
@@ -2363,12 +2363,12 @@ describe("get_habit_steps", () => {
 });
 ```
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `npx vitest run test/mcp.habit-steps-json.test.ts test/mcp.tools.test.ts`
 Expected: PASS, including the eleven-tools assertion added in Task 4.
 
-- [ ] **Step 6: Run the gate**
+- [x] **Step 6: Run the gate**
 
 ```bash
 npm test
@@ -2377,7 +2377,7 @@ npm run build && npm --prefix app run typecheck
 ```
 Expected: **all green, with no failures at all.** `test/mcp.readonly.test.ts` must still be unedited.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add app/src/main/mcp/habit-steps-json.ts app/src/main/mcp/tools.ts test/mcp.habit-steps-json.test.ts test/mcp.tools.test.ts
@@ -2418,7 +2418,7 @@ The suite drives a FAKE reader. This is the only place these three tools meet a 
 - Consumes: the eleven tools from Tasks 4–6.
 - Produces: nothing further.
 
-- [ ] **Step 1: Extend the probe**
+- [x] **Step 1: Extend the probe**
 
 In `scripts/mcp-probe.mjs`, update the header comment's "six tools" to "eleven tools". Then insert, after the existing `get_habit` block and before the activity-log block:
 
@@ -2488,7 +2488,7 @@ In `scripts/mcp-probe.mjs`, update the header comment's "six tools" to "eleven t
   }
 ```
 
-- [ ] **Step 2: Run the probe against the real store**
+- [x] **Step 2: Run the probe against the real store**
 
 Quit any running dev instance first, then run:
 ```bash
@@ -2498,7 +2498,7 @@ Expected: the three new sections print. Specifically expect `corpus disclosed be
 
 **If `multi-way refusal reached` is false**, the store has changed since this plan was written — check with `npm run probe:fork` whether the kept habit's route still has more than one way, and record what you find rather than editing the expectation.
 
-- [ ] **Step 3: Update CLAUDE.md**
+- [x] **Step 3: Update CLAUDE.md**
 
 In the commands block, change the `probe:mcp` description from "call all eight MCP tools" to:
 
@@ -2520,7 +2520,7 @@ In the `docs/internals/app-main.md` bullet list, replace the MCP bullet with:
 - **The MCP endpoint is READ-ONLY BY CONSTRUCTION**, guarded by `test/mcp.readonly.test.ts`. **The Host check is what closes DNS rebinding** — the Origin check cannot. There is deliberately no token, and it shows no score. **Eleven tools, and the guard's `^(search|get|list)_` rule NAMED one of them**: `find_habit` could not ship, because widening that prefix to admit `find_` would trade a structural property for a word. The guard also reads the `ExperienceReader` body with NO word boundaries, so `embed(inputs)` fails on `put` and an inline `startedAt` fails on `start` — the reader takes `texts` and declares its return types outside the interface. **`search_habits` discloses the corpus BEFORE the ranking** (`RANKING_MIN_HABITS = 5`, unswept), and **`steps.json` carries no recorded slot value at all**, `showSamples` unconsulted — `habit-marks.ts`'s rule, that a payload has no toggle so it carries no values.
 ```
 
-- [ ] **Step 4: Update the tool lists that name a count**
+- [x] **Step 4: Update the tool lists that name a count**
 
 Two files say "eight" in prose and will now be wrong. Both are load-bearing: `docs/mcp.md` is what a user reads to connect an agent.
 
@@ -2610,7 +2610,7 @@ consulted — a file you deliberately turned values on for is not the same as a
 payload handed to a background process over a socket.
 ````
 
-- [ ] **Step 5: Record what shipped in `docs/todo.md`**
+- [x] **Step 5: Record what shipped in `docs/todo.md`**
 
 Append a new entry, and update the sub-project C umbrella entry's tail (which currently ends "NOT DONE, still C3 … and D"):
 
@@ -2638,7 +2638,7 @@ Append a new entry, and update the sub-project C umbrella entry's tail (which cu
   back, which is a WRITE.
 ```
 
-- [ ] **Step 6: Run the gate**
+- [x] **Step 6: Run the gate**
 
 ```bash
 npm test
@@ -2647,7 +2647,7 @@ npm run build && npm --prefix app run typecheck
 ```
 Expected: all green.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add scripts/mcp-probe.mjs CLAUDE.md docs/mcp.md docs/internals/app-main.md docs/todo.md
