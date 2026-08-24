@@ -42,6 +42,25 @@
  * hit it (0 empty of 367), but a 2560px caption measured 224s, so the margin was
  * thinner than the stage's own timings suggested.
  *
+ * NO CONTEXT IS SENT, AND THAT IS THE WHOLE MEASUREMENT.
+ *
+ *   `CaptionRepresenter` calls `captioner.caption(bytes, seg.digest)`, and
+ *   `captionPrompt(context)` splices that digest into the prompt. The digest is
+ *   also this probe's ground truth -- so under the app's real configuration the
+ *   model is SHOWN the answers and can emit them having read no pixels at all.
+ *
+ *   Measured, and it inverted the verdict: a run that scored fresh no-context
+ *   captions against the STORED ones reported 1280px losing half the on-screen
+ *   text. The stored captions were written with the digest in the prompt. The
+ *   number was the context, not the width.
+ *
+ *   So every width here is captioned WITHOUT context, including the widest, and
+ *   `stored` is refused as a width. What this measures is legibility: what the
+ *   model can read off the image unaided. That makes it a CONSERVATIVE floor --
+ *   a width that passes here passes in the app, which additionally hands the
+ *   model the digest -- and it is the only form of the question that isolates
+ *   the variable being swept.
+ *
  * GROUND TRUTH, without hand-labelling anything:
  *
  *   Each segment's `digest` is templated from events, not from pixels: the
@@ -94,11 +113,28 @@ const SEED = Number(arg("seed", "7"));
  * which model or which width wrote a caption, so a library re-indexed under a
  * different captioner would be comparing against that one.
  */
-const WIDTHS = arg("widths", "stored,1280,1024,896")
+const WIDTHS = arg("widths", "2560,1920,1280")
   .split(",")
   .map((w) => w.trim())
-  .map((w) => (w === "stored" ? "stored" : Number(w)))
-  .filter((w) => w === "stored" || (Number.isFinite(w) && w > 0));
+  .map(Number)
+  .filter((w) => Number.isFinite(w) && w > 0);
+
+if (arg("widths", "").split(",").some((w) => w.trim() === "stored")) {
+  // Refused rather than supported: the stored caption was written WITH the
+  // digest in its prompt (see the header), and the digest is this probe's
+  // ground truth. Comparing a no-context run against it measures the context.
+  console.error(
+    "REFUSED: `stored` is not a width. The app captions with the segment's digest as\n" +
+      "context, and that digest is this probe's ground truth -- a stored caption can carry\n" +
+      "the answers having read no pixels. Sweep explicit widths, widest first; the widest\n" +
+      "IS the control.",
+  );
+  process.exit(1);
+}
+if (WIDTHS.length < 2) {
+  console.error("REFUSED: a sweep needs at least two widths -- the widest is the control.");
+  process.exit(1);
+}
 
 /** The captioner the app is configured with, unless overridden. */
 const settingsPath = join(DATA, "settings.json");
