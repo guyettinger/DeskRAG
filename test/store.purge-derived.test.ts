@@ -45,7 +45,7 @@ interface Seeded {
 }
 
 /** One recording with a row in every derived table AND every captured one. */
-async function seed(store: DualStore): Promise<Seeded> {
+async function seed(store: DualStore, dbPath: string): Promise<Seeded> {
   const sessionId = ulid();
   const segmentId = ulid();
   const parentId = ulid();
@@ -120,7 +120,19 @@ async function seed(store: DualStore): Promise<Seeded> {
     { id: parentId, sessionId, granularity: "level:1", tMonoStart: 0, tMonoEnd: 50 },
   ]);
   await store.updateSegment(segmentId, { digest: "clicked Save", caption: "a dialog" });
-  await store.updateSegmentAppCaption(segmentId, "TextEdit window");
+  // Raw SQL, because `app_caption` was RETIRED and the store no longer has a
+  // writer for it — but the table survives on every store that predates the
+  // retirement, holding text that is now both unread and wrong (20% of it named
+  // the wrong device class). It is therefore still classified derived, and the
+  // whole point of this seed is that a re-index must still empty it. Drop it
+  // from `DERIVED_SESSION_TABLES` and those rows would sit on disk forever.
+  {
+    const raw = new Database(dbPath);
+    raw
+      .prepare("INSERT INTO segment_app_caption(segment_id, text) VALUES (?, ?)")
+      .run(segmentId, "TextEdit window");
+    raw.close();
+  }
   await store.putSegmentTree([{ sessionId, parentId, childId: segmentId }]);
   await store.putSegmentSummaries([{ segmentId: parentId, text: "save the file", source: "llm" }]);
   // Model-only and hangs off the composed root, so it purges through
@@ -170,7 +182,7 @@ describe("DualStore.purgeDerived", () => {
   beforeEach(async () => {
     dir = mkdtempSync(join(tmpdir(), "erag-purge-"));
     store = await DualStore.open(join(dir, "app.db"), join(dir, "lance"));
-    s = await seed(store);
+    s = await seed(store, join(dir, "app.db"));
     sql = new Database(join(dir, "app.db"), { readonly: true });
   });
   afterEach(() => {
@@ -275,7 +287,7 @@ describe("DualStore.purgeDerived", () => {
   });
 
   it("purges only the session it was asked about", async () => {
-    const other = await seed(store);
+    const other = await seed(store, join(dir, "app.db"));
     await store.purgeDerived(s.sessionId);
     expect(store.getSegmentsBySession(other.sessionId)).toHaveLength(2);
     expect(store.getSegmentsBySession(s.sessionId)).toHaveLength(0);

@@ -17,7 +17,7 @@
  * What a ranked list is CALLED, for someone who did not build the index.
  *
  * The keys are the retriever's own vocabulary — `digest` is a templated event
- * rollup, `app_caption` is a crop of the focused window — and none of that is
+ * rollup, `behavior` is a numeric input-dynamics vector — and none of that is
  * the reader's problem. They asked a question and want to know which part of
  * the recording answered it.
  */
@@ -25,7 +25,6 @@ const LANE_LABELS: Record<string, string> = {
   digest: "what happened",
   summary: "task summary",
   caption: "screen description",
-  app_caption: "window description",
   transcript: "what was said",
   behavior: "activity pattern",
   lexical: "exact words",

@@ -531,14 +531,6 @@ export interface Store {
   /** Attach represent/ output (digest, caption, transcript text) to a segment. */
   updateSegment(id: string, patch: SegmentPatch): Promise<void>;
   /**
-   * Attach the focused-app-window caption text to a segment. Lives in
-   * segment_app_caption (a new table — see the schema comment) rather than a
-   * `SegmentPatch` field, since `segment`'s columns are frozen.
-   */
-  updateSegmentAppCaption(segmentId: string, text: string): Promise<void>;
-  /** Read back a segment's app_caption text, or undefined if none was written. */
-  getAppCaption(segmentId: string): string | undefined;
-  /**
    * Persist utterance-level speech. SQLite only — no vector space is keyed on a
    * clip, so there is no SQLite→Lance ordering hazard here, the same as the
    * trace_* tables.

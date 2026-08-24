@@ -37,7 +37,6 @@ export type StageId =
   | "digest"
   | "framePatches"
   | "captions"
-  | "appCaptions"
   | "transcribe"
   | "compose"
   | "reflect"
@@ -222,17 +221,6 @@ export const INDEX_STAGES: readonly StageSpec[] = [
     reindex: "per-session",
   },
   {
-    id: "appCaptions",
-    label: () => "App captions",
-    phase: "enrichment",
-    describe: () =>
-      "Describes just the focused window on each keyframe, cropped away from the rest of the desktop.",
-    needs: ["segment"],
-    gate: (f) => f.captioner,
-    skipReason: () => "no captioner configured",
-    reindex: "per-session",
-  },
-  {
     // Probed, not "configured": the model downloads itself, so the only thing
     // that can still be missing is the whisper.cpp binary — and skipping here is
     // what keeps a machine without it from fetching 57MB it cannot use.
@@ -269,7 +257,7 @@ export const INDEX_STAGES: readonly StageSpec[] = [
     label: () => "Composing",
     phase: "consolidation",
     describe: () => "Gathers actions into tasks and a session, each named by what it was for.",
-    needs: ["digest", "captions", "appCaptions", "transcribe"],
+    needs: ["digest", "captions", "transcribe"],
     gate: always,
     reindex: "per-session",
   },
@@ -300,17 +288,17 @@ export const INDEX_STAGES: readonly StageSpec[] = [
   },
   {
     // After every text-writing stage, because it reads what they wrote: digest,
-    // caption, app_caption, transcript and the composed summaries are produced
-    // by five stages under five different provider configurations, and one
-    // reader at the end sees whatever actually landed. Needs no provider, so it
-    // always runs — on a default install this lane is the only route from a
-    // query to an exact term.
+    // caption, transcript and the composed summaries are produced by four
+    // stages under four different provider configurations, and one reader at
+    // the end sees whatever actually landed. Needs no provider, so it always
+    // runs — on a default install this lane is the only route from a query to
+    // an exact term.
     id: "searchIndex",
     label: () => "Search index",
     phase: "consolidation",
     describe: () =>
       "Feeds every piece of text this run produced into the lexical index — the only route from a query to an exact term with no model.",
-    needs: ["compose", "digest", "captions", "appCaptions", "transcribe"],
+    needs: ["compose", "digest", "captions", "transcribe"],
     gate: always,
     reindex: "per-session",
   },

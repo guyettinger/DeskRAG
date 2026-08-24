@@ -464,6 +464,33 @@ export function SettingsScreen({ onEnv }: Props): React.JSX.Element {
           </div>
           <div className="form-row">
             <div>
+              <label>Caption width</label>
+              {/* Named against the OTHER width on purpose. Both settings exist,
+                  they disagree, and both are right — the stored keyframe feeds
+                  visual search and the player, this feeds one model. Someone who
+                  raised Keyframe max width to 2560 on this screen's own advice
+                  needs to read here that they did not also just triple their
+                  captioning time. */}
+              <div className="desc">
+                What the caption model sees. Keyframes are still STORED at{" "}
+                <span className="mono">{s.signals.screen.imageMaxWidth}px</span> for visual
+                search — this only shrinks the copy sent to the VLM, which pays for every
+                pixel.
+              </div>
+            </div>
+            <input
+              type="number"
+              min={320}
+              max={3840}
+              step={64}
+              value={p.captionMaxWidth}
+              onChange={(e) =>
+                void patchProviders({ captionMaxWidth: Number(e.target.value) })
+              }
+            />
+          </div>
+          <div className="form-row">
+            <div>
               <label>Summary model</label>
               <div className="desc">
                 {chatModels.length > 0

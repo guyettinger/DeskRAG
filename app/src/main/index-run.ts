@@ -13,7 +13,6 @@
  */
 
 import {
-  AppCaptionRepresenter,
   CaptionRepresenter,
   ComposeRepresenter,
   FramePatchRepresenter,
@@ -33,13 +32,15 @@ import {
   type EmbeddingProvider,
   type MultiVectorProvider,
   type ReflectionProvider,
-  type RegionCropper,
   type Reranker,
   type SummaryProvider as LibSummaryProvider,
+  type ImageDownscaler,
+  type TraceEvent,
   type TranscriptRepresenterOptions,
   excludedByName,
 } from "deskrag";
 import { stageSpec, type StageFacts, type StageId } from "./index-plan.js";
+import { captionExclusionFor } from "./caption-exclusion.js";
 import { digestContextFor } from "./digest-context.js";
 import { composedRoot, reflectionBriefFor } from "./reflection-brief.js";
 import { indexTrace } from "./trace-index.js";
@@ -82,11 +83,11 @@ export interface Providers {
 /**
  * Everything a stage needs from outside itself.
  *
- * `loadCropper` and `buildTranscriber` are functions rather than values because
- * both are expensive and conditional: the cropper is a lazy native import that
- * may fail, and resolving the whisper model can DOWNLOAD 57MB — which is why it
- * is deliberately not part of `buildProviders`, whose result the search path
- * also uses.
+ * `loadDownscaler` and `buildTranscriber` are functions rather than values
+ * because both are expensive and conditional: the downscaler is a lazy native
+ * import that may fail, and resolving the whisper model can DOWNLOAD 57MB —
+ * which is why it is deliberately not part of `buildProviders`, whose result the
+ * search path also uses.
  */
 export interface StageWorld {
   sessionId: string;
@@ -100,12 +101,27 @@ export interface StageWorld {
   blobs: BlobStore;
   providers: Providers;
   /**
-   * Applications the trace graph treats as instrumentation rather than as work —
-   * the recorder itself, by default. A SETTING rather than a fact, and it
-   * reaches only the `trace` stage: nothing else in the pipeline drops anything.
+   * Applications this pipeline treats as instrumentation rather than as work —
+   * the recorder itself, by default. A SETTING rather than a fact.
+   *
+   * TWO stages read it now, and they drop the same stretches for the same
+   * reason. `trace` has excluded the recorder since the `n0 — no state` root was
+   * removed; `captions` joined it because it was the one expensive stage still
+   * describing the instrument — 114 of 367 captions on the real store, at
+   * roughly 85s each, and `ComposeRepresenter` reads captions before digests so
+   * that prose reached three of eight composed roots.
    */
   excludeApps: readonly string[];
-  loadCropper(): Promise<RegionCropper | null>;
+  /**
+   * The captioner's width cap, as an ImageDownscaler, or null when sharp could
+   * not be loaded.
+   *
+   * Unlike `loadCropper` before it, a null here does NOT skip the stage: absence
+   * degrades to captioning at full resolution, which is exactly what this stage
+   * did before the cap existed. A missing native module must cost time, never a
+   * caption.
+   */
+  loadDownscaler(): Promise<ImageDownscaler | null>;
   buildTranscriber(): Promise<TranscriptRepresenterOptions["transcriber"]>;
 }
 
@@ -227,28 +243,37 @@ export const STAGE_RUNNERS: Record<StageId, StageRun> = {
   },
 
   captions: async (ctx) => {
+    // Null degrades to full-resolution captioning, which is what this stage did
+    // before the cap existed — see `StageWorld.loadDownscaler`.
+    const downscale = await ctx.loadDownscaler();
+    // The recorder's own stretches, skipped before a single blob is read. Built
+    // from the SAME setting and the SAME name-matching rule the trace lift uses,
+    // so the two cannot drift apart about what "the recorder" means. Undefined
+    // when the list is empty or the session carries no `focus_change` at all —
+    // both are true no-ops.
+    const isExcluded =
+      ctx.excludeApps.length === 0
+        ? undefined
+        : captionExclusionFor(
+            ctx.store.getEventsBySession(ctx.sessionId) as unknown as TraceEvent[],
+            excludedByName(ctx.excludeApps),
+          );
     const r = await new CaptionRepresenter(ctx.store, {
       captioner: ctx.providers.captioner!,
       captionEmbedder: ctx.providers.textEmbedder,
       blobStore: ctx.blobs,
+      ...(downscale ? { downscale } : {}),
+      ...(isExcluded ? { isExcluded } : {}),
       onProgress: (done, total) => ctx.progress(done, total, "segments"),
     }).represent(ctx.sessionId);
-    ctx.detail(`${r.captionedCount} of ${r.segmentCount} segments captioned`);
-  },
-
-  appCaptions: async (ctx) => {
-    // Needs a cropper too (sharp), unlike the whole-frame caption stage — skip
-    // entirely rather than write nothing useful when it's unavailable.
-    const cropper = await ctx.loadCropper();
-    if (!cropper) return;
-    const r = await new AppCaptionRepresenter(ctx.store, {
-      captioner: ctx.providers.captioner!,
-      captionEmbedder: ctx.providers.textEmbedder,
-      blobStore: ctx.blobs,
-      cropper,
-      onProgress: (done, total) => ctx.progress(done, total, "segments"),
-    }).represent(ctx.sessionId);
-    ctx.detail(`${r.captionedCount} of ${r.segmentCount} focused windows captioned`);
+    // The skipped count is DISCLOSED, never merely subtracted: a stage that
+    // captions fewer frames than it was given reads on screen exactly like one
+    // that is broken, which is the class of bug `StageSpec.skipReason` exists for.
+    ctx.detail(
+      r.excludedCount > 0
+        ? `${r.captionedCount} of ${r.segmentCount} segments captioned · ${r.excludedCount} skipped as recorder`
+        : `${r.captionedCount} of ${r.segmentCount} segments captioned`,
+    );
   },
 
   transcribe: async (ctx) => {

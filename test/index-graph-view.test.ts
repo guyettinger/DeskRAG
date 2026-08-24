@@ -291,11 +291,11 @@ describe("timeShares", () => {
 
 describe("reducedNeeds", () => {
   it("drops a need that another need already reaches", () => {
-    // `searchIndex` declares five and four are implied by `compose` needing
-    // them. Printing all five restates the hub instead of describing the stage.
+    // `searchIndex` declares four and three are implied by `compose` needing
+    // them. Printing all four restates the hub instead of describing the stage.
     const stages = ladder();
     const kept = reducedNeeds(stages).get("searchIndex")!;
-    expect(at(stages, "searchIndex").needs).toHaveLength(5);
+    expect(at(stages, "searchIndex").needs).toHaveLength(4);
     expect(kept).toEqual(["compose"]);
   });
 

@@ -100,7 +100,6 @@ describe("buildStageGraph", () => {
     expect(lean.filter((n) => n.state === "skipped").map((n) => n.id)).toEqual([
       "framePatches",
       "captions",
-      "appCaptions",
       "reflect",
     ]);
   });

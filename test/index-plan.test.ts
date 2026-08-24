@@ -93,10 +93,19 @@ describe("planStages", () => {
     expect(planStages(NOTHING)).toContain("compose");
   });
 
-  it("adds both caption stages from the one captioner gate", () => {
+  /**
+   * ONE caption stage, not two. There were two until `app_caption` was retired —
+   * a second VLM pass over the same keyframe, cropped to the focused window,
+   * which cost 38.5% of all indexing time and whose crop made it worse than the
+   * whole-frame caption rather than merely redundant. This asserts the count so
+   * a second pass cannot be reintroduced without saying so here.
+   */
+  it("adds exactly one caption stage from the captioner gate", () => {
     const plan = planStages({ ...NOTHING, captioner: true });
     expect(plan).toContain("captions");
-    expect(plan).toContain("appCaptions");
+    expect(planStages(NOTHING)).not.toContain("captions");
+    expect(INDEX_STAGES.filter((s) => s.gate({ ...NOTHING, captioner: true }) && !s.gate(NOTHING)))
+      .toHaveLength(1);
   });
 
   /**
@@ -120,7 +129,7 @@ describe("planStages", () => {
       const at = (id: StageId): number => plan.indexOf(id);
       expect(at("compose")).toBeGreaterThan(at("digest"));
       expect(at("searchIndex")).toBeGreaterThan(at("compose"));
-      for (const id of ["captions", "appCaptions", "transcribe"] as const) {
+      for (const id of ["captions", "transcribe"] as const) {
         if (at(id) !== -1) expect(at("compose")).toBeGreaterThan(at(id));
       }
     }

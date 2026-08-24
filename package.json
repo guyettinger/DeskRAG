@@ -51,7 +51,8 @@
     "app:dev": "npm run build && npm --prefix app run dev",
     "app:build": "npm run build && npm --prefix app run build",
     "app:dist": "npm run build && npm --prefix app run dist",
-    "probe:embed": "node scripts/embed-probe.mjs"
+    "probe:embed": "node scripts/embed-probe.mjs",
+    "probe:caption": "node scripts/caption-width-probe.mjs"
   },
   "dependencies": {
     "@huggingface/tokenizers": "0.1.3",

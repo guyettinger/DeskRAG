@@ -19,7 +19,6 @@ import type { TileConfig } from "./onnx/geometry.js";
  */
 export type View =
   | "caption" // VLM visual-semantic summary text
-  | "app_caption" // VLM summary of the focused app window only (crop of `caption`'s frame)
   | "digest" // templated structured-event text
   | "summary" // a COMPOSED level's text — what its children mean together
   | "transcript" // STT text (mic + desktop audio)
@@ -28,7 +27,6 @@ export type View =
 
 export const VIEWS: readonly View[] = [
   "caption",
-  "app_caption",
   "digest",
   "summary",
   "transcript",
@@ -43,13 +41,29 @@ export const VIEWS: readonly View[] = [
  * when the provider menu standardized on ColModernVBERT. They still appear in
  * `vector_space` on any store indexed before that.
  *
+ * `app_caption` was a SECOND VLM pass over each keyframe, cropped to the focused
+ * window. It was retired because the crop made it worse, not merely redundant:
+ * stripped of the menu bar, the Dock and the wallpaper, the model lost the cues
+ * that say which platform it is looking at, and measured on the real store 73 of
+ * 363 app captions (20%) called a macOS window an iOS, iPhone, iPad or Apple
+ * Watch screen — against 1 of 367 whole-frame captions, which was legitimate.
+ * That text was not inert: it reached the FTS row and its own dense Tier-1 lane,
+ * where it duplicated the caption lane's vote. It cost 38.5% of all indexing time
+ * to feed one lexical row and one lane that contradicted the screen one time in
+ * five, and nothing else read it — not compose, not the trace lift, not habits,
+ * not the record.
+ *
  * `parseNamespace` REJECTS them, and that is safe only because opening a store
  * does not parse: `DualStore` reads the `view` COLUMN, and the only caller of
  * `parseNamespace` is `ensureTable`, which runs on a namespace being registered.
  * A retired space is dropped on open before anything else walks the registry —
  * throwing on open is what took down a whole re-index once already.
  */
-export const RETIRED_VIEWS: readonly string[] = ["frame_image", "region_image"] as const;
+export const RETIRED_VIEWS: readonly string[] = [
+  "frame_image",
+  "region_image",
+  "app_caption",
+] as const;
 
 /**
  * Models whose adapter has been removed, so nothing can produce a comparable

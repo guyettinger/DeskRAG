@@ -97,6 +97,17 @@ export interface ProviderSettingsView {
   ollamaHost: string;
   /** The VLM used for captions — distinct from the embedding model. */
   ollamaCaptionModel: string;
+  /**
+   * How wide a keyframe reaches the CAPTIONER. Not how wide it is stored — that
+   * is `signals.screen.imageMaxWidth`, and the two deliberately disagree.
+   *
+   * A provider setting rather than a capture one because it changes nothing on
+   * disk: the stored keyframe keeps its full resolution for visual search and
+   * the player, and only the bytes handed to the model are shrunk. The image
+   * model wants 2048px or more (Settings banners for it); the VLM pays for every
+   * pixel and recovers the same text from far fewer.
+   */
+  captionMaxWidth: number;
   /** The chat model used to compose and name levels — distinct from both above. */
   ollamaSummaryModel: string;
   /**

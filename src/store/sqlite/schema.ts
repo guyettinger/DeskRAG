@@ -59,6 +59,20 @@ CREATE INDEX IF NOT EXISTS idx_segment_session ON segment(session_id, granularit
 -- column on segment, because segment's shape is frozen: CREATE TABLE IF NOT
 -- EXISTS with no migration step means a new column would never reach an
 -- existing install. Same pattern as ax_snapshot/trace_node_source.
+--
+-- NO LONGER WRITTEN. The app_caption view was retired: a second VLM pass over
+-- each keyframe, cropped to the focused window, which cost 38.5% of all indexing
+-- time and whose crop made it WORSE than the whole-frame caption rather than
+-- merely redundant (73 of 363 called a macOS window an iOS or Apple Watch
+-- screen; see RETIRED_VIEWS). Nothing reads this table any more and the store
+-- has no writer for it.
+--
+-- IT STAYS DECLARED, and it stays in DERIVED_SESSION_TABLES, deliberately. Every
+-- store recorded before the retirement holds these rows, and they are now both
+-- unread and wrong; leaving the table classified is what makes purgeDerived
+-- empty them on the next re-index. Dropping the classification would strand them
+-- on disk permanently, and DROPping the table is not a move this schema has --
+-- its one migration is a rename.
 CREATE TABLE IF NOT EXISTS segment_app_caption (
   segment_id  TEXT PRIMARY KEY REFERENCES segment(id) ON DELETE CASCADE,
   text        TEXT NOT NULL
