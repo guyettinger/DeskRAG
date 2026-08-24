@@ -21,10 +21,26 @@
  * stdout and a caption request to a local daemon. It registers no vector space,
  * writes no caption, and never touches Lance.
  *
- * It uses the REAL adapters from `dist/` — `sharpDownscaler` and
- * `OllamaCaptionProvider`, the same objects `index-run.ts` builds — rather than
- * its own resize and its own fetch. A probe that measures its own copy of the
- * pipeline measures something the app does not run.
+ * It resizes with the REAL `sharpDownscaler` from `dist/` and sends the REAL
+ * `CAPTION_SYSTEM` / `captionPrompt()`, so the bytes and the words are the ones
+ * `index-run.ts` sends. It deliberately does NOT call `OllamaCaptionProvider`,
+ * for two reasons that both bite:
+ *
+ *   - It swallows every failure and returns `""` ("daemon down, model deleted,
+ *     malformed response"), which is right for a pipeline that must not die on
+ *     one frame and WRONG for a measurement: a timed-out call would score as a
+ *     caption that recovered nothing, and the width would take the blame.
+ *   - It returns a string. The bill is measured in PROMPT TOKENS, which only the
+ *     raw `/api/chat` response carries.
+ *
+ * The call below therefore sends what the provider sends and reports what the
+ * provider discards. It uses `node:http` rather than `fetch` because undici's
+ * DEFAULT headersTimeout is 300s and cannot be raised without a dispatcher that
+ * Node does not expose — measured: this probe crashed at frame 29 of 33 on a
+ * caption slower than that, losing 28 completed frames. The shipped provider has
+ * the same 300s ceiling and degrades to `""` there; on this store no caption has
+ * hit it (0 empty of 367), but a 2560px caption measured 224s, so the margin was
+ * thinner than the stage's own timings suggested.
  *
  * GROUND TRUTH, without hand-labelling anything:
  *
@@ -50,6 +66,7 @@
  */
 import { createRequire } from "node:module";
 import { existsSync, readFileSync } from "node:fs";
+import { request as httpRequest } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -245,31 +262,68 @@ if (sampledScreen < 10) {
 
 /* --- the run --------------------------------------------------------------- */
 
-async function caption(bytes) {
-  const t0 = Date.now();
-  const res = await fetch(`${HOST}/api/chat`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      model: MODEL,
-      stream: false,
-      messages: [
-        { role: "system", content: CAPTION_SYSTEM },
-        {
-          role: "user",
-          content: captionPrompt(),
-          images: [Buffer.from(bytes).toString("base64")],
-        },
-      ],
-    }),
+/**
+ * One caption call. Returns `{ failed: true }` rather than throwing, so a slow
+ * or refused frame costs ONE frame instead of the whole sweep.
+ *
+ * `CALL_TIMEOUT_MS` is ours and is generous on purpose: the point of the probe
+ * is that the widest width is slow, so a timeout tuned to the fast widths would
+ * fail the very case under test and report it as a quality loss.
+ */
+const CALL_TIMEOUT_MS = 20 * 60 * 1000;
+
+function caption(bytes) {
+  const body = JSON.stringify({
+    model: MODEL,
+    stream: false,
+    messages: [
+      { role: "system", content: CAPTION_SYSTEM },
+      {
+        role: "user",
+        content: captionPrompt(),
+        images: [Buffer.from(bytes).toString("base64")],
+      },
+    ],
   });
-  const j = await res.json();
-  return {
-    ms: Date.now() - t0,
-    text: (j.message?.content ?? "").trim(),
-    promptTokens: j.prompt_eval_count ?? 0,
-    outTokens: j.eval_count ?? 0,
-  };
+  const u = new URL(`${HOST}/api/chat`);
+  const t0 = Date.now();
+  return new Promise((resolve) => {
+    const done = (v) => resolve({ ms: Date.now() - t0, ...v });
+    const req = httpRequest(
+      {
+        hostname: u.hostname,
+        port: u.port,
+        path: u.pathname,
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "content-length": Buffer.byteLength(body),
+        },
+      },
+      (res) => {
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          try {
+            const j = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+            done({
+              text: (j.message?.content ?? "").trim(),
+              promptTokens: j.prompt_eval_count ?? 0,
+              outTokens: j.eval_count ?? 0,
+            });
+          } catch {
+            done({ failed: "malformed response", text: "", promptTokens: 0, outTokens: 0 });
+          }
+        });
+      },
+    );
+    req.setTimeout(CALL_TIMEOUT_MS, () => {
+      req.destroy();
+      done({ failed: `no response in ${CALL_TIMEOUT_MS / 60000}m`, text: "", promptTokens: 0, outTokens: 0 });
+    });
+    req.on("error", (e) => done({ failed: e.message, text: "", promptTokens: 0, outTokens: 0 }));
+    req.end(body);
+  });
 }
 
 const results = [];
@@ -280,6 +334,8 @@ for (const width of WIDTHS) {
   let outTokens = 0;
   let bytes = 0;
   const hit = { screen: 0, chrome: 0 };
+  /** Calls that never returned a caption. Their answers are NOT scored. */
+  const failures = [];
   const seen = { screen: 0, chrome: 0 };
   /** Answer -> whether this width recovered it, so a loss can be NAMED. */
   const kept = new Map();
@@ -292,8 +348,15 @@ for (const width of WIDTHS) {
     } else {
       const raw = new Uint8Array(readFileSync(row.path));
       const sent = await shrink(raw);
-      bytes += sent.length;
       r = await caption(sent);
+      if (r.failed !== undefined) {
+        // A frame the model never answered for is not evidence about the WIDTH.
+        // Scoring it as a miss is how a probe blames a resize for a daemon.
+        failures.push(`${row.segment_id}: ${r.failed}`);
+        process.stderr.write("!");
+        continue;
+      }
+      bytes += sent.length; // only frames that were SCORED reach the average
     }
     ms += r.ms;
     promptTokens += r.promptTokens;
@@ -313,10 +376,12 @@ for (const width of WIDTHS) {
   process.stderr.write("\n");
   results.push({
     width,
+    failures,
+    scored: chosen.length - failures.length,
     ms,
-    promptTokens: Math.round(promptTokens / chosen.length),
-    outTokens: Math.round(outTokens / chosen.length),
-    kb: Math.round(bytes / chosen.length / 1024),
+    promptTokens: Math.round(promptTokens / Math.max(1, chosen.length - failures.length)),
+    outTokens: Math.round(outTokens / Math.max(1, chosen.length - failures.length)),
+    kb: Math.round(bytes / Math.max(1, chosen.length - failures.length) / 1024),
     screen: seen.screen > 0 ? hit.screen / seen.screen : 0,
     chrome: seen.chrome > 0 ? hit.chrome / seen.chrome : 0,
     hit,
@@ -336,7 +401,7 @@ console.log(
 console.log("  " + "-".repeat(96));
 for (const r of results) {
   const stored = r.width === "stored";
-  const per = stored ? "—" : (r.ms / chosen.length / 1000).toFixed(1) + "s";
+  const per = stored ? "—" : (r.ms / Math.max(1, r.scored) / 1000).toFixed(1) + "s";
   const speedup = stored || base.ms === 0 ? "—" : (base.ms / r.ms).toFixed(2) + "x";
   console.log(
     `  ${pad(r.width, 6)}  ${pad(stored ? "—" : r.kb + "KB", 6)}  ${pad(stored ? "—" : r.promptTokens, 10)}   ` +
@@ -344,6 +409,17 @@ for (const r of results) {
       `${pad((r.screen * 100).toFixed(0) + "%", 5)} (${pad(r.hit.screen + "/" + r.seen.screen, 7)})   ` +
       `${pad((r.chrome * 100).toFixed(0) + "%", 5)} (${r.hit.chrome}/${r.seen.chrome})`,
   );
+}
+const failed = results.filter((r) => r.failures.length > 0);
+if (failed.length > 0) {
+  console.log(
+    `\n  CALLS THAT NEVER ANSWERED — these frames are excluded from their width's score and\n` +
+      `  from its per-frame time. A width is only comparable to another over the same frames,\n` +
+      `  so read any row with failures as measured on a SMALLER sample, not as a worse caption:`,
+  );
+  for (const r of failed) {
+    console.log(`    ${r.width}: ${r.failures.length} of ${chosen.length} — ${r.failures.join("; ")}`);
+  }
 }
 if (results[0].width === "stored") {
   console.log(
