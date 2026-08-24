@@ -27,16 +27,74 @@ import type { WalkMarkDTO } from "@shared/types";
 /** Monday first, because a week of work reads Monday to Sunday. */
 export const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
 
+/**
+ * The same seven days, spelled out — for the WORDS, never for the picture.
+ *
+ * A three-letter row label is a column heading a reader scans; a label read
+ * aloud, or shown on hover, is a sentence, and "Mon 09:00 — 2 recordings" reads
+ * as an abbreviation of something rather than as a fact.
+ */
+const DAY_NAMES = [
+  "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+] as const;
+
 const plural = (n: number, one: string): string => `${n} ${one}${n === 1 ? "" : "s"}`;
 
+/** Two digits, so a label agrees with the axis it sits under: 00:00, not 0:00. */
+const pad2 = (n: number): string => String(n).padStart(2, "0");
+
+/**
+ * One hour of one weekday, and the walks that landed in it.
+ *
+ * The grid used to hold a bare count, which is exactly enough to paint a square
+ * and not enough to open anything — the same gap the ledger closed when its
+ * marks gained `walk`. A count can say "twice on Monday morning"; only the walk
+ * itself can take you there.
+ *
+ * `count` is `walks.length` and is kept only so the colour ramp reads one field
+ * rather than a length. The two can never disagree because nothing writes them
+ * separately.
+ */
+export interface PhaseCell {
+  count: number;
+  /** OLDEST FIRST. Sorted here, never trusted — see `rhythmOf`. */
+  walks: WalkMarkDTO[];
+}
+
 export interface PhaseGrid {
-  /** 7 rows (0 = Monday) × 24 columns of counts. */
-  cells: number[][];
+  /** 7 rows (0 = Monday) × 24 columns. */
+  cells: PhaseCell[][];
   /** The largest count in any cell — the ramp's top. NEVER printed. */
   peak: number;
   walks: number;
   days: number;
 }
+
+/**
+ * How many columns one hour label spans. See `HOUR_TICKS`.
+ *
+ * Three, so a two-digit label always has three cells of width to sit in even
+ * when the pane is narrow — the `labelFits` rule reached structurally rather
+ * than by measuring. A label that cannot truncate needs no truncation guard.
+ */
+export const HOUR_TICK_SPAN = 3;
+
+/**
+ * THE HOUR AXIS, which the grid shipped without.
+ *
+ * Seven rows of twenty-four unlabelled cells cannot answer the question the
+ * strip exists to ask: it could say a habit repeats somewhere mid-week, and
+ * never that it happens at 9am. Measured in the running app — 168 cells and no
+ * hour anywhere on screen.
+ *
+ * These TILE the 24 columns exactly. A gap or an overlap would put every label
+ * to the right of it under the wrong cell, which is a picture that lies rather
+ * than one that is merely sparse.
+ */
+export const HOUR_TICKS: readonly { hour: number; label: string }[] = Array.from(
+  { length: 24 / HOUR_TICK_SPAN },
+  (_, i) => ({ hour: i * HOUR_TICK_SPAN, label: pad2(i * HOUR_TICK_SPAN) }),
+);
 
 export type Rhythm =
   | { kind: "grid"; grid: PhaseGrid }
@@ -80,15 +138,27 @@ export function rhythmOf(walks: readonly WalkMarkDTO[]): Rhythm {
     };
   }
 
-  const cells = Array.from({ length: 7 }, () => new Array<number>(24).fill(0));
-  for (const d of dates) {
-    const row = cells[dayIndex(d)]!;
-    const hour = d.getHours();
-    row[hour] = (row[hour] ?? 0) + 1;
+  const cells: PhaseCell[][] = Array.from({ length: 7 }, () =>
+    Array.from({ length: 24 }, () => ({ count: 0, walks: [] as WalkMarkDTO[] })),
+  );
+  // SORTED, not trusted. `binding.walks` is documented oldest-first and
+  // `cadenceOf` still sorts it for the same reason: the click target is the
+  // EARLIEST walk in an hour, so an unsorted cell silently opens the wrong
+  // recording — a defect that looks like working navigation.
+  for (const w of [...walks].sort((a, b) => a.at - b.at)) {
+    const d = new Date(w.at);
+    cells[dayIndex(d)]![d.getHours()]!.walks.push(w);
   }
+  for (const row of cells) for (const cell of row) cell.count = cell.walks.length;
+
   return {
     kind: "grid",
-    grid: { cells, peak: Math.max(...cells.flat()), walks: walks.length, days },
+    grid: {
+      cells,
+      peak: Math.max(...cells.flat().map((c) => c.count)),
+      walks: walks.length,
+      days,
+    },
   };
 }
 
@@ -100,7 +170,7 @@ export function rhythmOf(walks: readonly WalkMarkDTO[]): Rhythm {
  * but not in phase, which is exactly the distinction the strip exists to draw.
  */
 export function rhythmNote(grid: PhaseGrid): string {
-  const repeated = grid.cells.flat().filter((c) => c > 1).length;
+  const repeated = grid.cells.flat().filter((c) => c.count > 1).length;
   if (repeated === 0) {
     return `${plural(grid.walks, "walk")} across ${plural(grid.days, "day")}, no two in the same hour of the week.`;
   }
@@ -110,6 +180,19 @@ export function rhythmNote(grid: PhaseGrid): string {
 /** The same claim as the picture's accessible name. */
 export function rhythmLabel(grid: PhaseGrid): string {
   return `Walks by hour of the week. ${rhythmNote(grid)}`;
+}
+
+/**
+ * What ONE cell says when a pointer asks it.
+ *
+ * The `placeLabel` / `markLabel` rule, one screen over: the picture is the
+ * reading and the words are the fact, so a pointer and a screen reader are told
+ * the same thing. An empty hour says it is empty rather than printing a bare
+ * zero, which reads as a measurement of nothing.
+ */
+export function cellLabel(day: number, hour: number, cell: PhaseCell): string {
+  const what = cell.count === 0 ? "no recordings" : plural(cell.count, "recording");
+  return `${DAY_NAMES[day] ?? DAYS[day] ?? "?"} ${pad2(hour)}:00 — ${what}`;
 }
 
 const MS_PER_MIN = 60_000;

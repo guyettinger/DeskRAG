@@ -42,18 +42,38 @@ import {
   markStates,
   proposalEvidence,
   proposalTitle,
-  recordTail,
   walkSpan,
 } from "../habits-view.js";
 import type { LedgerMark } from "../habits-view.js";
 import { clampTip } from "./hover-card.js";
-import { DAYS, fadeLine, rhythmLabel, rhythmNote, rhythmOf } from "../habit-rhythm.js";
+import {
+  cellLabel,
+  DAYS,
+  fadeLine,
+  HOUR_TICK_SPAN,
+  HOUR_TICKS,
+  rhythmLabel,
+  rhythmNote,
+  rhythmOf,
+  type PhaseCell,
+} from "../habit-rhythm.js";
 import { placeLabel, portraitOf } from "../habit-portrait.js";
+import { liftingRollup, timingRows } from "../habit-record-view.js";
 
 /** Distance from the mark to its card, and from the card to the window edge —
     the rail's two constants, which the shared `clampTip` reads. */
 const TIP_OFFSET = 10;
 const TIP_MARGIN = 8;
+
+/**
+ * How long the phase grid's card survives the pointer leaving a cell.
+ *
+ * It exists so a pointer can TRAVEL into the card, which the ledger's never
+ * needs to do: an hour holding several walks lists them with their own Open
+ * buttons, and a card that closes the instant the cursor leaves the cell is a
+ * control nobody can reach.
+ */
+const TIP_LINGER = 160;
 
 /** The span every ledger on the screen is drawn against. Null draws nothing. */
 type Domain = { from: number; to: number } | null;
@@ -477,7 +497,6 @@ function MarkCard({
 }): React.JSX.Element {
   const cardRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
-  const readout = markReadout(mark, { wallClock, timecode });
 
   useLayoutEffect(() => {
     const el = cardRef.current;
@@ -503,6 +522,23 @@ function MarkCard({
         visibility: pos ? undefined : "hidden",
       }}
     >
+      <MarkReadout mark={mark} />
+    </div>
+  );
+}
+
+/**
+ * What ONE walk says — the ledger's card and the phase grid's, from one source.
+ *
+ * Two renderers of one readout is the `ax-dump`/`ax-exec` drift hazard by name:
+ * the two cards report the same recording, and a field added to `markReadout`
+ * that reached only one of them would be a difference nothing fails on. There
+ * is no second copy to keep in step because there is no second copy.
+ */
+function MarkReadout({ mark }: { mark: WalkMarkDTO }): React.JSX.Element {
+  const readout = markReadout(mark, { wallClock, timecode });
+  return (
+    <>
       <div className="ledger__tip-when">{readout.when}</div>
       {readout.at !== null && (
         <div className="ledger__tip-at mono">
@@ -513,7 +549,7 @@ function MarkCard({
       {readout.fit !== null && <div className="ledger__tip-fit">{readout.fit}</div>}
       {readout.note !== null && <div className="ledger__tip-note">{readout.note}</div>}
       {readout.action !== null && <div className="ledger__tip-go">{readout.action}</div>}
-    </div>
+    </>
   );
 }
 
@@ -545,11 +581,44 @@ function MarkCard({
  *
  * One hue, `--data-0`, for the reason `Portrait` uses one.
  */
-function Rhythm({ walks }: { walks: readonly WalkMarkDTO[] }): React.JSX.Element | null {
+function Rhythm({
+  walks,
+  onOpen,
+}: {
+  walks: readonly WalkMarkDTO[];
+  onOpen: (sessionId: string, atSec: number) => void;
+}): React.JSX.Element | null {
   // Nothing to place at all. Rendered as nothing, exactly as `Ledger` returns
   // null at zero marks — the editor is already saying there are no recordings.
+  const [hover, setHover] = useState<{ cell: PhaseCell; day: number; hour: number; x: number; y: number } | null>(
+    null,
+  );
+  // The card can hold BUTTONS when an hour holds several walks, so the pointer
+  // must be able to travel into it. A bare `onMouseLeave` on the grid closes it
+  // out from under the cursor mid-journey; the timer is what spans the gap, and
+  // entering the card cancels it. The ledger's card stays a pure tooltip and
+  // needs none of this — it never holds a control.
+  const closing = useRef<number | null>(null);
+  const hold = (): void => {
+    if (closing.current !== null) window.clearTimeout(closing.current);
+    closing.current = null;
+  };
+  const release = (): void => {
+    hold();
+    closing.current = window.setTimeout(() => setHover(null), TIP_LINGER);
+  };
+  useEffect(() => () => hold(), []);
+
   if (walks.length === 0) return null;
   const rhythm = rhythmOf(walks);
+
+  /** Where the card points, from the CELL rather than the cursor, so a keyboard
+      focus places it exactly as a hover does — the ledger's rule. */
+  const anchor = (el: Element): { x: number; y: number } => {
+    const r = el.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.bottom };
+  };
+
   return (
     <div className="rhythm">
       <span className="eyebrow">In phase</span>
@@ -557,28 +626,181 @@ function Rhythm({ walks }: { walks: readonly WalkMarkDTO[] }): React.JSX.Element
         <p className="rhythm__note">{rhythm.reason}</p>
       ) : (
         <>
-          <div className="rhythm__grid" role="img" aria-label={rhythmLabel(rhythm.grid)}>
+          <div
+            className="rhythm__grid"
+            role="group"
+            aria-label={rhythmLabel(rhythm.grid)}
+            onMouseLeave={release}
+          >
             {rhythm.grid.cells.map((row, day) => (
               <React.Fragment key={DAYS[day]}>
                 <span className="rhythm__day mono">{DAYS[day]}</span>
-                {row.map((count, hour) => (
-                  <span
-                    key={hour}
-                    className="rhythm__cell"
-                    style={
-                      count === 0
-                        ? undefined
-                        : {
-                            background: `color-mix(in oklab, var(--data-0) ${25 + Math.round(65 * (count / rhythm.grid.peak))}%, transparent)`,
-                          }
-                    }
-                  />
-                ))}
+                {row.map((cell, hour) => {
+                  const label = cellLabel(day, hour, cell);
+                  const paint = {
+                    background: `color-mix(in oklab, var(--data-0) ${25 + Math.round(65 * (cell.count / rhythm.grid.peak))}%, transparent)`,
+                  };
+                  // An EMPTY hour is not a control. 164 of 168 cells are empty
+                  // on a real store, and making every one of them focusable
+                  // would put 168 tab stops in front of the four that lead
+                  // somewhere.
+                  if (cell.count === 0) {
+                    return <span key={hour} className="rhythm__cell" title={label} />;
+                  }
+                  // The EARLIEST walk in the hour — the cell's walks are sorted
+                  // oldest first by `rhythmOf`, which sorts rather than trusts
+                  // for exactly this read.
+                  const first = cell.walks.find((w) => w.walk !== null) ?? null;
+                  return (
+                    <button
+                      key={hour}
+                      type="button"
+                      // The HIT BOX is the button and the MARK is the span
+                      // inside it — the ledger's rule, and the rail's before
+                      // it. A cell is the size of the hour it reports.
+                      className="rhythm__hit"
+                      // Withheld, never offered dead. An orphaned habit has no
+                      // live route, so its walks carry no moment; the card says
+                      // so in words rather than leaving a control that does
+                      // nothing when pressed.
+                      disabled={first === null}
+                      aria-label={label}
+                      title={label}
+                      onMouseEnter={(e) => {
+                        hold();
+                        setHover({ cell, day, hour, ...anchor(e.currentTarget) });
+                      }}
+                      onMouseLeave={release}
+                      onFocus={(e) => {
+                        hold();
+                        setHover({ cell, day, hour, ...anchor(e.currentTarget) });
+                      }}
+                      onBlur={release}
+                      onClick={() => {
+                        if (first?.walk != null) onOpen(first.sessionId, first.walk.atSec);
+                      }}
+                    >
+                      <span className="rhythm__cell" style={paint} />
+                    </button>
+                  );
+                })}
               </React.Fragment>
+            ))}
+            {/* THE HOUR AXIS, which the grid shipped without. Seven rows of 24
+                unlabelled cells could say a habit repeats somewhere mid-week
+                and never that it happens at 9am — measured in the running app,
+                168 cells and no hour anywhere on screen. A tick spans three
+                columns so a two-digit label always has room. */}
+            <span className="rhythm__day" aria-hidden="true" />
+            {HOUR_TICKS.map((t) => (
+              <span
+                key={t.hour}
+                className="rhythm__tick mono"
+                style={{ gridColumn: `span ${HOUR_TICK_SPAN}` }}
+              >
+                {t.label}
+              </span>
             ))}
           </div>
           <p className="rhythm__note">{rhythmNote(rhythm.grid)}</p>
         </>
+      )}
+      {hover && (
+        <CellCard
+          cell={hover.cell}
+          title={cellLabel(hover.day, hover.hour, hover.cell)}
+          x={hover.x}
+          y={hover.y}
+          onEnter={hold}
+          onLeave={release}
+          onOpen={onOpen}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * What one hour of the week says, and how to follow it.
+ *
+ * Measured and clamped through the shared `clampTip`, exactly as the ledger's
+ * card is — a card sized by a guess ran off the bottom of the window there, and
+ * the arithmetic is shared so the two cannot drift.
+ *
+ * ONE walk needs no list: the cell itself opens it and the card is a pure
+ * readout, identical to the ledger's. SEVERAL walks get a row each with its own
+ * Open, because picking one silently would hide the others — the fork
+ * instrument's rule that a step keeps its Open wherever it is drawn.
+ */
+function CellCard({
+  cell,
+  title,
+  x,
+  y,
+  onEnter,
+  onLeave,
+  onOpen,
+}: {
+  cell: PhaseCell;
+  title: string;
+  x: number;
+  y: number;
+  onEnter: () => void;
+  onLeave: () => void;
+  onOpen: (sessionId: string, atSec: number) => void;
+}): React.JSX.Element {
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+
+  useLayoutEffect(() => {
+    const el = cardRef.current;
+    if (!el) return;
+    const { width, height } = el.getBoundingClientRect();
+    setPos(
+      clampTip(
+        { x, y },
+        { width, height },
+        { width: window.innerWidth, height: window.innerHeight },
+        { offset: TIP_OFFSET, margin: TIP_MARGIN },
+      ),
+    );
+  }, [x, y, cell]);
+
+  const many = cell.walks.length > 1;
+  return (
+    <div
+      className="ledger__tip"
+      ref={cardRef}
+      onMouseEnter={onEnter}
+      onMouseLeave={onLeave}
+      style={{
+        left: pos?.left ?? x + TIP_OFFSET,
+        top: pos?.top ?? y + TIP_OFFSET,
+        // Hidden for the one frame between mount and measurement, so it never
+        // appears at an unclamped position and jumps.
+        visibility: pos ? undefined : "hidden",
+      }}
+    >
+      <div className="ledger__tip-when">{title}</div>
+      {cell.walks.map((w) =>
+        many ? (
+          <div key={w.sessionId} className="rhythm__tip-walk">
+            <MarkReadout mark={w} />
+            {w.walk === null ? (
+              <span className="habitsteps__noopen">no moment to open</span>
+            ) : (
+              <button
+                type="button"
+                className="btn ghost rhythm__tip-open"
+                onClick={() => onOpen(w.sessionId, w.walk!.atSec)}
+              >
+                Open
+              </button>
+            )}
+          </div>
+        ) : (
+          <MarkReadout key={w.sessionId} mark={w} />
+        ),
       )}
     </div>
   );
@@ -787,6 +1009,186 @@ function RecordedSteps({
           </ol>
         </section>
       ))}
+    </div>
+  );
+}
+
+/**
+ * The record's remaining blocks, as instruments.
+ *
+ * This half used to be a `<pre>` holding the generated markdown from
+ * `## What varies` down. Measured in the running app on the author's real
+ * store, it was 835x420 of monospace prose whose largest section was
+ * FIFTY-SIX consecutive lines of raw `t_mono` floats and macOS keycodes,
+ * under a heading a person reads as "what this evidence does not say" —
+ * burying the five sentences that actually qualify the evidence. It also
+ * printed `## Where the ways fork` a second time, a few inches below the fork
+ * instrument that draws it.
+ *
+ * THE FILE IS UNTOUCHED. `habit.markdown` is rendered in main and handed out
+ * verbatim; `Copy HABIT.md` and `get_habit` still return that string, and
+ * nothing here reaches it. This is a SECOND RENDERER of the same facts —
+ * `WayForkView`'s shape, safe because neither parses the other's output and
+ * both read one projection from main.
+ *
+ * EVERY SECTION STATES ITS ABSENCE. A block with nothing to say says so, the
+ * `StageSpec.skipReason` rule: a section that merely never appeared would be
+ * indistinguishable from one nobody implemented.
+ */
+function HabitRecord({
+  habit,
+  onOpen,
+}: {
+  habit: HabitDTO;
+  onOpen: (sessionId: string, atSec: number) => void;
+}): React.JSX.Element {
+  const lifting = liftingRollup(habit.ways);
+  const span = walkSpan(habit.binding.walks);
+  const dropped = droppedEarlyLine(habit);
+
+  return (
+    <div className="hrecord">
+      <section className="hrecord__block">
+        <span className="eyebrow">What varies</span>
+        {habit.slots.length === 0 ? (
+          <p className="hrecord__note">
+            Nothing was typed on this route, so it has no recorded inputs.
+          </p>
+        ) : (
+          <>
+            <ul className="hrecord__slots">
+              {habit.slots.map((slot) => (
+                <li key={slot.name} className="hrecord__slot">
+                  <code className="hrecord__slotname">{slot.name}</code>
+                  {/* The words are composed in MAIN by the record's own
+                      `slotNote`, so the file and this cannot disagree. */}
+                  <span className="hrecord__slotnote">{slot.note}</span>
+                </li>
+              ))}
+            </ul>
+            {/* The values are NOT here and cannot be: a DTO has no per-habit
+                toggle, so it carries no values at all. Said rather than left
+                to be noticed as an absence. */}
+            <p className="hrecord__note">
+              {habit.showSamples
+                ? "The recorded values are printed in the file, not here."
+                : "The recorded values are not printed. Turn on “Show recorded values” below if you need them in the file."}
+            </p>
+          </>
+        )}
+      </section>
+
+      <section className="hrecord__block">
+        <span className="eyebrow">Where the time goes</span>
+        {habit.timings === null ? (
+          /* SILENT TOGETHER WITH THE FILE, under the same guard: one
+             recording's timings are a fact about one afternoon, not about a
+             habit. Drawn as a reason rather than omitted. */
+          <p className="hrecord__note">
+            Only one recording is timed, so there is nothing to read these against.
+          </p>
+        ) : (
+          <>
+            <p className="hrecord__note">
+              Way {habit.timings.wayLetter}&rsquo;s steps, each with its own recorded span. They
+              are durations, not targets.
+              {habit.timings.single &&
+                " Every step below was walked by one recording each, so these are observations rather than a comparison."}
+            </p>
+            <ol className="hrecord__times">
+              {timingRows(habit.timings).map((row) => (
+                <li key={row.n} className="hrecord__time">
+                  <span className="hrecord__timeplaces">
+                    <span className="hrecord__n mono">{row.n}.</span> {row.from} &rarr; {row.to}
+                  </span>
+                  <span className="hrecord__bars">
+                    {row.runs.map((run, i) => (
+                      <span key={i} className="hrecord__barrow">
+                        {/* The bar is the reading and the number is the fact —
+                            the portrait band's rule. A bar carries no printed
+                            number ON it; the duration sits beside it. */}
+                        <span className="hrecord__bar">
+                          <span
+                            className="hrecord__fill"
+                            style={{ width: `${run.share * 100}%` }}
+                          />
+                        </span>
+                        <span className="hrecord__ms mono">{run.text}</span>
+                      </span>
+                    ))}
+                  </span>
+                </li>
+              ))}
+            </ol>
+          </>
+        )}
+      </section>
+
+      <section className="hrecord__block">
+        <span className="eyebrow">What this evidence does not say</span>
+        {habit.cautions.length === 0 && lifting === null && dropped === null ? (
+          <p className="hrecord__note">Nothing qualifies this evidence.</p>
+        ) : (
+          <>
+            <ul className="hrecord__cautions">
+              {habit.cautions.map((c) => (
+                <li key={c}>{c}</li>
+              ))}
+              {dropped !== null && <li>{dropped}</li>}
+            </ul>
+            {/* ROLLED UP, never dropped. Fifty-six of these buried the five
+                bullets above on the real store; they are still every one of
+                them, one disclosure away, and still every one of them in the
+                file. A `<details>` because the browser already owns this
+                behaviour and a hand-rolled toggle would owe it a label, a
+                keyboard path and an expanded state. */}
+            {lifting !== null && (
+              <details className="hrecord__lifting">
+                <summary>{lifting.summary}</summary>
+                <ul className="hrecord__cautions mono">
+                  {lifting.notes.map((n) => (
+                    <li key={n}>{n}</li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </>
+        )}
+      </section>
+
+      <section className="hrecord__block">
+        <span className="eyebrow">Evidence</span>
+        <p className="hrecord__note">
+          {evidenceLine(habit)}
+          {span !== null && ` · ${span}`} · on this machine
+        </p>
+        {/* The recordings themselves, openable. A ULID names a recording and
+            can be read by nothing; the ledger has been able to open these since
+            `c205413`, and printing the ids beneath it was the record's own
+            habit rather than a reading. */}
+        <ul className="hrecord__walks">
+          {habit.binding.walks.map((w) => {
+            const label = markLabel(markReadout(w, { wallClock, timecode }));
+            return (
+              <li key={w.sessionId}>
+                <button
+                  type="button"
+                  className="btn ghost hrecord__walk"
+                  disabled={w.walk === null}
+                  aria-label={label}
+                  title={label}
+                  onClick={() => {
+                    if (w.walk !== null) onOpen(w.sessionId, w.walk.atSec);
+                  }}
+                >
+                  {wallClock(w.at)}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+        <p className="hrecord__note mono">{habit.binding.routeLabel}</p>
+      </section>
     </div>
   );
 }
@@ -1036,10 +1438,6 @@ function HabitEditor({
   // Merging archives somebody else's habit, so it is confirmed. The state holds
   // WHICH one, because a habit can duplicate more than one at a time.
   const [confirmMerge, setConfirmMerge] = useState<string | null>(null);
-  // The record is not editable here, and the file says the same thing. Splitting
-  // the document at the heading is how the screen shows which half is which.
-  const record = recordTail(habit.markdown);
-
   const span = walkSpan(b.walks);
 
   return (
@@ -1060,8 +1458,12 @@ function HabitEditor({
             {span !== null && ` · ${span}`}
           </p>
         {b.walks.some((w) => w.fit !== null) && <LedgerLegend />}
-          <Rhythm walks={b.walks} />
         </div>
+        {/* OUTSIDE `.habitedit__evidence`, which is capped at 420px so the
+            ledger and its meta line do not stretch across the pane. The grid
+            wants the whole width: 24 columns inside 400px gave 15px cells with
+            no room for an hour axis, which is why it shipped without one. */}
+        <Rhythm walks={b.walks} onOpen={onOpenRecording} />
       </header>
 
       {b.note !== null && (
@@ -1242,7 +1644,7 @@ function HabitEditor({
         <span className="eyebrow">The record — the recording, not editable</span>
       </div>
       <RecordedSteps ways={habit.ways} fork={habit.fork} onOpen={onOpenRecording} />
-      {record !== "" && <pre className="habitedit__record mono">{record}</pre>}
+      <HabitRecord habit={habit} onOpen={onOpenRecording} />
 
       {/* The reason in WORDS, not a greyed control with no explanation. */}
       {proseNote !== null && <p className="muted">{proseNote}</p>}

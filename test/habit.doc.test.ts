@@ -7,6 +7,7 @@ import {
   recordedBlocks,
   renderHabitMarkdown,
   slugify,
+  taggedCautions,
   templateBody,
   type HabitDocInput,
 } from "../app/src/main/habit-doc.js";
@@ -550,9 +551,96 @@ describe("what this evidence does not say", () => {
     };
     const out = cautionsFor(f, route, flowWalks(f, route));
     expect(out.some((c) => /1 of the 3 recordings took 2 extra states/.test(c))).toBe(true);
+    expect(out.some((c) => /1 of the 3 recordings took 2 extra states/.test(c))).toBe(true);
     expect(out.some((c) => c.includes("TextEdit → Finder → TextEdit → Chrome"))).toBe(true);
   });
 
+  /**
+   * THE SPLIT, and why it is a tag rather than a filter.
+   *
+   * The Habits screen rolls the lifting notes up behind a disclosure: on the
+   * author's real store they are 56 of the section's 61 bullets, each carrying a
+   * raw `t_mono` float and a macOS keycode, under a heading a person reads as
+   * "what this evidence does not say". They are diagnostics, not cautions.
+   *
+   * The screen cannot separate them by POSITION — they are interleaved with the
+   * `missing` and `everyRecording` bullets inside the per-step loop — and
+   * matching the "Lifting note on " prefix would make a sentence's wording
+   * load-bearing. So the kind travels with the text.
+   *
+   * `cautionsFor` is then a map over this, which is what keeps the rendered
+   * HABIT.md byte-identical: same strings, same order, one source.
+   */
+  describe("the caution / lifting split", () => {
+    const lifted = () => {
+      const f = flows();
+      f.graph.edges[0]!.liftWarnings = ["dropped a wait whose predicate was already true"];
+      return f;
+    };
+
+    it("gives cautionsFor exactly the tagged texts, in order", () => {
+      const f = lifted();
+      f.routes[0]!.count = 1;
+      const route = f.routes[0]!;
+      expect(cautionsFor(f, route, flowWalks(f, route))).toEqual(
+        taggedCautions(f, route, flowWalks(f, route)).map((c) => c.text),
+      );
+    });
+
+    it("tags a lifting note as lifting and everything else as caution", () => {
+      const f = lifted();
+      f.routes[0]!.count = 1;
+      const tagged = taggedCautions(f, f.routes[0]!, flowWalks(f, f.routes[0]!));
+      const lift = tagged.filter((c) => c.kind === "lifting");
+      expect(lift).toHaveLength(1);
+      expect(lift[0]!.text).toMatch(/dropped a wait whose predicate was already true/);
+      expect(tagged.some((c) => c.kind === "caution" && /Recorded once/.test(c.text))).toBe(true);
+      expect(tagged.every((c) => c.kind === "lifting" || c.kind === "caution")).toBe(true);
+    });
+
+    /** The interleaving is the whole reason for the tag: a lifting note sits
+        BETWEEN two cautions, so no prefix or suffix of the array is the split. */
+    it("keeps a lifting note interleaved, not appended", () => {
+      const f = lifted();
+      f.routes[0]!.count = 1;
+      f.graph.nodes[1]!.locatable = false;
+      const kinds = taggedCautions(f, f.routes[0]!, flowWalks(f, f.routes[0]!)).map((c) => c.kind);
+      expect(kinds.indexOf("lifting")).toBeGreaterThan(0);
+      expect(kinds.lastIndexOf("caution")).toBeGreaterThan(kinds.indexOf("lifting"));
+    });
+  });
+
+});
+
+/**
+ * THE FILE DOES NOT MOVE.
+ *
+ * The Habits screen now draws the record from the DTO instead of dumping this
+ * markdown, and the whole point of doing it that way is that HABIT.md — the
+ * thing an agent loads and `Copy HABIT.md` puts on the clipboard — is untouched.
+ * Splitting `cautionsFor` is the one change that reached the generator, so this
+ * pins its output against a snapshot taken before the split.
+ */
+describe("the rendered record is byte-identical across the caution split", () => {
+  it("renders a route with lifting notes exactly as it did before", () => {
+    const f = flows();
+    f.graph.edges[0]!.liftWarnings = ["dropped a wait whose predicate was already true"];
+    f.graph.nodes[1]!.locatable = false;
+    f.routes[0]!.count = 3;
+    f.graph.edges[0]!.observations = 2;
+    const md = recordedBlocks({ flows: f, route: f.routes[0]!, showSamples: false });
+
+    const section = md.slice(md.indexOf("## What this evidence does not say"));
+    const bullets = section.split("\n").filter((l) => l.startsWith("- "));
+    // The order is the assertion: caution, caution, lifting, caution — a
+    // lifting note BETWEEN cautions is what no filter could have preserved.
+    expect(bullets.map((b) => /^- Lifting note on /.test(b))).toEqual([
+      false,
+      false,
+      true,
+      false,
+    ]);
+  });
 });
 
 /**

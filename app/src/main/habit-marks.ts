@@ -19,11 +19,14 @@ import type {
   FlowsDTO,
   HabitForkDTO,
   HabitForkRowDTO,
+  HabitSlotDTO,
   HabitStepDTO,
+  HabitTimingsDTO,
   HabitWayDTO,
   WalkFitDTO,
 } from "@shared/types";
-import { flowWalks, variantLetter, type FlowStep } from "./flow-steps.js";
+import { flowVariables, flowWalks, variantLetter, type FlowStep } from "./flow-steps.js";
+import { slotNote, taggedCautions } from "./habit-doc.js";
 import { walkAnalysis } from "./walk-analysis.js";
 import { runPhrase, wayFork } from "./way-fork.js";
 
@@ -153,4 +156,86 @@ export function droppedEarlyOf(flows: FlowsDTO, route: FlowRouteDTO): DroppedEar
     places: [...p.places],
     count: p.count,
   }));
+}
+
+
+/**
+ * What the route's typed actions varied — NAMES AND COUNTS, never values.
+ *
+ * `flowVariables` is the record's own projection, so the block the screen draws
+ * and the block the file prints name the same slots in the same order. What
+ * differs is only what is dropped: the samples stay in the file, behind the
+ * per-habit `showSamples` toggle, because a DTO has no toggle and so can carry
+ * no values. A COUNT is not a value — "1 recorded value" says how much varied
+ * without saying what was typed.
+ */
+export function habitSlots(flows: FlowsDTO, route: FlowRouteDTO): HabitSlotDTO[] {
+  const steps = flowWalks(flows, route).flatMap((w) => w.steps);
+  return flowVariables(steps).map((v) => ({
+    name: v.name,
+    samples: v.samples.length,
+    note: slotNote(v.samples.length),
+  }));
+}
+
+/**
+ * Where the time goes, on the baseline Way.
+ *
+ * NULL under exactly the record's guard — fewer than two recordings, or no
+ * baseline — so the screen and the file are silent together. One recording's
+ * timings are a fact about one afternoon, not about a habit, and a chart drawn
+ * where the document beside it says nothing would claim more than the evidence.
+ *
+ * `StepCost.stepIndex` indexes the baseline Way's steps, so the labels are read
+ * from that Way rather than looked up from the graph — the same reason
+ * `timeBlock` does it that way: two functions naming one edge is the
+ * `ax-dump`/`ax-exec` drift hazard.
+ */
+export function habitTimings(flows: FlowsDTO, route: FlowRouteDTO): HabitTimingsDTO | null {
+  if (route.count < 2) return null;
+  const analysis = walkAnalysis({ flows, route });
+  const wayIndex = analysis.baseline.wayIndex;
+  if (wayIndex === null) return null;
+
+  const baseWay = flowWalks(flows, route)[wayIndex];
+  if (baseWay === undefined) return null;
+
+  // Steps with no recorded duration are DROPPED, exactly as the record drops
+  // them: a zero would draw a bar of no length beside real ones and read as an
+  // instantaneous step rather than an unmeasured one.
+  const rows = analysis.steps.filter((s) => s.durations.length > 0);
+  if (rows.length === 0) return null;
+
+  const steps = rows.flatMap((cost) => {
+    const step = baseWay.steps[cost.stepIndex];
+    if (step === undefined) return [];
+    return [{ from: step.from, to: step.to, ms: cost.durations.map((d) => d.ms) }];
+  });
+  if (steps.length === 0) return null;
+
+  return {
+    wayLetter: variantLetter(wayIndex),
+    steps,
+    single: rows.every((r) => r.durations.length === 1),
+  };
+}
+
+/**
+ * What this evidence does not say, WITHOUT the lifting notes.
+ *
+ * The notes are rebuilt on screen from `HabitStepDTO.liftWarnings`, which the
+ * renderer already holds, and rolled up behind a disclosure. Carrying them here
+ * would put 56 of the section's 61 bullets in this field — measured on the
+ * author's real store — each a raw `t_mono` float and a macOS keycode, burying
+ * the five sentences the section exists to deliver.
+ *
+ * The rendered FILE is untouched and still prints every one of them, in place.
+ * `taggedCautions` is what makes that true of one source rather than two.
+ */
+export function habitCautions(flows: FlowsDTO, route: FlowRouteDTO): string[] {
+  const walks = flowWalks(flows, route);
+  const dropped = walkAnalysis({ flows, route }).droppedEarly;
+  return taggedCautions(flows, route, walks, dropped)
+    .filter((c) => c.kind === "caution")
+    .map((c) => c.text);
 }

@@ -84,7 +84,33 @@ function span(steps: readonly FlowStep[]): { first: number | null; last: number 
  * the thing, so it succeeded. A "this step sometimes failed" section would have
  * been the strongest line in the file and would have been empty forever.
  */
-export function cautionsFor(
+/**
+ * A caution, and WHAT KIND it is.
+ *
+ * The Habits screen rolls the lifting notes up behind a disclosure: on the
+ * author's real store they are 56 of this section's 61 bullets, each carrying a
+ * raw `t_mono` float and a macOS keycode, under a heading a person reads as
+ * "what this evidence does not say". They are diagnostics, not cautions, and
+ * fifty-six of them bury the five sentences that matter.
+ *
+ * The kind travels WITH the text because neither alternative works. The notes
+ * are interleaved with the `missing` and `everyRecording` bullets inside the
+ * per-step loop, so no prefix or suffix of the array is the split; and matching
+ * the "Lifting note on " prefix downstream would make one sentence's wording
+ * load-bearing in a file that never parses this one's output.
+ */
+export interface TaggedCaution {
+  text: string;
+  kind: "caution" | "lifting";
+}
+
+/**
+ * The cautions, tagged. `cautionsFor` is a map over this.
+ *
+ * ONE SOURCE, which is what keeps the rendered HABIT.md byte-identical across
+ * the split: same strings, same order, and the markdown never sees the tag.
+ */
+export function taggedCautions(
   flows: FlowsDTO,
   route: FlowRouteDTO,
   walks: readonly FlowWalk[],
@@ -98,18 +124,22 @@ export function cautionsFor(
    * this function.
    */
   droppedEarly: readonly PrefixFact[] = [],
-): string[] {
-  const out: string[] = [];
+): TaggedCaution[] {
+  const out: TaggedCaution[] = [];
+  // ONE PUSH SITE PER KIND, so a new caution cannot be added untagged: there
+  // is no bare `out.push` left in this function to copy.
+  const say = (text: string): void => void out.push({ text, kind: "caution" });
+  const lift = (text: string): void => void out.push({ text, kind: "lifting" });
   const many = walks.length > 1;
   const where = (w: FlowWalk, step: FlowStep): string =>
     many ? `Way ${variantLetter(w.index)} step ${step.index + 1}` : `Step ${step.index + 1}`;
 
   if (route.count === 1) {
-    out.push(
+    say(
       "Recorded once. Kept from a single observation, and nothing has confirmed it repeats — one walk is not evidence that this is how the task is done.",
     );
   } else if (route.name !== null && route.nameObservations < route.count) {
-    out.push(
+    say(
       `Recorded ${route.count} times, but only ${route.nameObservations} of those recordings agreed on what it was for. Several recordings can share a shape and disagree about the purpose.`,
     );
   }
@@ -123,7 +153,7 @@ export function cautionsFor(
       v.extraHops < 0
         ? "a different path through the same places"
         : `${v.extraHops} extra ${v.extraHops === 1 ? "state" : "states"}`;
-    out.push(
+    say(
       `${v.count} of the ${route.count} recordings took ${hops} and were folded into this route: ` +
         `${v.label}. They are counted here because they start and end in the same place and pass ` +
         `through everything below in order — not because anything checked that the detour was ` +
@@ -139,7 +169,7 @@ export function cautionsFor(
   // its steps by construction — so it is stated once, about the route.
   if (many) {
     const shape = walks.map((w) => `${w.steps.length}`).join(" and ");
-    out.push(
+    say(
       `The ${route.count} recordings did NOT do this the same way. They are shown below as ` +
         `${walks.length} separate ways of ${shape} steps — follow ONE of them, not all of them in ` +
         `sequence. They share this route only because they passed through the same applications ` +
@@ -150,7 +180,7 @@ export function cautionsFor(
   for (const w of walks) {
     for (const step of w.steps) {
       if (step.missing) {
-        out.push(
+        say(
           `${where(w, step)} refers to an edge that is not in the graph (an index defect). It is named rather than skipped, because a step that vanished would make this read as shorter than it was.`,
         );
         continue;
@@ -158,19 +188,19 @@ export function cautionsFor(
       // Only worth saying when there is ONE way: with variants, "not every
       // recording did this" is what having variants already means.
       if (!many && !step.everyRecording) {
-        out.push(
+        say(
           `Step ${step.index + 1} was in ${step.observations} of the ${route.count} recordings. The others stopped before it or went another way.`,
         );
       }
       if (step.sourcesBelowObservations) {
-        out.push(
+        say(
           `${where(w, step)} counts more observations than it can now point at: a recording it came from has been deleted.`,
         );
       }
       for (const w2 of step.liftWarnings) {
         // NOT lower-cased: "way a step 7" reads as a typo, and only a rendered
         // file showed it — `where` returns a sentence-initial label.
-        out.push(`Lifting note on ${where(w, step)}: ${w2}`);
+        lift(`Lifting note on ${where(w, step)}: ${w2}`);
       }
     }
   }
@@ -194,7 +224,7 @@ export function cautionsFor(
   }
   const points = acts.filter((a) => /^point \(/.test(a.target)).length;
   if (points > 0) {
-    out.push(
+    say(
       `${points} of the ${acts.length} recorded actions are anchored to a bare screen coordinate rather than to an element. Those cannot be located by an agent, and they were recorded on this machine's display — they drift on a different resolution.`,
     );
   }
@@ -205,7 +235,7 @@ export function cautionsFor(
   const nodeById = new Map(flows.graph.nodes.map((n) => [n.id, n]));
   const vague = route.nodeIds.filter((id) => nodeById.get(id)?.locatable === false);
   if (vague.length > 0) {
-    out.push(
+    say(
       `${vague.length} of the ${route.nodeIds.length} states on this route are identified only by which application was in front. An agent can confirm it arrived in one, but cannot find it on screen.`,
     );
   }
@@ -217,7 +247,7 @@ export function cautionsFor(
   // abandonment is invisible from the full route's side without this line.
   for (const p of droppedEarly) {
     const n = p.count;
-    out.push(
+    say(
       `This work was started and dropped early ${n} further time${n === 1 ? "" : "s"}: ` +
         `${n === 1 ? "a recording" : `${n} recordings`} went as far as ${p.places.join(" → ")} ` +
         `and stopped. Those are not counted among the ${route.count} above.`,
@@ -227,17 +257,41 @@ export function cautionsFor(
   return out;
 }
 
-const varLine = (name: string, samples: readonly string[], showSamples: boolean): string => {
-  const n = samples.length;
-  if (!showSamples) {
-    return n >= 2
-      ? `- \`${name}\` — ${n} recorded values, varies between recordings`
-      : `- \`${name}\` — 1 recorded value (typed once; not established as a variable)`;
-  }
-  const shown = samples.map((s) => `\n  - ${JSON.stringify(s)}`).join("");
+/**
+ * The cautions as plain strings — the record's own view, and every existing
+ * caller's.
+ *
+ * A MAP, never a second implementation. This is what makes the split invisible
+ * to HABIT.md: same strings, same order, and the generator below calls this one
+ * exactly as it always did.
+ */
+export function cautionsFor(
+  flows: FlowsDTO,
+  route: FlowRouteDTO,
+  walks: readonly FlowWalk[],
+  droppedEarly: readonly PrefixFact[] = [],
+): string[] {
+  return taggedCautions(flows, route, walks, droppedEarly).map((c) => c.text);
+}
+
+/**
+ * What a slot's value COUNT says, in words — one sentence, one source.
+ *
+ * Composed in main so the rendered file and the Habits screen cannot disagree
+ * about the wording, the reason `way-fork.ts` composes `runPhrase` and the
+ * verdict text here rather than in the renderer. The screen carries this
+ * through `HabitSlotDTO.note`; it never carries the samples.
+ */
+export function slotNote(n: number): string {
   return n >= 2
-    ? `- \`${name}\` — ${n} recorded values, varies between recordings${shown}`
-    : `- \`${name}\` — 1 recorded value (typed once; not established as a variable)${shown}`;
+    ? `${n} recorded values, varies between recordings`
+    : "1 recorded value (typed once; not established as a variable)";
+}
+
+const varLine = (name: string, samples: readonly string[], showSamples: boolean): string => {
+  const line = `- \`${name}\` — ${slotNote(samples.length)}`;
+  if (!showSamples) return line;
+  return line + samples.map((s) => `\n  - ${JSON.stringify(s)}`).join("");
 };
 
 export interface RecordedInput {

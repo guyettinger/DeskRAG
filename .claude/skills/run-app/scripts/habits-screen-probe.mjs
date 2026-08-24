@@ -9,9 +9,20 @@
  *
  * It asserts three things `npm test` structurally cannot reach:
  *
- *   1. the portrait band draws, nothing truncates, and no bar prints a number;
- *   2. the rhythm strip either draws 168 cells or STATES why it cannot;
- *   3. whatever the "Not walked lately" band does, it agrees with the rows.
+ *   1. the portrait band draws FULL WIDTH, nothing truncates, and no bar
+ *      prints a number;
+ *   2. the rhythm strip either draws 168 cells with a readable hour axis and a
+ *      way into each walk, or STATES why it cannot;
+ *   3. whatever the "Not walked lately" band does, it agrees with the rows;
+ *   4. a kept habit's record is drawn as INSTRUMENTS, not dumped as markdown.
+ *
+ * (2) carries one check that exists because of a real defect and would catch
+ * nothing without a running renderer: a painted cell must have a NON-ZERO box.
+ * `.rhythm__cell` is a `<span>`, blockified for free while it is a direct grid
+ * child; moved inside the hit button it became a plain inline span, where width
+ * and height do not apply, and every painted cell collapsed to 0x0. The DOM
+ * still reported 168 cells, the inline background was still set, and the
+ * screenshot still looked plausible. Only `getBoundingClientRect()` said so.
  *
  * (3) is the interesting one. The spec PREDICTS the band is silent on this
  * store — quiet 72h against a 4-week floor — and a prediction nothing checks is
@@ -106,39 +117,115 @@ try {
     "the bars descend",
   );
 
+  // FULL WIDTH of the band. The 520px cap this replaces made the picture a
+  // third of its container while the coverage line beneath it ran the whole
+  // width, so the band read as an unfinished column rather than one reading.
+  const portraitWidth = await page.evaluate(() => {
+    const places = document.querySelector(".portrait__places");
+    const band = document.querySelector(".portrait");
+    if (!places || !band) return null;
+    return {
+      places: +places.getBoundingClientRect().width.toFixed(1),
+      band: +band.getBoundingClientRect().width.toFixed(1),
+    };
+  });
+  check(
+    portraitWidth !== null && portraitWidth.places >= portraitWidth.band - 1,
+    `the bars fill the band — ${portraitWidth?.places} of ${portraitWidth?.band}px`,
+  );
+
   // ---- 2. the rhythm strip
   await page.locator(".habits__items .habit").first().click();
   await page.waitForSelector(".habitedit__evidence", { timeout: 20_000 });
 
-  const rhythm = await page.evaluate(() => ({
-    present: document.querySelector(".rhythm") !== null,
-    gridDrawn: document.querySelector(".rhythm__grid") !== null,
-    cells: document.querySelectorAll(".rhythm__cell").length,
-    // The component sets an inline background ONLY on a cell holding a walk,
-    // so the attribute IS the contract. Comparing computed colours instead
-    // would compare an `rgb()` against a raw `--sunken` hex and never match.
-    filled: [...document.querySelectorAll(".rhythm__cell")].filter((c) =>
+  const rhythm = await page.evaluate(() => {
+    const box = (el) => (el ? el.getBoundingClientRect() : null);
+    const grid = document.querySelector(".rhythm__grid");
+    const painted = [...document.querySelectorAll(".rhythm__cell")].filter((c) =>
       c.hasAttribute("style"),
-    ).length,
-    note: document.querySelector(".rhythm__note")?.textContent ?? "",
-    label: document.querySelector(".rhythm__grid")?.getAttribute("aria-label") ?? null,
-    fitsEvidence:
-      (document.querySelector(".rhythm")?.getBoundingClientRect().right ?? 0) <=
-      (document.querySelector(".habitedit__evidence")?.getBoundingClientRect().right ?? 0) + 1,
-  }));
+    );
+    return {
+      present: document.querySelector(".rhythm") !== null,
+      gridDrawn: grid !== null,
+      cells: document.querySelectorAll(".rhythm__cell").length,
+      // The component sets an inline background ONLY on a cell holding a walk,
+      // so the attribute IS the contract. Comparing computed colours instead
+      // would compare an `rgb()` against a raw `--sunken` hex and never match.
+      filled: painted.length,
+      // ...and a painted cell must have a BOX. See the header.
+      collapsed: painted.filter((c) => {
+        const b = c.getBoundingClientRect();
+        return b.width < 1 || b.height < 1;
+      }).length,
+      hits: document.querySelectorAll(".rhythm__hit").length,
+      liveHits: [...document.querySelectorAll(".rhythm__hit")].filter((b) => !b.disabled).length,
+      ticks: [...document.querySelectorAll(".rhythm__tick")].map((t) => t.textContent),
+      note: document.querySelector(".rhythm__note")?.textContent ?? "",
+      label: grid?.getAttribute("aria-label") ?? null,
+      // FULL WIDTH of the pane it sits in. It used to live inside
+      // `.habitedit__evidence`, capped at 420px, where 24 columns gave 15px
+      // cells with no room for an hour label — which is why it shipped with no
+      // hour axis and so could never say a habit happens at 9am.
+      gridWidth: +(box(grid)?.width ?? 0).toFixed(1),
+      paneWidth: +(box(document.querySelector(".habitedit__masthead"))?.width ?? 0).toFixed(1),
+    };
+  });
 
   console.log(`\nRhythm: ${rhythm.gridDrawn ? `grid drawn, ${rhythm.filled} cells hold a walk` : "below the floor"}`);
   console.log(`  ${rhythm.note}\n`);
 
   check(rhythm.present, "the rhythm strip is on the screen");
   check(rhythm.note !== "", "it says something in words, whichever state it is in");
-  check(rhythm.fitsEvidence, "it does not overflow the evidence column");
   if (rhythm.gridDrawn) {
     check(rhythm.cells === 168, `the grid is 7x24 — found ${rhythm.cells} cells`);
     check(rhythm.label !== null, "the picture has an accessible name");
     // A drawn grid with nothing in it would mean the walks vanished between
     // the floor check and the fill — the two read the same array.
     check(rhythm.filled > 0, `a drawn grid holds at least one walk — ${rhythm.filled}`);
+    check(
+      rhythm.collapsed === 0,
+      `every painted cell has a box — ${rhythm.collapsed} of ${rhythm.filled} collapsed to 0x0`,
+    );
+    check(
+      rhythm.gridWidth >= rhythm.paneWidth - 1,
+      `the grid fills the pane — ${rhythm.gridWidth} of ${rhythm.paneWidth}px`,
+    );
+    // THE HOUR AXIS, which the grid shipped without. Without it the strip could
+    // say a habit repeats somewhere mid-week and never that it is at 9am.
+    check(
+      rhythm.ticks.join(",") === "00,03,06,09,12,15,18,21",
+      `the hour axis ticks every third hour — got [${rhythm.ticks.join(", ")}]`,
+    );
+    // A cell holding a walk is a WAY IN. An empty cell is not a control: 164 of
+    // 168 are empty on a real store, and making each one focusable would put
+    // 168 tab stops in front of the four that lead somewhere.
+    check(
+      rhythm.hits === rhythm.filled,
+      `exactly the cells holding a walk are controls — ${rhythm.hits} hits, ${rhythm.filled} filled`,
+    );
+
+    if (rhythm.liveHits > 0) {
+      await page.locator(".rhythm__hit:not([disabled])").first().hover();
+      await page.waitForSelector(".ledger__tip", { timeout: 5000 });
+      const tip = await page.evaluate(() => {
+        const t = document.querySelector(".ledger__tip");
+        const b = t.getBoundingClientRect();
+        return {
+          text: t.textContent ?? "",
+          // Measured and clamped through the shared `clampTip`, exactly as the
+          // ledger's card is — a card sized by a guess ran off the window there.
+          inWindow:
+            b.top >= 0 && b.left >= 0 && b.right <= innerWidth && b.bottom <= innerHeight,
+        };
+      });
+      console.log(`  hover: ${tip.text.slice(0, 60)}…`);
+      check(
+        /^(Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day \d\d:00 — \d+ recording/.test(tip.text),
+        "a cell's card names the day and hour it reports",
+      );
+      check(tip.inWindow, "the card is clamped inside the window");
+      check(!/%|score|streak/i.test(tip.text), "the card prints no score");
+    }
   } else {
     check(rhythm.cells === 0, "below the floor it draws no cells at all");
     check(
@@ -175,6 +262,90 @@ try {
     console.log(
       "  (The spec predicts this on a library younger than the four-week floor.\n" +
         "   Its absence here is the prediction holding, not a missing feature.)",
+    );
+  }
+
+  // ---- 4. the record, as instruments
+  //
+  // This half used to be a `<pre>` of the generated markdown from
+  // `## What varies` down: 835x420 of monospace prose whose largest section was
+  // fifty-six lines of raw `t_mono` floats and macOS keycodes, and which
+  // printed `## Where the ways fork` a second time under the fork instrument
+  // that draws it. The FILE is unchanged — `Copy HABIT.md` still copies
+  // `habit.markdown` — so this checks the SCREEN and never the document.
+  const record = await page.evaluate(() => ({
+    present: document.querySelector(".hrecord") !== null,
+    blocks: [...document.querySelectorAll(".hrecord__block > .eyebrow")].map(
+      (e) => e.textContent,
+    ),
+    // The proposal preview keeps its `<pre>`; a KEPT habit must not have one.
+    dumped: document.querySelectorAll(".habitedit__body .habitedit__record").length,
+    forkInstruments: document.querySelectorAll(".wayfork, .habitsteps").length,
+    timeRows: document.querySelectorAll(".hrecord__time").length,
+    // A bar carries no printed number ON it — the portrait band's ×N rule.
+    barsPrint: [...document.querySelectorAll(".hrecord__bar")].some(
+      (b) => (b.textContent ?? "").trim() !== "",
+    ),
+    liftingSummary: document.querySelector(".hrecord__lifting summary")?.textContent ?? null,
+    liftingHidden: document.querySelector(".hrecord__lifting")?.open === false,
+    liftingNotes: document.querySelectorAll(".hrecord__lifting li").length,
+    // DIRECT child of the block, so this counts the cautions and not the 56
+    // lifting notes nested inside the <details> beside them — which is the
+    // whole distinction this section exists to draw.
+    cautions: document.querySelectorAll(".hrecord__block > .hrecord__cautions > li").length,
+    walkChips: document.querySelectorAll(".hrecord__walk").length,
+    ledgerMarks: document.querySelectorAll(".habitedit__evidence .ledger__hit").length,
+    truncated: [...document.querySelectorAll(".hrecord *")].filter(
+      (el) => el.scrollWidth > el.clientWidth + 1,
+    ).length,
+  }));
+
+  console.log(`\nRecord: [${record.blocks.join(" · ")}]`);
+  console.log(`  ${record.timeRows} timed steps · ${record.walkChips} openable recordings`);
+  console.log(`  ${record.liftingSummary ?? "no lifting notes"}\n`);
+
+  check(record.present, "the record is drawn as instruments");
+  check(
+    record.dumped === 0,
+    `a kept habit dumps no generated markdown — found ${record.dumped} <pre>`,
+  );
+  check(
+    record.blocks.join(",") ===
+      "What varies,Where the time goes,What this evidence does not say,Evidence",
+    `the four blocks are drawn in order — got [${record.blocks.join(", ")}]`,
+  );
+  // The fork was printed TWICE: once as the instrument, once as markdown a few
+  // inches below it. Exactly one of the two step renderers should be on screen.
+  check(
+    record.forkInstruments === 1,
+    `the ways are drawn once, not twice — ${record.forkInstruments} step renderers`,
+  );
+  check(!record.barsPrint, "no duration bar prints a number on its face");
+  check(record.truncated === 0, `nothing in the record truncates — ${record.truncated} did`);
+  // The recordings, openable. A ULID names a recording and can be read by
+  // nothing; the ledger has been able to open these since `c205413`.
+  check(
+    record.walkChips === record.ledgerMarks,
+    `every recording is openable from the record — ${record.walkChips} chips, ${record.ledgerMarks} marks`,
+  );
+  if (record.liftingSummary !== null) {
+    // ROLLED UP, never dropped. Every note is still one disclosure away, and
+    // still every one of them in the file.
+    check(
+      record.liftingHidden,
+      "the lifting notes start collapsed, so they cannot bury the cautions",
+    );
+    check(
+      /^\d+ lifting notes?/.test(record.liftingSummary),
+      `the disclosure says what is behind it — "${record.liftingSummary}"`,
+    );
+    check(
+      record.liftingNotes > 0,
+      "opening it would show every note, not a summary of them",
+    );
+    check(
+      record.cautions >= 1,
+      `the cautions are readable beside it — ${record.cautions} bullets`,
     );
   }
 
