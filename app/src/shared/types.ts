@@ -1455,6 +1455,65 @@ export interface DroppedEarlyDTO {
   count: number;
 }
 
+/**
+ * One slot the record's "What varies" block names.
+ *
+ * NAMES AND A COUNT, never a value. `habit-marks.ts`'s rule is that a payload
+ * has no toggle so it carries no values — and `showSamples` is per habit, so a
+ * DTO carrying samples would have to pick one answer for every reader. A COUNT
+ * is not a value: "1 recorded value" says how much varied without saying what
+ * was typed, which is exactly what the screen needs to draw the block. The
+ * verbatim keystrokes stay in the rendered file, behind the toggle.
+ */
+export interface HabitSlotDTO {
+  name: string;
+  /** How many distinct recorded values. Never the values themselves. */
+  samples: number;
+  /**
+   * What that count says, in words — composed in MAIN by the record's own
+   * `slotNote`, so the file and the screen cannot word it differently. The
+   * `way-fork.ts` precedent, where `phrase` and the verdict text travel for the
+   * same reason.
+   */
+  note: string;
+}
+
+/**
+ * One step of the baseline Way, with its own recorded span.
+ *
+ * A step's duration is its OWN extent, never the gap to the next step — the
+ * rule `walk-analysis.ts` states, because differencing consecutive starts folds
+ * the idle before the next step into this one's cost and hides the hesitation.
+ *
+ * `ms` is a LIST because a step walked by several recordings has several spans,
+ * and averaging them would invent a number no recording produced.
+ */
+export interface HabitStepTimingDTO {
+  from: string;
+  to: string;
+  ms: number[];
+}
+
+/**
+ * Where the time goes, on the baseline Way.
+ *
+ * Null when there is nothing to read it against: one recording's timings are a
+ * fact about one afternoon, not about a habit. The record applies the same
+ * guard (`route.count > 1` and a baseline), so the screen and the file are
+ * silent together.
+ */
+export interface HabitTimingsDTO {
+  /** The baseline Way's letter — the same letter the record prints. */
+  wayLetter: string;
+  steps: HabitStepTimingDTO[];
+  /**
+   * True when EVERY step holds exactly one duration, which is the normal case
+   * on a real store and is not obvious from the numbers: a list of one reads
+   * like a comparison. The record says so in words for the same reason.
+   */
+  single: boolean;
+}
+
 export interface HabitDTO {
   id: string;
   state: HabitState;
@@ -1510,6 +1569,21 @@ export interface HabitDTO {
   fork: HabitForkDTO | null;
   /** Empty is the common case. See `DroppedEarlyDTO`. */
   droppedEarly: DroppedEarlyDTO[];
+  /** What the route's typed actions varied. See `HabitSlotDTO`. */
+  slots: HabitSlotDTO[];
+  /** Where the time goes. Null below two recordings — see `HabitTimingsDTO`. */
+  timings: HabitTimingsDTO | null;
+  /**
+   * What this evidence does not say, WITHOUT the lifting notes.
+   *
+   * The notes are excluded here and rebuilt on screen from
+   * `ways[].steps[].liftWarnings`, which the renderer already holds. On the
+   * author's real store they are 56 of the section's 61 bullets — each a raw
+   * `t_mono` float and a macOS keycode — so carrying them in this field would
+   * bury the five sentences it exists to deliver. The rendered FILE still
+   * prints every one of them, interleaved exactly as it always did.
+   */
+  cautions: string[];
   /**
    * The whole HABIT.md.
    *

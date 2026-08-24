@@ -396,23 +396,3 @@ export function markLabel(readout: MarkReadout): string {
     .join(" · ");
 }
 
-/**
- * The record BELOW the steps, because the steps are now an instrument.
- *
- * Two `indexOf` calls and no markdown parsing. Rendering the file in the
- * renderer would be the `ax-dump`/`ax-exec` drift hazard — `probe:habits` exists
- * because nothing in the suite can diff two renderers of one document. Finding
- * a heading boundary is the same class of operation as the `lastIndexOf` this
- * replaces, and it lives here rather than in the `.tsx` so the root suite can
- * hold it to the cases below.
- *
- * The tail cannot be found by NAME: `## Where the ways fork` renders only
- * at two or more recordings, so a habit recorded once would fall through to the
- * whole document.
- */
-export function recordTail(markdown: string): string {
-  const steps = markdown.lastIndexOf("## Recorded steps");
-  if (steps < 0) return markdown;
-  const next = markdown.indexOf("\n## ", steps + 1);
-  return next < 0 ? "" : markdown.slice(next + 1);
-}

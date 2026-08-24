@@ -4065,10 +4065,14 @@ select {
    ONE HUE — `--data-0` at varying lightness — because C1 owns `--data-2` and
    `--data-3` for conformance and a colour's meaning is a repo-wide claim. */
 .portrait { margin-top: var(--s3); display: flex; flex-direction: column; gap: var(--s2); }
+/* FULL WIDTH of the band. The 520px cap it replaces made the picture a third of
+   its container while the coverage line beneath it ran the full width, so the
+   band read as an unfinished column rather than as one reading. The name column
+   is still `max-content`, so nothing truncates — only the bars grew. */
 .portrait__places {
   list-style: none; margin: 0; padding: 0;
   display: grid; grid-template-columns: max-content 1fr; gap: var(--s1) var(--s2);
-  align-items: center; max-width: 520px;
+  align-items: center;
 }
 .portrait__place { display: contents; }
 .portrait__app { font-size: var(--t-meta); color: var(--text); overflow-wrap: anywhere; }
@@ -4240,17 +4244,57 @@ select {
    absolute wall clock. Cells are set into `--sunken` so an empty week reads as
    an instrument with nothing in it rather than as a missing element. */
 .rhythm { display: flex; flex-direction: column; gap: var(--s1); margin-top: var(--s2); }
+/* FULL WIDTH, and no longer square. Inside the 400px cap this replaces, 24
+   columns gave 15px cells with no room for an hour label — which is why the
+   grid shipped with no hour axis at all, and so could say a habit repeats
+   somewhere mid-week but never that it happens at 9am. A fixed row height keeps
+   seven rows plus the axis at ~128px instead of the 231px `aspect-ratio: 1`
+   would give at this width. */
 .rhythm__grid {
-  display: grid; grid-template-columns: max-content repeat(24, 1fr);
-  gap: 2px; align-items: center; max-width: 400px;
+  display: grid; grid-template-columns: max-content repeat(24, minmax(0, 1fr));
+  gap: 2px; align-items: center;
 }
 .rhythm__day {
   font-size: var(--t-nano); color: var(--muted); padding-right: var(--s1);
   text-align: right;
 }
-.rhythm__cell {
-  aspect-ratio: 1; border-radius: 2px; background: var(--sunken);
+/* The axis, in the day labels' own voice — both are the frame around the data,
+   and setting them differently would read as two kinds of thing. A tick spans
+   three columns (`HOUR_TICK_SPAN`), so a two-digit label always has room. */
+.rhythm__tick {
+  font-size: var(--t-nano); color: var(--muted); padding-top: var(--s0);
 }
+.rhythm__cell {
+  height: 14px; border-radius: 2px; background: var(--sunken);
+}
+/* THE HIT BOX IS THE BUTTON AND THE MARK IS THE SPAN INSIDE IT — the ledger's
+   rule and the rail's before it. Here they happen to coincide, because a cell
+   is already the size of the hour it reports; the nesting is kept so that
+   padding the target later cannot silently widen the picture. */
+.rhythm__hit {
+  display: block; height: 14px; padding: 0; border: 0; background: none;
+  cursor: pointer;
+}
+/* An hour whose habit has no live route has no moment to open. It still DRAWS —
+   the evidence is real even when the way in is not — and the card says why. */
+.rhythm__hit:disabled { cursor: default; }
+/* `display: block` IS LOAD-BEARING, and its absence measured 0x0. A cell that
+   is a direct grid child is blockified by the grid, so the base rule's height
+   applies; the same span nested inside the hit button is a plain INLINE span,
+   where width and height are ignored. The grid still reported 168 cells and the
+   screenshot still looked plausible — only `getBoundingClientRect()` showed
+   that every painted cell had collapsed. */
+.rhythm__hit .rhythm__cell { display: block; width: 100%; height: 100%; }
+.rhythm__hit:hover .rhythm__cell,
+.rhythm__hit:focus-visible .rhythm__cell { outline: 1px solid var(--accent); }
+.rhythm__hit:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* One walk per row inside the card, when an hour holds several. */
+.rhythm__tip-walk {
+  display: flex; align-items: baseline; justify-content: space-between; gap: var(--s2);
+  padding-top: var(--s1);
+}
+.rhythm__tip-walk + .rhythm__tip-walk { border-top: 1px solid var(--hairline-soft); }
+.rhythm__tip-open { flex: none; }
 .rhythm__note { margin: 0; font-size: var(--t-meta); color: var(--muted); }
 
 .habitedit {
@@ -4262,9 +4306,10 @@ select {
 .habitedit__body h2 { font-size: var(--t-title); margin: 0; overflow-wrap: anywhere; }
 .habitedit__bind { display: flex; flex-direction: column; align-items: flex-start; gap: var(--s2); }
 
-/* The record, cut into the panel. `--sunken` is the register the signal wells
-   and the timeline use — a meter set into the instrument, which is what this is:
-   generated, read-only, and not the user's to edit. */
+/* The PROPOSAL's preview well — the only `<pre>` of generated markdown left on
+   this screen, and deliberately so: it shows the record a route WOULD produce,
+   before anything is kept, so Accept is never a blind act. The kept habit's own
+   record is drawn as instruments below. */
 .habitedit__record {
   margin: 0; padding: var(--s3); border-radius: var(--radius);
   background: var(--sunken); border: 1px solid var(--hairline-soft);
@@ -4272,6 +4317,80 @@ select {
   white-space: pre-wrap; overflow-wrap: anywhere;
   max-height: 420px; overflow-y: auto;
 }
+
+/* THE RECORD, AS INSTRUMENTS. `--sunken` is the register the signal wells and
+   the timeline use — a meter set into the instrument, which is what this is:
+   generated, read-only, and not the user's to edit.
+
+   It replaces an 835x420 `<pre>` of the generated markdown, whose largest
+   section was fifty-six lines of raw `t_mono` floats and macOS keycodes and
+   which printed the fork a second time under the fork instrument that draws it.
+   The FILE is unchanged: `Copy HABIT.md` still copies `habit.markdown`. */
+.hrecord {
+  display: flex; flex-direction: column; gap: var(--s4);
+  padding: var(--s3); border-radius: var(--radius);
+  background: var(--sunken); border: 1px solid var(--hairline-soft);
+}
+.hrecord__block { display: flex; flex-direction: column; gap: var(--s2); }
+.hrecord__note {
+  margin: 0; font-size: var(--t-meta); line-height: 1.5; color: var(--muted);
+}
+
+.hrecord__slots, .hrecord__cautions, .hrecord__walks {
+  list-style: none; margin: 0; padding: 0;
+}
+.hrecord__cautions {
+  display: flex; flex-direction: column; gap: var(--s1);
+  font-size: var(--t-meta); line-height: 1.5; color: var(--muted);
+}
+.hrecord__cautions li { padding-left: var(--s3); text-indent: calc(-1 * var(--s2)); }
+.hrecord__cautions li::before { content: "· "; color: var(--muted); }
+
+.hrecord__slots { display: flex; flex-direction: column; gap: var(--s1); }
+.hrecord__slot { display: flex; align-items: baseline; gap: var(--s2); }
+.hrecord__slotname { font-size: var(--t-meta); color: var(--text); }
+.hrecord__slotnote { font-size: var(--t-meta); color: var(--muted); }
+
+/* WHERE THE TIME GOES. One bar per RECORDING, never one from a mean or a
+   maximum: an average invents a number no recording produced, and a single bar
+   drawn from the longest span overstates every other recording of that step.
+   The bar is the reading and the duration beside it is the fact — the portrait
+   band's rule, so no number is printed ON a bar. */
+.hrecord__times {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: var(--s2);
+}
+.hrecord__time {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: var(--s3); align-items: center;
+}
+.hrecord__timeplaces {
+  font-size: var(--t-meta); color: var(--text); overflow-wrap: anywhere;
+}
+.hrecord__n { color: var(--muted); }
+.hrecord__bars { display: flex; flex-direction: column; gap: var(--s0); min-width: 0; }
+.hrecord__barrow { display: flex; align-items: center; gap: var(--s2); }
+.hrecord__bar {
+  flex: 1; min-width: 0; height: 6px; border-radius: var(--radius-sm);
+  background: var(--hairline-soft);
+}
+.hrecord__fill {
+  display: block; height: 100%; border-radius: var(--radius-sm);
+  background: color-mix(in oklab, var(--data-0) 70%, transparent);
+}
+.hrecord__ms { flex: none; font-size: var(--t-meta); color: var(--muted); }
+
+/* The lifting notes, one disclosure away. `<details>` because the browser
+   already owns the keyboard path and the expanded state; a hand-rolled toggle
+   would owe all three. */
+.hrecord__lifting { font-size: var(--t-meta); color: var(--muted); }
+.hrecord__lifting summary { cursor: pointer; color: var(--text); }
+.hrecord__lifting .hrecord__cautions { margin-top: var(--s2); }
+
+/* The recordings themselves, openable. A ULID names a recording and can be read
+   by nothing; the ledger has been able to open these since `c205413`. */
+.hrecord__walks { display: flex; flex-wrap: wrap; gap: var(--s1); }
+.hrecord__walk { font-size: var(--t-meta); }
 /* The document's head. The habit's title used to exist on this pane only as the
    VALUE of a text input, so the editor opened on the word TITLE and the thing
    being edited was never named. */

@@ -2,12 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   approxDuration,
   cadenceOf,
+  cellLabel,
   DAYS,
   fadeLine,
   FADE_FLOOR_MS,
   FADE_MIN_WALKS,
   FADE_MULTIPLE,
   hasFaded,
+  HOUR_TICK_SPAN,
+  HOUR_TICKS,
   RHYTHM_MIN_DAYS,
   RHYTHM_MIN_WALKS,
   rhythmLabel,
@@ -133,14 +136,14 @@ describe("the grid", () => {
   it("places a Saturday walk on the Saturday row, not the Sunday one", () => {
     const r = rhythmOf(fourAcrossThree);
     if (r.kind !== "grid") throw new Error("unreachable");
-    expect(r.grid.cells[5]![21]).toBe(1);
-    expect(r.grid.cells[6]![21]).toBe(0);
+    expect(r.grid.cells[5]![21]!.count).toBe(1);
+    expect(r.grid.cells[6]![21]!.count).toBe(0);
   });
 
   it("counts two walks in the same hour of the week into one cell", () => {
     const r = rhythmOf(fourAcrossThree);
     if (r.kind !== "grid") throw new Error("unreachable");
-    expect(r.grid.cells[0]![9]).toBe(2);
+    expect(r.grid.cells[0]![9]!.count).toBe(2);
     expect(r.grid.peak).toBe(2);
     expect(r.grid.walks).toBe(4);
     expect(r.grid.days).toBe(3);
@@ -366,5 +369,129 @@ describe("fadeLine", () => {
   it("never grades, never counts down, never says behind", () => {
     const line = fadeLine(weekly, at(2026, 7, MON, 10) + 6 * WEEK)!;
     expect(line).not.toMatch(/%|behind|overdue|streak|score|should/i);
+  });
+});
+
+/**
+ * A CELL CARRIES ITS WALKS, because a cell you can point at is a cell you must
+ * be able to follow.
+ *
+ * The grid used to hold bare counts, which is exactly enough to paint a square
+ * and not enough to open anything — the same gap the ledger closed when its
+ * marks gained `walk`. A count can say "you did this twice on Monday morning";
+ * only the walk itself can take you there.
+ */
+describe("a cell carries the walks it counts", () => {
+  const nine = at(2026, 7, MON, 9);
+  const halfNine = at(2026, 7, MON, 9, 30);
+
+  const fourAcrossThree = [
+    walk(nine),
+    walk(halfNine),
+    walk(at(2026, 7, MON + 1, 14)),
+    walk(at(2026, 7, MON + 5, 21)),
+  ];
+
+  it("puts both walks of a shared hour in that cell, and none in its neighbours", () => {
+    const r = rhythmOf(fourAcrossThree);
+    if (r.kind !== "grid") throw new Error("unreachable");
+    const cell = r.grid.cells[0]![9]!;
+    expect(cell.walks.map((w) => w.at)).toEqual([nine, halfNine]);
+    expect(r.grid.cells[0]![8]!.walks).toEqual([]);
+    expect(r.grid.cells[0]![10]!.walks).toEqual([]);
+  });
+
+  /** `count` is `walks.length`, in every cell. Two numbers that can disagree
+      are one bug waiting; the paint and the link must come from one fact. */
+  it("never lets the count and the walks disagree", () => {
+    const r = rhythmOf(fourAcrossThree);
+    if (r.kind !== "grid") throw new Error("unreachable");
+    for (const row of r.grid.cells) {
+      for (const cell of row) expect(cell.count).toBe(cell.walks.length);
+    }
+  });
+
+  /**
+   * OLDEST FIRST inside a cell, and sorted here rather than trusted.
+   * `binding.walks` is documented oldest-first and `cadenceOf` still sorts it —
+   * a rule this consequential should not depend on a caller honouring that.
+   * The click target is the earliest walk in the hour, so an unsorted cell
+   * silently opens the wrong recording.
+   */
+  it("sorts a cell's walks oldest first even when handed them backwards", () => {
+    const r = rhythmOf([
+      walk(halfNine),
+      walk(nine),
+      walk(at(2026, 7, MON + 1, 14)),
+      walk(at(2026, 7, MON + 5, 21)),
+    ]);
+    if (r.kind !== "grid") throw new Error("unreachable");
+    expect(r.grid.cells[0]![9]!.walks.map((w) => w.at)).toEqual([nine, halfNine]);
+  });
+
+  it("keeps peak reading the counts, so the ramp is unchanged", () => {
+    const r = rhythmOf(fourAcrossThree);
+    if (r.kind !== "grid") throw new Error("unreachable");
+    expect(r.grid.peak).toBe(2);
+  });
+});
+
+/**
+ * What a cell says when a pointer asks it — the `placeLabel` / `markLabel`
+ * rule, one screen over: the picture is the reading and the words are the fact,
+ * so a pointer and a screen reader are told the same thing.
+ */
+describe("what one cell says", () => {
+  it("names the day and the hour, and counts in words", () => {
+    expect(cellLabel(0, 9, { count: 2, walks: [] })).toBe("Monday 09:00 — 2 recordings");
+    expect(cellLabel(6, 21, { count: 1, walks: [] })).toBe("Sunday 21:00 — 1 recording");
+  });
+
+  /** Midnight is 00:00, not 0:00 — the grid's axis prints two digits and the
+      label must agree with the axis it sits under. */
+  it("pads the hour to two digits", () => {
+    expect(cellLabel(1, 0, { count: 1, walks: [] })).toBe("Tuesday 00:00 — 1 recording");
+  });
+
+  it("says an empty hour is empty rather than printing a zero on its own", () => {
+    expect(cellLabel(3, 15, { count: 0, walks: [] })).toBe("Thursday 15:00 — no recordings");
+  });
+
+  it("never prints a rate, a percentage or a grade", () => {
+    expect(cellLabel(0, 9, { count: 2, walks: [] })).not.toMatch(/%|score|rate|streak/i);
+  });
+});
+
+/**
+ * THE HOUR AXIS, which the grid shipped without.
+ *
+ * Seven rows of twenty-four unlabelled cells cannot answer the question the
+ * strip exists to ask: it could say a habit repeats somewhere mid-week and
+ * never that it happens at 9am. Measured in the running app — 168 cells, no
+ * hour anywhere on screen.
+ *
+ * EVERY THIRD HOUR, never all 24. A tick spans three columns, so even in a
+ * narrow pane a two-digit label has three cells of width to sit in — the
+ * `labelFits` rule reached structurally rather than by measuring: a label that
+ * cannot truncate needs no truncation guard.
+ */
+describe("the hour axis", () => {
+  it("ticks every third hour, so 24 columns carry 8 labels", () => {
+    expect(HOUR_TICK_SPAN).toBe(3);
+    expect(HOUR_TICKS).toHaveLength(8);
+  });
+
+  it("starts at midnight and ends at 21:00, two digits throughout", () => {
+    expect(HOUR_TICKS.map((t) => t.label)).toEqual([
+      "00", "03", "06", "09", "12", "15", "18", "21",
+    ]);
+  });
+
+  /** The ticks must TILE the 24 columns exactly: a gap or an overlap puts every
+      label to the right of it under the wrong cell, which is a picture that
+      lies rather than one that is merely sparse. */
+  it("tiles all 24 columns exactly, with no gap and no overlap", () => {
+    expect(HOUR_TICKS.map((t) => t.hour)).toEqual([0, 3, 6, 9, 12, 15, 18, 21]);
+    expect(HOUR_TICKS.length * HOUR_TICK_SPAN).toBe(24);
   });
 });

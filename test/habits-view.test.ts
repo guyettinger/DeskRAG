@@ -14,7 +14,6 @@ import {
   markLabel,
   markReadout,
   markStates,
-  recordTail,
   walkSpan,
 } from "../app/src/renderer/src/habits-view.js";
 import type { LedgerMark } from "../app/src/renderer/src/habits-view.js";
@@ -62,6 +61,9 @@ const habit = (over: Partial<HabitDTO> = {}): HabitDTO => ({
   ways: [],
   fork: null,
   droppedEarly: [],
+  slots: [],
+  timings: null,
+  cautions: [],
   apps: [],
   slug: "a-habit",
   title: "A habit",
@@ -497,57 +499,6 @@ describe("the mark says how it compared", () => {
     const r = readoutOf(walk({ sessionId: "s1", at: 0, fit: fit({ skipped: 1 }) }));
     expect(r.fit).not.toMatch(/\d+%/);
     expect(r.fit).not.toMatch(/wrong|failed|bad|worse|poor/i);
-  });
-});
-
-describe("recordTail", () => {
-  // The steps become an instrument, so the <pre> holds the record FROM THE NEXT
-  // HEADING DOWN. `## Where the ways fork` only exists at count >= 2, so
-  // the tail cannot be found by name — it is the first heading after the steps.
-  const doc = (...sections: string[]): string =>
-    ["---", "name: x", "---", "", "Prose.", "", ...sections].join("\n");
-
-  it("starts at the heading after the recorded steps", () => {
-    const md = doc("## Recorded steps", "", "1. A → B", "", "## What varies", "", "Nothing.");
-    expect(recordTail(md)).toMatch(/^## What varies/);
-  });
-
-  it("finds it whatever the next heading is called", () => {
-    // A single-recording habit has no "Where the ways fork" section.
-    const md = doc("## Recorded steps", "", "1. A → B", "", "## Evidence", "", "Once.");
-    expect(recordTail(md)).toMatch(/^## Evidence/);
-  });
-
-  it("is empty when the record ends at the steps", () => {
-    expect(recordTail(doc("## Recorded steps", "", "1. A → B"))).toBe("");
-  });
-
-  it("keeps every later heading, not just the next one", () => {
-    const md = doc(
-      "## Recorded steps",
-      "",
-      "1. A → B",
-      "",
-      "## Where the ways fork",
-      "",
-      "All 2 recordings took the same path.",
-      "",
-      "## Evidence",
-      "",
-      "Recorded twice.",
-    );
-    const tail = recordTail(md);
-    expect(tail).toMatch(/## Where the ways fork/);
-    expect(tail).toMatch(/## Evidence/);
-    expect(tail).not.toMatch(/## Recorded steps/);
-  });
-
-  it("returns the whole document when there is no steps heading at all", () => {
-    // A defensive case, not a real one: if the record ever stops emitting the
-    // heading, showing everything is the honest failure and showing nothing is
-    // not.
-    const md = doc("## Something else", "", "text");
-    expect(recordTail(md)).toBe(md);
   });
 });
 

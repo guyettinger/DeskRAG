@@ -73,7 +73,15 @@ import { SignalTally } from "./recording-activity.js";
 import { IndexWorker } from "./index-worker.js";
 import { frequentRoutes, toGraphDTO } from "./graph-view.js";
 import { flowApps } from "./flow-steps.js";
-import { droppedEarlyOf, habitFork, habitWays, walkFits } from "./habit-marks.js";
+import {
+  droppedEarlyOf,
+  habitCautions,
+  habitFork,
+  habitSlots,
+  habitTimings,
+  habitWays,
+  walkFits,
+} from "./habit-marks.js";
 import {
   bindHabit,
   duplicateHabits,
@@ -1943,6 +1951,13 @@ export class DeskRagService {
       fork: flows !== null && bound.route !== null ? habitFork(flows, bound.route) : null,
       droppedEarly:
         flows !== null && bound.route !== null ? droppedEarlyOf(flows, bound.route) : [],
+      // The record's other three blocks, as data. An ORPHANED habit has no live
+      // route to read them from, so they are empty rather than guessed — the
+      // same rule `apps` states: inventing them from the bind-time label would
+      // put a guess in a picture. The screen draws the snapshot's prose instead.
+      slots: flows !== null && bound.route !== null ? habitSlots(flows, bound.route) : [],
+      timings: flows !== null && bound.route !== null ? habitTimings(flows, bound.route) : null,
+      cautions: flows !== null && bound.route !== null ? habitCautions(flows, bound.route) : [],
       markdown,
       binding,
     };
