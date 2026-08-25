@@ -357,11 +357,13 @@ export {
   type CaptionRepresenterOptions,
   type CaptionRepresentResult,
 } from "./represent/caption/caption-representer.js";
-export {
-  AppCaptionRepresenter,
-  type AppCaptionRepresenterOptions,
-  type AppCaptionRepresentResult,
-} from "./represent/caption/app-caption-representer.js";
+/**
+ * The captioner's own width cap. `ImageDownscaler` is an interface; the
+ * sharp-backed implementation is native and lives at
+ * `./represent/caption/sharp-downscale.js` — the same arrangement as
+ * `RegionCropper`, and for the same reason.
+ */
+export type { ImageDownscaler } from "./represent/caption/downscale.js";
 export { FakeCaptionProvider } from "./represent/caption/fake.js";
 /**
  * Local VLM captioner. Barrel-safe (plain fetch); `listVisionModels` is what the

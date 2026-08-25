@@ -228,13 +228,6 @@ export class DualStore implements Store {
            meta       = COALESCE(@meta, meta)
          WHERE id = @id`,
       ),
-      upsertSegmentAppCaption: db.prepare(
-        `INSERT INTO segment_app_caption(segment_id, text) VALUES (?, ?)
-         ON CONFLICT(segment_id) DO UPDATE SET text = excluded.text`,
-      ),
-      selectSegmentAppCaption: db.prepare(
-        "SELECT text FROM segment_app_caption WHERE segment_id = ?",
-      ),
       insertSegmentTreeEdge: db.prepare(
         `INSERT INTO segment_tree(session_id, parent_id, child_id) VALUES (?, ?, ?)
          ON CONFLICT(parent_id, child_id) DO NOTHING`,
@@ -449,9 +442,6 @@ export class DualStore implements Store {
       ),
       selectSegmentIdsWithTranscript: db.prepare(
         "SELECT id FROM segment WHERE transcript IS NOT NULL",
-      ),
-      selectSegmentIdsWithAppCaption: db.prepare(
-        "SELECT segment_id AS id FROM segment_app_caption",
       ),
       selectRegionById: db.prepare("SELECT * FROM region WHERE id = ?"),
       selectRegionsByFrame: db.prepare(
@@ -780,19 +770,6 @@ export class DualStore implements Store {
         meta: patch.meta === undefined ? null : JSON.stringify(patch.meta),
       });
     });
-  }
-
-  async updateSegmentAppCaption(segmentId: string, text: string): Promise<void> {
-    await this.mutex.run(async () => {
-      this.stmts.upsertSegmentAppCaption.run(segmentId, text);
-    });
-  }
-
-  getAppCaption(segmentId: string): string | undefined {
-    const row = this.stmts.selectSegmentAppCaption.get(segmentId) as
-      | { text: string }
-      | undefined;
-    return row?.text;
   }
 
   async putTranscriptClips(rows: TranscriptClipInsert[]): Promise<void> {
@@ -1699,9 +1676,7 @@ export class DualStore implements Store {
               ? this.stmts.selectSegmentIdsWithDigest
               : space.view === "transcript"
                 ? this.stmts.selectSegmentIdsWithTranscript
-                : space.view === "app_caption"
-                  ? this.stmts.selectSegmentIdsWithAppCaption
-                  : null;
+                : null;
         expected = new Set(
           stmt ? (stmt.all() as { id: string }[]).map((r) => r.id) : [],
         );

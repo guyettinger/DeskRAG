@@ -194,7 +194,6 @@ describe("initialStages", () => {
     expect(by.get("framePatches")!.detail).toMatch(/image model/i);
     expect(by.get("captions")!.state).toBe("skipped");
     expect(by.get("captions")!.detail).toMatch(/captioner/i);
-    expect(by.get("appCaptions")!.state).toBe("skipped");
 
     // Everything ungated still runs on a default install — that is what makes
     // text search work with no provider configured at all.

@@ -56,10 +56,54 @@ export const DEFAULT_EXCLUDED_APPS = [
   "com.github.Electron",
 ] as const;
 
+/**
+ * How wide a keyframe reaches the CAPTIONER — not how wide it is stored.
+ *
+ * Two consumers want opposite things and both are right. `imageMaxWidth` belongs
+ * to the image model: ColModernVBERT's preprocessor upscales below 2048px and
+ * match quality degrades with no visible error, which is why Settings banners
+ * the user to raise it to 2560. The VLM pays for every one of those pixels —
+ * measured on real keyframes with a 30B captioner, one caption cost 4113 prompt
+ * tokens and 154-224s at 2560px against 1389 tokens and 91-107s at 1280px, and
+ * both replies still read the calculator expression that was the whole
+ * retrievable content of the segment.
+ *
+ * 1280 rather than the 896 that measured fastest: 896 was 3-4x on two frames
+ * with one model, and `probe:caption` is what would justify moving there.
+ */
+export const DEFAULT_CAPTION_MAX_WIDTH = 1280;
+
+/**
+ * The band a stored value is kept inside.
+ *
+ * Below the floor a desktop screenshot stops being legible to any VLM, and the
+ * ceiling is `imageMaxWidth`'s own maximum — above it the cap could never bind,
+ * so a larger number is not a stronger preference, it is a no-op wearing one.
+ */
+const CAPTION_WIDTH_MIN = 320;
+const CAPTION_WIDTH_MAX = 3840;
+
+/**
+ * A persisted caption width, or the default.
+ *
+ * Coerced on READ only, the same split `mcpPortFor` follows and for the same
+ * reason `resolveWhisperBinary` is not: `apply()` runs on every keystroke in the
+ * Settings field, so clamping there would fight the typist mid-edit.
+ */
+export function captionMaxWidthFor(width: number | undefined): number {
+  if (typeof width !== "number" || !Number.isFinite(width)) return DEFAULT_CAPTION_MAX_WIDTH;
+  const rounded = Math.round(width);
+  if (rounded < CAPTION_WIDTH_MIN || rounded > CAPTION_WIDTH_MAX) {
+    return DEFAULT_CAPTION_MAX_WIDTH;
+  }
+  return rounded;
+}
+
 const DEFAULTS: PersistedSettings = {
   providers: {
     ollamaHost: "http://localhost:11434",
     ollamaCaptionModel: "qwen3-vl:4b",
+    captionMaxWidth: DEFAULT_CAPTION_MAX_WIDTH,
     ollamaSummaryModel: "qwen3:4b",
     // Stays nomic even though embeddinggemma scores higher: flipping this
     // strands every text vector on disk, so it is a decision for the bake-off
@@ -243,6 +287,7 @@ export class SettingsStore {
           binaryPath: resolveWhisperBinary(raw.providers?.whisper?.binaryPath),
         },
         localModels: { ...DEFAULTS.providers.localModels, ...raw.providers?.localModels },
+        captionMaxWidth: captionMaxWidthFor(raw.providers?.captionMaxWidth),
       };
       // The spread above copies whatever the old file held, including fields
       // that are no longer settings at all. Dropped rather than carried, so the

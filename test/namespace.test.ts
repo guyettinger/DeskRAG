@@ -70,12 +70,16 @@ describe("namespaceFor", () => {
    * these rows — `purgeRetiredSpaces` drops them before anything walks the
    * registry, and throwing on open is what took down a whole re-index once.
    */
-  it("treats the retired single-vector image views as unknown", () => {
+  it("treats every retired view as unknown", () => {
     for (const view of RETIRED_VIEWS) {
       expect(VIEWS as readonly string[]).not.toContain(view);
       expect(() => parseNamespace(`${view}:onnx:m:768`)).toThrow();
     }
-    expect(RETIRED_VIEWS).toEqual(["frame_image", "region_image"]);
+    // `app_caption` joined the two single-vector image views: a second VLM pass
+    // over each keyframe, cropped to the focused window. Listed here so the
+    // Lance table is DROPPED ON OPEN on every store that already has one —
+    // `purgeRetiredSpaces` walks exactly this list.
+    expect(RETIRED_VIEWS).toEqual(["frame_image", "region_image", "app_caption"]);
     expect(RETIRED_MODELS).toContain("colsmol-256m");
   });
 });
@@ -96,7 +100,6 @@ describe("multivector views", () => {
       "transcript",
       "behavior",
       "summary",
-      "app_caption",
     ] as const) {
       expect(MULTIVECTOR_VIEWS.has(v)).toBe(false);
     }

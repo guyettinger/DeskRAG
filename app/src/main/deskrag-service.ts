@@ -420,7 +420,7 @@ export class DeskRagService {
 
   /**
    * Async because the ONNX adapters load native code and therefore arrive via
-   * `await import()`, like loadCropper() already does.
+   * `await import()`, like loadDownscaler() already does.
    *
    * An EMBEDDER that cannot load throws. It must never silently fall back to a
    * different embedder: that writes into a different vector space while the user
@@ -882,19 +882,31 @@ export class DeskRagService {
       excludeApps: this.settings.view().flows.excludeApps,
       store: this.store,
       blobs: this.blobs,
-      loadCropper: () => this.loadCropper(),
+      loadDownscaler: () => this.loadDownscaler(),
       buildTranscriber: () => this.buildTranscriber(),
     };
   }
 
-  private async loadCropper(): Promise<import("deskrag").RegionCropper | null> {
+  /**
+   * The captioner's width cap, lazily, so importing this module never loads
+   * libvips.
+   *
+   * Returns null rather than throwing on any failure, and the caller treats null
+   * as "send the original bytes". That is the right degradation here and the
+   * OPPOSITE of what `loadCropper` did before it: a missing crop meant a stage
+   * with nothing useful to write, where a missing resize only means a slower
+   * caption.
+   */
+  private async loadDownscaler(): Promise<import("deskrag").ImageDownscaler | null> {
     try {
       const mod = (await import(
-        /* @vite-ignore */ libUrl("deskrag/represent/regions/sharp-cropper")
-      )) as { SharpRegionCropper: new () => import("deskrag").RegionCropper };
-      return new mod.SharpRegionCropper();
+        /* @vite-ignore */ libUrl("deskrag/represent/caption/sharp-downscale")
+      )) as {
+        sharpDownscaler: (maxWidth: number) => import("deskrag").ImageDownscaler;
+      };
+      return mod.sharpDownscaler(this.settings.view().providers.captionMaxWidth);
     } catch (err) {
-      console.error("[deskrag] sharp cropper unavailable:", err);
+      console.error("[deskrag] sharp downscaler unavailable:", err);
       return null;
     }
   }
@@ -929,7 +941,7 @@ export class DeskRagService {
     const searchers: ViewSearcher[] = [];
     // `summary` is the composed levels — a task or a process answering at its
     // own altitude, rather than a 900ms action standing in for one.
-    for (const view of ["digest", "summary", "caption", "app_caption", "transcript"] as const) {
+    for (const view of ["digest", "summary", "caption", "transcript"] as const) {
       const s = new TextViewSearcher(prov.textEmbedder, view);
       if (registered.has(s.namespace)) searchers.push(s);
     }
@@ -985,7 +997,7 @@ export class DeskRagService {
     // that before searching, or an empty result over a full library is
     // indistinguishable from "nothing matched".
     const registered = new Set(this.store.listVectorSpaces().map((s) => s.namespace));
-    const hasCurrentTextSpace = (["digest", "caption", "app_caption", "transcript"] as const).some(
+    const hasCurrentTextSpace = (["digest", "caption", "transcript"] as const).some(
       (view) => registered.has(new TextViewSearcher(prov.textEmbedder, view).namespace),
     );
     const hasAnyTextSpace = this.store
@@ -994,7 +1006,6 @@ export class DeskRagService {
         (s) =>
           s.view === "digest" ||
           s.view === "caption" ||
-          s.view === "app_caption" ||
           s.view === "transcript",
       );
 
@@ -1419,8 +1430,8 @@ export class DeskRagService {
    * second list to keep in step.
    *
    * Re-segmenting is safe, and it was not before. The old worry was that new
-   * segment ids would orphan every caption, app_caption and transcript attached
-   * to the old ones — true, and the reason `Segmenter` was excluded.
+   * segment ids would orphan every caption and transcript attached to the old
+   * ones — true, and the reason `Segmenter` was excluded.
    * `purgeDerived` removes those rows first and the stages rewrite them.
    *
    * WHAT THIS COSTS, and why the UI confirms first: a recording is rebuilt with
