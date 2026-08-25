@@ -97,6 +97,37 @@ const arg = (name, fallback) => {
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
 };
 
+/**
+ * A BARE POSITIONAL MEANS THE FLAG WAS EATEN, and this probe cannot afford to
+ * shrug at one.
+ *
+ * `npm run probe:caption --widths 2560,1920,1280` does NOT pass `--widths`:
+ * npm consumes it as its own config and hands the script the bare value
+ * `2560,1920,1280`. Every flag then falls back to its default -- including
+ * `--limit`, which is 10 -- and the run LOOKS like the one that was asked for,
+ * because the default width list happens to be the same three numbers. That is
+ * how a sweep was published off 10 frames: the banner echoed the intended
+ * widths and nothing said the limit had been ignored. The separator is what
+ * npm needs: `npm run probe:caption -- --widths 2560,1920,1280`.
+ */
+const stray = [];
+for (let i = 2; i < process.argv.length; i++) {
+  if (process.argv[i].startsWith("--")) {
+    if (!process.argv[i].includes("=")) i++; // its value
+    continue;
+  }
+  stray.push(process.argv[i]);
+}
+if (stray.length > 0) {
+  console.error(
+    `REFUSED: ${stray.map((s) => JSON.stringify(s)).join(", ")} reached this script as a bare\n` +
+      "argument, so the flag in front of it was swallowed -- npm eats `--foo bar` after\n" +
+      "`npm run`, and EVERY other flag then silently took its default. Repeat the run with\n" +
+      "the separator:  npm run probe:caption -- --widths 2560,1920,1280 --limit 33",
+  );
+  process.exit(1);
+}
+
 const DATA = arg("data", join(homedir(), "Library/Application Support/deskrag-app/DeskRAG"));
 const LIMIT = Number(arg("limit", "10"));
 const SEED = Number(arg("seed", "7"));
@@ -475,10 +506,42 @@ if (results[0].width === "stored") {
  * which is a fact about the corpus and not about the width.
  */
 console.log("");
-if (base.screen === 0) {
+/**
+ * THE CONTROL HAS TO BE ABLE TO LOSE SOMETHING, and below seven answers it
+ * cannot -- so the verdict is withheld rather than printed at low resolution.
+ *
+ * The verdict is a RATIO against the widest width, so its resolution is 1/n
+ * where n is what the control actually recovered. The bands are 0.95 and 0.85,
+ * and the smallest n for which any k/n lands between them is SEVEN (6/7 =
+ * 0.857); at n <= 6 the MARGINAL band is unreachable and the verdict has only
+ * two states it can ever print. At n = 1 -- which is what a run
+ * whose --limit was eaten produced -- "reads 100% of the on-screen text the
+ * 2560px did, SAFE" is a comparison of one string against one string, and it
+ * reads exactly like a measurement.
+ *
+ * The timing columns above are unaffected and stay printed: latency needs no
+ * ground truth, and it was corroborated independently against `index_job`.
+ */
+const VERDICT_MIN_ANSWERS = 7;
+// `base.screen` is a RATIO; `base.hit.screen` is the COUNT the ratio's
+// resolution comes from. Reading the ratio here would make the guard fire on
+// every run that is not perfect, which is every run.
+const baseAnswers = base.hit.screen;
+if (baseAnswers === 0) {
   console.log(
     "  NO VERDICT: the widest width read none of the on-screen strings, so there is " +
       "nothing for a narrower one to lose. Check the captioner is answering at all.",
+  );
+} else if (baseAnswers < VERDICT_MIN_ANSWERS) {
+  console.log(
+    `  NO VERDICT ON CONTENT: the ${base.width}px control recovered ${baseAnswers} of ` +
+      `${sampledScreen} on-screen strings, so the finest step this ratio can take is ` +
+      `1/${baseAnswers} (${(100 / baseAnswers).toFixed(0)}%).\n` +
+      `  The MARGINAL band between 85% and 95% is unreachable -- the verdict could only ` +
+      `read SAFE or LOSES CONTENT. The LATENCY column above stands; the content column ` +
+      `is not a measurement.\n` +
+      `  Raise --limit (there are ${withScreen.length} frames that carry on-screen text) ` +
+      `and remember the npm separator: npm run probe:caption -- --limit 33`,
   );
 } else {
   for (const r of results.slice(1)) {
