@@ -17,7 +17,7 @@
  * THE FILE IS NOT REDRAWN HERE. `HABIT.md` is rendered in main and handed out
  * verbatim — `Copy HABIT.md` and `get_habit` return the same string, and none
  * of it passes through this file. This is a SECOND RENDERER of the same facts,
- * the shape `WayForkView` already established: safe only because neither
+ * the shape `way-lattice.ts` already established: safe only because neither
  * parses the other's output, and both read one projection from main.
  *
  * A `.ts` module, never `.tsx`, so the root suite can reach it — the rule
@@ -27,7 +27,7 @@
  * as a duration. Nothing here computes a rate, a percentage or a grade.
  */
 
-import type { HabitTimingsDTO, HabitWayDTO } from "@shared/types";
+import type { HabitRunDTO, HabitTimingsDTO, HabitWayDTO } from "@shared/types";
 
 /** "A", "A and B", "A, B and C" — no Oxford comma, matching the record's prose. */
 function joinWords(items: readonly string[]): string {
@@ -389,6 +389,9 @@ export interface StripSegment {
 
 export interface StripLane {
   sessionId: string;
+  /** Which Way this recording took, and its letter. See `HabitRunDTO`. */
+  way: number;
+  wayLetter: string;
   /** Wall clock of the recording's start, for the label. Null when unknown. */
   at: number | null;
   /** Where inside the recording to open, in lane seconds. Null when unplaceable. */
@@ -405,24 +408,32 @@ export interface StripView {
   domainMs: number;
   legend: { app: string; toneSlot: number }[];
   /**
-   * Recordings of this route that walked a DIFFERENT Way, counted.
+   * The route has more than one Way, so a lane's letter is worth printing.
    *
-   * Never silently dropped: the strip draws the baseline Way's recordings, and
-   * a reader counting three marks on the ledger against two lanes here is owed
-   * the reason. The fork instrument is where those recordings are drawn.
+   * `liftingRollup`'s rule: one Way needs no letter, and labelling it "Way A"
+   * claims a distinction against Ways that are not being drawn. The record's
+   * own `where` drops it for the same reason.
    */
-  elsewhere: number;
-}
-
-/** A recording's placement, injected so this module stays free of the DTO's shape. */
-export interface StripWalk {
-  sessionId: string;
-  at: number;
-  atSec: number | null;
+  manyWays: boolean;
 }
 
 /**
- * One lane per recording, segmented by step, on ONE shared domain.
+ * One lane per RECORDING, segmented by the steps that recording walked.
+ *
+ * IT DRAWS EVERY RUN, which is the change. It used to read `HabitTimingsDTO`,
+ * which costs the BASELINE Way alone — so on the author's real store a
+ * 6-recording habit drew two lanes and apologised for four, and Finder never
+ * appeared at all because only Way F reaches it and Way F is not the baseline.
+ * The record's masthead named Finder in its app chain the whole time, so the
+ * legend under the axis and the chain above it disagreed about which
+ * applications the route passes through.
+ *
+ * The second lane was worse than missing: `stepCosts` reads an edge's sources
+ * across EVERY session, so a recording that walked another Way and shared a
+ * single edge arrived as a lane holding that one step — measured, a 1.0s sliver
+ * drawn on Way E's axis, indistinguishable from a recording that really did
+ * take 1.0s. `HabitRunDTO` is built per session per Way, so there is no session
+ * to leak and this function has nothing to filter.
  *
  * THE LANE'S EXTENT IS THE SUM OF WHAT IS DRAWN — its step spans plus the idle
  * between them — and never the recording's whole-walk duration. The two are
@@ -430,102 +441,84 @@ export interface StripWalk {
  * end would assert an unmeasured remainder. The whole-walk range is printed in
  * the masthead, where it is a fact rather than an axis.
  *
+ * ONE SHARED DOMAIN across every lane, so Way F's 62.3s detour is visibly three
+ * times Way E's 19.7s. Per-lane scaling would draw every recording the same
+ * width and say nothing — the ledger's shared-domain rule.
+ *
  * NO WIDTH FLOOR HERE, deliberately, unlike the spine's bars: segments TILE a
  * lane, so a floor on one steals width from its neighbours and the lane stops
  * summing to itself. A sub-pixel step is kept visible by `min-width: 1px` in
  * the sheet — the rail's own rule, applied where it belongs.
  *
- * NULL when there is nothing to draw: no timings (fewer than two recordings, or
- * no baseline) or no attributed span. The caller then states the reason — a
- * strip that merely never appeared would be indistinguishable from one nobody
- * implemented.
+ * NULL when there is nothing to draw — no runs, or no attributed span. The
+ * caller then states the reason: a strip that merely never appeared would be
+ * indistinguishable from one nobody implemented.
  */
 export function stripLanes(
-  way: HabitWayDTO,
-  timings: HabitTimingsDTO | null,
-  walks: readonly StripWalk[],
+  runs: readonly HabitRunDTO[],
+  ways: readonly HabitWayDTO[],
   tones: Map<string, number>,
-  totalRecordings: number,
 ): StripView | null {
-  if (timings === null) return null;
+  if (runs.length === 0) return null;
 
-  const placeOf = new Map(way.steps.map((s) => [s.index, s.to]));
-  const appOf = new Map(way.steps.map((s) => [s.index, s.app]));
-  const ordered = [...timings.steps].sort((a, b) => a.stepIndex - b.stepIndex);
+  // A step is located by (way, stepIndex) — never by position in `segments`,
+  // which drops steps carrying no source and so is a SUBSET of the Way's steps.
+  // That off-by-one is the one `HabitStepTimingDTO.stepIndex` exists for.
+  const stepAt = ways.map((w) => new Map(w.steps.map((s) => [s.index, s])));
 
-  // Gather each recording's own run of segments, in step order.
-  const raw = new Map<string, { kind: "step" | "idle"; stepIndex: number | null; ms: number }[]>();
-  const push = (sessionId: string, seg: { kind: "step" | "idle"; stepIndex: number | null; ms: number }): void => {
-    const list = raw.get(sessionId);
-    if (list === undefined) raw.set(sessionId, [seg]);
-    else list.push(seg);
-  };
-  for (const step of ordered) {
-    for (const r of step.runs) push(r.sessionId, { kind: "step", stepIndex: step.stepIndex, ms: r.ms });
-    for (const g of step.gapsAfterMs) push(g.sessionId, { kind: "idle", stepIndex: null, ms: g.ms });
-  }
-  if (raw.size === 0) return null;
-
-  const totals = new Map(
-    [...raw].map(([id, segs]) => [id, segs.reduce((n, s) => n + s.ms, 0)] as const),
-  );
-  const domainMs = Math.max(...totals.values());
+  const domainMs = Math.max(...runs.map((r) => r.totalMs));
   if (domainMs <= 0) return null;
 
-  const walkOf = new Map(walks.map((w) => [w.sessionId, w]));
-  // OLDEST FIRST, matching the ledger and the walks list. `way.sessionIds` is
-  // ordered by the route, so a lane's position never depends on which step
-  // happened to be timed first.
-  const order = way.sessionIds.filter((id) => raw.has(id));
-  for (const id of raw.keys()) if (!order.includes(id)) order.push(id);
-
-  const lanes = order.map((sessionId): StripLane => {
-    const segs = raw.get(sessionId) ?? [];
-    const totalMs = totals.get(sessionId) ?? 0;
+  const lanes = runs.map((run): StripLane => {
     let atPct = 0;
-    const segments = segs.map((s): StripSegment => {
-      const widthPct = (s.ms / domainMs) * 100;
-      const leftPct = atPct;
+    const segments: StripSegment[] = [];
+    const push = (
+      kind: "step" | "idle",
+      stepIndex: number | null,
+      place: string,
+      toneSlot: number | null,
+      ms: number,
+    ): void => {
+      const widthPct = (ms / domainMs) * 100;
+      segments.push({ kind, stepIndex, place, toneSlot, ms, leftPct: atPct, widthPct, text: secs(ms) });
       atPct += widthPct;
-      const app = s.stepIndex === null ? null : appOf.get(s.stepIndex) ?? null;
-      return {
-        kind: s.kind,
-        stepIndex: s.stepIndex,
-        place: s.stepIndex === null ? "" : placeOf.get(s.stepIndex) ?? "",
-        toneSlot: toneOf(app, tones),
-        ms: s.ms,
-        leftPct,
-        widthPct,
-        text: secs(s.ms),
-      };
-    });
-    const walk = walkOf.get(sessionId);
+    };
+
+    for (const seg of run.segments) {
+      const step = stepAt[run.way]?.get(seg.stepIndex);
+      push("step", seg.stepIndex, step?.to ?? "", toneOf(step?.app ?? null, tones), seg.ms);
+      // A ZERO GAP IS NOT A SEGMENT. `min-width: 1px` in the sheet would paint
+      // it as a hairline of hatching between two steps that ran back to back,
+      // which reads as a pause that was measured and was not.
+      if (seg.idleAfterMs > 0) push("idle", null, "", null, seg.idleAfterMs);
+    }
+
     return {
-      sessionId,
-      at: walk?.at ?? null,
-      atSec: walk?.atSec ?? null,
-      totalMs,
-      totalText: secs(totalMs),
+      sessionId: run.sessionId,
+      way: run.way,
+      wayLetter: run.wayLetter,
+      at: run.at,
+      atSec: run.atSec,
+      totalMs: run.totalMs,
+      totalText: secs(run.totalMs),
       segments,
     };
   });
 
   // The legend names only what the strip actually PAINTS, in the order it is
   // first reached — a swatch for an application no lane contains would send a
-  // reader looking for a colour that is not there.
+  // reader looking for a colour that is not there. Reached across EVERY lane
+  // now, which is how Finder finally gets into it.
   const legend: { app: string; toneSlot: number }[] = [];
-  for (const step of ordered) {
-    const app = appOf.get(step.stepIndex) ?? null;
-    const slot = toneOf(app, tones);
-    if (app !== null && slot !== null && !legend.some((l) => l.app === app)) {
-      legend.push({ app, toneSlot: slot });
+  for (const lane of lanes) {
+    for (const seg of lane.segments) {
+      if (seg.kind !== "step" || seg.toneSlot === null) continue;
+      const app = [...tones].find(([, slot]) => slot === seg.toneSlot)?.[0];
+      if (app !== undefined && !legend.some((l) => l.app === app)) {
+        legend.push({ app, toneSlot: seg.toneSlot });
+      }
     }
   }
 
-  return {
-    lanes,
-    domainMs,
-    legend,
-    elsewhere: Math.max(0, totalRecordings - lanes.length),
-  };
+  return { lanes, domainMs, legend, manyWays: ways.length > 1 };
 }

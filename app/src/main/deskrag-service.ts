@@ -78,6 +78,7 @@ import {
   habitCautions,
   habitFork,
   habitSlots,
+  habitRuns,
   habitTimings,
   habitWays,
   walkFits,
@@ -1968,6 +1969,7 @@ export class DeskRagService {
       // put a guess in a picture. The screen draws the snapshot's prose instead.
       slots: flows !== null && bound.route !== null ? habitSlots(flows, bound.route) : [],
       timings: flows !== null && bound.route !== null ? habitTimings(flows, bound.route) : null,
+      runs: flows !== null && bound.route !== null ? habitRuns(flows, bound.route) : [],
       cautions: flows !== null && bound.route !== null ? habitCautions(flows, bound.route) : [],
       markdown,
       binding,

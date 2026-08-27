@@ -4060,27 +4060,50 @@ select {
 .habits__headtext { min-width: 0; }
 .habits__bar { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; }
 
-/* The band under the h1. NOTHING TRUNCATES: an app name either fits its column
-   or wraps, and the column is sized from the longest name rather than clipped.
-   ONE HUE — `--data-0` at varying lightness — because C1 owns `--data-2` and
-   `--data-3` for conformance and a colour's meaning is a repo-wide claim. */
+/* The band under the h1: WHERE IN THE WEEK the whole library's work happens.
+   It replaced a bar per application, which on the author's real store drew
+   three bars all at full width and always would have — one habit through three
+   apps weighs each of them equally, and every proposal is excluded by the
+   recurrence gate. ONE HUE, `--data-0` at varying lightness, because C1 owns
+   `--data-2` and `--data-3` for conformance and a colour's meaning is a
+   repo-wide claim. */
 .portrait { margin-top: var(--s3); display: flex; flex-direction: column; gap: var(--s2); }
-/* FULL WIDTH of the band. The 520px cap it replaces made the picture a third of
-   its container while the coverage line beneath it ran the full width, so the
-   band read as an unfinished column rather than as one reading. The name column
-   is still `max-content`, so nothing truncates — only the bars grew. */
-.portrait__places {
-  list-style: none; margin: 0; padding: 0;
-  display: grid; grid-template-columns: max-content 1fr; gap: var(--s1) var(--s2);
-  align-items: center;
+/* IT REUSES `.rhythm__grid` RATHER THAN RESTATING IT. The two grids are the
+   same instrument at two scopes, and a second set of geometry would be the
+   `ax-dump`/`ax-exec` drift hazard in a stylesheet — including the `display:
+   block` trap on the nested cell, which measured 0x0 and was invisible in both
+   the DOM and the screenshot. Only what genuinely differs is declared here. */
+/* TALLER CELLS, because the band is wider than the pane the per-habit grid
+   sits in. Measured in the running app: at 1260px the 24 columns give a 49.7px
+   cell, and at the shared 14px height that is a 3.5:1 sliver that reads as a
+   bar chart rather than as a grid. The per-habit instrument runs 33x14 (2.4:1)
+   at 835px; 20px here restores that proportion without capping the width — and
+   the cap is what the per-habit grid was moved OUT of, because a picture a
+   third of its container reads as an unfinished column. */
+.portrait__week { column-gap: 3px; }
+.portrait__week .rhythm__cell,
+.portrait__week .rhythm__hit { height: 20px; }
+/* A HOLLOW RING IS A ROUTE WALKED ONCE — the ledger's `is-lone` rule, one
+   instrument up. A RING rather than a fainter fill, and for the ledger's exact
+   reason: a lighter square reads as *less important*, where a ring reads as
+   *not filled in yet*, which is the true statement about an observation. It
+   carries no `background` at all, so the count ramp cannot dilute it. */
+.rhythm__cell.is-lone {
+  background: none;
+  box-shadow: inset 0 0 0 1.5px color-mix(in oklab, var(--data-0) 70%, transparent);
 }
-.portrait__place { display: contents; }
-.portrait__app { font-size: var(--t-meta); color: var(--text); overflow-wrap: anywhere; }
-.portrait__bar {
-  display: block; height: 6px; border-radius: var(--radius-sm);
-  background: var(--sunken);
+/* The route's name, above the readout, when a cell can hold walks of several.
+   The per-habit grid passes null and this never draws. */
+.rhythm__tip-route {
+  font-size: var(--t-meta); color: var(--text); font-weight: 550;
+  margin-bottom: var(--s0);
 }
-.portrait__fill { display: block; height: 100%; border-radius: var(--radius-sm); }
+/* The NOTE is the picture's own claim and the COVERAGE line is the library's
+   shape, so they are not the same kind of sentence and must not be set as
+   though they were — two identical muted lines stacked read as one paragraph
+   that got wrapped. The claim takes body weight; the coverage stays mono meta,
+   which is the voice every other count on this screen is printed in. */
+.portrait__note { margin: 0; font-size: var(--t-body); color: var(--text); }
 .portrait__coverage { font-size: var(--t-meta); color: var(--muted); margin: 0; }
 
 /* List | editor. EVERY link in the height chain needs min-height: 0, and the
@@ -4446,7 +4469,7 @@ select {
    shares ONE set of columns. Per-lane grids size their `max-content` columns
    independently — measured in the running app at 444.6px and 451.1px of track
    on two lanes of one strip — and a shared domain drawn on two different axes
-   is not a shared domain at all. This is `.portrait__place`'s pattern, and it
+   is not a shared domain at all. This is `.rhythm__grid`'s pattern, and it
    is what makes a stack of rows a small-multiples reading. */
 .hstrip__lanes {
   list-style: none;
@@ -4457,7 +4480,41 @@ select {
   gap: var(--s1) var(--s2);
   align-items: center;
 }
+/* THE WAY COLUMN IS DROPPED, NOT EMPTIED, on a route with one way — the
+   `liftingRollup` rule that one way needs no letter. An empty reserved column
+   reads as something that failed to load, which is the defect the spine's bar
+   column already paid for (`data-bars="no"`). */
+.hstrip__lanes[data-ways="many"] {
+  grid-template-columns: max-content max-content minmax(0, 1fr) max-content max-content;
+}
 .hstrip__lane { display: contents; }
+/* Tracing one way dims the others. OPACITY on the segments only: dimming the
+   whole row would fade the timestamp and the Open button, and a control that
+   looks disabled while it still works is worse than no feedback at all. */
+.hstrip__lane.is-dim .hstrip__track { opacity: 0.3; }
+.hstrip__lane.is-lit .hstrip__track {
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 55%, transparent);
+}
+/* The letter IS the control — a chip-sized button, so the lane and the graph
+   below are two ways into one selection. */
+.hstrip__way {
+  border: 1px solid var(--hairline-soft);
+  background: none;
+  color: var(--muted);
+  font-size: var(--t-meta);
+  font-weight: 600;
+  line-height: 1;
+  padding: var(--s1) var(--s2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.hstrip__way:hover { color: var(--text); border-color: var(--hairline); }
+.hstrip__way.is-picked {
+  color: var(--text);
+  border-color: color-mix(in oklab, var(--accent) 60%, transparent);
+  background: color-mix(in oklab, var(--accent) 12%, transparent);
+}
+.hstrip__way:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .hstrip__when { font-size: var(--t-meta); color: var(--muted); }
 .hstrip__track {
   position: relative;
@@ -4597,58 +4654,132 @@ select {
 }
 .hspine__ms { flex: none; font-size: var(--t-meta); color: var(--muted); }
 
-/* Where the ways fork (C3). --data-6 is the one unclaimed indexed slot, and the
-   palette's own note at the top of this file calls it an instrument colour and a
-   lane colour. Colour carries SPINE vs FORK; a way is identified by its printed
-   letter, never by hue. */
-.wayfork { display: flex; flex-direction: column; gap: var(--s3); }
-.wayfork__lead { margin: 0; font-size: var(--t-meta); color: var(--muted); }
-.wayfork__chips { display: flex; flex-wrap: wrap; gap: var(--s2); }
-.wayfork__chip {
+/* WHERE THE WAYS FORK (C3), as one graph. It replaced a chip row over an
+   indented list of phrases — measured on the real store, fourteen lines of
+   which half said `nothing here`.
+
+   COLOUR CARRIES THE APPLICATION here, not spine-versus-fork as the list did.
+   A node reads its `[data-tone]` slot from the SAME `appTones` map the
+   masthead chain and the strip's legend use, so an application is one colour
+   in all three instruments — which is the only reason the legend above can be
+   trusted by the graph below. A way is identified by its printed letter, its
+   lane and the highlight; hue never has to stretch to N ways. */
+.wlat { display: flex; flex-direction: column; gap: var(--s3); }
+.wlat__lead { margin: 0; font-size: var(--t-meta); color: var(--muted); }
+.wlat__verdict { margin: 0; font-size: var(--t-meta); }
+
+/* THE CHIPS ARE THE SELECTOR. They carried the same four facts before and did
+   nothing with them; a chip that traces its own path is those words doing a job. */
+.wlat__chips { display: flex; flex-wrap: wrap; gap: var(--s2); }
+.wlat__chip {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s0);
+  align-items: flex-start;
   font-size: var(--t-meta);
   padding: var(--s1) var(--s2);
   border-radius: var(--radius-sm);
-  background: color-mix(in oklab, var(--data-6) 12%, transparent);
-}
-.wayfork__spine {
-  margin: 0;
-  padding-left: var(--s4);
-  display: flex;
-  flex-direction: column;
-  gap: var(--s3);
-}
-.wayfork__step { display: flex; flex-direction: column; gap: var(--s1); }
-.wayfork__places { font-weight: 600; }
-.wayfork__n { color: var(--muted); font-variant-numeric: tabular-nums; }
-.wayfork__ats { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: baseline; }
-.wayfork__at {
-  display: inline-flex;
-  gap: var(--s1);
-  align-items: baseline;
-  font-size: var(--t-meta);
+  border: 1px solid var(--hairline-soft);
+  background: var(--sunken);
   color: var(--muted);
+  cursor: pointer;
+  text-align: left;
 }
-/* Said in words, never a greyed control with no reason. */
-.wayfork__noopen { font-size: var(--t-nano); color: var(--muted); }
-.wayfork__band {
+.wlat__chip b { color: var(--text); font-weight: 600; }
+.wlat__chip:hover { border-color: var(--hairline); }
+/* THE CONTACT RULE is the app's one way of saying "current", and it is written
+   out per selector rather than as a bare `.is-active` — in a sheet with no
+   scoping that name would claim every future use of it. */
+.wlat__chip.is-picked {
+  border-color: color-mix(in oklab, var(--accent) 60%, transparent);
+  background: color-mix(in oklab, var(--accent) 12%, transparent);
+}
+.wlat__chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.wlat__chipmeta { font-size: var(--t-nano); }
+
+/* The world. Sized in the layout, in world coordinates, so the SVG wire layer
+   and the absolutely-positioned pills share one origin — `GraphCanvas`'s
+   structure. It SCROLLS rather than zooming: the real store's longest branch is
+   nine steps, which is tall but finite, and a pan/zoom viewport inside an
+   editor pane is machinery this diagram does not need. */
+.wlat__canvas {
+  position: relative;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.wlat__wires { position: absolute; inset: 0; pointer-events: none; }
+.wlat__wire {
+  fill: none;
+  stroke: var(--hairline);
+  stroke-linecap: round;
+  transition: stroke 120ms ease, opacity 120ms ease;
+}
+.wlat__wire.is-lit { stroke: var(--accent); }
+.wlat__wire.is-dim { opacity: 0.22; }
+
+/* A PILL, not a card. Flows draws 180x132 nodes because each carries a
+   keyframe; the question here is the SHAPE of the divergence, and the whole
+   fork has to fit on one screen. */
+.wlat__node {
+  position: absolute;
   display: flex;
   flex-direction: column;
-  gap: var(--s1);
+  justify-content: center;
+  gap: var(--s0);
   padding: var(--s1) var(--s2);
-  border-left: 2px solid color-mix(in oklab, var(--data-6) 55%, transparent);
-  background: color-mix(in oklab, var(--data-6) 8%, transparent);
+  border-radius: var(--radius);
+  border: 1px solid var(--hairline-soft);
+  /* The tone is a LEFT RAIL, not a fill: eight background tints at this size
+     would put eight coloured blocks behind eight pieces of text and lose the
+     lightness separation the data register is built on.
+
+     AN INSET SHADOW, NOT `border-left`. It was a border first, and tracing a
+     way ERASED IT — `.is-lit` sets `border-color`, which is all four sides, so
+     every pill on the lit path lost the one channel that says which
+     application it is. Visible only in the screenshot: the DOM had the tone
+     slot set correctly on every node the whole time. A shadow and a border are
+     independent properties, so neither can overwrite the other. */
+  box-shadow: inset 3px 0 0 var(--tone, var(--muted-dim));
+  padding-left: calc(var(--s2) + 3px);
+  background: var(--panel);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: opacity 120ms ease, border-color 120ms ease;
 }
-.wayfork__run { margin: 0; font-size: var(--t-meta); color: var(--muted); }
-/* The button is the LEAST important thing in its row and was the loudest —
-   measured in the running app, four full-size `btn`s per step read as four
-   identical controls and buried the Way letters they belong to. The letter is
-   what tells the ways apart, so it is what must be legible first. */
-.wayfork__open {
-  padding: var(--s1) var(--s2);
-  font-size: var(--t-meta);
-  font-weight: 550;
+.wlat__node:hover { border-color: var(--hairline); }
+/* An ORIGIN is a place, not a step, so there is no moment inside a recording it
+   could open. It is drawn in the sunken surface so it reads as the ground the
+   route starts from rather than as a step nobody recorded. */
+.wlat__node--origin { background: var(--sunken); border-style: dashed; }
+.wlat__node:disabled { cursor: default; }
+/* The RING is the border and the RAIL is the shadow, so lighting a node cannot
+   take its application colour with it. See the rail's note above. */
+.wlat__node.is-lit { border-color: color-mix(in oklab, var(--accent) 55%, transparent); }
+.wlat__node.is-dim { opacity: 0.25; }
+.wlat__node:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* NOTHING TRUNCATES — the rail's rule. A place name wraps inside its pill; a
+   pill that cannot hold its name grows a second line rather than an ellipsis,
+   which would hide the fact that the layout broke. */
+.wlat__place {
+  font-size: var(--t-body);
+  font-weight: 600;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
 }
-.wayfork__verdict { margin: 0; font-size: var(--t-meta); }
+.wlat__summary { font-size: var(--t-nano); color: var(--muted); overflow-wrap: anywhere; }
+/* THE LETTERS RIDE THE DIAGRAM. A branch whose ways are named only in a key
+   makes the reader look away from the picture to read it. */
+.wlat__ways {
+  position: absolute;
+  top: var(--s1);
+  right: var(--s2);
+  font-size: var(--t-nano);
+  color: var(--muted-dim);
+  letter-spacing: 0.04em;
+}
+
 .habitedit__toggle {
   display: flex; gap: var(--s2); align-items: flex-start;
   font-size: var(--t-meta); color: var(--muted); line-height: 1.45;

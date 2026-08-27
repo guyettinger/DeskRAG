@@ -9,12 +9,19 @@
  *
  * It asserts three things `npm test` structurally cannot reach:
  *
- *   1. the portrait band draws FULL WIDTH, nothing truncates, and no bar
- *      prints a number;
- *   2. the rhythm strip either draws 168 cells with a readable hour axis and a
- *      way into each walk, or STATES why it cannot;
+ *   1. the portrait band places the WHOLE LIBRARY in the week — 168 cells full
+ *      width, a hollow ring for a route walked once, and no score anywhere;
+ *   2. the per-habit rhythm strip either draws 168 cells with a readable hour
+ *      axis and a way into each walk, or STATES why it cannot;
  *   3. whatever the "Not walked lately" band does, it agrees with the rows;
  *   4. a kept habit's record is drawn as INSTRUMENTS, not dumped as markdown.
+ *
+ * BOTH GRIDS ARE `.rhythm__grid`, deliberately: they are one instrument at two
+ * scopes, and a second copy of the geometry would be the `ax-dump`/`ax-exec`
+ * drift hazard in a stylesheet — including the `display: block` trap below,
+ * which measured 0x0. The consequence is that EVERY query here must be scoped:
+ * a bare `.rhythm__cell` now matches 336 cells across two instruments, and a
+ * probe counting them together would pass while measuring neither.
  *
  * (2) carries one check that exists because of a real defect and would catch
  * nothing without a running renderer: a painted cell must have a NON-ZERO box.
@@ -65,74 +72,87 @@ try {
   }));
   console.log(`\nCorpus: ${corpus.rows} rows across bands [${corpus.bands.join(", ")}]\n`);
 
-  // ---- 1. the portrait
+  // ---- 1. the portrait band: the whole library, placed in the week
   const portrait = await page.evaluate(() => {
-    const places = [...document.querySelectorAll(".portrait__place")];
+    const band = document.querySelector(".portrait");
+    const grid = document.querySelector(".portrait__week");
+    const painted = [...document.querySelectorAll(".portrait__week .rhythm__cell")].filter(
+      (c) => c.hasAttribute("style") || c.classList.contains("is-lone"),
+    );
     return {
-      present: document.querySelector(".portrait") !== null,
-      places: places.map((li) => ({
-        label: li.getAttribute("aria-label"),
-        app: li.querySelector(".portrait__app")?.textContent ?? "",
-        // A bar must never PRINT its count — the ×N rule.
-        printed: (li.textContent ?? "")
-          .replace(li.querySelector(".portrait__app")?.textContent ?? "", "")
-          .trim(),
-        share:
-          li.querySelector(".portrait__fill").getBoundingClientRect().width /
-          li.querySelector(".portrait__bar").getBoundingClientRect().width,
-      })),
+      present: band !== null,
+      gridDrawn: grid !== null,
+      reason: document.querySelector(".portrait__note")?.textContent ?? "",
+      cells: document.querySelectorAll(".portrait__week .rhythm__cell").length,
+      // A cell holding a walk of a RECURRING route is filled; one holding only
+      // routes walked once is a hollow ring. The ring carries no inline
+      // background at all, so the class IS the contract.
+      filled: painted.filter((c) => !c.classList.contains("is-lone")).length,
+      lone: painted.filter((c) => c.classList.contains("is-lone")).length,
+      // ...and a painted cell must have a BOX. See the header.
+      collapsed: painted.filter((c) => {
+        const b = c.getBoundingClientRect();
+        return b.width < 1 || b.height < 1;
+      }).length,
+      hits: document.querySelectorAll(".portrait__week .rhythm__hit").length,
+      ticks: [...document.querySelectorAll(".portrait__week .rhythm__tick")].map(
+        (t) => t.textContent,
+      ),
+      labelled: [...document.querySelectorAll(".portrait__week .rhythm__hit")].every((h) =>
+        /\d\d:00 — /.test(h.getAttribute("aria-label") ?? ""),
+      ),
       coverage: document.querySelector(".portrait__coverage")?.textContent ?? "",
-      truncated: [...document.querySelectorAll(".portrait__app")].filter(
-        (el) => el.scrollWidth > el.clientWidth + 1,
-      ).length,
+      // The bars this band replaced. On the real store all three drew at FULL
+      // width and always would have — one habit through three applications
+      // weighs each of them equally — so the picture could not differentiate
+      // on the library it was drawn for.
+      bars: document.querySelectorAll(".portrait__bar, .portrait__fill").length,
+      width: grid === null ? null : {
+        grid: +grid.getBoundingClientRect().width.toFixed(1),
+        band: +(band?.getBoundingClientRect().width ?? 0).toFixed(1),
+      },
     };
   });
 
   console.log("Portrait:");
-  for (const p of portrait.places) {
-    console.log(`  ${p.app.padEnd(18)} ${"█".repeat(Math.max(1, Math.round(p.share * 24)))}`);
-  }
+  console.log(`  ${portrait.gridDrawn ? `${portrait.filled} filled · ${portrait.lone} seen once` : "withheld"}`);
+  console.log(`  ${portrait.reason}`);
   console.log(`  ${portrait.coverage}\n`);
 
   check(portrait.present, "the portrait band is on the screen");
-  check(portrait.places.length > 0, "it names at least one place");
-  check(portrait.truncated === 0, `no place name is truncated — ${portrait.truncated} were`);
-  check(
-    portrait.places.every((p) => p.printed === ""),
-    "no bar prints a number on its face",
-  );
-  check(
-    portrait.places.every((p) => /· \d+ recordings? of repeated work$/.test(p.label ?? "")),
-    "every bar says its count in words, for a screen reader",
-  );
+  check(portrait.bars === 0, `the equal-width bars are gone — ${portrait.bars} remain`);
   check(
     /^\d+ recordings? walked a route · /.test(portrait.coverage),
     "the coverage line says what its number is a count OF",
   );
-  check(!/%|score|streak/i.test(portrait.coverage), "the coverage line prints no score");
-  // Descending, which is what makes the picture readable at a glance.
-  const shares = portrait.places.map((p) => p.share);
   check(
-    shares.every((s, i) => i === 0 || s <= shares[i - 1] + 0.001),
-    "the bars descend",
+    !/%|score|streak/i.test(`${portrait.coverage} ${portrait.reason}`),
+    "the band prints no score",
   );
 
-  // FULL WIDTH of the band. The 520px cap this replaces made the picture a
-  // third of its container while the coverage line beneath it ran the whole
-  // width, so the band read as an unfinished column rather than one reading.
-  const portraitWidth = await page.evaluate(() => {
-    const places = document.querySelector(".portrait__places");
-    const band = document.querySelector(".portrait");
-    if (!places || !band) return null;
-    return {
-      places: +places.getBoundingClientRect().width.toFixed(1),
-      band: +band.getBoundingClientRect().width.toFixed(1),
-    };
-  });
-  check(
-    portraitWidth !== null && portraitWidth.places >= portraitWidth.band - 1,
-    `the bars fill the band — ${portraitWidth?.places} of ${portraitWidth?.band}px`,
-  );
+  // EITHER BRANCH, never a skip. On a young library the band withholds the grid
+  // and says what it has; the check is that it does one or the other, so this
+  // keeps working rather than starting to fail as the store grows.
+  if (portrait.gridDrawn) {
+    check(portrait.cells === 168, `the week is 7x24 — ${portrait.cells} cells`);
+    check(portrait.ticks.length === 8, `the hour axis is labelled — ${portrait.ticks.join(" ")}`);
+    check(
+      portrait.collapsed === 0,
+      `every painted cell has a box — ${portrait.collapsed} collapsed to 0x0`,
+    );
+    check(portrait.hits > 0, "an hour holding a recording is a control");
+    check(portrait.labelled, "every hour says its day and time for a screen reader");
+    check(
+      portrait.width !== null && portrait.width.grid >= portrait.width.band - 1,
+      `the week fills the band — ${portrait.width?.grid} of ${portrait.width?.band}px`,
+    );
+  } else {
+    check(portrait.reason.length > 0, "it says WHY it drew no week");
+    check(
+      /too few to place in the week/.test(portrait.reason),
+      `the reason names the condition — "${portrait.reason}"`,
+    );
+  }
 
   // ---- 2. the rhythm strip
   await page.locator(".habits__items .habit").first().click();
@@ -140,14 +160,14 @@ try {
 
   const rhythm = await page.evaluate(() => {
     const box = (el) => (el ? el.getBoundingClientRect() : null);
-    const grid = document.querySelector(".rhythm__grid");
-    const painted = [...document.querySelectorAll(".rhythm__cell")].filter((c) =>
+    const grid = document.querySelector(".rhythm .rhythm__grid");
+    const painted = [...document.querySelectorAll(".rhythm .rhythm__cell")].filter((c) =>
       c.hasAttribute("style"),
     );
     return {
       present: document.querySelector(".rhythm") !== null,
       gridDrawn: grid !== null,
-      cells: document.querySelectorAll(".rhythm__cell").length,
+      cells: document.querySelectorAll(".rhythm .rhythm__cell").length,
       // The component sets an inline background ONLY on a cell holding a walk,
       // so the attribute IS the contract. Comparing computed colours instead
       // would compare an `rgb()` against a raw `--sunken` hex and never match.
@@ -157,10 +177,10 @@ try {
         const b = c.getBoundingClientRect();
         return b.width < 1 || b.height < 1;
       }).length,
-      hits: document.querySelectorAll(".rhythm__hit").length,
-      liveHits: [...document.querySelectorAll(".rhythm__hit")].filter((b) => !b.disabled).length,
-      ticks: [...document.querySelectorAll(".rhythm__tick")].map((t) => t.textContent),
-      note: document.querySelector(".rhythm__note")?.textContent ?? "",
+      hits: document.querySelectorAll(".rhythm .rhythm__hit").length,
+      liveHits: [...document.querySelectorAll(".rhythm .rhythm__hit")].filter((b) => !b.disabled).length,
+      ticks: [...document.querySelectorAll(".rhythm .rhythm__tick")].map((t) => t.textContent),
+      note: document.querySelector(".rhythm .rhythm__note")?.textContent ?? "",
       label: grid?.getAttribute("aria-label") ?? null,
       // FULL WIDTH of the pane it sits in. It used to live inside
       // `.habitedit__evidence`, capped at 420px, where 24 columns gave 15px
@@ -205,7 +225,7 @@ try {
     );
 
     if (rhythm.liveHits > 0) {
-      await page.locator(".rhythm__hit:not([disabled])").first().hover();
+      await page.locator(".rhythm .rhythm__hit:not([disabled])").first().hover();
       await page.waitForSelector(".ledger__tip", { timeout: 5000 });
       const tip = await page.evaluate(() => {
         const t = document.querySelector(".ledger__tip");
@@ -289,11 +309,21 @@ try {
     // ONE step renderer. The spine and the fork are alternatives, never both:
     // drawing them together would put the sequence on the page twice, which is
     // the defect this section exists to undo.
-    stepRenderers: document.querySelectorAll(".hspine, .wayfork").length,
+    stepRenderers: document.querySelectorAll(".hspine, .wlat").length,
     // RETIRED. `.habitsteps` and the `Where the time goes` block are the two
     // halves the spine replaced; either reappearing means the merge came apart.
     retired: document.querySelectorAll(".habitsteps, .hrecord__time, .hrecord__walk").length,
     stripLanes: document.querySelectorAll(".hstrip__lane").length,
+    // EVERY RECORDING GETS A LANE. The strip read `HabitTimingsDTO`, which
+    // costs the BASELINE Way alone — measured, two lanes of six recordings,
+    // one of them a 1.0s sliver of a recording that walked a different Way and
+    // merely shared one edge. `HabitRunDTO` is per session per Way.
+    stripWays: [...document.querySelectorAll(".hstrip__way")].map((w) => w.textContent.trim()),
+    // The apology that counted what the axis left out. Gone with the omission.
+    apology: /took another way, so it is not drawn/.test(document.body.textContent ?? ""),
+    // THE LEGEND NAMES WHAT IS PAINTED, across every lane now — which is how
+    // an application reached only by a non-baseline Way finally appears.
+    stripLegend: [...document.querySelectorAll(".hstrip__key")].map((k) => k.textContent.trim()),
     // ONE SHARED DOMAIN. Per-lane grids size their `max-content` columns
     // independently — measured at 444.6px and 451.1px on two lanes of one strip
     // — and a shared domain drawn on two axes is not a shared domain.
@@ -320,6 +350,23 @@ try {
     ),
     // Density is READ, not counted: every step says what it did in one line.
     summaries: [...document.querySelectorAll(".hspine__detail summary")].map((e) => e.textContent),
+    // The lattice. A node is a PILL with a tone rail; the rail is an inset
+    // shadow and NOT `border-left`, because `.is-lit` sets `border-color` on
+    // all four sides and erased the application colour of every lit pill —
+    // visible only in a screenshot, with the DOM correct throughout.
+    latNodes: document.querySelectorAll(".wlat__node").length,
+    latWires: document.querySelectorAll(".wlat__wire").length,
+    latChips: document.querySelectorAll(".wlat__chip").length,
+    latZeroBox: [...document.querySelectorAll(".wlat__node")].filter((e) => {
+      const b = e.getBoundingClientRect();
+      return b.width === 0 || b.height === 0;
+    }).length,
+    latRails: [...document.querySelectorAll(".wlat__node")].filter(
+      (n) => getComputedStyle(n).boxShadow.includes("inset"),
+    ).length,
+    // The prose list the graph replaced: `Way A: nothing here` and its twelve
+    // siblings, half of which said that nothing happened.
+    latRetired: document.querySelectorAll(".wayfork, .wayfork__run, .wayfork__spine").length,
     liftingSummary: document.querySelector(".hrecord__lifting summary")?.textContent ?? null,
     liftingHidden: document.querySelector(".hrecord__lifting")?.open === false,
     liftingNotes: document.querySelectorAll(".hrecord__lifting li").length,
@@ -366,6 +413,59 @@ try {
       record.trackWidths.length === 1,
       `every lane shares one axis — widths ${record.trackWidths.join(", ")}`,
     );
+    check(
+      !record.apology,
+      "no recording is counted and set aside — the axis draws them all",
+    );
+    // AGREEMENT, not a fixed number, so this keeps working as the library
+    // grows: a way letter per lane, or none at all on a single-Way route.
+    check(
+      record.stripWays.length === 0 || record.stripWays.length === record.stripLanes,
+      `every lane says which way it took — ${record.stripWays.length} letters on ${record.stripLanes} lanes`,
+    );
+  }
+
+  if (record.latNodes > 0) {
+    console.log(
+      `\nLattice: ${record.latNodes} pills · ${record.latWires} wires · ${record.latChips} ways\n`,
+    );
+    check(record.latRetired === 0, `the prose fork list is gone — ${record.latRetired} nodes remain`);
+    check(record.latWires > 0, "the pills are joined by wires");
+    check(
+      record.latZeroBox === 0,
+      `every pill has a box — ${record.latZeroBox} collapsed to 0x0`,
+    );
+    check(
+      record.latRails === record.latNodes,
+      `every pill carries its application rail — ${record.latRails} of ${record.latNodes}`,
+    );
+
+    // TRACING IS THE POINT. Picking a way must light its own path and dim the
+    // rest, in the graph AND on the strip — one selection, every instrument.
+    await page.locator(".wlat__chip").first().click();
+    const traced = await page.evaluate(() => ({
+      lit: document.querySelectorAll(".wlat__node.is-lit").length,
+      dim: document.querySelectorAll(".wlat__node.is-dim").length,
+      litWires: document.querySelectorAll(".wlat__wire.is-lit").length,
+      litLanes: document.querySelectorAll(".hstrip__lane.is-lit").length,
+      dimLanes: document.querySelectorAll(".hstrip__lane.is-dim").length,
+      // A LIT PILL KEEPS ITS RAIL. See the note above.
+      litKeepsRail: [...document.querySelectorAll(".wlat__node.is-lit")].every((n) =>
+        getComputedStyle(n).boxShadow.includes("inset"),
+      ),
+    }));
+    check(traced.lit > 0, `picking a way lights its path — ${traced.lit} pills`);
+    check(
+      traced.lit + traced.dim === record.latNodes,
+      `every pill is either on the path or off it — ${traced.lit}+${traced.dim} of ${record.latNodes}`,
+    );
+    check(traced.litWires > 0, `the wires along it light too — ${traced.litWires}`);
+    check(traced.litKeepsRail, "a lit pill keeps its application colour");
+    check(
+      traced.litLanes === 1 && traced.dimLanes === record.stripLanes - 1,
+      `the same pick lights that way's lane on the axis — ${traced.litLanes} lit, ${traced.dimLanes} dim`,
+    );
+    await page.locator(".wlat__chip").first().click();
   }
   if (record.spineSteps > 0) {
     check(

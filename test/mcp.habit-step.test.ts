@@ -41,6 +41,7 @@ const habit = (ways: HabitWayDTO[]): HabitDTO => ({
   droppedEarly: [],
   slots: [],
   timings: null,
+  runs: [],
   cautions: [],
   apps: ["Calculator", "TextEdit"],
   slug: "add-up-and-note",

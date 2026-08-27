@@ -437,7 +437,7 @@ describe("a cell carries the walks it counts", () => {
 });
 
 /**
- * What a cell says when a pointer asks it — the `placeLabel` / `markLabel`
+ * What a cell says when a pointer asks it — the `weekCellLabel` / `markLabel`
  * rule, one screen over: the picture is the reading and the words are the fact,
  * so a pointer and a screen reader are told the same thing.
  */

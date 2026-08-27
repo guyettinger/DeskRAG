@@ -3,6 +3,7 @@ import {
   droppedEarlyOf,
   habitCautions,
   habitFork,
+  habitRuns,
   habitSlots,
   habitTimings,
   habitWays,
@@ -483,5 +484,87 @@ describe("what this evidence does not say, as data", () => {
     const all = cautionsFor(f, f.routes[0]!, flowWalks(f, f.routes[0]!));
     expect(all.some((x) => /keycode 42/.test(x))).toBe(true);
     expect(all.length).toBeGreaterThan(habitCautions(f, f.routes[0]!).length);
+  });
+});
+
+describe("every recording's own run", () => {
+  it("draws EVERY recording, each on the Way it actually took", () => {
+    const flows = divergent();
+    const runs = habitRuns(flows, flows.routes[0]!);
+
+    // Three recordings, three lanes. `habitTimings` draws the baseline Way
+    // alone, which on this route is one recording of three.
+    expect(runs.map((r) => r.sessionId)).toEqual(["s1", "s2", "s3"]);
+    expect(runs.map((r) => r.wayLetter)).toEqual(["A", "B", "C"]);
+    expect(runs.map((r) => r.way)).toEqual([0, 1, 2]);
+  });
+
+  it("costs a step against THIS session's source, never the edge's other walkers", () => {
+    const flows = divergent();
+    const runs = habitRuns(flows, flows.routes[0]!);
+
+    // `e0` is walked by all three recordings, with a DIFFERENT extent each
+    // (s1 2→6, s2 2→5, s3 2→6). A run that read the edge rather than the
+    // session would carry three spans on one lane.
+    for (const run of runs) {
+      for (const seg of run.segments) {
+        expect(seg.stepIndex).toBeTypeOf("number");
+      }
+    }
+    expect(runs.find((r) => r.sessionId === "s2")!.segments.map((s) => s.ms)).toEqual([3000, 1000]);
+    expect(runs.find((r) => r.sessionId === "s1")!.segments.map((s) => s.ms)).toEqual([4000, 4000]);
+  });
+
+  it("is the leak `habitTimings` has, stated as a difference", () => {
+    const flows = divergent();
+    const route = flows.routes[0]!;
+
+    // The baseline Way is s3's, and it is walked by ONE recording — but the
+    // timings' first step carries a span for every session that crossed `e0`.
+    // That is the 1.0s sliver measured on the real store: a lane drawn on
+    // another Way's axis, indistinguishable from a real short recording.
+    const timings = habitTimings(flows, route)!;
+    const leaked = timings.steps[0]!.runs.map((r) => r.sessionId).sort();
+    expect(leaked).toEqual(["s1", "s2", "s3"]);
+
+    // A run is built from ONE session's source on ONE Way's steps, so there is
+    // no session here to leak: s3's lane holds s3's spans and nothing else.
+    const s3 = habitRuns(flows, route).find((r) => r.sessionId === "s3")!;
+    expect(s3.segments.map((s) => s.ms)).toEqual([4000, 3000, 4000]);
+  });
+
+  it("puts the pause between two moves in the gap, never in either step", () => {
+    const flows = divergent();
+    const s1 = habitRuns(flows, flows.routes[0]!).find((r) => r.sessionId === "s1")!;
+
+    // e0 ends at 6, e1 begins at 8. The two seconds belong to neither.
+    expect(s1.segments.map((s) => s.idleAfterMs)).toEqual([2000, 0]);
+    // A lane's extent is the sum of what it DREW — spans plus the idle between.
+    expect(s1.totalMs).toBe(4000 + 2000 + 4000);
+  });
+
+  it("clamps a negative gap rather than subtracting width from the lane", () => {
+    const flows = divergent();
+    // Make `e0` outrun `e1`'s start for s1: the edge extents genuinely overlap
+    // when one source runs past the next's beginning.
+    const e0 = flows.graph.edges.find((e) => e.id === "e0")!;
+    e0.sources = e0.sources.map((s) => (s.sessionId === "s1" ? { ...s, throughSec: 9 } : s));
+
+    const s1 = habitRuns(flows, flows.routes[0]!).find((r) => r.sessionId === "s1")!;
+    expect(s1.segments[0]!.idleAfterMs).toBe(0);
+    expect(s1.totalMs).toBeGreaterThan(0);
+  });
+
+  it("is EMPTY below two recordings, so the screen and the file are silent together", () => {
+    const flows = once();
+    expect(habitRuns(flows, flows.routes[0]!)).toEqual([]);
+    expect(habitTimings(flows, flows.routes[0]!)).toBeNull();
+  });
+
+  it("carries the walk's own LANE seconds, so a lane can be opened", () => {
+    const flows = divergent();
+    const runs = habitRuns(flows, flows.routes[0]!);
+    expect(runs.every((r) => r.atSec === 2)).toBe(true);
+    expect(runs.map((r) => r.at)).toEqual([T_TUE, T_TUE + DAY_MS, T_TUE + 2 * DAY_MS]);
   });
 });

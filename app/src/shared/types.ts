@@ -1567,6 +1567,55 @@ export interface HabitTimingsDTO {
   single: boolean;
 }
 
+/**
+ * ONE RECORDING'S OWN RUN of the route, segmented by the steps IT walked.
+ *
+ * `HabitTimingsDTO` answers a different question and cannot answer this one: it
+ * costs the BASELINE Way only, so a route walked six ways draws one recording
+ * and apologises for five. Worse, it leaks — `stepCosts` reads each edge's
+ * sources across EVERY session, so a recording that walked another Way and
+ * happens to share one edge arrives as a lane holding that single step.
+ * Measured on the real store: a 6-recording habit drew two lanes, one of which
+ * was a 1.0s sliver of a recording that walked Way A, drawn on Way E's axis.
+ *
+ * A run belongs to exactly ONE Way, and only that Way's steps are costed for
+ * it, so the leak is unrepresentable here rather than filtered out.
+ *
+ * The whole-walk duration is deliberately NOT carried: `totalMs` is the sum of
+ * what is DRAWN — the step spans plus the idle between them — because segments
+ * that stopped short of a stated end would assert an unmeasured remainder. The
+ * whole-walk range is printed in the record's masthead, where it is a fact
+ * rather than an axis. (`HabitWayDTO.totalsMs` is where that lives.)
+ */
+export interface HabitRunDTO {
+  sessionId: string;
+  /** Which Way this recording took — an index into `HabitDTO.ways`. */
+  way: number;
+  /** `ways[way].letter`, carried so a lane can be labelled without a lookup. */
+  wayLetter: string;
+  /** Wall clock of the recording's start. Display only, like `startedAt`. */
+  at: number | null;
+  /**
+   * Where inside the recording to open, in LANE seconds — the axis the track
+   * rail is drawn in, never `tMono / 1000`. Null when the walk cannot be
+   * placed, and then the lane draws with its reason and nothing to open.
+   */
+  atSec: number | null;
+  /**
+   * In step order. `stepIndex` indexes `ways[way].steps`, never this array:
+   * a step carrying no source is DROPPED rather than zeroed, so this is a
+   * subset — the same trap `HabitStepTimingDTO.stepIndex` exists for.
+   *
+   * `idleAfterMs` is the pause before the next step began, and is 0 on the last
+   * one. It is NOT folded into either neighbour: a step's cost is its own
+   * extent, and hesitation lives in the gap rather than in an overrun of the
+   * move before it.
+   */
+  segments: { stepIndex: number; ms: number; idleAfterMs: number }[];
+  /** The sum of what is drawn. See above — never the whole-walk duration. */
+  totalMs: number;
+}
+
 export interface HabitDTO {
   id: string;
   state: HabitState;
@@ -1626,6 +1675,14 @@ export interface HabitDTO {
   slots: HabitSlotDTO[];
   /** Where the time goes. Null below two recordings — see `HabitTimingsDTO`. */
   timings: HabitTimingsDTO | null;
+  /**
+   * EVERY recording's own run, oldest first. See `HabitRunDTO`.
+   *
+   * Empty below two recordings, under the same guard `timings` uses, so the
+   * screen and the rendered file stay silent together: one recording's timings
+   * are a fact about one afternoon, not about a habit.
+   */
+  runs: HabitRunDTO[];
   /**
    * What this evidence does not say, WITHOUT the lifting notes.
    *
