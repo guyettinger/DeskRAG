@@ -19,6 +19,7 @@ import type {
   FlowsDTO,
   HabitForkDTO,
   HabitForkRowDTO,
+  HabitRunDTO,
   HabitSlotDTO,
   HabitStepDTO,
   HabitTimingsDTO,
@@ -27,7 +28,7 @@ import type {
 } from "@shared/types";
 import { flowVariables, flowWalks, variantLetter, type FlowStep } from "./flow-steps.js";
 import { slotNote, taggedCautions } from "./habit-doc.js";
-import { walkAnalysis } from "./walk-analysis.js";
+import { sessionStartedAt, sourcesOf, walkAnalysis } from "./walk-analysis.js";
 import { runPhrase, wayFork } from "./way-fork.js";
 
 /**
@@ -233,6 +234,94 @@ export function habitTimings(flows: FlowsDTO, route: FlowRouteDTO): HabitTimings
     single: rows.every((r) => r.durations.length === 1),
   };
 }
+
+/**
+ * EVERY recording's own run, each on the Way it actually took.
+ *
+ * `habitTimings` costs the BASELINE Way and nothing else, which is what left
+ * the strip drawing one lane of six and apologising for the rest — and Finder,
+ * reached only by Way F, absent from a record whose masthead names it. This
+ * costs each Way against ITS OWN sessions instead, so every recording gets a
+ * full lane and the applications drawn are the applications the route visits.
+ *
+ * THE LEAK IS UNREPRESENTABLE HERE, not filtered. `stepCosts` reads an edge's
+ * sources across every session, so a recording that walked a different Way and
+ * shares a single edge arrived as a lane holding that one step — measured on
+ * the real store, a 1.0s sliver drawn on another Way's axis, indistinguishable
+ * from a recording that genuinely took 1.0s. A run is built from one session's
+ * source on one Way's steps, so there is no session here to leak.
+ *
+ * EMPTY below two recordings, the guard `habitTimings` uses, so the screen and
+ * the rendered file are silent together: one recording's timings are a fact
+ * about one afternoon, not about a habit.
+ *
+ * A step with NO source for this session is DROPPED rather than zeroed, exactly
+ * as the record drops it — a zero draws a bar of no length beside real ones and
+ * reads as an instantaneous step rather than an unmeasured one. `stepIndex` is
+ * carried for that reason: the array is a subset of the Way's steps.
+ */
+export function habitRuns(flows: FlowsDTO, route: FlowRouteDTO): HabitRunDTO[] {
+  if (route.count < 2) return [];
+
+  const startedAt = sessionStartedAt(flows);
+  // The walk's own span, for the moment a lane opens at. LANE seconds, minted
+  // by `frequentRoutes` — never `tMono / 1000`, the measured Flows bug that
+  // landed every jump ~1.9s early.
+  const walkAt = new Map(route.walks.map((w) => [w.sessionId, w.atSec]));
+
+  const runs: HabitRunDTO[] = [];
+  for (const way of flowWalks(flows, route)) {
+    // Read each edge ONCE per Way rather than once per session: a Way with six
+    // recordings would otherwise scan `graph.edges` six times per step.
+    const sources = way.steps.map((s) => sourcesOf(flows, s.edgeId));
+
+    for (const sessionId of way.sessionIds) {
+      const spans = way.steps.flatMap((step, i) => {
+        const s = sources[i]?.get(sessionId);
+        return s === undefined ? [] : [{ stepIndex: step.index, at: s.atSec, through: s.throughSec }];
+      });
+      if (spans.length === 0) continue;
+
+      const segments = spans.map((span, i) => {
+        const next = spans[i + 1];
+        return {
+          stepIndex: span.stepIndex,
+          ms: Math.max(0, Math.round((span.through - span.at) * MS_PER_SEC)),
+          // CLAMPED AT ZERO, never negative. Two steps can overlap when one
+          // edge's source extends past the next's start, and a negative
+          // segment would subtract width from a lane that must sum to itself.
+          idleAfterMs:
+            next === undefined ? 0 : Math.max(0, Math.round((next.at - span.through) * MS_PER_SEC)),
+        };
+      });
+
+      runs.push({
+        sessionId,
+        way: way.index,
+        wayLetter: variantLetter(way.index),
+        at: startedAt.get(sessionId) ?? null,
+        atSec: walkAt.get(sessionId) ?? null,
+        segments,
+        totalMs: segments.reduce((n, s) => n + s.ms + s.idleAfterMs, 0),
+      });
+    }
+  }
+
+  // OLDEST FIRST, matching the ledger and the walks list, and an UNDATED run
+  // sorts LAST for `walkAnalysis`'s reason: a missing date is not a very old
+  // one, and letting null sort to the front would put the least-known evidence
+  // at the head of an axis that reads top-to-bottom in time.
+  runs.sort((a, b) => {
+    if (a.at === null && b.at === null) return a.sessionId.localeCompare(b.sessionId);
+    if (a.at === null) return 1;
+    if (b.at === null) return -1;
+    return a.at - b.at || a.sessionId.localeCompare(b.sessionId);
+  });
+  return runs;
+}
+
+/** Seconds to milliseconds, matching `walk-analysis.ts`'s own constant. */
+const MS_PER_SEC = 1000;
 
 /**
  * What this evidence does not say, WITHOUT the lifting notes.

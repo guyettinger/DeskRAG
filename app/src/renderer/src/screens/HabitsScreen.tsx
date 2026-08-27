@@ -27,7 +27,14 @@ import type {
   WalkMarkDTO,
 } from "@shared/types";
 import { api, timecode, wallClock } from "../api.js";
-import { foldFork, waySecs, type ForkRunView } from "../way-fork-view.js";
+import { waySecs } from "../way-fork-view.js";
+import {
+  LNODE_H,
+  LNODE_W,
+  layoutWays,
+  wayWireWidth,
+  type Lattice,
+} from "../way-lattice.js";
 import { GhostLottie } from "../brand/GhostLottie.js";
 import {
   bandHabits,
@@ -57,7 +64,14 @@ import {
   rhythmOf,
   type PhaseCell,
 } from "../habit-rhythm.js";
-import { placeLabel, portraitOf } from "../habit-portrait.js";
+import {
+  portraitOf,
+  portraitWeek,
+  weekCellLabel,
+  weekLabel,
+  weekNote,
+  type PortraitCell,
+} from "../habit-portrait.js";
 import {
   appTones,
   liftingRollup,
@@ -207,7 +221,7 @@ export function HabitsScreen({
         </div>
       </Head>
 
-      <Portrait data={data} />
+      <Portrait data={data} onOpen={onOpenRecording} />
 
       <div className="habits__stage">
         <aside className="habits__list">
@@ -436,13 +450,6 @@ function Ledger({
     );
   }
 
-  /** Where the card should point, from the mark itself rather than the cursor,
-      so a keyboard focus places it exactly as a hover does. */
-  const anchor = (el: Element): { x: number; y: number } => {
-    const r = el.getBoundingClientRect();
-    return { x: r.left + r.width / 2, y: r.bottom };
-  };
-
   return (
     <span
       className={`ledger ledger--${size} ledger--live`}
@@ -470,8 +477,8 @@ function Ledger({
             disabled={walk === null}
             aria-label={label}
             title={label}
-            onMouseEnter={(e) => setHover({ mark: m, ...anchor(e.currentTarget) })}
-            onFocus={(e) => setHover({ mark: m, ...anchor(e.currentTarget) })}
+            onMouseEnter={(e) => setHover({ mark: m, ...tipAnchor(e.currentTarget) })}
+            onFocus={(e) => setHover({ mark: m, ...tipAnchor(e.currentTarget) })}
             onBlur={() => setHover(null)}
             onClick={() => {
               if (walk !== null) onOpen(m.sessionId, walk.atSec);
@@ -621,13 +628,6 @@ function Rhythm({
   if (walks.length === 0) return null;
   const rhythm = rhythmOf(walks);
 
-  /** Where the card points, from the CELL rather than the cursor, so a keyboard
-      focus places it exactly as a hover does — the ledger's rule. */
-  const anchor = (el: Element): { x: number; y: number } => {
-    const r = el.getBoundingClientRect();
-    return { x: r.left + r.width / 2, y: r.bottom };
-  };
-
   return (
     <div className="rhythm">
       <span className="eyebrow">In phase</span>
@@ -677,12 +677,12 @@ function Rhythm({
                       title={label}
                       onMouseEnter={(e) => {
                         hold();
-                        setHover({ cell, day, hour, ...anchor(e.currentTarget) });
+                        setHover({ cell, day, hour, ...tipAnchor(e.currentTarget) });
                       }}
                       onMouseLeave={release}
                       onFocus={(e) => {
                         hold();
-                        setHover({ cell, day, hour, ...anchor(e.currentTarget) });
+                        setHover({ cell, day, hour, ...tipAnchor(e.currentTarget) });
                       }}
                       onBlur={release}
                       onClick={() => {
@@ -716,7 +716,10 @@ function Rhythm({
       )}
       {hover && (
         <CellCard
-          cell={hover.cell}
+          // The per-habit grid holds ONE route, so its walks name none: the row
+          // above already says which habit this is, and repeating it on every
+          // line of the card would be the doubling the record's spine undoes.
+          walks={hover.cell.walks.map((walk) => ({ walk, routeTitle: null, recurring: true }))}
           title={cellLabel(hover.day, hover.hour, hover.cell)}
           x={hover.x}
           y={hover.y}
@@ -742,7 +745,7 @@ function Rhythm({
  * instrument's rule that a step keeps its Open wherever it is drawn.
  */
 function CellCard({
-  cell,
+  walks,
   title,
   x,
   y,
@@ -750,7 +753,14 @@ function CellCard({
   onLeave,
   onOpen,
 }: {
-  cell: PhaseCell;
+  /**
+   * `routeTitle` is null where naming the route would repeat what the reader
+   * already has — the per-habit grid, whose every walk is one habit. The band
+   * under the `<h1>` holds the whole library, so an hour there can carry walks
+   * of DIFFERENT routes and a card that did not name them would offer several
+   * Open buttons with no way to tell them apart.
+   */
+  walks: readonly { walk: WalkMarkDTO; routeTitle: string | null; recurring: boolean }[];
   title: string;
   x: number;
   y: number;
@@ -773,9 +783,9 @@ function CellCard({
         { offset: TIP_OFFSET, margin: TIP_MARGIN },
       ),
     );
-  }, [x, y, cell]);
+  }, [x, y, walks]);
 
-  const many = cell.walks.length > 1;
+  const many = walks.length > 1;
   return (
     <div
       className="ledger__tip"
@@ -791,26 +801,32 @@ function CellCard({
       }}
     >
       <div className="ledger__tip-when">{title}</div>
-      {cell.walks.map((w) =>
-        many ? (
-          <div key={w.sessionId} className="rhythm__tip-walk">
-            <MarkReadout mark={w} />
-            {w.walk === null ? (
+      {walks.map(({ walk: mark, routeTitle, recurring }) => (
+        <div key={mark.sessionId} className={many ? "rhythm__tip-walk" : undefined}>
+          {routeTitle !== null && (
+            <div className="rhythm__tip-route">
+              {routeTitle}
+              {/* The fill rule, said beside the thing it describes. A hollow
+                  mark is the only one on this band whose meaning is not its
+                  position, so the card states it rather than relying on a key. */}
+              {recurring ? "" : " · seen once"}
+            </div>
+          )}
+          <MarkReadout mark={mark} />
+          {many &&
+            (mark.walk === null ? (
               <span className="habitsteps__noopen">no moment to open</span>
             ) : (
               <button
                 type="button"
                 className="btn ghost rhythm__tip-open"
-                onClick={() => onOpen(w.sessionId, w.walk!.atSec)}
+                onClick={() => onOpen(mark.sessionId, mark.walk!.atSec)}
               >
                 Open
               </button>
-            )}
-          </div>
-        ) : (
-          <MarkReadout key={w.sessionId} mark={w} />
-        ),
-      )}
+            ))}
+        </div>
+      ))}
     </div>
   );
 }
@@ -836,102 +852,173 @@ function LedgerLegend(): React.JSX.Element {
 }
 
 /**
- * Where the ways fork.
+ * WHERE THE WAYS FORK — one graph, with every way traceable through it.
  *
- * COLOUR CARRIES SPINE-VERSUS-FORK, NEVER WAY IDENTITY. Ways are told apart by
- * their printed letter and their lane position, so hue is never the only
- * channel and the palette does not have to stretch to N ways. The band is
- * `--data-6`, the one unclaimed indexed slot — `--data-0` is C2's portrait,
- * `--data-2`/`--data-3` are C1's deviated and short, and 1/4/5/7 are the
- * semantic aliases.
+ * It replaced a row of inert chips over an indented list of phrases. Measured
+ * on the author's real store that was six ways and three divergence points
+ * written as fourteen lines, half of which said `nothing here` — so the two
+ * facts a reader actually wants (Ways D and E take the SAME shortcut; F's
+ * detour is nine steps through Finder) could only be recovered by reading every
+ * line and holding it in mind. The alignment was already computed; only its
+ * rendering was prose.
  *
- * A step keeps its "Open" wherever it is drawn: C1's rule that the record is
- * verifiable rather than merely trusted does not weaken inside a fork.
+ * SVG FOR THE WIRES, HTML BUTTONS FOR THE NODES — `GraphCanvas`'s structure
+ * exactly, and for its reason: a node has to stay focusable and openable. The
+ * old fork list could open a moment per way per step, and a diagram that took
+ * that away would trade C1's rule — the record is verifiable rather than merely
+ * trusted — for a picture.
+ *
+ * COLOUR CARRIES THE APPLICATION, never way identity. Ways are told apart by
+ * their letter, their lane and the highlight, so hue never has to stretch to N
+ * ways and the tone map is the one the strip and the masthead already use. A
+ * node is teal in all three instruments or the legend above is worthless.
+ *
+ * THE HIGHLIGHT IS THE WAY'S OWN PATH, handed over by `layoutWays` rather than
+ * recomputed here: an edge exists because some way crosses it, so a lit path
+ * can never name a wire that is not drawn.
  */
-function WayForkView({
+function WayLattice({
   ways,
   fork,
+  tones,
+  picked,
+  onPick,
   onOpen,
 }: {
   ways: readonly HabitWayDTO[];
   fork: HabitForkDTO;
+  tones: Map<string, number>;
+  /** The way being traced, or null for all of them at equal weight. */
+  picked: number | null;
+  onPick: (way: number | null) => void;
   onOpen: (sessionId: string, atSec: number) => void;
 }): React.JSX.Element {
-  const view = foldFork(fork, ways);
+  const lattice: Lattice = useMemo(() => layoutWays(fork, ways, tones), [fork, ways, tones]);
+  /**
+   * Hover PREVIEWS a way and a click PINS it, so a reader can sweep the chips
+   * and watch the paths without committing — and can then stop on one and
+   * still reach the nodes with a pointer or a Tab.
+   */
+  const [hovered, setHovered] = useState<number | null>(null);
+  const lit = hovered ?? picked;
+
+  const path = lit === null ? null : (lattice.paths.find((p) => p.way === lit) ?? null);
+  const dim = (kind: "node" | "edge", id: string): boolean =>
+    path !== null && !(kind === "node" ? path.nodes : path.edges).includes(id);
+
+  const trace = (way: number): void => onPick(picked === way ? null : way);
+
   return (
-    <div className="wayfork">
-      <p className="wayfork__lead">
-        These recordings took different paths. The numbered steps are the part every way has in
-        common; the band beneath a step is where they differ.
+    <div className="wlat">
+      <p className="wlat__lead">
+        These recordings took different paths. The trunk is the part every way has in common;
+        a branch beside it is where one or more of them went their own route.
       </p>
-      <div className="wayfork__chips">
-        {ways.map((w) => (
-          <span key={w.letter} className="wayfork__chip">
-            <b>Way {w.letter}</b> · {w.steps.length} step{w.steps.length === 1 ? "" : "s"} ·{" "}
-            {w.sessionIds.length === 1 ? "1 recording" : `${w.sessionIds.length} recordings`}
-            {w.totalsMs.length > 0 && <> · {w.totalsMs.map(waySecs).join(", ")}</>}
-          </span>
+
+      {/* THE CHIPS ARE THE SELECTOR, not a legend. They carried the same four
+          facts before and did nothing with them; a chip that traces its own
+          path through the graph is the same words doing a job. */}
+      <div className="wlat__chips" role="group" aria-label="Trace one way through the graph">
+        {ways.map((w, i) => (
+          <button
+            key={w.letter}
+            type="button"
+            className={`wlat__chip${picked === i ? " is-picked" : ""}`}
+            aria-pressed={picked === i}
+            onClick={() => trace(i)}
+            onMouseEnter={() => setHovered(i)}
+            onMouseLeave={() => setHovered(null)}
+            onFocus={() => setHovered(i)}
+            onBlur={() => setHovered(null)}
+          >
+            <b>Way {w.letter}</b>
+            <span className="wlat__chipmeta mono">
+              {w.steps.length} step{w.steps.length === 1 ? "" : "s"} ·{" "}
+              {w.sessionIds.length} recording{w.sessionIds.length === 1 ? "" : "s"}
+              {w.totalsMs.length > 0 ? ` · ${waySecs(Math.min(...w.totalsMs))}` : ""}
+            </span>
+          </button>
         ))}
       </div>
-      {view.leading.length > 0 && <ForkBand runs={view.leading} />}
-      <ol className="wayfork__spine">
-        {view.steps.map((s) => (
-          <li key={s.n} className="wayfork__step">
-            <span className="wayfork__places">
-              {/* The number is DRAWN, not left to the <ol> marker: the row is a
-                  flex container, which removes the list-item display and takes
-                  the marker with it. The lead sentence and the rendered file
-                  both say "the numbered steps", so a silent marker would make
-                  the screen contradict the file it is drawn beside. */}
-              <span className="wayfork__n">{s.n}.</span> {s.from} → {s.to}
-            </span>
-            <div className="wayfork__ats">
-              {s.at.map((a) => {
-                const at = ways[a.way]?.steps[a.step]?.firstAt ?? null;
-                return (
-                  <span key={a.way} className="wayfork__at">
-                    Way {a.letter}
-                    {at === null ? (
-                      <span className="wayfork__noopen">no moment to open</span>
-                    ) : (
-                      <button
-                        type="button"
-                        className="btn ghost wayfork__open"
-                        onClick={() => onOpen(at.sessionId, at.atSec)}
-                      >
-                        Open
-                      </button>
-                    )}
-                  </span>
-                );
-              })}
-            </div>
-            {s.after.length > 0 && <ForkBand runs={s.after} />}
-          </li>
-        ))}
-      </ol>
-      <p className="wayfork__verdict">
+
+      <div
+        className="wlat__canvas"
+        style={{ width: lattice.width, height: lattice.height }}
+        role="group"
+        aria-label={
+          path === null
+            ? `${ways.length} ways through this route`
+            : `Way ${path.letter}, ${path.nodes.length - 1} steps`
+        }
+      >
+        <svg className="wlat__wires" width={lattice.width} height={lattice.height} aria-hidden="true">
+          {lattice.edges.map((e) => (
+            <path
+              key={e.id}
+              d={e.d}
+              // WEIGHT IS HOW MANY WAYS CROSS IT — a count of paths on this
+              // page, never a score about any of them. Sub-linear, so a
+              // six-way trunk does not become a bar that hides its branches.
+              strokeWidth={wayWireWidth(e.ways.length)}
+              className={`wlat__wire${dim("edge", e.id) ? " is-dim" : ""}${
+                path !== null && !dim("edge", e.id) ? " is-lit" : ""
+              }`}
+            />
+          ))}
+        </svg>
+
+        {lattice.nodes.map((n) => {
+          const at = n.firstAt;
+          const letters = n.ways.map((w) => ways[w]?.letter ?? String(w)).join(", ");
+          const label =
+            n.kind === "origin"
+              ? `${n.place} — where Way${n.ways.length === 1 ? "" : "s"} ${letters} begin${
+                  n.ways.length === 1 ? "s" : ""
+                }`
+              : `${n.place} — Way${n.ways.length === 1 ? "" : "s"} ${letters}${
+                  n.summary === "" ? "" : ` · ${n.summary}`
+                }`;
+          return (
+            <button
+              key={n.id}
+              type="button"
+              className={
+                `wlat__node wlat__node--${n.kind}` +
+                `${dim("node", n.id) ? " is-dim" : ""}` +
+                `${path !== null && !dim("node", n.id) ? " is-lit" : ""}`
+              }
+              style={{ left: n.x, top: n.y, width: LNODE_W, height: LNODE_H }}
+              data-tone={n.toneSlot === null ? "neutral" : `app-${n.toneSlot}`}
+              // An origin is a PLACE, not a step, so there is no moment inside a
+              // recording it could open. Disabled and said in words on the pill
+              // rather than offered dead — the `skipReason` rule.
+              disabled={at === null}
+              aria-label={label}
+              title={label}
+              onClick={() => {
+                if (at !== null) onOpen(at.sessionId, at.atSec);
+              }}
+            >
+              <span className="wlat__place">{n.place}</span>
+              {n.kind !== "origin" && (
+                <span className="wlat__summary mono">
+                  {n.summary === "" ? "no actions recorded" : n.summary}
+                </span>
+              )}
+              {/* THE LETTERS RIDE THE DIAGRAM, not a legend beside it. A branch
+                  whose ways are named only in a key makes the reader look away
+                  from the picture to read it. */}
+              <span className="wlat__ways mono" aria-hidden="true">
+                {letters}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      <p className="wlat__verdict">
         {fork.verdict.kind === "named" ? fork.verdict.text : fork.verdict.reason}
       </p>
-    </div>
-  );
-}
-
-/**
- * One gap, one line per way. Every way appears, empty run included.
- *
- * `ForkBand`, not `Band`: this file already has a `Band` for the list's own
- * sections. A class name is a repo-wide identifier in `styles.css` and a
- * component name is a file-wide one here.
- */
-function ForkBand({ runs }: { runs: readonly ForkRunView[] }): React.JSX.Element {
-  return (
-    <div className="wayfork__band">
-      {runs.map((r) => (
-        <p key={r.way} className="wayfork__run">
-          Way {r.letter}: {r.phrase}
-        </p>
-      ))}
     </div>
   );
 }
@@ -940,7 +1027,7 @@ function ForkBand({ runs }: { runs: readonly ForkRunView[] }): React.JSX.Element
  * THE RECORD: one masthead, one strip, one spine, three qualifiers.
  *
  * This section is a SECOND RENDERER of facts main already rendered into
- * `HABIT.md` — the shape `WayForkView` established, safe only because neither
+ * `HABIT.md` — the shape `WayLattice` established, safe only because neither
  * parses the other's output and both read one projection. `Copy HABIT.md` and
  * `get_habit` still hand out `habit.markdown` byte for byte; nothing here
  * reaches it.
@@ -964,27 +1051,31 @@ function HabitRecordSection({
   onOpen: (sessionId: string, atSec: number) => void;
 }): React.JSX.Element {
   const tones = appTones(habit.apps);
-  // The BASELINE Way is the one the timings are measured on, so the strip and
-  // the spine must read the same one or a lane would be segmented by steps the
-  // spine never lists. Falling back to the first Way keeps a single-Way habit
-  // (which has no baseline letter until it has two recordings) drawable.
+  /**
+   * ONE SELECTION FOR THE WHOLE RECORD, and it is what ties the section
+   * together. Before this the strip, the chips and the spine were three
+   * instruments drawn from one route that knew nothing about each other: you
+   * could read that Way F took 62.3s and that Way F detours through Finder, and
+   * nothing on the page connected the two statements. Picking a way now lights
+   * its lane on the axis and its path through the graph at the same time.
+   *
+   * Reset when the HABIT changes, never when the route is re-keyed: an index
+   * into `ways` means nothing once a different habit is selected, and a stale
+   * `2` would light whatever Way C happens to be on the next one.
+   */
+  const [picked, setPicked] = useState<number | null>(null);
+  useEffect(() => setPicked(null), [habit.id]);
+
+  // The BASELINE Way is the one the SPINE is measured on. The strip no longer
+  // reads it at all — it draws every recording on the Way that recording took —
+  // but the spine still joins on `HabitStepTimingDTO.stepIndex`, so it must
+  // read the same Way `habitTimings` costed. Falling back to the first Way
+  // keeps a single-Way habit (which has no baseline letter until it has two
+  // recordings) drawable.
   const baseWay =
     habit.ways.find((w) => w.letter === habit.timings?.wayLetter) ?? habit.ways[0] ?? null;
 
-  const strip =
-    baseWay === null
-      ? null
-      : stripLanes(
-          baseWay,
-          habit.timings,
-          habit.binding.walks.map((w) => ({
-            sessionId: w.sessionId,
-            at: w.at,
-            atSec: w.walk?.atSec ?? null,
-          })),
-          tones,
-          habit.binding.recordings,
-        );
+  const strip = stripLanes(habit.runs, habit.ways, tones);
 
   const spine: SpineView | null =
     baseWay === null || habit.fork !== null ? null : spineRows(baseWay, habit.timings, tones);
@@ -992,7 +1083,13 @@ function HabitRecordSection({
   return (
     <>
       <RecordLede habit={habit} tones={tones} baseWay={baseWay} />
-      <HabitStrip strip={strip} reason={stripReason(habit)} onOpen={onOpen} />
+      <HabitStrip
+        strip={strip}
+        reason={stripReason(habit)}
+        picked={picked}
+        onPick={setPicked}
+        onOpen={onOpen}
+      />
       {/* ONE of these, never both: the fork instrument already draws the shared
           steps, and drawing the spine beside it would put the sequence on the
           page twice — the defect this whole section exists to undo. */}
@@ -1000,7 +1097,14 @@ function HabitRecordSection({
         <HabitSpine view={spine} recordings={habit.binding.recordings} onOpen={onOpen} />
       )}
       {habit.fork !== null && (
-        <WayForkView ways={habit.ways} fork={habit.fork} onOpen={onOpen} />
+        <WayLattice
+          ways={habit.ways}
+          fork={habit.fork}
+          tones={tones}
+          picked={picked}
+          onPick={setPicked}
+          onOpen={onOpen}
+        />
       )}
       <HabitRecord habit={habit} />
     </>
@@ -1021,9 +1125,10 @@ function stripReason(habit: HabitDTO): string {
   if (habit.binding.recordings < 2) {
     return "Only one recording is timed, so there is no second run to compare it against. Record this work again and its shape appears here.";
   }
-  if (habit.timings === null) {
-    return "These recordings took paths too different to share a baseline, so there is no common shape to draw. The steps below are still each recording's own.";
-  }
+  // The "too different to share a baseline" branch is GONE, and its absence is
+  // the point: the strip draws each recording on the Way that recording took,
+  // so ways diverging is no longer a reason it cannot be drawn. It is exactly
+  // what the axis now shows.
   return "No step carries a recorded span, so there is nothing to place on an axis.";
 }
 
@@ -1076,25 +1181,40 @@ function RecordLede({
 }
 
 /**
- * The shape of each run: one lane per recording, on ONE shared domain.
+ * HOW EVERY RUN WENT — one lane per recording, on one shared axis.
  *
- * The lanes are what the `Evidence` block's bare wall-clock chips used to be —
- * the same recordings, openable the same way, with the shape of the run
- * attached. A shared domain is the whole reason a stack of lanes is a reading:
- * rescaling each to its own extent draws a fast run and a slow one identically,
- * which is the ledger's rule one level up.
+ * IT DRAWS THEM ALL, which is the change. It read `HabitTimingsDTO`, which
+ * costs the BASELINE Way alone, so on the author's real store a 6-recording
+ * habit showed TWO lanes and apologised for four in a footnote — and Finder
+ * never appeared, because only Way F reaches it and Way F is not the baseline,
+ * while the masthead's app chain three inches above named Finder the whole
+ * time. One of the two lanes was worse than absent: a 1.0s sliver of a
+ * recording that had walked a different Way and merely shared one edge, drawn
+ * on this Way's axis as though it were a real 1.0s run. See `HabitRunDTO`.
+ *
+ * The footnote is gone with the omission it explained. Nothing is counted and
+ * set aside any more, so there is nothing left to disclose.
  *
  * A LANE'S EXTENT IS WHAT IT DREW — its step spans plus the idle between them —
  * never the whole-walk duration, which would leave segments stopping short of a
  * stated end and assert an unmeasured remainder.
+ *
+ * ONE SHARED DOMAIN across every lane, the ledger's rule: a route walked in
+ * 19.7s and one walked in 62.3s must not draw the same width, because that
+ * difference is the reading.
  */
 function HabitStrip({
   strip,
   reason,
+  picked,
+  onPick,
   onOpen,
 }: {
   strip: StripView | null;
   reason: string;
+  /** The way being traced, shared with the lattice. Null lights every lane. */
+  picked: number | null;
+  onPick: (way: number | null) => void;
   onOpen: (sessionId: string, atSec: number) => void;
 }): React.JSX.Element {
   if (strip === null) {
@@ -1108,14 +1228,34 @@ function HabitStrip({
   return (
     <section className="hstrip">
       <span className="eyebrow">How the runs went</span>
-      <ol className="hstrip__lanes">
+      <ol className="hstrip__lanes" data-ways={strip.manyWays ? "many" : "one"}>
         {strip.lanes.map((lane) => {
           const atSec = lane.atSec;
+          const dim = picked !== null && picked !== lane.way;
           return (
-            <li key={lane.sessionId} className="hstrip__lane">
+            <li
+              key={lane.sessionId}
+              className={`hstrip__lane${dim ? " is-dim" : ""}${
+                picked === lane.way ? " is-lit" : ""
+              }`}
+            >
               <span className="hstrip__when mono">
                 {lane.at === null ? "unknown" : wallClock(lane.at)}
               </span>
+              {/* ONE WAY NEEDS NO LETTER — `liftingRollup`'s rule. The column
+                  is dropped entirely rather than filled with a repeated "A",
+                  which would claim a distinction against ways nobody drew. */}
+              {strip.manyWays && (
+                <button
+                  type="button"
+                  className={`hstrip__way mono${picked === lane.way ? " is-picked" : ""}`}
+                  aria-pressed={picked === lane.way}
+                  aria-label={`Trace Way ${lane.wayLetter} through this route`}
+                  onClick={() => onPick(picked === lane.way ? null : lane.way)}
+                >
+                  {lane.wayLetter}
+                </button>
+              )}
               <span className="hstrip__track">
                 {lane.segments.map((seg, i) => (
                   <span
@@ -1156,16 +1296,6 @@ function HabitStrip({
           idle
         </span>
       </div>
-      {/* Counted, never dropped: a reader comparing three marks on the ledger
-          against two lanes here is owed the reason. */}
-      {strip.elsewhere > 0 && (
-        <p className="hrecord__note">
-          {strip.elsewhere === 1
-            ? "1 more recording took another way"
-            : `${strip.elsewhere} more recordings took another way`}
-          , so it is not drawn on this axis. The ways are below.
-        </p>
-      )}
     </section>
   );
 }
@@ -1418,11 +1548,16 @@ function HabitRecord({ habit }: { habit: HabitDTO }): React.JSX.Element {
  * The answer to the question the `<h1>` has always asked.
  *
  * "What you do repeatedly" has headed a file list since Habits shipped. This
- * says where that repeated work actually happens, and how much of what you
+ * says WHEN that repeated work actually happens, and how much of what you
  * record recurs at all — `post.md`'s second lesson, made glanceable.
  *
- * A BAR CARRIES NO PRINTED NUMBER. The bar length is the reading and
- * `placeLabel` is the fact, exactly as a ledger mark is a position and
+ * IT REPLACED A BAR PER APPLICATION, which on the author's real store drew all
+ * three bars at full width and always would have: one kept habit through three
+ * applications weighs each of them equally, and every proposal is ×1 and
+ * excluded by the recurrence gate. See `habit-portrait.ts` for the measurement.
+ *
+ * A CELL CARRIES NO PRINTED NUMBER. The fill is the reading and
+ * `weekCellLabel` is the fact, exactly as a ledger mark is a position and
  * `markLabel` is the sentence — so a pointer and a screen reader are told the
  * same thing. A count in the gutter would be the `×N` glyph again, which was
  * deleted for being the one of three statements that could only be read as a
@@ -1433,38 +1568,146 @@ function HabitRecord({ habit }: { habit: HabitDTO }): React.JSX.Element {
  * above a violet "went another way" mark would assert a relationship that does
  * not exist.
  */
-function Portrait({ data }: { data: HabitsDTO }): React.JSX.Element | null {
+function Portrait({
+  data,
+  onOpen,
+}: {
+  data: HabitsDTO;
+  onOpen: (sessionId: string, atSec: number) => void;
+}): React.JSX.Element | null {
   const portrait = portraitOf(data);
-  // Nothing recurs. The band draws nothing rather than an empty frame — this
-  // is not an insufficiency state, because there is no reading being withheld.
+  const [hover, setHover] = useState<
+    { cell: PortraitCell; day: number; hour: number; x: number; y: number } | null
+  >(null);
+  // The card can hold BUTTONS when an hour holds several walks, so the pointer
+  // must be able to travel into it — `Rhythm`'s rule, and its timer.
+  const closing = useRef<number | null>(null);
+  const hold = (): void => {
+    if (closing.current !== null) window.clearTimeout(closing.current);
+    closing.current = null;
+  };
+  const release = (): void => {
+    hold();
+    closing.current = window.setTimeout(() => setHover(null), TIP_LINGER);
+  };
+  useEffect(() => () => hold(), []);
+
+  // Nothing has been walked at all. The band draws nothing rather than an empty
+  // frame — this is not an insufficiency state, because there is no reading
+  // being withheld.
   if (portrait.empty) return null;
+  const week = portraitWeek(data);
+
   return (
-    <section className="portrait" aria-label="Where your repeated work happens">
-      <ul className="portrait__places">
-        {portrait.places.map((place) => {
-          const label = placeLabel(place);
-          return (
-            <li key={place.app} className="portrait__place" title={label} aria-label={label}>
-              <span className="portrait__app">{place.app}</span>
-              <span className="portrait__bar">
-                <span
-                  className="portrait__fill"
-                  style={{
-                    // A floor of 2%, so the lightest place is still a mark
-                    // rather than nothing. It never reaches zero because a
-                    // place with no recordings is not in `places` at all.
-                    width: `${Math.max(place.share * 100, 2)}%`,
-                    background: `color-mix(in oklab, var(--data-0) ${25 + Math.round(65 * place.share)}%, transparent)`,
-                  }}
-                />
+    <section className="portrait" aria-label="When your recorded work happens">
+      {week.kind === "too-few" ? (
+        <p className="portrait__note">{week.reason}</p>
+      ) : (
+        <>
+          <div
+            className="rhythm__grid portrait__week"
+            role="group"
+            aria-label={weekLabel(week.grid)}
+            onMouseLeave={release}
+          >
+            {week.grid.cells.map((row, day) => (
+              <React.Fragment key={DAYS[day]}>
+                <span className="rhythm__day mono">{DAYS[day]}</span>
+                {row.map((cell, hour) => {
+                  const label = weekCellLabel(day, hour, cell);
+                  // An EMPTY hour is not a control — `Rhythm`'s rule. Most of
+                  // 168 cells are empty on a real store, and making each one
+                  // focusable would bury the few that lead somewhere.
+                  if (cell.count === 0) {
+                    return <span key={hour} className="rhythm__cell" title={label} />;
+                  }
+                  // A HOLLOW RING IS A ROUTE WALKED ONCE, and a filled cell is
+                  // one that recurs. The ledger's `is-lone` rule, one
+                  // instrument up: a lighter fill would read as *less
+                  // important*, where a ring reads as *not filled in yet* —
+                  // which is the true statement about an observation.
+                  const paint = cell.recurring
+                    ? {
+                        background: `color-mix(in oklab, var(--data-0) ${
+                          25 + Math.round(65 * (cell.count / week.grid.peak))
+                        }%, transparent)`,
+                      }
+                    : undefined;
+                  const first = cell.walks.find((w) => w.walk.walk !== null) ?? null;
+                  return (
+                    <button
+                      key={hour}
+                      type="button"
+                      className="rhythm__hit"
+                      // Withheld, never offered dead: a walk with no live route
+                      // carries no moment, and the card says so in words.
+                      disabled={first === null}
+                      aria-label={label}
+                      title={label}
+                      onMouseEnter={(e) => {
+                        hold();
+                        setHover({ cell, day, hour, ...tipAnchor(e.currentTarget) });
+                      }}
+                      onMouseLeave={release}
+                      onFocus={(e) => {
+                        hold();
+                        setHover({ cell, day, hour, ...tipAnchor(e.currentTarget) });
+                      }}
+                      onBlur={release}
+                      onClick={() => {
+                        const w = first?.walk.walk;
+                        if (first != null && w != null) onOpen(first.walk.sessionId, w.atSec);
+                      }}
+                    >
+                      <span
+                        className={`rhythm__cell${cell.recurring ? "" : " is-lone"}`}
+                        style={paint}
+                      />
+                    </button>
+                  );
+                })}
+              </React.Fragment>
+            ))}
+            <span className="rhythm__day" aria-hidden="true" />
+            {HOUR_TICKS.map((t) => (
+              <span
+                key={t.hour}
+                className="rhythm__tick mono"
+                style={{ gridColumn: `span ${HOUR_TICK_SPAN}` }}
+              >
+                {t.label}
               </span>
-            </li>
-          );
-        })}
-      </ul>
+            ))}
+          </div>
+          <p className="portrait__note">{weekNote(week.grid)}</p>
+        </>
+      )}
       <p className="portrait__coverage mono">{portrait.coverage}</p>
+      {hover && (
+        <CellCard
+          walks={hover.cell.walks}
+          title={weekCellLabel(hover.day, hover.hour, hover.cell)}
+          x={hover.x}
+          y={hover.y}
+          onEnter={hold}
+          onLeave={release}
+          onOpen={onOpen}
+        />
+      )}
     </section>
   );
+}
+
+/**
+ * Where a hover card points: the CELL's own box, never the cursor.
+ *
+ * Shared by the two grids so a keyboard focus places the card exactly as a
+ * hover does — the ledger's rule. Two copies of this arithmetic is the drift
+ * hazard `clampTip` was already extracted for.
+ */
+function tipAnchor(el: Element): { x: number; y: number } {
+  const r = el.getBoundingClientRect();
+  return { x: r.left + r.width / 2, y: r.bottom };
 }
 
 function Band({ title, children }: { title: string; children: React.ReactNode }): React.JSX.Element {

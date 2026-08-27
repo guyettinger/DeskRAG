@@ -530,6 +530,7 @@ const habit = (over: Partial<HabitDTO> = {}): HabitDTO => ({
   droppedEarly: [],
   slots: [],
   timings: null,
+  runs: [],
   cautions: [],
   apps: [],
   slug: "file-a-bug-report",

@@ -284,8 +284,13 @@ const MS_PER_SEC = 1000;
  *
  * `EdgeSourceDTO` is where BOTH the wall clock and the extent live; `atSec` on
  * `RouteWalkDTO` is the whole walk's span and cannot answer for a single step.
+ *
+ * EXPORTED so `habitRuns` reads edge sources through this function rather than
+ * walking `edge.sources` a second time. Two readers of one shape is the
+ * `ax-dump`/`ax-exec` drift hazard, and the first-source-wins rule below is
+ * exactly the kind of tie-break that would be reimplemented differently.
  */
-function sourcesOf(
+export function sourcesOf(
   flows: FlowsDTO,
   edgeId: string,
 ): Map<string, { atSec: number; throughSec: number }> {

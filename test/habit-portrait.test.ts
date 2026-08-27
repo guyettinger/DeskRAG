@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { placeLabel, portraitOf } from "../app/src/renderer/src/habit-portrait.js";
+import {
+  portraitOf,
+  portraitWeek,
+  weekCellLabel,
+  weekNote,
+} from "../app/src/renderer/src/habit-portrait.js";
 import type { HabitBindingDTO, HabitDTO, HabitProposalDTO, WalkMarkDTO } from "@shared/types";
 
 /**
@@ -9,13 +14,22 @@ import type { HabitBindingDTO, HabitDTO, HabitProposalDTO, WalkMarkDTO } from "@
  * `jsx`, so a test touching a `.tsx` even for a type breaks `npm run typecheck`.
  */
 
-const walk = (sessionId: string): WalkMarkDTO => ({
+const walk = (sessionId: string, at = 0): WalkMarkDTO => ({
   sessionId,
-  at: 0,
+  at,
   gained: false,
   fit: null,
   walk: { atSec: 0, throughSec: 1, steps: 2 },
 });
+
+/**
+ * A LOCAL wall-clock moment, because the grid is local by design — a UTC key
+ * would merge two evenings west of Greenwich, which is the rule `localDayKey`
+ * states. Built through the `Date` constructor so this fixture and the module
+ * under test agree about the machine's zone rather than about a fixed offset.
+ */
+const local = (day: number, hour: number): number =>
+  new Date(2026, 2, 2 + day, hour, 30, 0).getTime(); // 2026-03-02 is a Monday
 
 const binding = (over: Partial<HabitBindingDTO> = {}): HabitBindingDTO => ({
   state: "exact",
@@ -48,6 +62,7 @@ const habit = (over: Partial<HabitDTO> = {}): HabitDTO => ({
   droppedEarly: [],
   slots: [],
   timings: null,
+  runs: [],
   cautions: [],
   apps: ["Calculator", "TextEdit"],
   slug: "a-habit",
@@ -80,56 +95,168 @@ const proposal = (over: Partial<HabitProposalDTO> = {}): HabitProposalDTO => ({
   ...over,
 });
 
-describe("portraitOf places", () => {
-  it("weighs each application by the recordings of the routes it appears in", () => {
-    const p = portraitOf({ habits: [habit()], proposals: [proposal()] });
-    expect(p.places).toEqual([
-      { app: "Chrome", recordings: 3, share: 1 },
-      { app: "Calculator", recordings: 2, share: 2 / 3 },
-      { app: "TextEdit", recordings: 2, share: 2 / 3 },
-    ]);
+describe("portraitWeek", () => {
+  /** Ten walks over seven days: the author's real store's shape. */
+  const library = () => ({
+    habits: [
+      habit({
+        binding: binding({
+          recordings: 6,
+          walks: [0, 1, 2, 3, 4, 5].map((d) => walk(`h${d}`, local(d, 15))),
+        }),
+      }),
+    ],
+    proposals: [
+      proposal({ count: 1, walks: [walk("p1", local(6, 9))], sessionIds: ["p1"] }),
+      proposal({ count: 1, walks: [walk("p2", local(6, 9))], sessionIds: ["p2"], label: "E → F" }),
+    ],
   });
 
-  it("sums an application that appears in more than one route", () => {
-    const p = portraitOf({
-      habits: [habit({ apps: ["Chrome"] })],
-      proposals: [proposal()],
+  it("places every walk in the week, one-offs INCLUDED", () => {
+    const w = portraitWeek(library());
+    if (w.kind !== "grid") throw new Error(w.reason);
+    // Six habit walks plus two proposals: the bars this replaces weighed only
+    // what recurs, and so could never show that something does not.
+    expect(w.grid.walks).toBe(8);
+    expect(w.grid.recurring).toBe(6);
+    expect(w.grid.days).toBe(7);
+  });
+
+  it("fills a cell holding a recurring route and leaves a one-off HOLLOW", () => {
+    const w = portraitWeek(library());
+    if (w.kind !== "grid") throw new Error(w.reason);
+    expect(w.grid.cells[0]![15]).toMatchObject({ count: 1, recurring: true });
+    // Sunday 09:00 holds two proposals, each walked once.
+    expect(w.grid.cells[6]![9]).toMatchObject({ count: 2, recurring: false });
+  });
+
+  it("fills a MIXED hour, because something that repeats happened then", () => {
+    const data = library();
+    data.proposals.push(
+      proposal({ count: 1, walks: [walk("p3", local(0, 15))], sessionIds: ["p3"], label: "G → H" }),
+    );
+    const w = portraitWeek(data);
+    if (w.kind !== "grid") throw new Error(w.reason);
+    expect(w.grid.cells[0]![15]).toMatchObject({ count: 2, recurring: true });
+  });
+
+  it("names the ROUTE on every walk, which a per-habit cell never has to", () => {
+    const w = portraitWeek(library());
+    if (w.kind !== "grid") throw new Error(w.reason);
+    expect(w.grid.cells[0]![15]!.walks[0]!.routeTitle).toBe("A habit");
+    // A proposal falls back to its label when it has no composed name.
+    expect(w.grid.cells[6]![9]!.walks.map((x) => x.routeTitle)).toEqual(["C → D", "E → F"]);
+  });
+
+  it("counts a KEPT habit as recurring even at one recording", () => {
+    // Keeping it is the recurrence claim; a deleted recording must not
+    // silently retract it. The same rule the coverage line holds.
+    const w = portraitWeek({
+      habits: [habit({ binding: binding({ recordings: 1, walks: [walk("s1", local(0, 9))] }) })],
+      proposals: [0, 1, 2].map((d) =>
+        proposal({ count: 1, walks: [walk(`p${d}`, local(d + 1, 9))], sessionIds: [`p${d}`] }),
+      ),
     });
-    expect(p.places).toEqual([{ app: "Chrome", recordings: 5, share: 1 }]);
+    if (w.kind !== "grid") throw new Error(w.reason);
+    expect(w.grid.cells[0]![9]).toMatchObject({ recurring: true });
+    expect(w.grid.recurring).toBe(1);
   });
 
-  /**
-   * The h1 asks what you do REPEATEDLY. A route seen once is an observation,
-   * and letting it colour the portrait would answer a different question.
-   */
-  it("excludes a route walked only once", () => {
-    const p = portraitOf({ habits: [], proposals: [proposal({ count: 1, apps: ["Mail"] })] });
-    expect(p.places).toEqual([]);
-    expect(p.empty).toBe(true);
-  });
-
-  it("keeps a kept habit even when its evidence dropped to one recording", () => {
-    // Being written down IS the recurrence claim, and a deleted recording must
-    // not silently retract it. `lostSessionIds` exists precisely for this case.
-    const p = portraitOf({
-      habits: [habit({ binding: binding({ recordings: 1, walks: [walk("s1")] }) })],
+  it("sorts a cell's walks OLDEST FIRST rather than trusting the caller", () => {
+    const w = portraitWeek({
+      habits: [
+        habit({
+          binding: binding({
+            recordings: 4,
+            // Handed newest first on purpose.
+            walks: [3, 2, 1, 0].map((d) => walk(`h${d}`, local(d, 15))),
+          }),
+        }),
+      ],
       proposals: [],
     });
-    expect(p.places.map((x) => x.app)).toEqual(["Calculator", "TextEdit"]);
+    if (w.kind !== "grid") throw new Error(w.reason);
+    const monday = w.grid.cells[0]![15]!;
+    expect(monday.walks.map((x) => x.walk.sessionId)).toEqual(["h0"]);
   });
 
-  it("drops an archived or dismissed habit from the picture", () => {
-    for (const state of ["archived", "dismissed"] as const) {
-      expect(portraitOf({ habits: [habit({ state })], proposals: [] }).empty).toBe(true);
-    }
-  });
-
-  it("breaks a weight tie on first appearance, so the order is stable", () => {
-    const p = portraitOf({
-      habits: [habit({ apps: ["Zed", "Alfred"] })],
+  it("withholds the grid under the FLOOR, and says what it has", () => {
+    const w = portraitWeek({
+      habits: [habit({ binding: binding({ recordings: 2, walks: [walk("s1", local(0, 9))] }) })],
       proposals: [],
     });
-    expect(p.places.map((x) => x.app)).toEqual(["Zed", "Alfred"]);
+    expect(w.kind).toBe("too-few");
+    if (w.kind !== "too-few") return;
+    expect(w.reason).toBe("1 recording, on 1 day — too few to place in the week.");
+  });
+
+  it("refuses four walks inside ONE DAY — the four-in-four-minutes cluster", () => {
+    const w = portraitWeek({
+      habits: [
+        habit({
+          binding: binding({
+            recordings: 4,
+            walks: [0, 1, 2, 3].map((h) => walk(`s${h}`, local(0, 9 + h))),
+          }),
+        }),
+      ],
+      proposals: [],
+    });
+    expect(w.kind).toBe("too-few");
+  });
+
+  it("states the FILL RULE in words, at every mix", () => {
+    const w = portraitWeek(library());
+    if (w.kind !== "grid") throw new Error(w.reason);
+    expect(weekNote(w.grid)).toBe(
+      "8 recordings across 7 days · 6 on a route walked more than once, 2 seen once.",
+    );
+  });
+
+  it("says so when NOTHING recurs, rather than printing a zero", () => {
+    const w = portraitWeek({
+      habits: [],
+      proposals: [0, 1, 2, 3].map((d) =>
+        proposal({ count: 1, walks: [walk(`p${d}`, local(d, 9))], sessionIds: [`p${d}`] }),
+      ),
+    });
+    if (w.kind !== "grid") throw new Error(w.reason);
+    expect(weekNote(w.grid)).toBe(
+      "4 recordings across 4 days — none of these routes has been walked twice yet.",
+    );
+  });
+
+  it("says so when EVERYTHING recurs", () => {
+    const w = portraitWeek({
+      habits: [
+        habit({
+          binding: binding({
+            recordings: 4,
+            walks: [0, 1, 2, 3].map((d) => walk(`s${d}`, local(d, 9))),
+          }),
+        }),
+      ],
+      proposals: [],
+    });
+    if (w.kind !== "grid") throw new Error(w.reason);
+    expect(weekNote(w.grid)).toBe(
+      "4 recordings across 4 days, every one of them on a route you have walked before.",
+    );
+  });
+
+  it("gives an empty hour words rather than a bare zero", () => {
+    expect(weekCellLabel(2, 0, { count: 0, recurring: false, walks: [] })).toBe(
+      "Wednesday 00:00 — no recordings",
+    );
+  });
+
+  it("says on the CELL that a hollow mark is a route seen once", () => {
+    const w = portraitWeek(library());
+    if (w.kind !== "grid") throw new Error(w.reason);
+    expect(weekCellLabel(6, 9, w.grid.cells[6]![9]!)).toBe(
+      "Sunday 09:00 — 2 recordings, on a route seen once",
+    );
+    expect(weekCellLabel(0, 15, w.grid.cells[0]![15]!)).toBe("Monday 15:00 — 1 recording");
   });
 });
 
@@ -165,20 +292,5 @@ describe("portraitOf coverage", () => {
       proposals: [],
     });
     expect(p.coverage).toBe("1 recording walked a route · 1 route · 0 walked again · 1 written down");
-  });
-});
-
-describe("placeLabel", () => {
-  /**
-   * A bar carries no printed number, exactly as a ledger mark carries no
-   * printed timestamp: the words are the fact and the picture is the metaphor.
-   */
-  it("says the count in words, with its unit", () => {
-    expect(placeLabel({ app: "Calculator", recordings: 3, share: 1 })).toBe(
-      "Calculator · 3 recordings of repeated work",
-    );
-    expect(placeLabel({ app: "Mail", recordings: 1, share: 0.5 })).toBe(
-      "Mail · 1 recording of repeated work",
-    );
   });
 });

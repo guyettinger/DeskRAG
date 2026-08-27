@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { HabitStepDTO, HabitTimingsDTO, HabitWayDTO } from "@shared/types";
+import type { HabitRunDTO, HabitStepDTO, HabitTimingsDTO, HabitWayDTO } from "@shared/types";
 import {
   actionSummary,
   appTones,
@@ -431,18 +431,25 @@ describe("the spine: sequence, cost and trust in one row", () => {
 });
 
 describe("the strip: the shape of each run", () => {
-  const walks = [
-    { sessionId: "a", at: 1000, atSec: 5 },
-    { sessionId: "b", at: 2000, atSec: 7 },
-  ];
-
-  /** Absence is DRAWN by the caller, so the projection must say so rather than guess. */
-  it("is null with no timings, so the caller can state the reason", () => {
-    expect(stripLanes(wayOf([stepOf({ index: 0 })]), null, walks, appTones([]), 1)).toBeNull();
+  const runOf = (
+    over: Partial<HabitRunDTO> & { sessionId: string; segments: HabitRunDTO["segments"] },
+  ): HabitRunDTO => ({
+    way: 0,
+    wayLetter: "A",
+    at: 1000,
+    atSec: 5,
+    totalMs: over.segments.reduce((n, x) => n + x.ms + x.idleAfterMs, 0),
+    ...over,
   });
 
-  it("is null when no step carries an attributed span", () => {
-    expect(stripLanes(wayOf([stepOf({ index: 0 })]), timings([]), walks, appTones([]), 2)).toBeNull();
+  /** Absence is DRAWN by the caller, so the projection must say so rather than guess. */
+  it("is null with no runs, so the caller can state the reason", () => {
+    expect(stripLanes([], [wayOf([stepOf({ index: 0 })])], appTones([]))).toBeNull();
+  });
+
+  it("is null when every run drew nothing at all", () => {
+    const runs = [runOf({ sessionId: "a", segments: [{ stepIndex: 0, ms: 0, idleAfterMs: 0 }] })];
+    expect(stripLanes(runs, [wayOf([stepOf({ index: 0 })])], appTones([]))).toBeNull();
   });
 
   /**
@@ -452,11 +459,12 @@ describe("the strip: the shape of each run", () => {
    */
   it("scales every lane against the longest lane, never against itself", () => {
     const view = stripLanes(
-      wayOf([stepOf({ index: 0 })], ["a", "b"]),
-      timings([timed(0, [{ sessionId: "a", ms: 4000 }, { sessionId: "b", ms: 2000 }])], false),
-      walks,
+      [
+        runOf({ sessionId: "a", segments: [{ stepIndex: 0, ms: 4000, idleAfterMs: 0 }] }),
+        runOf({ sessionId: "b", segments: [{ stepIndex: 0, ms: 2000, idleAfterMs: 0 }] }),
+      ],
+      [wayOf([stepOf({ index: 0 })], ["a", "b"])],
       appTones([]),
-      2,
     )!;
     expect(view.domainMs).toBe(4000);
     expect(view.lanes[0]!.segments[0]!.widthPct).toBeCloseTo(100);
@@ -466,14 +474,17 @@ describe("the strip: the shape of each run", () => {
   /** Segments TILE a lane, so they must abut exactly — a width floor would not. */
   it("lays a lane's segments end to end with no gap between them", () => {
     const view = stripLanes(
-      wayOf([stepOf({ index: 0 }), stepOf({ index: 1 })], ["a"]),
-      timings([
-        timed(0, [{ sessionId: "a", ms: 1000 }], [{ sessionId: "a", ms: 500 }]),
-        timed(1, [{ sessionId: "a", ms: 2500 }]),
-      ]),
-      walks,
+      [
+        runOf({
+          sessionId: "a",
+          segments: [
+            { stepIndex: 0, ms: 1000, idleAfterMs: 500 },
+            { stepIndex: 1, ms: 2500, idleAfterMs: 0 },
+          ],
+        }),
+      ],
+      [wayOf([stepOf({ index: 0 }), stepOf({ index: 1 })], ["a"])],
       appTones([]),
-      1,
     )!;
     const segs = view.lanes[0]!.segments;
     expect(segs.map((s) => s.kind)).toEqual(["step", "idle", "step"]);
@@ -481,14 +492,27 @@ describe("the strip: the shape of each run", () => {
     expect(segs[2]!.leftPct + segs[2]!.widthPct).toBeCloseTo(100);
   });
 
+  /**
+   * A ZERO GAP IS NOT A SEGMENT. `min-width: 1px` in the sheet keeps a
+   * sub-pixel step visible, and would paint a zero-length gap as a hairline of
+   * hatching between two steps that ran back to back — a pause that reads as
+   * measured and was not.
+   */
+  it("draws no idle segment where no idle was measured", () => {
+    const view = stripLanes(
+      [runOf({ sessionId: "a", segments: [{ stepIndex: 0, ms: 1000, idleAfterMs: 0 }] })],
+      [wayOf([stepOf({ index: 0 })], ["a"])],
+      appTones([]),
+    )!;
+    expect(view.lanes[0]!.segments.map((s) => s.kind)).toEqual(["step"]);
+  });
+
   /** The lane's extent is what it DREW, so it can never stop short of its own end. */
   it("totals a lane from its own drawn segments", () => {
     const view = stripLanes(
-      wayOf([stepOf({ index: 0 })], ["a"]),
-      timings([timed(0, [{ sessionId: "a", ms: 1000 }], [{ sessionId: "a", ms: 500 }])]),
-      walks,
+      [runOf({ sessionId: "a", segments: [{ stepIndex: 0, ms: 1000, idleAfterMs: 500 }] })],
+      [wayOf([stepOf({ index: 0 })], ["a"])],
       appTones([]),
-      1,
     )!;
     expect(view.lanes[0]!.totalMs).toBe(1500);
     expect(view.lanes[0]!.totalText).toBe("1.5s");
@@ -496,36 +520,90 @@ describe("the strip: the shape of each run", () => {
 
   it("carries each recording's wall clock and moment, for the label and the link", () => {
     const view = stripLanes(
-      wayOf([stepOf({ index: 0 })], ["a"]),
-      timings([timed(0, [{ sessionId: "a", ms: 1000 }])]),
-      walks,
+      [runOf({ sessionId: "a", segments: [{ stepIndex: 0, ms: 1000, idleAfterMs: 0 }] })],
+      [wayOf([stepOf({ index: 0 })], ["a"])],
       appTones([]),
-      1,
     )!;
     expect(view.lanes[0]!.at).toBe(1000);
     expect(view.lanes[0]!.atSec).toBe(5);
   });
 
-  /** A recording the strip cannot place is still counted, never silently dropped. */
-  it("counts the recordings that took another way rather than dropping them", () => {
+  /**
+   * EVERY RECORDING IS DRAWN, which is the whole change. Reading
+   * `HabitTimingsDTO` drew the baseline Way alone — measured on the real store,
+   * two lanes of six recordings, one of them a 1.0s sliver of a recording that
+   * had walked a different Way and shared a single edge.
+   */
+  it("draws a lane for every run, whichever Way it took", () => {
     const view = stripLanes(
-      wayOf([stepOf({ index: 0 })], ["a"]),
-      timings([timed(0, [{ sessionId: "a", ms: 1000 }])]),
-      walks,
-      appTones([]),
-      3,
+      [
+        runOf({ sessionId: "a", way: 0, wayLetter: "A", segments: [{ stepIndex: 0, ms: 1000, idleAfterMs: 0 }] }),
+        runOf({ sessionId: "b", way: 1, wayLetter: "B", segments: [{ stepIndex: 0, ms: 3000, idleAfterMs: 0 }] }),
+      ],
+      [
+        wayOf([stepOf({ index: 0, app: "Calculator", to: "Calculator" })], ["a"]),
+        { ...wayOf([stepOf({ index: 0, app: "Finder", to: "Finder" })], ["b"]), letter: "B" },
+      ],
+      appTones(["Calculator", "TextEdit", "Finder"]),
     )!;
-    expect(view.elsewhere).toBe(2);
+    expect(view.lanes.map((l) => l.sessionId)).toEqual(["a", "b"]);
+    expect(view.lanes.map((l) => l.wayLetter)).toEqual(["A", "B"]);
+    // Finder is reached only by the second Way, and appears now because that
+    // Way is drawn. The masthead's app chain named it all along.
+    expect(view.legend.map((l) => l.app)).toEqual(["Calculator", "Finder"]);
+  });
+
+  /**
+   * A step is located by (way, stepIndex), never by its position in
+   * `segments` — a step carrying no source is dropped, so the array is a
+   * SUBSET of the Way's steps. That is the off-by-one
+   * `HabitStepTimingDTO.stepIndex` exists for, one instrument over.
+   */
+  it("locates a segment by its step INDEX, not by its position", () => {
+    const view = stripLanes(
+      [runOf({ sessionId: "a", segments: [{ stepIndex: 2, ms: 1000, idleAfterMs: 0 }] })],
+      [
+        wayOf(
+          [
+            stepOf({ index: 0, app: "Calculator", to: "Calculator" }),
+            stepOf({ index: 1, app: "Calculator", to: "Calculator" }),
+            stepOf({ index: 2, app: "Finder", to: "Finder" }),
+          ],
+          ["a"],
+        ),
+      ],
+      appTones(["Calculator", "TextEdit", "Finder"]),
+    )!;
+    expect(view.lanes[0]!.segments[0]!.place).toBe("Finder");
+    expect(view.lanes[0]!.segments[0]!.toneSlot).toBe(2);
+  });
+
+  /**
+   * ONE WAY NEEDS NO LETTER — `liftingRollup`'s rule. Labelling it claims a
+   * distinction against Ways that are not being drawn.
+   */
+  it("says whether the letter is worth printing at all", () => {
+    const one = stripLanes(
+      [runOf({ sessionId: "a", segments: [{ stepIndex: 0, ms: 1000, idleAfterMs: 0 }] })],
+      [wayOf([stepOf({ index: 0 })], ["a"])],
+      appTones([]),
+    )!;
+    expect(one.manyWays).toBe(false);
+
+    const two = stripLanes(
+      [runOf({ sessionId: "a", segments: [{ stepIndex: 0, ms: 1000, idleAfterMs: 0 }] })],
+      [wayOf([stepOf({ index: 0 })], ["a"]), wayOf([stepOf({ index: 0 })], ["b"])],
+      appTones([]),
+    )!;
+    expect(two.manyWays).toBe(true);
   });
 
   /** A swatch for a colour no lane contains sends a reader looking for nothing. */
   it("names only the applications it actually paints", () => {
     const view = stripLanes(
-      wayOf([stepOf({ index: 0, app: "TextEdit" })], ["a"]),
-      timings([timed(0, [{ sessionId: "a", ms: 1000 }])]),
-      walks,
+      [runOf({ sessionId: "a", segments: [{ stepIndex: 0, ms: 1000, idleAfterMs: 0 }] })],
+      [wayOf([stepOf({ index: 0, app: "TextEdit" })], ["a"])],
       appTones(["Calculator", "TextEdit"]),
-      1,
     )!;
     expect(view.legend).toEqual([{ app: "TextEdit", toneSlot: 1 }]);
   });

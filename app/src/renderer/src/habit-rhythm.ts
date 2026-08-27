@@ -119,8 +119,25 @@ export const RHYTHM_MIN_DAYS = 3;
 /** `Date.getDay()` is Sunday-first; the grid is Monday-first. */
 const dayIndex = (d: Date): number => (d.getDay() + 6) % 7;
 
+/**
+ * WHERE IN THE WEEK a wall-clock moment lands — the grid's one placement rule.
+ *
+ * EXPORTED because the band under the `<h1>` draws the same grid over the whole
+ * library, and two functions turning a timestamp into a (day, hour) is the
+ * `ax-dump`/`ax-exec` drift hazard at its smallest scale: Monday-first and
+ * local-vs-UTC are exactly the two decisions a second implementation gets
+ * wrong, and neither would fail anything — the picture would simply be shifted.
+ */
+export function placeInWeek(at: number): { day: number; hour: number } {
+  const d = new Date(at);
+  return { day: dayIndex(d), hour: d.getHours() };
+}
+
 /** LOCAL calendar day. A UTC key would merge two evenings west of Greenwich. */
 const dayKey = (d: Date): string => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+
+/** The same LOCAL day rule, for callers counting distinct days. See `placeInWeek`. */
+export const localDayKey = (at: number): string => dayKey(new Date(at));
 
 export function rhythmOf(walks: readonly WalkMarkDTO[]): Rhythm {
   const dates = walks.map((w) => new Date(w.at));
@@ -185,7 +202,7 @@ export function rhythmLabel(grid: PhaseGrid): string {
 /**
  * What ONE cell says when a pointer asks it.
  *
- * The `placeLabel` / `markLabel` rule, one screen over: the picture is the
+ * The `weekCellLabel` / `markLabel` rule, one band up: the picture is the
  * reading and the words are the fact, so a pointer and a screen reader are told
  * the same thing. An empty hour says it is empty rather than printing a bare
  * zero, which reads as a measurement of nothing.

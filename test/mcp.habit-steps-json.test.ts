@@ -57,6 +57,7 @@ const habit = (over: Partial<HabitDTO> = {}): HabitDTO => ({
   fork: null,
   slots: [],
   timings: null,
+  runs: [],
   cautions: [],
   droppedEarly: [],
   apps: ["Calculator", "TextEdit"],
