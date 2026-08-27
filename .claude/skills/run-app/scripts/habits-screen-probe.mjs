@@ -265,27 +265,61 @@ try {
     );
   }
 
-  // ---- 4. the record, as instruments
+  // ---- 4. the record: one lede, one strip, one spine, three qualifiers
   //
   // This half used to be a `<pre>` of the generated markdown from
   // `## What varies` down: 835x420 of monospace prose whose largest section was
-  // fifty-six lines of raw `t_mono` floats and macOS keycodes, and which
-  // printed `## Where the ways fork` a second time under the fork instrument
-  // that draws it. The FILE is unchanged — `Copy HABIT.md` still copies
+  // fifty-six lines of raw `t_mono` floats and macOS keycodes. It then became
+  // four instrument blocks, and it STILL drew the sequence twice — a step list
+  // numbered by `step.index + 1`, and a `Where the time goes` block numbered by
+  // its own position, which could disagree because `habitTimings` drops steps
+  // carrying no duration. The spine merges them and joins on `stepIndex`.
+  //
+  // The FILE is unchanged throughout — `Copy HABIT.md` still copies
   // `habit.markdown` — so this checks the SCREEN and never the document.
   const record = await page.evaluate(() => ({
     present: document.querySelector(".hrecord") !== null,
+    lede: document.querySelector(".hlede__facts")?.textContent ?? null,
+    chain: [...document.querySelectorAll(".hlede__app")].map((e) => e.textContent.trim()),
     blocks: [...document.querySelectorAll(".hrecord__block > .eyebrow")].map(
       (e) => e.textContent,
     ),
     // The proposal preview keeps its `<pre>`; a KEPT habit must not have one.
     dumped: document.querySelectorAll(".habitedit__body .habitedit__record").length,
-    forkInstruments: document.querySelectorAll(".wayfork, .habitsteps").length,
-    timeRows: document.querySelectorAll(".hrecord__time").length,
-    // A bar carries no printed number ON it — the portrait band's ×N rule.
-    barsPrint: [...document.querySelectorAll(".hrecord__bar")].some(
+    // ONE step renderer. The spine and the fork are alternatives, never both:
+    // drawing them together would put the sequence on the page twice, which is
+    // the defect this section exists to undo.
+    stepRenderers: document.querySelectorAll(".hspine, .wayfork").length,
+    // RETIRED. `.habitsteps` and the `Where the time goes` block are the two
+    // halves the spine replaced; either reappearing means the merge came apart.
+    retired: document.querySelectorAll(".habitsteps, .hrecord__time, .hrecord__walk").length,
+    stripLanes: document.querySelectorAll(".hstrip__lane").length,
+    // ONE SHARED DOMAIN. Per-lane grids size their `max-content` columns
+    // independently — measured at 444.6px and 451.1px on two lanes of one strip
+    // — and a shared domain drawn on two axes is not a shared domain.
+    trackWidths: [...new Set(
+      [...document.querySelectorAll(".hstrip__track")].map(
+        (t) => +t.getBoundingClientRect().width.toFixed(1),
+      ),
+    )],
+    // `display: block` on a nested cell is load-bearing, and its absence
+    // measured 0x0 with the DOM and the screenshot both looking fine.
+    zeroBoxSegs: [...document.querySelectorAll(".hstrip__seg")].filter((e) => {
+      const b = e.getBoundingClientRect();
+      return b.width === 0 || b.height === 0;
+    }).length,
+    spineSteps: document.querySelectorAll(".hspine__step").length,
+    // A PLACE IS PRINTED ONCE while the chain holds. A row printing `A → B` is
+    // a declared BREAK, not the default — it used to be every row.
+    spineBroken: [...document.querySelectorAll(".hspine__step .hspine__place")].filter(
+      (e) => (e.textContent ?? "").includes(" → "),
+    ).length,
+    // A bar carries no printed number ON it — the portrait band's rule.
+    barsPrint: [...document.querySelectorAll(".hspine__bar")].some(
       (b) => (b.textContent ?? "").trim() !== "",
     ),
+    // Density is READ, not counted: every step says what it did in one line.
+    summaries: [...document.querySelectorAll(".hspine__detail summary")].map((e) => e.textContent),
     liftingSummary: document.querySelector(".hrecord__lifting summary")?.textContent ?? null,
     liftingHidden: document.querySelector(".hrecord__lifting")?.open === false,
     liftingNotes: document.querySelectorAll(".hrecord__lifting li").length,
@@ -293,41 +327,56 @@ try {
     // lifting notes nested inside the <details> beside them — which is the
     // whole distinction this section exists to draw.
     cautions: document.querySelectorAll(".hrecord__block > .hrecord__cautions > li").length,
-    walkChips: document.querySelectorAll(".hrecord__walk").length,
-    ledgerMarks: document.querySelectorAll(".habitedit__evidence .ledger__hit").length,
-    truncated: [...document.querySelectorAll(".hrecord *")].filter(
+    truncated: [...document.querySelectorAll(".hrecord *, .hlede *, .hstrip *, .hspine *")].filter(
       (el) => el.scrollWidth > el.clientWidth + 1,
     ).length,
   }));
 
-  console.log(`\nRecord: [${record.blocks.join(" · ")}]`);
-  console.log(`  ${record.timeRows} timed steps · ${record.walkChips} openable recordings`);
+  console.log(`\nRecord: ${record.lede ?? "no lede"}`);
+  console.log(`  ${record.chain.join(" → ")}`);
+  console.log(
+    `  ${record.stripLanes} strip lanes · ${record.spineSteps} spine steps · blocks [${record.blocks.join(" · ")}]`,
+  );
   console.log(`  ${record.liftingSummary ?? "no lifting notes"}\n`);
 
   check(record.present, "the record is drawn as instruments");
+  check(record.lede !== null, "the lede answers what this is before anything is read");
   check(
     record.dumped === 0,
     `a kept habit dumps no generated markdown — found ${record.dumped} <pre>`,
   );
   check(
     record.blocks.join(",") ===
-      "What varies,Where the time goes,What this evidence does not say,Evidence",
-    `the four blocks are drawn in order — got [${record.blocks.join(", ")}]`,
+      "What changes each time,What this can’t tell you,Where this came from",
+    `the three qualifier blocks are drawn in order — got [${record.blocks.join(", ")}]`,
   );
-  // The fork was printed TWICE: once as the instrument, once as markdown a few
-  // inches below it. Exactly one of the two step renderers should be on screen.
   check(
-    record.forkInstruments === 1,
-    `the ways are drawn once, not twice — ${record.forkInstruments} step renderers`,
+    record.stepRenderers === 1,
+    `the sequence is drawn once, not twice — ${record.stepRenderers} step renderers`,
+  );
+  check(
+    record.retired === 0,
+    `the two halves the spine replaced are gone — ${record.retired} retired nodes on screen`,
   );
   check(!record.barsPrint, "no duration bar prints a number on its face");
   check(record.truncated === 0, `nothing in the record truncates — ${record.truncated} did`);
-  // The recordings, openable. A ULID names a recording and can be read by
-  // nothing; the ledger has been able to open these since `c205413`.
-  check(
-    record.walkChips === record.ledgerMarks,
-    `every recording is openable from the record — ${record.walkChips} chips, ${record.ledgerMarks} marks`,
-  );
+  check(record.zeroBoxSegs === 0, `every painted strip segment has a box — ${record.zeroBoxSegs} at 0`);
+  if (record.stripLanes > 0) {
+    check(
+      record.trackWidths.length === 1,
+      `every lane shares one axis — widths ${record.trackWidths.join(", ")}`,
+    );
+  }
+  if (record.spineSteps > 0) {
+    check(
+      record.spineBroken === 0,
+      `a place is printed once while the chain holds — ${record.spineBroken} rows printed both`,
+    );
+    check(
+      record.summaries.every((t) => /\d|types \{/.test(t ?? "")),
+      `every action tally counts something — [${record.summaries.slice(0, 3).join(" | ")}]`,
+    );
+  }
   if (record.liftingSummary !== null) {
     // ROLLED UP, never dropped. Every note is still one disclosure away, and
     // still every one of them in the file.

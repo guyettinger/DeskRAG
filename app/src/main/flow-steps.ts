@@ -58,6 +58,19 @@ export interface FlowStep {
   edgeId: string;
   from: string;
   to: string;
+  /**
+   * The application the step ARRIVES in — the `to` node's own `app`.
+   *
+   * The destination, never the origin: a step is the work of getting somewhere,
+   * and the place it lands in is the one a reader is looking at when it ends.
+   * Read from the same `TraceNodeDTO.app` `flowApps` reads, so a step's colour
+   * and the route's app chain can never name different applications.
+   *
+   * NULL is carried, never guessed. A node lifted with no `app` predicate has
+   * no application, and inventing one from the label would put a guess in a
+   * picture — the rule `LiftInput.visualAt` states one layer down.
+   */
+  app: string | null;
   actions: FlowStepAction[];
   observations: number;
   /**
@@ -204,6 +217,7 @@ export function stepsFor(
         edgeId,
         from: "",
         to: "",
+        app: null,
         actions: [],
         observations: 0,
         everyRecording: true,
@@ -223,6 +237,7 @@ export function stepsFor(
       edgeId,
       from: labelOf(edge.from),
       to: labelOf(edge.to),
+      app: nodeById.get(edge.to)?.app ?? null,
       actions: edge.actions.map(toAction),
       observations: edge.observations,
       everyRecording: recordings <= 0 || edge.observations >= recordings,

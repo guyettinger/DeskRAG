@@ -16,6 +16,7 @@ const ways: HabitWayDTO[] = [
         edgeId: "e0",
         from: "Calculator",
         to: "TextEdit",
+        app: null,
         actions: [
           { action: "click", target: 'Button "="' },
           { action: "type", target: "slot textarea", slot: { name: "textarea" } },
@@ -31,6 +32,7 @@ const ways: HabitWayDTO[] = [
         edgeId: "gone",
         from: "TextEdit",
         to: "TextEdit",
+        app: null,
         actions: [],
         observations: 1,
         everyRecording: false,

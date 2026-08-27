@@ -4336,7 +4336,7 @@ select {
   margin: 0; font-size: var(--t-meta); line-height: 1.5; color: var(--muted);
 }
 
-.hrecord__slots, .hrecord__cautions, .hrecord__walks {
+.hrecord__slots, .hrecord__cautions {
   list-style: none; margin: 0; padding: 0;
 }
 .hrecord__cautions {
@@ -4351,34 +4351,11 @@ select {
 .hrecord__slotname { font-size: var(--t-meta); color: var(--text); }
 .hrecord__slotnote { font-size: var(--t-meta); color: var(--muted); }
 
-/* WHERE THE TIME GOES. One bar per RECORDING, never one from a mean or a
-   maximum: an average invents a number no recording produced, and a single bar
-   drawn from the longest span overstates every other recording of that step.
-   The bar is the reading and the duration beside it is the fact — the portrait
-   band's rule, so no number is printed ON a bar. */
-.hrecord__times {
-  list-style: none; margin: 0; padding: 0;
-  display: flex; flex-direction: column; gap: var(--s2);
-}
-.hrecord__time {
-  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
-  gap: var(--s3); align-items: center;
-}
-.hrecord__timeplaces {
-  font-size: var(--t-meta); color: var(--text); overflow-wrap: anywhere;
-}
-.hrecord__n { color: var(--muted); }
-.hrecord__bars { display: flex; flex-direction: column; gap: var(--s0); min-width: 0; }
-.hrecord__barrow { display: flex; align-items: center; gap: var(--s2); }
-.hrecord__bar {
-  flex: 1; min-width: 0; height: 6px; border-radius: var(--radius-sm);
-  background: var(--hairline-soft);
-}
-.hrecord__fill {
-  display: block; height: 100%; border-radius: var(--radius-sm);
-  background: color-mix(in oklab, var(--data-0) 70%, transparent);
-}
-.hrecord__ms { flex: none; font-size: var(--t-meta); color: var(--muted); }
+/* WHERE THE TIME GOES IS NOT A BLOCK ANY MORE — it is the spine's bar column,
+   on the row of the step it times (`.hspine__bars`). Two independently numbered
+   lists of one sequence could disagree about which step was which, because
+   `habitTimings` drops steps carrying no duration; merging them removed both
+   the join and the defect. */
 
 /* The lifting notes, one disclosure away. `<details>` because the browser
    already owns the keyboard path and the expanded state; a hand-rolled toggle
@@ -4387,10 +4364,9 @@ select {
 .hrecord__lifting summary { cursor: pointer; color: var(--text); }
 .hrecord__lifting .hrecord__cautions { margin-top: var(--s2); }
 
-/* The recordings themselves, openable. A ULID names a recording and can be read
-   by nothing; the ledger has been able to open these since `c205413`. */
-.hrecord__walks { display: flex; flex-wrap: wrap; gap: var(--s1); }
-.hrecord__walk { font-size: var(--t-meta); }
+/* THE RECORDINGS ARE THE STRIP'S LANES NOW. They were a row of bare wall-clock
+   chips here — the same recordings, openable the same way, with no shape
+   attached. A lane is that chip with its run drawn beside it. */
 /* The document's head. The habit's title used to exist on this pane only as the
    VALUE of a text input, so the editor opened on the word TITLE and the thing
    being edited was never named. */
@@ -4419,18 +4395,207 @@ select {
    below it is the recording, which neither of them can edit — the invariant the
    whole table is AUTHORED for. */
 .habitedit__recordhead--cut { border-top: 1px solid var(--hairline); padding-top: var(--s3); }
+/* The rule in words, under the heading that now only names the thing. */
+.habitedit__recordnote { margin: 0; font-size: var(--t-meta); }
 
 /* The steps as an instrument. The <pre> below still holds the rest of the
    record verbatim; this half is drawn from the DTO because a step that cannot
    be opened is a record you must take on trust. */
-.habitsteps { display: flex; flex-direction: column; gap: var(--s3); }
-.habitsteps__list { margin: 0; padding-left: var(--s4); display: flex; flex-direction: column; gap: var(--s2); }
-.habitsteps__head { display: flex; align-items: baseline; gap: var(--s2); flex-wrap: wrap; }
-.habitsteps__places { font-weight: 600; }
-/* Said in words, never a greyed control with no reason. */
+/* The steps' one surviving rule: a reason where a control would be. Both the
+   spine and the strip say why a moment cannot be opened rather than drawing a
+   greyed button with no explanation — a disabled control with no reason is
+   indistinguishable from one nobody implemented. */
 .habitsteps__noopen { font-size: var(--t-nano); color: var(--muted); }
-.habitsteps__action { margin: 0; font-size: var(--t-meta); color: var(--muted); }
-.habitsteps__count { margin: 0; font-size: var(--t-nano); color: var(--muted); font-style: italic; }
+
+/* ---- the record's lede: the glance ---------------------------------------
+   Four facts and the app chain, above every instrument. The section used to
+   open on a step list, so "what is this habit, roughly" could only be answered
+   by reading all of it. The chain's swatches are the strip's own tone slots
+   (`appTones`), so the legend is learned before the strip is reached and an
+   application cannot be teal here and clay there. */
+.hlede { display: flex; flex-direction: column; gap: var(--s1); }
+.hlede__facts { margin: 0; font-size: var(--t-body); color: var(--text); }
+.hlede__chain {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1) var(--s2);
+  font-size: var(--t-meta);
+  color: var(--muted);
+}
+.hlede__app { display: inline-flex; align-items: center; gap: var(--s1); }
+.hlede__arrow { color: var(--hairline); }
+/* A DATA tone, never `--accent`: the two chroma registers are separated by
+   lightness precisely so a lane colour cannot be mistaken for a control. */
+.hlede__swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--tone, var(--muted-dim));
+}
+
+/* ---- the strip: the shape of each run ------------------------------------
+   ONE LANE PER RECORDING, ON ONE SHARED DOMAIN. A per-lane rescale draws a fast
+   run and a slow one identically, which is exactly the distinction the strip
+   exists to make — the recurrence ledger's rule, one level up.
+   `--sunken` for the track: a meter set INTO the instrument, the register the
+   signal wells and the timeline already use. */
+.hstrip { display: flex; flex-direction: column; gap: var(--s2); }
+/* THE GRID IS ON THE LIST AND THE LANE IS `display: contents`, so every lane
+   shares ONE set of columns. Per-lane grids size their `max-content` columns
+   independently — measured in the running app at 444.6px and 451.1px of track
+   on two lanes of one strip — and a shared domain drawn on two different axes
+   is not a shared domain at all. This is `.portrait__place`'s pattern, and it
+   is what makes a stack of rows a small-multiples reading. */
+.hstrip__lanes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) max-content max-content;
+  gap: var(--s1) var(--s2);
+  align-items: center;
+}
+.hstrip__lane { display: contents; }
+.hstrip__when { font-size: var(--t-meta); color: var(--muted); }
+.hstrip__track {
+  position: relative;
+  display: block;
+  height: 14px;
+  min-width: 0;
+  border-radius: var(--radius-sm);
+  background: var(--sunken);
+  overflow: hidden;
+}
+.hstrip__seg {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  /* The rail's rule, applied where it belongs: segments TILE a lane, so a width
+     floor in the projection would steal from a neighbour and stop the lane
+     summing to itself. A sub-pixel step stays visible here instead. */
+  min-width: 1px;
+  background: var(--tone, var(--muted-dim));
+  /* A 1px ring in the surface colour, so two adjacent segments are separated by
+     a 2px gap. A ring rather than a border or a margin: `box-shadow` paints
+     OUTSIDE the box, so every segment keeps its exact width. */
+  box-shadow: 0 0 0 1px var(--sunken);
+}
+/* IDLE IS NOT A STEP AND MUST NOT LOOK LIKE ONE. Hatched and unfilled — the
+   same convention the rail uses for a cut edge — because the pause between two
+   moves is real recorded time that belongs to neither of them. */
+.hstrip__seg--idle {
+  background: repeating-linear-gradient(
+    -45deg,
+    transparent 0 3px,
+    color-mix(in oklab, var(--muted-dim) 55%, transparent) 3px 6px
+  );
+  box-shadow: none;
+}
+.hstrip__total { font-size: var(--t-meta); color: var(--muted); }
+.hstrip__open { padding: var(--s0) var(--s2); font-size: var(--t-meta); }
+.hstrip__legend { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s3); }
+.hstrip__key {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  font-size: var(--t-meta);
+  color: var(--muted);
+}
+/* The swatch is the segment's own paint, so a hue can never be restated in the
+   legend and drift from the thing it explains. */
+.hstrip__swatch { width: 8px; height: 8px; border-radius: 2px; background: var(--tone, var(--muted-dim)); }
+.hstrip__key--idle .hstrip__swatch {
+  background: repeating-linear-gradient(
+    -45deg,
+    transparent 0 2px,
+    color-mix(in oklab, var(--muted-dim) 55%, transparent) 2px 4px
+  );
+}
+
+/* ---- the spine: sequence, cost and trust in one row ----------------------
+   A PLACE IS PRINTED ONCE. A route of N steps passes through N+1 places, but
+   `from -> to` per row printed 2N of them — step i's `to` is step i+1's `from`
+   — so consecutive rows read as near-duplicate strings. Each row is now the
+   place the step ARRIVES in, threaded on a rail.
+   The bar column is the retired `Where the time goes` block, on the row of the
+   step it times: the two lists used to be numbered independently and could
+   point at different steps. */
+.hspine { display: flex; flex-direction: column; gap: var(--s2); }
+.hspine__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.hspine__step {
+  display: grid;
+  grid-template-columns: 2ch 9px minmax(0, 1fr) minmax(0, 34%);
+  gap: var(--s2);
+  align-items: start;
+  margin: 0;
+}
+/* NO BARS, NO COLUMN. A habit recorded once has no timings, and the reserved
+   column held a third of the pane with nothing in it — measured on screen. An
+   empty reserved column reads as something that failed to load. */
+.hspine[data-bars="no"] .hspine__step { grid-template-columns: 2ch 9px minmax(0, 1fr); }
+/* The origin is NOT a step and takes no number: it is where the first one
+   starts from, and a 0 or a 1 in front of it would label work nobody did. A
+   flex row indented to the node column rather than a fourth grid cell — its
+   note belongs beside the name it qualifies. */
+.hspine__origin {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin: 0;
+  padding: 0 0 var(--s2) calc(2ch + var(--s2));
+  font-size: var(--t-meta);
+  color: var(--muted);
+}
+.hspine__origin .hspine__place { font-weight: 600; color: var(--text); }
+.hspine__originnote { font-size: var(--t-nano); }
+.hspine__step { padding: var(--s2) 0; }
+.hspine__step + .hspine__step { border-top: 1px solid var(--hairline-soft); }
+.hspine__n { font-size: var(--t-meta); color: var(--muted); padding-top: 1px; }
+/* The node is the PLACE, in its application's tone — the strip's colour, so a
+   segment there and a row here are recognisable as one another. */
+.hspine__node {
+  width: 9px;
+  height: 9px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: var(--tone, var(--muted-dim));
+}
+/* HOLLOW, because the route has not done anything yet when it is here. The
+   ledger's lone-mark rule: a ring reads as "not filled in", a fainter dot reads
+   as "less important", and only the first is true. */
+.hspine__node--origin { background: none; border: 1.5px solid var(--muted-dim); margin-top: 0; }
+.hspine__body { display: flex; flex-direction: column; gap: var(--s1); min-width: 0; }
+.hspine__head { display: flex; align-items: baseline; gap: var(--s2); flex-wrap: wrap; }
+.hspine__place { font-weight: 600; overflow-wrap: anywhere; }
+.hspine__open { padding: var(--s0) var(--s2); font-size: var(--t-meta); }
+.hspine__actions { margin: 0; font-size: var(--t-meta); color: var(--muted); }
+/* The tally is the reading; the verbatim list is one disclosure away. A step can
+   carry fourteen action lines, and fourteen lines of monospace says nothing at a
+   glance about which step is the expensive one. */
+.hspine__detail { font-size: var(--t-meta); color: var(--muted); }
+.hspine__detail summary { cursor: pointer; color: var(--text); }
+.hspine__verbatim {
+  list-style: none;
+  margin: var(--s1) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s0);
+}
+.hspine__idle { margin: 0; font-size: var(--t-nano); color: var(--muted-dim); font-style: italic; }
+.hspine__count { margin: 0; font-size: var(--t-nano); color: var(--muted); font-style: italic; }
+.hspine__bars { display: flex; flex-direction: column; gap: var(--s0); min-width: 0; padding-top: 2px; }
+.hspine__barrow { display: flex; align-items: center; gap: var(--s2); }
+.hspine__bar { flex: 1; min-width: 0; height: 6px; border-radius: var(--radius-sm); background: var(--hairline-soft); }
+.hspine__fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklab, var(--data-0) 70%, transparent);
+}
+.hspine__ms { flex: none; font-size: var(--t-meta); color: var(--muted); }
 
 /* Where the ways fork (C3). --data-6 is the one unclaimed indexed slot, and the
    palette's own note at the top of this file calls it an instrument colour and a

@@ -32,6 +32,9 @@ const step = (index: number, from: string, to: string): FlowStep => ({
   edgeId: `e${index}`,
   from,
   to,
+  // These places are `App — window` labels, and the fork cares about the
+  // sequence rather than the tone, so the app is left unresolved here.
+  app: null,
   actions: [],
   observations: 1,
   everyRecording: false,

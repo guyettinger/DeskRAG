@@ -11,6 +11,7 @@ const way = (letter: string, n: number): HabitWayDTO => ({
     edgeId: `e${i}`,
     from: "A",
     to: "B",
+    app: null,
     actions: [],
     observations: 1,
     everyRecording: true,
