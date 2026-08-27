@@ -367,9 +367,40 @@ describe("where the time goes, as data", () => {
     // s3 is the standard, and its three steps are e0, e1, e2. A step carries
     // EVERY recording that walked that edge, not just the baseline's own: all
     // three sessions walked e0 (4s, 3s, 4s), two walked e1 (4s, 3s), one e2.
-    expect(t!.steps.map((x) => x.ms)).toEqual([[4000, 3000, 4000], [4000, 3000], [4000]]);
+    expect(t!.steps.map((x) => x.runs.map((r) => r.ms))).toEqual([
+      [4000, 3000, 4000],
+      [4000, 3000],
+      [4000],
+    ]);
     expect(t!.steps[0]!.from).toBe("Calculator");
     expect(t!.steps[0]!.to).toBe("TextEdit");
+  });
+
+  /**
+   * THE ATTRIBUTION SURVIVES THE PROJECTION, and it used to be thrown away one
+   * line before the DTO — `cost.durations.map((d) => d.ms)`. Without the session
+   * id a step's spans can be drawn as a bar chart and as nothing else: the shape
+   * strip's lanes are one recording's whole run, assembled across steps.
+   */
+  it("says which recording each span belongs to", () => {
+    const f = divergent();
+    const t = habitTimings(f, f.routes[0]!);
+    const ids = t!.steps[0]!.runs.map((r) => r.sessionId);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids.every((id) => typeof id === "string" && id.length > 0)).toBe(true);
+  });
+
+  /**
+   * WHICH STEP, not which row. `habitTimings` DROPS a step carrying no recorded
+   * duration, so this list is a subset of the Way's steps; the screen used to
+   * number the survivors by position while the step list numbered by
+   * `HabitStepDTO.index`, and one dropped step made the two point at different
+   * steps with nothing failing to say so.
+   */
+  it("carries each row's index into the baseline Way, not its own position", () => {
+    const f = divergent();
+    const t = habitTimings(f, f.routes[0]!);
+    expect(t!.steps.map((x) => x.stepIndex)).toEqual([0, 1, 2]);
   });
 
   /**
@@ -382,8 +413,9 @@ describe("where the time goes, as data", () => {
     const t = habitTimings(f, f.routes[0]!);
     // s3's e0 spans 2→6, so its own extent is 4s. Differencing e0's start from
     // e1's would report 6s (2→8) and fold the idle before e1 into e0's cost.
-    expect(t!.steps[0]!.ms).toContain(4000);
-    expect(t!.steps[0]!.ms).not.toContain(6000);
+    const ms = t!.steps[0]!.runs.map((r) => r.ms);
+    expect(ms).toContain(4000);
+    expect(ms).not.toContain(6000);
   });
 
   it("names the baseline Way, so the screen can say which one it is", () => {

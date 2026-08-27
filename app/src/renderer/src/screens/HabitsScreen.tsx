@@ -58,7 +58,16 @@ import {
   type PhaseCell,
 } from "../habit-rhythm.js";
 import { placeLabel, portraitOf } from "../habit-portrait.js";
-import { liftingRollup, timingRows } from "../habit-record-view.js";
+import {
+  appTones,
+  liftingRollup,
+  rangeText,
+  spineRows,
+  stripLanes,
+  type SpineRow,
+  type SpineView,
+  type StripView,
+} from "../habit-record-view.js";
 
 /** Distance from the mark to its card, and from the card to the window edge —
     the rail's two constants, which the shared `clampTip` reads. */
@@ -928,120 +937,403 @@ function ForkBand({ runs }: { runs: readonly ForkRunView[] }): React.JSX.Element
 }
 
 /**
- * The recorded steps, as an instrument rather than as text.
+ * THE RECORD: one masthead, one strip, one spine, three qualifiers.
  *
- * Ledger marks have been able to open a recording since `c205413`; the steps —
- * the part a person is actually asked to trust — could not, so the record was
- * trusted rather than verifiable. Drawn from `HabitDTO.ways`, which main built
- * from the same `FlowWalk[]` the file is rendered from: two renderers of one
- * thing is a drift hazard, and they are safe only because neither parses the
- * other's output.
+ * This section is a SECOND RENDERER of facts main already rendered into
+ * `HABIT.md` — the shape `WayForkView` established, safe only because neither
+ * parses the other's output and both read one projection. `Copy HABIT.md` and
+ * `get_habit` still hand out `habit.markdown` byte for byte; nothing here
+ * reaches it.
  *
- * A step with no moment is DRAWN and states its reason — the
- * `StageSpec.skipReason` rule, and the same rule that already makes a mark with
- * no walk say why it cannot be followed. A disabled control with no explanation
- * is indistinguishable from one nobody implemented.
+ * IT DRAWS THE SEQUENCE EXACTLY ONCE. It used to draw it twice — a step list
+ * numbered by `step.index + 1`, then a `Where the time goes` block numbered by
+ * its own position — and those two could disagree, because `habitTimings` drops
+ * steps carrying no duration and one dropped step shifted every number below it.
+ * The spine merges them and joins on `HabitStepTimingDTO.stepIndex`, so the
+ * question "how long did step 3 take" is answered on step 3's own row.
+ *
+ * EVERY BLOCK STATES ITS ABSENCE, the `StageSpec.skipReason` rule: a section
+ * that merely never appeared would be indistinguishable from one nobody
+ * implemented.
  */
-function RecordedSteps({
-  ways,
-  fork,
-  onOpen,
-}: {
-  ways: readonly HabitWayDTO[];
-  fork: HabitForkDTO | null;
-  onOpen: (sessionId: string, atSec: number) => void;
-}): React.JSX.Element | null {
-  if (ways.length === 0) return null;
-  // Several ways get the fork instrument INSTEAD of the side-by-side lists,
-  // which is what asked a reader to diff N procedures by eye. ONE way is the
-  // healthy case and renders exactly as it always did.
-  if (fork !== null) return <WayForkView ways={ways} fork={fork} onOpen={onOpen} />;
-  // Below here there is exactly ONE way, so the per-way heading and the
-  // "they did not take the same path" lead are gone with the branch that used
-  // to need them.
-  return (
-    <div className="habitsteps">
-      {ways.map((way) => (
-        <section key={way.letter} className="habitsteps__way">
-          <ol className="habitsteps__list">
-            {way.steps.map((step) => (
-              <li key={`${way.letter}-${step.index}`} className="habitsteps__step">
-                <div className="habitsteps__head">
-                  <span className="habitsteps__places">
-                    {step.missing
-                      ? `edge ${step.edgeId} is not in the graph (index defect)`
-                      : `${step.from} → ${step.to}`}
-                  </span>
-                  {step.firstAt === null ? (
-                    <span className="habitsteps__noopen">
-                      No recording carries this step, so there is no moment to open
-                    </span>
-                  ) : (
-                    <button
-                      type="button"
-                      className="btn ghost habitsteps__open"
-                      onClick={() => {
-                        const at = step.firstAt;
-                        if (at !== null) onOpen(at.sessionId, at.atSec);
-                      }}
-                    >
-                      Open this moment
-                    </button>
-                  )}
-                </div>
-                {step.actions.length === 0 ? (
-                  <p className="habitsteps__action muted">(no actions recorded on this edge)</p>
-                ) : (
-                  step.actions.map((a, i) => (
-                    <p key={i} className="habitsteps__action mono">
-                      {a.action}
-                      {a.target === "—" || a.target === "" ? "" : ` — ${a.target}`}
-                    </p>
-                  ))
-                )}
-                <p className="habitsteps__count">
-                  {step.observations === 1
-                    ? "walked once"
-                    : `walked by ${step.observations} recordings`}
-                </p>
-              </li>
-            ))}
-          </ol>
-        </section>
-      ))}
-    </div>
-  );
-}
-
-/**
- * The record's remaining blocks, as instruments.
- *
- * This half used to be a `<pre>` holding the generated markdown from
- * `## What varies` down. Measured in the running app on the author's real
- * store, it was 835x420 of monospace prose whose largest section was
- * FIFTY-SIX consecutive lines of raw `t_mono` floats and macOS keycodes,
- * under a heading a person reads as "what this evidence does not say" —
- * burying the five sentences that actually qualify the evidence. It also
- * printed `## Where the ways fork` a second time, a few inches below the fork
- * instrument that draws it.
- *
- * THE FILE IS UNTOUCHED. `habit.markdown` is rendered in main and handed out
- * verbatim; `Copy HABIT.md` and `get_habit` still return that string, and
- * nothing here reaches it. This is a SECOND RENDERER of the same facts —
- * `WayForkView`'s shape, safe because neither parses the other's output and
- * both read one projection from main.
- *
- * EVERY SECTION STATES ITS ABSENCE. A block with nothing to say says so, the
- * `StageSpec.skipReason` rule: a section that merely never appeared would be
- * indistinguishable from one nobody implemented.
- */
-function HabitRecord({
+function HabitRecordSection({
   habit,
   onOpen,
 }: {
   habit: HabitDTO;
   onOpen: (sessionId: string, atSec: number) => void;
 }): React.JSX.Element {
+  const tones = appTones(habit.apps);
+  // The BASELINE Way is the one the timings are measured on, so the strip and
+  // the spine must read the same one or a lane would be segmented by steps the
+  // spine never lists. Falling back to the first Way keeps a single-Way habit
+  // (which has no baseline letter until it has two recordings) drawable.
+  const baseWay =
+    habit.ways.find((w) => w.letter === habit.timings?.wayLetter) ?? habit.ways[0] ?? null;
+
+  const strip =
+    baseWay === null
+      ? null
+      : stripLanes(
+          baseWay,
+          habit.timings,
+          habit.binding.walks.map((w) => ({
+            sessionId: w.sessionId,
+            at: w.at,
+            atSec: w.walk?.atSec ?? null,
+          })),
+          tones,
+          habit.binding.recordings,
+        );
+
+  const spine: SpineView | null =
+    baseWay === null || habit.fork !== null ? null : spineRows(baseWay, habit.timings, tones);
+
+  return (
+    <>
+      <RecordLede habit={habit} tones={tones} baseWay={baseWay} />
+      <HabitStrip strip={strip} reason={stripReason(habit)} onOpen={onOpen} />
+      {/* ONE of these, never both: the fork instrument already draws the shared
+          steps, and drawing the spine beside it would put the sequence on the
+          page twice — the defect this whole section exists to undo. */}
+      {spine !== null && (
+        <HabitSpine view={spine} recordings={habit.binding.recordings} onOpen={onOpen} />
+      )}
+      {habit.fork !== null && (
+        <WayForkView ways={habit.ways} fork={habit.fork} onOpen={onOpen} />
+      )}
+      <HabitRecord habit={habit} />
+    </>
+  );
+}
+
+/**
+ * Why there is no strip, in words.
+ *
+ * Composed here rather than inside the projection because it is a sentence for
+ * a reader, and `habit-record-view.ts` computes geometry. Every branch names a
+ * CONDITION the reader can act on, never "no data".
+ */
+function stripReason(habit: HabitDTO): string {
+  if (habit.ways.length === 0) {
+    return "This habit has no live route, so there is nothing to draw. Its binding is described below.";
+  }
+  if (habit.binding.recordings < 2) {
+    return "Only one recording is timed, so there is no second run to compare it against. Record this work again and its shape appears here.";
+  }
+  if (habit.timings === null) {
+    return "These recordings took paths too different to share a baseline, so there is no common shape to draw. The steps below are still each recording's own.";
+  }
+  return "No step carries a recorded span, so there is nothing to place on an axis.";
+}
+
+/**
+ * The glance: how many recordings, how many steps, how long, and where.
+ *
+ * FOUR FACTS AND A CHAIN, above everything. The section used to open on a step
+ * list, so "what is this habit, roughly" could only be answered by reading all
+ * of it. The app chain doubles as the strip's legend key — the swatches are the
+ * same tone slots, learned before the strip is reached.
+ */
+function RecordLede({
+  habit,
+  tones,
+  baseWay,
+}: {
+  habit: HabitDTO;
+  tones: Map<string, number>;
+  baseWay: HabitWayDTO | null;
+}): React.JSX.Element {
+  const recordings = habit.binding.recordings;
+  const steps = baseWay?.steps.length ?? 0;
+  // Across EVERY Way, because the range is about the work and not about one
+  // path through it. A range, never a mean: both ends are spans a recording
+  // actually produced.
+  const span = rangeText(habit.ways.flatMap((w) => w.totalsMs));
+
+  return (
+    <div className="hlede">
+      <p className="hlede__facts">
+        {recordings === 1 ? "1 recording" : `${recordings} recordings`}
+        {steps > 0 && <> · {steps === 1 ? "1 step" : `${steps} steps`}</>}
+        {span !== null && <> · {span}</>}
+      </p>
+      {habit.apps.length > 0 && (
+        <p className="hlede__chain">
+          {habit.apps.map((app, i) => (
+            <React.Fragment key={app}>
+              {i > 0 && <span className="hlede__arrow" aria-hidden="true">→</span>}
+              <span className="hlede__app" data-tone={`app-${tones.get(app) ?? 0}`}>
+                <span className="hlede__swatch" aria-hidden="true" />
+                {app}
+              </span>
+            </React.Fragment>
+          ))}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The shape of each run: one lane per recording, on ONE shared domain.
+ *
+ * The lanes are what the `Evidence` block's bare wall-clock chips used to be —
+ * the same recordings, openable the same way, with the shape of the run
+ * attached. A shared domain is the whole reason a stack of lanes is a reading:
+ * rescaling each to its own extent draws a fast run and a slow one identically,
+ * which is the ledger's rule one level up.
+ *
+ * A LANE'S EXTENT IS WHAT IT DREW — its step spans plus the idle between them —
+ * never the whole-walk duration, which would leave segments stopping short of a
+ * stated end and assert an unmeasured remainder.
+ */
+function HabitStrip({
+  strip,
+  reason,
+  onOpen,
+}: {
+  strip: StripView | null;
+  reason: string;
+  onOpen: (sessionId: string, atSec: number) => void;
+}): React.JSX.Element {
+  if (strip === null) {
+    return (
+      <section className="hstrip hstrip--empty">
+        <span className="eyebrow">How the runs went</span>
+        <p className="hrecord__note">{reason}</p>
+      </section>
+    );
+  }
+  return (
+    <section className="hstrip">
+      <span className="eyebrow">How the runs went</span>
+      <ol className="hstrip__lanes">
+        {strip.lanes.map((lane) => {
+          const atSec = lane.atSec;
+          return (
+            <li key={lane.sessionId} className="hstrip__lane">
+              <span className="hstrip__when mono">
+                {lane.at === null ? "unknown" : wallClock(lane.at)}
+              </span>
+              <span className="hstrip__track">
+                {lane.segments.map((seg, i) => (
+                  <span
+                    key={i}
+                    className={`hstrip__seg hstrip__seg--${seg.kind}`}
+                    data-tone={seg.toneSlot === null ? "neutral" : `app-${seg.toneSlot}`}
+                    style={{ left: `${seg.leftPct}%`, width: `${seg.widthPct}%` }}
+                    title={seg.kind === "idle" ? `${seg.text} idle` : `${seg.place} — ${seg.text}`}
+                  />
+                ))}
+              </span>
+              <span className="hstrip__total mono">{lane.totalText}</span>
+              {/* Said in words, never a greyed control with no reason. */}
+              {atSec === null ? (
+                <span className="habitsteps__noopen">no moment to open</span>
+              ) : (
+                <button
+                  type="button"
+                  className="btn ghost hstrip__open"
+                  onClick={() => onOpen(lane.sessionId, atSec)}
+                >
+                  Open
+                </button>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+      <div className="hstrip__legend">
+        {strip.legend.map((l) => (
+          <span key={l.app} className="hstrip__key" data-tone={`app-${l.toneSlot}`}>
+            <span className="hstrip__swatch" aria-hidden="true" />
+            {l.app}
+          </span>
+        ))}
+        <span className="hstrip__key hstrip__key--idle">
+          <span className="hstrip__swatch" aria-hidden="true" />
+          idle
+        </span>
+      </div>
+      {/* Counted, never dropped: a reader comparing three marks on the ledger
+          against two lanes here is owed the reason. */}
+      {strip.elsewhere > 0 && (
+        <p className="hrecord__note">
+          {strip.elsewhere === 1
+            ? "1 more recording took another way"
+            : `${strip.elsewhere} more recordings took another way`}
+          , so it is not drawn on this axis. The ways are below.
+        </p>
+      )}
+    </section>
+  );
+}
+
+/**
+ * The steps, their cost and their agreement — one row each.
+ *
+ * A PLACE IS PRINTED ONCE. A route of N steps passes through N+1 places, but
+ * `from → to` on every row prints 2N of them: step *i*'s `to` is step *i+1*'s
+ * `from`, so consecutive rows read as near-duplicate strings and the eye cannot
+ * find where the work actually moves. Each row is therefore the place the step
+ * ARRIVES in, with the origin drawn once above. Where the chain genuinely
+ * breaks — a `missing` step — the row falls back to `from → to` and says so.
+ *
+ * Ledger marks have been able to open a recording since `c205413`; the steps —
+ * the part a person is actually asked to trust — could not, so the record was
+ * trusted rather than verifiable. A step with no moment is DRAWN and states its
+ * reason, the `StageSpec.skipReason` rule.
+ */
+function HabitSpine({
+  view,
+  recordings,
+  onOpen,
+}: {
+  view: SpineView;
+  recordings: number;
+  onOpen: (sessionId: string, atSec: number) => void;
+}): React.JSX.Element | null {
+  if (view.rows.length === 0) return null;
+  // THE BAR COLUMN IS RESERVED ONLY WHERE THERE ARE BARS. A habit recorded once
+  // has no timings at all, and the column still held a third of the pane —
+  // measured in the running app: every step's place and its Open button crammed
+  // left of an empty 34%. An empty reserved column reads as a thing that failed
+  // to load.
+  const timed = view.rows.some((r) => r.runs.length > 0);
+  return (
+    <section className="hspine" data-bars={timed ? "yes" : "no"}>
+      <span className="eyebrow">What happens, in order</span>
+      {view.origin !== null && (
+        <p className="hspine__origin">
+          <span className="hspine__node hspine__node--origin" aria-hidden="true" />
+          <span className="hspine__place">{view.origin}</span>
+          {/* Beside the name it qualifies, not in the bar column three hundred
+              pixels away — measured on screen, where it read as a stray label. */}
+          <span className="hspine__originnote">where it starts</span>
+        </p>
+      )}
+      <ol className="hspine__list">
+        {view.rows.map((row) => (
+          <SpineStep
+            key={`${row.n}-${row.edgeId}`}
+            row={row}
+            recordings={recordings}
+            onOpen={onOpen}
+          />
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+function SpineStep({
+  row,
+  recordings,
+  onOpen,
+}: {
+  row: SpineRow;
+  recordings: number;
+  onOpen: (sessionId: string, atSec: number) => void;
+}): React.JSX.Element {
+  const at = row.firstAt;
+  return (
+    <li className="hspine__step">
+      <span className="hspine__n mono">{row.n}</span>
+      <span
+        className="hspine__node"
+        data-tone={row.toneSlot === null ? "neutral" : `app-${row.toneSlot}`}
+        aria-hidden="true"
+      />
+      <div className="hspine__body">
+        <div className="hspine__head">
+          <span className="hspine__place">
+            {row.missing
+              ? `edge ${row.edgeId} is not in the graph (index defect)`
+              : row.brokenFrom === null
+                ? row.place
+                : `${row.brokenFrom} → ${row.place}`}
+          </span>
+          {at === null ? (
+            <span className="habitsteps__noopen">
+              No recording carries this step, so there is no moment to open
+            </span>
+          ) : (
+            <button
+              type="button"
+              className="btn ghost hspine__open"
+              onClick={() => onOpen(at.sessionId, at.atSec)}
+            >
+              Open this moment
+            </button>
+          )}
+        </div>
+        {/* SUMMARIZED BY KIND, with every line one disclosure away. A step can
+            carry fourteen action lines, and fourteen lines of monospace says
+            nothing at a glance about whether this is the expensive step. */}
+        {row.summary === "" ? (
+          <p className="hspine__actions muted">(no actions recorded on this edge)</p>
+        ) : (
+          <details className="hspine__detail">
+            <summary>{row.summary}</summary>
+            <ul className="hspine__verbatim mono">
+              {row.actions.map((a, i) => (
+                <li key={i}>
+                  {a.action}
+                  {a.target === "—" || a.target === "" ? "" : ` — ${a.target}`}
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+        {/* The pause AFTER the step, never folded into its cost: a step's
+            duration is its own extent, and the hesitation before the next move
+            belongs to neither neighbour. */}
+        {row.idleText !== null && <p className="hspine__idle">then {row.idleText} idle</p>}
+        {/* THE COUNT IS THE EDGE'S OWN, and it can EXCEED the route's.
+            `observations` counts every recording that walked this edge anywhere
+            in the graph, so a route recorded once can hold a step walked by
+            four — measured in the running app, a 1-recording habit whose step 2
+            read `walked by all 4 recordings`. "All" asserted the two numbers
+            were the same when they were not; the bare count says what was
+            observed and claims nothing further. */}
+        <p className="hspine__count">
+          {row.everyRecording
+            ? row.observations === 1
+              ? "walked once"
+              : `walked by ${row.observations} recordings`
+            : `walked by ${row.observations} of the route's ${recordings} recordings`}
+        </p>
+      </div>
+      <span className="hspine__bars">
+        {row.runs.map((run, i) => (
+          <span key={i} className="hspine__barrow">
+            {/* The bar is the reading and the number is the fact — the portrait
+                band's rule. A bar carries no printed number ON it. */}
+            <span className="hspine__bar">
+              <span className="hspine__fill" style={{ width: `${run.share * 100}%` }} />
+            </span>
+            <span className="hspine__ms mono">{run.text}</span>
+          </span>
+        ))}
+      </span>
+    </li>
+  );
+}
+
+/**
+ * The three qualifiers, under the instruments that answer first.
+ *
+ * `Where the time goes` is GONE from here: it is the spine's bar column now,
+ * on the same row as the step it times. What remains is what the sequence
+ * cannot say for itself — what changes between runs, what the evidence does not
+ * cover, and where it came from.
+ *
+ * The recordings themselves are the strip's lanes, so this block no longer
+ * lists them: the same wall clocks, openable the same way, with the shape of
+ * each run attached instead of standing alone as chips.
+ */
+function HabitRecord({ habit }: { habit: HabitDTO }): React.JSX.Element {
   const lifting = liftingRollup(habit.ways);
   const span = walkSpan(habit.binding.walks);
   const dropped = droppedEarlyLine(habit);
@@ -1049,7 +1341,7 @@ function HabitRecord({
   return (
     <div className="hrecord">
       <section className="hrecord__block">
-        <span className="eyebrow">What varies</span>
+        <span className="eyebrow">What changes each time</span>
         {habit.slots.length === 0 ? (
           <p className="hrecord__note">
             Nothing was typed on this route, so it has no recorded inputs.
@@ -1079,53 +1371,7 @@ function HabitRecord({
       </section>
 
       <section className="hrecord__block">
-        <span className="eyebrow">Where the time goes</span>
-        {habit.timings === null ? (
-          /* SILENT TOGETHER WITH THE FILE, under the same guard: one
-             recording's timings are a fact about one afternoon, not about a
-             habit. Drawn as a reason rather than omitted. */
-          <p className="hrecord__note">
-            Only one recording is timed, so there is nothing to read these against.
-          </p>
-        ) : (
-          <>
-            <p className="hrecord__note">
-              Way {habit.timings.wayLetter}&rsquo;s steps, each with its own recorded span. They
-              are durations, not targets.
-              {habit.timings.single &&
-                " Every step below was walked by one recording each, so these are observations rather than a comparison."}
-            </p>
-            <ol className="hrecord__times">
-              {timingRows(habit.timings).map((row) => (
-                <li key={row.n} className="hrecord__time">
-                  <span className="hrecord__timeplaces">
-                    <span className="hrecord__n mono">{row.n}.</span> {row.from} &rarr; {row.to}
-                  </span>
-                  <span className="hrecord__bars">
-                    {row.runs.map((run, i) => (
-                      <span key={i} className="hrecord__barrow">
-                        {/* The bar is the reading and the number is the fact —
-                            the portrait band's rule. A bar carries no printed
-                            number ON it; the duration sits beside it. */}
-                        <span className="hrecord__bar">
-                          <span
-                            className="hrecord__fill"
-                            style={{ width: `${run.share * 100}%` }}
-                          />
-                        </span>
-                        <span className="hrecord__ms mono">{run.text}</span>
-                      </span>
-                    ))}
-                  </span>
-                </li>
-              ))}
-            </ol>
-          </>
-        )}
-      </section>
-
-      <section className="hrecord__block">
-        <span className="eyebrow">What this evidence does not say</span>
+        <span className="eyebrow">What this can&rsquo;t tell you</span>
         {habit.cautions.length === 0 && lifting === null && dropped === null ? (
           <p className="hrecord__note">Nothing qualifies this evidence.</p>
         ) : (
@@ -1157,36 +1403,11 @@ function HabitRecord({
       </section>
 
       <section className="hrecord__block">
-        <span className="eyebrow">Evidence</span>
+        <span className="eyebrow">Where this came from</span>
         <p className="hrecord__note">
           {evidenceLine(habit)}
           {span !== null && ` · ${span}`} · on this machine
         </p>
-        {/* The recordings themselves, openable. A ULID names a recording and
-            can be read by nothing; the ledger has been able to open these since
-            `c205413`, and printing the ids beneath it was the record's own
-            habit rather than a reading. */}
-        <ul className="hrecord__walks">
-          {habit.binding.walks.map((w) => {
-            const label = markLabel(markReadout(w, { wallClock, timecode }));
-            return (
-              <li key={w.sessionId}>
-                <button
-                  type="button"
-                  className="btn ghost hrecord__walk"
-                  disabled={w.walk === null}
-                  aria-label={label}
-                  title={label}
-                  onClick={() => {
-                    if (w.walk !== null) onOpen(w.sessionId, w.walk.atSec);
-                  }}
-                >
-                  {wallClock(w.at)}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
         <p className="hrecord__note mono">{habit.binding.routeLabel}</p>
       </section>
     </div>
@@ -1641,10 +1862,17 @@ function HabitEditor({
           must not sit below it — Copy HABIT.md was entirely off-screen at
           1180x800, which only the screenshot showed. */}
       <div className="habitedit__recordhead habitedit__recordhead--cut">
-        <span className="eyebrow">The record — the recording, not editable</span>
+        <span className="eyebrow">What the recording shows</span>
       </div>
-      <RecordedSteps ways={habit.ways} fork={habit.fork} onOpen={onOpenRecording} />
-      <HabitRecord habit={habit} onOpen={onOpenRecording} />
+      {/* The policy in a SENTENCE, not in the heading. A title should name the
+          thing; "the recording, not editable" is a rule about it, and it stood
+          where the name belonged. The drawn seam above already says it once in
+          the layout — this says it in words for anyone who does not read a
+          hairline as a boundary. */}
+      <p className="muted habitedit__recordnote">
+        Generated from the recordings. Not written by a model, and not editable here.
+      </p>
+      <HabitRecordSection habit={habit} onOpen={onOpenRecording} />
 
       {/* The reason in WORDS, not a greyed control with no explanation. */}
       {proseNote !== null && <p className="muted">{proseNote}</p>}

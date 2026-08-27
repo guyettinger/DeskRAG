@@ -71,6 +71,7 @@ function toStep(step: FlowStep): HabitStepDTO {
     edgeId: step.edgeId,
     from: step.from,
     to: step.to,
+    app: step.app,
     actions: step.actions.map((a) => ({
       action: a.action,
       target: a.target,
@@ -206,10 +207,23 @@ export function habitTimings(flows: FlowsDTO, route: FlowRouteDTO): HabitTimings
   const rows = analysis.steps.filter((s) => s.durations.length > 0);
   if (rows.length === 0) return null;
 
+  // THE ATTRIBUTION IS KEPT. `cost.durations` is `{ sessionId, ms }[]` and this
+  // used to `.map((d) => d.ms)` it away, which cost the strip its lanes: without
+  // the session id a step's spans can be drawn as a bar chart and as nothing
+  // else. `cost.stepIndex` is kept for the same class of reason — see
+  // `HabitStepTimingDTO.stepIndex`.
   const steps = rows.flatMap((cost) => {
     const step = baseWay.steps[cost.stepIndex];
     if (step === undefined) return [];
-    return [{ from: step.from, to: step.to, ms: cost.durations.map((d) => d.ms) }];
+    return [
+      {
+        stepIndex: cost.stepIndex,
+        from: step.from,
+        to: step.to,
+        runs: cost.durations.map((d) => ({ sessionId: d.sessionId, ms: d.ms })),
+        gapsAfterMs: cost.gapsAfter.map((g) => ({ sessionId: g.sessionId, ms: g.ms })),
+      },
+    ];
   });
   if (steps.length === 0) return null;
 

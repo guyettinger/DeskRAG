@@ -10,6 +10,7 @@ const step = (over: Partial<HabitStepDTO> = {}): HabitStepDTO => ({
   edgeId: "e0",
   from: "Calculator",
   to: "TextEdit",
+  app: null,
   actions: [{ action: "click", target: 'Button "="' }],
   observations: 2,
   everyRecording: true,

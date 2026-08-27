@@ -1386,6 +1386,16 @@ export interface HabitStepDTO {
   from: string;
   to: string;
   /**
+   * The application this step ARRIVES in, for the strip's and the spine's tone.
+   *
+   * The `to` node's own `app`, read by the same projection `HabitDTO.apps` uses
+   * (`flowApps`), so a step's colour and the route's app chain can never name
+   * different applications. NULL is carried, never guessed — a node lifted with
+   * no `app` predicate has none, and the row then draws in the neutral tone
+   * rather than borrowing a neighbour's.
+   */
+  app: string | null;
+  /**
    * The recorded actions.
    *
    * The slot's NAME travels; its SAMPLES never do. `habit-marks.ts` states the
@@ -1500,9 +1510,41 @@ export interface HabitSlotDTO {
  * and averaging them would invent a number no recording produced.
  */
 export interface HabitStepTimingDTO {
+  /**
+   * WHICH step this times — the index into the baseline Way's `steps`, not this
+   * row's position in the list.
+   *
+   * Load-bearing, and its absence was a defect rather than an inconvenience.
+   * `habitTimings` DROPS steps that carry no recorded duration, so this list is
+   * a subset of the Way's steps; the screen used to number the survivors
+   * `i + 1` while the step list numbered by `HabitStepDTO.index + 1`, so one
+   * unmeasured step shifted every number below it and the two lists silently
+   * pointed at different steps. Joining on this index instead makes that
+   * unrepresentable.
+   */
+  stepIndex: number;
   from: string;
   to: string;
-  ms: number[];
+  /**
+   * One span per recording, each SAYING WHICH RECORDING IT IS.
+   *
+   * A list because a step walked by several recordings has several spans, and
+   * averaging them would invent a number no recording produced. Attributed
+   * because a lane of the shape strip is one recording's whole run: without the
+   * session id the spans cannot be assembled into anything but a bar chart.
+   * `walk-analysis.ts` has carried the attribution all along (`StepCost.
+   * durations`); the projection used to drop it.
+   */
+  runs: { sessionId: string; ms: number }[];
+  /**
+   * Idle between this step ending and the next beginning, per recording.
+   *
+   * Empty on the last step, and empty wherever nothing was measured. It is NOT
+   * folded into either neighbour's duration: a step's cost is its own extent,
+   * the rule `walk-analysis.ts` states, and the pause before the next move is
+   * where hesitation lives rather than an overrun of the move before it.
+   */
+  gapsAfterMs: { sessionId: string; ms: number }[];
 }
 
 /**
