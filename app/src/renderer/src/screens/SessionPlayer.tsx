@@ -195,6 +195,23 @@ export function SessionPlayer({
   const keyframes = detail.keyframes;
   const [openFrame, setOpenFrame] = useState<string | null>(null);
 
+  // THE POSTER IS COVER FOR A VIDEO THAT HAS NOT DECODED YET, AND A SEEK ENDS
+  // THAT — so it is taken down at the first completed seek, not at first play.
+  //
+  // Vidstack keys the poster on `started` alone (`data-visible: () => !started()
+  // && !hidden()` in its Poster component), and `started` flips only on play.
+  // But the <video> beneath it decodes and paints a seek while paused, so on
+  // this screen — where scrubbing to a moment IS the gesture, and half the ways
+  // in (the rail, a keyframe click, `seekTo` from search) never touch play —
+  // an opaque first keyframe sat over every seeked frame until playback began.
+  // It reads as a video that ignores the playhead.
+  //
+  // `seeked`, not `seeking`: on `seeking` the element still holds the PREVIOUS
+  // frame, so revealing there swaps one stale image for another and can flash
+  // black if nothing has decoded at all. By `seeked` the new frame is painted.
+  // One-way — a seek back to 0 does not put the cover back.
+  const [posterRevealed, setPosterRevealed] = useState(false);
+
   // A fragmented MP4 can report Infinity until enough of it is buffered, so the
   // timeline starts on the t_mono span the keyframe offsets are measured
   // against and adopts the provider's duration once it reports a real one.
@@ -309,6 +326,7 @@ export function SessionPlayer({
         onDurationChange={(value) => {
           if (Number.isFinite(value) && value > 0) setDuration(value);
         }}
+        onSeeked={() => setPosterRevealed(true)}
         // The <video> element carries its own picture-in-picture affordance,
         // independent of the button and the keybinding removed above. provider-
         // change is the documented place to configure a provider; provider-setup
@@ -318,7 +336,7 @@ export function SessionPlayer({
         }}
       >
         <MediaProvider>
-          <Poster className="vds-poster" alt="" />
+          {!posterRevealed && <Poster className="vds-poster" alt="" />}
           {chapters && (
             <Track kind="chapters" type="json" content={chapters} label="Segments" default />
           )}
