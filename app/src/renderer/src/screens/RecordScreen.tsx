@@ -189,11 +189,20 @@ export function RecordScreen({ status, env, onOpenIndexing }: Props): React.JSX.
             polls the frontmost application and an app left on screen films its
             own UI into every route it records. Unannounced, pressing the button
             looks like the app quitting — and the control that stops it is in a
-            place the user has no reason to look. */}
+            place the user has no reason to look.
+
+            This used to promise the window came BACK when you stopped from the
+            menu bar. It no longer does: a stop from the tray leaves the window
+            where you put it. So the sentence that answered "where did my
+            recording go?" has to be replaced rather than deleted, and the
+            answer is now the ghost's own face — which means the face has to be
+            taught here, once, in the only place the user is reading. */}
         <p>
           Record your screen, input, and audio into a searchable memory. DeskRAG hides while it
-          records so it stays out of your flows — stop from the menu bar, and the window comes
-          back. Recording also keeps running if you close the window to the tray.
+          records so it stays out of your flows — the ghost in the menu bar starts and stops it,
+          and stays out of your way when you do. Watch its face: one wide eye means it is
+          recording, three dots mean a recording is being indexed. Recording also keeps running
+          if you close the window to the tray.
         </p>
       </div>
 

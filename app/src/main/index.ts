@@ -9,9 +9,19 @@
  * ends up bracketing every route it captures. That is fixed properly at lift
  * time (`trace/exclude.ts` — which also repairs recordings already taken); this
  * just stops producing the problem in the first place.
+ *
+ * WHICH MAKES THE TRAY A WHOLE CONTROL SURFACE, not a shortcut into the window.
+ * Starting and stopping both happen here with nothing shown: a stop initiated
+ * from the menu leaves the window exactly where the user left it, and the
+ * ghost's own face reports what happened next. The face is the only thing in
+ * the menu bar — there is no `setTitle`, because a second glyph beside the mark
+ * said what the mark can say itself, and because a menu-bar pixel that CHANGES
+ * during a capture is what let this app's own window defeat `mpdecimate`
+ * (docs/internals/capture.md). Nothing up there animates, and nothing ticks.
  */
 
 import { app, BrowserWindow, Tray, Menu, nativeImage } from "electron";
+import type { NativeImage } from "electron";
 import { join } from "node:path";
 import { existsSync, rmSync } from "node:fs";
 import { DeskRagService } from "./deskrag-service.js";
@@ -23,6 +33,7 @@ import { IPC } from "@shared/types";
 import { registerScheme, registerProtocol } from "./protocol.js";
 import { ensureToolPath } from "./tool-path.js";
 import { resolveAxBin, resolveSidecar } from "./sidecar-path.js";
+import { trayFaceAsset, trayIndexing, trayStatusLine, trayTooltip } from "./tray-face.js";
 
 let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -137,36 +148,70 @@ function createWindow(): void {
 }
 
 /**
- * Recording wins the tray title over indexing, because only one of them is
- * capturing something unrepeatable. Indexing still gets its own glyph: it now
- * runs in the background for minutes at a time, and a tray that showed nothing
- * would make the machine's fans the only evidence of it.
+ * The four faces, loaded once. A template image is black + alpha; macOS inverts
+ * it for the menu bar, so one asset per face covers light and dark.
+ *
+ * A MISSING VARIANT FALLS BACK TO THE IDLE GHOST rather than to nothing: a blank
+ * menu-bar item is indistinguishable from the app having quit, which is the
+ * worst thing the tray could claim while a recording is running.
  */
-function trayTitle(): string {
-  if (service.status().state === "recording") return "⏺ REC";
-  if (service.indexQueue().runningJobId !== null) return "⏳";
-  return "◉";
+const trayImages = new Map<string, NativeImage>();
+
+function loadTrayImages(): NativeImage {
+  const idle = nativeImage.createFromPath(brandAsset("tray", "trayTemplate.png"));
+  if (!idle.isEmpty()) idle.setTemplateImage(true);
+  // Enumerated through `trayFaceAsset` itself, so there is no second list of
+  // face names to go stale against the one the emitter writes.
+  for (const recording of [false, true]) {
+    for (const indexing of [false, true]) {
+      const base = trayFaceAsset(recording, indexing);
+      const img = nativeImage.createFromPath(brandAsset("tray", `${base}.png`));
+      if (!img.isEmpty()) img.setTemplateImage(true);
+      trayImages.set(base, img.isEmpty() ? idle : img);
+    }
+  }
+  return idle;
+}
+
+/**
+ * Stopping from the tray must NOT summon the window.
+ *
+ * The menu bar is the control surface precisely because the window is out of
+ * the way; a stop that yanks it back defeats the reason the control is here.
+ * Clearing the flag first makes `restoreAfterRecording` a no-op for this stop
+ * and leaves it intact for the other path — the user who reopened the window
+ * mid-recording and pressed the button there.
+ *
+ * What answers "where did my recording go?" is the ghost: `stopRecording`
+ * enqueues, the queue starts, and the face picks up its indexing dots.
+ */
+function stopFromTray(): void {
+  hiddenForRecording = false;
+  void service.stopRecording();
 }
 
 function rebuildTray(): void {
   if (!tray) return;
   const s = service.status();
-  const indexing = service.indexQueue().runningJobId !== null;
-  tray.setTitle(trayTitle());
-  tray.setToolTip(`DeskRAG — ${s.state}${indexing ? " · indexing" : ""}`);
+  const queue = service.indexQueue();
+  const recording = s.state === "recording";
+  const face = trayImages.get(trayFaceAsset(recording, trayIndexing(queue)));
+  if (face && !face.isEmpty()) tray.setImage(face);
+  tray.setToolTip(trayTooltip(s, queue));
+  // The toggle comes FIRST. It is the reason this menu exists while the window
+  // is hidden, and putting "Open DeskRAG" at the top invites the mis-click this
+  // surface is meant to avoid. Sentence case throughout, matching the record
+  // button's own labels, so one action keeps one name across both surfaces.
   const menu = Menu.buildFromTemplate([
+    { label: trayStatusLine(s, queue), enabled: false },
+    { type: "separator" },
+    recording
+      ? { label: "Stop recording", click: () => stopFromTray() }
+      : { label: "Start recording", click: () => void service.startRecording() },
     { label: "Open DeskRAG", click: () => showWindow() },
     { type: "separator" },
-    s.state === "recording"
-      ? { label: "Stop Recording", click: () => void service.stopRecording() }
-      : {
-          label: "Start Recording",
-          enabled: s.state === "idle",
-          click: () => void service.startRecording(),
-        },
-    { type: "separator" },
     {
-      label: "Quit",
+      label: "Quit DeskRAG",
       click: () => {
         quitting = true;
         app.quit();
@@ -214,14 +259,14 @@ function restoreAfterRecording(): void {
 }
 
 function createTray(): void {
-  // A template image is black + alpha; macOS inverts it for the menu bar, so
-  // one asset covers light and dark. Falls back to an empty image rather than
-  // throwing if the generated icon is missing.
-  const trayIcon = nativeImage.createFromPath(brandAsset("tray", "trayTemplate.png"));
-  if (!trayIcon.isEmpty()) trayIcon.setTemplateImage(true);
-  tray = new Tray(trayIcon.isEmpty() ? nativeImage.createEmpty() : trayIcon);
+  const idle = loadTrayImages();
+  tray = new Tray(idle.isEmpty() ? nativeImage.createEmpty() : idle);
   tray.setToolTip("DeskRAG");
-  tray.on("click", () => showWindow());
+  // NO `click` HANDLER ON macOS. A tray with a context menu already opens it on
+  // left-click, so the handler that used to sit here ALSO showed the window —
+  // the window came up behind the menu on the one gesture meant to avoid it.
+  // Elsewhere a bare left-click does nothing at all, so there it pops the menu.
+  if (process.platform !== "darwin") tray.on("click", () => tray?.popUpContextMenu());
   rebuildTray();
 }
 
@@ -254,6 +299,12 @@ app.whenReady().then(async () => {
     rebuildTray();
     if (s.state === "idle") restoreAfterRecording();
   });
+  // THE QUEUE NEEDS ITS OWN SUBSCRIPTION. `rebuildTray` used to run only from
+  // `onState`, so the indexing glyph only ever refreshed when a recording
+  // transition happened to coincide with one — it was stale the rest of the
+  // time. Now that indexing is half of what the ghost's face says, that is a
+  // defect rather than a curiosity.
+  service.onIndexQueue(() => rebuildTray());
 
   // An unpackaged macOS dev run shows Electron's own dock icon otherwise.
   if (process.platform === "darwin" && app.dock) {

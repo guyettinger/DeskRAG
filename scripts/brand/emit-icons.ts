@@ -13,10 +13,44 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import sharp from "sharp";
 import { renderMark } from "./emit-static.js";
-import { bezierToPath, CANVAS, eyes, GHOST_FIT, ghostBodyPath, mouthBezier, mouthWidth } from "./geometry.js";
+import {
+  aperture,
+  bezierToPath,
+  CANVAS,
+  eyes,
+  GHOST_FIT,
+  ghostBodyPath,
+  mouthBezier,
+  mouthWidth,
+  workDots,
+} from "./geometry.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const buildDir = join(here, "../../app/build");
+
+/**
+ * WHICH STATE THE GHOST'S FACE IS WEARING. Two independent axes, because
+ * indexing and recording are independent: a stage already in flight keeps
+ * running for a while after a capture starts, and a tray that arbitrated
+ * between them would go quiet about one of the two.
+ */
+export type TrayFace = { capture: "idle" | "recording"; indexing: boolean };
+
+/**
+ * THE FOUR FACES AND THE FILE EACH IS WRITTEN TO — the array IS the emitted set,
+ * so adding a state means adding a row here and nowhere else.
+ *
+ * The idle basename is unchanged (`trayTemplate`) so an app built before this
+ * change still finds its icon. The runtime picks the same names through
+ * `trayFaceAsset` in app/src/main/tray-face.ts, which cannot import this file;
+ * `test/brand.assets.test.ts` asserts the two agree rather than trusting them to.
+ */
+export const TRAY_FACES: readonly { face: TrayFace; base: string }[] = [
+  { face: { capture: "idle", indexing: false }, base: "trayTemplate" },
+  { face: { capture: "recording", indexing: false }, base: "trayRecordingTemplate" },
+  { face: { capture: "idle", indexing: true }, base: "trayIndexingTemplate" },
+  { face: { capture: "recording", indexing: true }, base: "trayRecordingIndexingTemplate" },
+] as const;
 
 /**
  * The tray mark: ghost silhouette only, solid black on transparent. macOS
@@ -25,14 +59,47 @@ const buildDir = join(here, "../../app/build");
  * as a black body and would not read as knocked out. The face must instead be
  * genuinely transparent: an SVG mask, drawn in the same ghost-local space
  * GHOST_FIT places on the canvas, with the body in mask-white (keep) and the
- * eyes/mouth in mask-black (cut away). The desk bar is dropped — it is
+ * face features in mask-black (cut away). The desk bar is dropped — it is
  * illegible at 16px.
+ *
+ * STATE IS CARRIED BY THE FACE AND BY NOTHING ELSE. The silhouette never
+ * changes, so the mark stays one mark; what changes is what is cut out of it.
+ * That is also the whole reason the tray no longer sets a title: a second glyph
+ * beside the ghost said what the ghost could say itself.
+ *
+ * The pupil is the one place the mask paints white on top of black — mask-white
+ * RESTORES ink, which is how a filled dot exists at all in a format that has
+ * only alpha.
  */
-export function renderTrayMark(): string {
+export function renderTrayMark(
+  face: TrayFace = { capture: "idle", indexing: false },
+): string {
   const fit = `translate(${GHOST_FIT.tx} ${GHOST_FIT.ty}) scale(${GHOST_FIT.scale})`;
-  const eyeEls = eyes
-    .map((e) => `      <ellipse cx="${e.cx}" cy="${e.cy}" rx="${e.rx}" ry="${e.ry}" fill="#000000"/>`)
-    .join("\n");
+  const eyeRow =
+    face.capture === "recording"
+      ? [
+          `        <circle cx="${aperture.cx}" cy="${aperture.cy}" r="${aperture.r}" fill="#000000"/>`,
+          `        <circle cx="${aperture.cx}" cy="${aperture.cy}" r="${aperture.pupilR}" fill="#FFFFFF"/>`,
+        ]
+      : eyes.map(
+          (e) => `        <ellipse cx="${e.cx}" cy="${e.cy}" rx="${e.rx}" ry="${e.ry}" fill="#000000"/>`,
+        );
+  // The aperture is wide enough to occupy the mouth row too, so the recording
+  // face has no smile — it is ONE feature, which is what makes it read as a
+  // different face rather than as the idle one with something added.
+  const mouthRow =
+    face.capture === "recording"
+      ? []
+      : [
+          `        <path d="${bezierToPath(mouthBezier(), false)}" fill="none" stroke="#000000"` +
+            ` stroke-width="${mouthWidth}" stroke-linecap="round"/>`,
+        ];
+  const bellyRow = face.indexing
+    ? [-workDots.dx, 0, workDots.dx].map(
+        (dx) =>
+          `        <circle cx="${workDots.cx + dx}" cy="${workDots.cy}" r="${workDots.r}" fill="#000000"/>`,
+      )
+    : [];
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${CANVAS} ${CANVAS}"` +
       ` width="${CANVAS}" height="${CANVAS}">`,
@@ -40,9 +107,9 @@ export function renderTrayMark(): string {
     `    <mask id="tray-mask" maskUnits="userSpaceOnUse" x="0" y="0" width="${CANVAS}" height="${CANVAS}">`,
     `      <g transform="${fit}">`,
     `        <path d="${ghostBodyPath(0)}" fill="#FFFFFF"/>`,
-    eyeEls,
-    `        <path d="${bezierToPath(mouthBezier(), false)}" fill="none" stroke="#000000"` +
-      ` stroke-width="${mouthWidth}" stroke-linecap="round"/>`,
+    ...eyeRow,
+    ...mouthRow,
+    ...bellyRow,
     "      </g>",
     "    </mask>",
     "  </defs>",
@@ -131,9 +198,13 @@ export async function main(): Promise<void> {
   for (const size of icoSizes) icoPngs.push({ size, data: await rasterise(markSvg, size) });
   writeFileSync(join(buildDir, "icon.ico"), packIco(icoPngs));
 
-  const traySvg = renderTrayMark();
-  writeFileSync(join(buildDir, "tray/trayTemplate.png"), await rasterise(traySvg, 16));
-  writeFileSync(join(buildDir, "tray/trayTemplate@2x.png"), await rasterise(traySvg, 32));
+  for (const { face, base } of TRAY_FACES) {
+    const traySvg = renderTrayMark(face);
+    writeFileSync(join(buildDir, `tray/${base}.png`), await rasterise(traySvg, 16));
+    writeFileSync(join(buildDir, `tray/${base}@2x.png`), await rasterise(traySvg, 32));
+  }
 
-  console.log("brand: wrote app/build icons (png, icns, ico, tray)");
+  console.log(
+    `brand: wrote app/build icons (png, icns, ico, ${TRAY_FACES.length} tray faces)`,
+  );
 }

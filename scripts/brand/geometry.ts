@@ -68,6 +68,53 @@ const MOUTH_CONTROL: Pt = [120, 141];
 const MOUTH_END: Pt = [130, 130];
 export const mouthWidth = 6;
 
+/**
+ * THE TRAY MARK'S TWO STATE SYMBOLS, in ghost-local coordinates.
+ *
+ * They live here rather than in the icon emitter for the reason the rest of the
+ * face does: an emitter that invented its own numbers would drift from the eyes
+ * and the mouth it has to line up with. Both are DERIVED from the features they
+ * replace — the axis is the midpoint of the two eyes, the aperture sits on the
+ * eye row, the dots on the low point of the mouth's arc — so moving the face
+ * moves them with it.
+ */
+const FACE_AXIS = (eyes[0].cx + eyes[1].cx) / 2;
+
+/**
+ * RECORDING: one wide aperture where the two eyes sit.
+ *
+ * A macOS template image keeps only alpha, so a filled dot cannot be drawn — the
+ * ring is knocked OUT of the silhouette and the pupil is left as ink. The 0.4
+ * `pupilR / r` ratio is IconRecord's own (app/src/renderer/src/icons.tsx: ring
+ * r 8.5, pupil r 3.4), so the menu bar and the record button carry one shape
+ * even though only one of them may carry the red.
+ */
+export const aperture = { cx: FACE_AXIS, cy: eyes[0].cy, r: 30, pupilR: 12 } as const;
+
+/**
+ * INDEXING: three dots low on the ghost's body, below the face.
+ *
+ * BELOW the face and not in place of the smile, which is where they started —
+ * measured at 32px, dots on the mouth row read as a slightly wider smile and the
+ * indexing ghost was indistinguishable from the idle one at a glance. Down here
+ * they cannot merge with any face feature, including the recording aperture,
+ * which is what lets the two axes be read independently.
+ *
+ * BOTH NUMBERS BELOW ARE CLEARANCES, not placements, and both were paid for at
+ * 16px. `cy` sits midway between the mouth's deepest point and the LIFTED hem
+ * line rather than the hem itself. `dx` pulls the outer dots inside `CUSP_X` by
+ * a full radius: the eyes' half-separation is 32, which is exactly `CUSP_X`, so
+ * the obvious derivation put each outer dot directly over a cusp — where it
+ * notched the silhouette instead of reading as a dot.
+ */
+const WORK_DOT_R = 8;
+export const workDots = {
+  cx: FACE_AXIS,
+  cy: (MOUTH_CONTROL[1] + (HEM_Y - CUSP_LIFT)) / 2,
+  dx: (CUSP_X[1] - CUSP_X[0]) / 2 - WORK_DOT_R,
+  r: WORK_DOT_R,
+} as const;
+
 /** Vertical bob amplitude, in ghost-local units. */
 export const BOB_AMPLITUDE = 8;
 
