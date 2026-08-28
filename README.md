@@ -6,9 +6,10 @@
 
 <p align="center"><strong>Local-first, multimodal desktop session memory.</strong></p>
 
-DeskRAG captures what happens on your desktop — screen video, microphone audio,
-mouse/keyboard input, active window, and the OS accessibility tree — into a searchable
-"experience memory," then lets you recall past moments by:
+DeskRAG captures what happens on your desktop — screen video, microphone audio, the
+audio your computer *plays*, mouse/keyboard input, active window, and the OS
+accessibility tree — into a searchable "experience memory," then lets you recall past
+moments by:
 
 - **semantic query** — *"that time I was debugging auth"*
 - **visual example** — *"find this screen / this dialog"*
@@ -85,7 +86,8 @@ xcode-select --install   # swiftc, for the sidecar
 ```bash
 npm install         # the library (root) — Node-ABI native modules for the test suite
 npm run app:install # the app (own node_modules) — postinstall builds better-sqlite3 for Electron
-npm run build:ax    # the Swift sidecars — ax-dump is required to record at all
+npm run build:ax    # the Swift sidecars — ax-dump is required to record at all,
+                    # audio-tap is what captures computer audio
 npm run app:dev     # build the library, then launch the app
 ```
 
@@ -93,6 +95,14 @@ Transcription (`brew install whisper-cpp`) and the Ollama-backed caption and
 embedding providers are optional — a missing one disables exactly that feature.
 See [Setup](./docs/setup.md) for permissions and [Providers](./docs/providers.md)
 for what runs where.
+
+**Computer audio** — everything your Mac plays, the far end of a call included — is a
+Core Audio process tap, so it needs macOS 14.2+, the `audio-tap` sidecar, and the
+System Audio Recording permission. It ships **off**, and you turn it on per signal on
+the Record screen. It excludes DeskRAG's own audio — every process the app knows about
+when the tap opens, so playing a past recording during a capture does not feed back into
+it — and the tap sits *pre-mixer*: it hears what is playing even while your output is
+muted. Both audio signals feed the same transcript view.
 
 To use the library directly instead:
 
@@ -107,7 +117,7 @@ npm install && npm run typecheck && npm test
 | [Architecture](./docs/architecture.md) | the pipeline, the dual-store seam, vector namespacing, repo layout |
 | [Setup](./docs/setup.md) | requirements, install, optional tools, macOS permissions, maintainer scripts |
 | [Providers](./docs/providers.md) | what runs where, weight pinning, why every provider is local |
-| [Agent access (MCP)](./docs/mcp.md) | the six read-only tools, how to connect, and the security posture |
+| [Agent access (MCP)](./docs/mcp.md) | the eleven read-only tools, how to connect, and the security posture |
 | [Library usage](./docs/library-usage.md) | the API shape, end to end |
 | [DeskRAGApp](./app/README.md) | the Electron desktop client |
 | [Roadmap](./ROADMAP.md) | what isn't built yet, and where a shipped part stops short |

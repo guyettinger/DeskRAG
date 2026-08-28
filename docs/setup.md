@@ -5,10 +5,14 @@
 - **Node ≥ 20**, macOS (native capture is macOS-focused today).
 - Native npm modules build on install: `better-sqlite3`, `@lancedb/lancedb`, `sharp` (image crops).
 - **macOS permissions** for live capture: Screen Recording, Accessibility, Input
-  Monitoring, and Microphone — granted to the launching process (for the app in dev,
-  that's Electron). Audio is read by a *child* `ffmpeg`, so the grant has to belong to
-  the bundle; a packaged build gets there via `NSMicrophoneUsageDescription` plus the
+  Monitoring, Microphone, and — for computer audio — System Audio Recording, granted
+  to the launching process (for the app in dev, that's Electron). Microphone audio is
+  read by a *child* `ffmpeg`, so the grant has to belong to the bundle; a packaged
+  build gets there via `NSMicrophoneUsageDescription` plus the
   `com.apple.security.device.audio-input` entitlement in `app/build/entitlements.mac.plist`.
+  Computer audio is a Core Audio tap in the `audio-tap` child, and needs
+  `NSAudioCaptureUsageDescription` — **without that key macOS never prompts and the tap
+  simply delivers nothing**.
   **Those entitlements only apply to a *signed* build** — without an Apple Developer
   signing identity electron-builder skips signing, and the packaged app cannot record
   audio however the plist reads. Check the built app, not the config:
@@ -21,6 +25,15 @@
   specific one in Settings only if you need to; an index like `:2` is per-machine, and
   index 0 is often a *virtual* device that records silence with no error at all. List
   yours with `ffmpeg -f avfoundation -list_devices true -i ""`.
+- **Computer audio — everything this Mac plays — needs macOS 14.2+**, where Core Audio
+  process taps exist at all; ffmpeg cannot reach system audio on macOS by any route. It
+  is captured by the `audio-tap` sidecar, ships **disabled**, and is turned on per
+  signal on the Record screen. Two things to know before reading its meter: the tap is
+  *pre-mixer*, so it hears what is playing even while your output is muted, and it
+  delivers **nothing at all while nothing is playing** — no callbacks, not zeroed
+  buffers. A silent reading therefore means either a quiet Mac or a missing System
+  Audio Recording grant, which the Record card says in exactly those terms because the
+  grant is not queryable. DeskRAG's own sound is excluded.
 
 The **`ax-dump` sidecar is required to record at all**, not just for the
 accessibility tree. Capture reads the device timebase from `ax-dump --clock`,
@@ -28,14 +41,17 @@ and without it a frame can only be stamped with the time it *arrived* — measur
 3.05s later than the moment it was captured. A session refuses to start rather
 than storing timestamps that mean something different from every other session.
 
-A packaged build ships the binary in `Contents/Resources`; a dev checkout builds
-it with `npm run build:ax`, which needs `swiftc` (Xcode Command Line Tools).
+A packaged build ships it — and `audio-tap` beside it — in `Contents/Resources`; a
+dev checkout builds them with `npm run build:ax`, which needs `swiftc` (Xcode Command
+Line Tools). `ax-exec` is the third sidecar and is deliberately not shipped: it is the
+one that can click, and nothing in the app spawns it.
 
 Optional, per feature — a missing one disables exactly that feature:
 
 | Feature | Needs |
 |---|---|
-| Screen capture, audio chunks | **`ffmpeg` 5.1 or newer** on `PATH` |
+| Screen capture, microphone chunks | **`ffmpeg` 5.1 or newer** on `PATH` |
+| Computer audio | the **`audio-tap`** sidecar + **macOS 14.2+** (built by `npm run build:ax`; needs Xcode 15.1+ to compile) |
 | Mouse/keyboard + focused window | **`uiohook-napi`**, **`active-win`** (optionalDependencies) |
 | Accessibility tree | the same **`ax-dump`** sidecar (see above) |
 | Transcription | a **`whisper.cpp`** binary (`brew install whisper-cpp`) — the model downloads itself |
@@ -47,7 +63,8 @@ Optional, per feature — a missing one disables exactly that feature:
 npm install
 npm run typecheck
 npm test
-npm run build:ax   # compile both macOS sidecars (native/ax-dump, native/ax-exec).
+npm run build:ax   # compile the three macOS sidecars (native/ax-dump,
+                   # native/ax-exec, native/audio-tap).
                    # NOT optional in a dev checkout: capture reads the device
                    # timebase from `ax-dump --clock` and refuses to start without it.
 ```

@@ -12,7 +12,7 @@ regression, not a feature to add.**
 | Image | ONNX (in-process) | `colmodernvbert-250m` — late interaction; patches *are* the regions, so highlights fall out of the MaxSim map |
 | Behavioral vector | builtin | `input-dynamics-v1`, 12-dim |
 | VLM caption | Ollama (daemon) | any vision model you've pulled, e.g. `qwen3-vl:4b` |
-| Transcription (STT) | whisper.cpp (subprocess) | `ggml-base.en-q5_1.bin`, downloaded like any other weight |
+| Transcription (STT) | whisper.cpp (subprocess) | `ggml-base.en-q5_1.bin`, downloaded like any other weight — it reads **both** audio sources, microphone and computer |
 | Rerank (Tier 4) | ONNX (in-process) | `jina-reranker-v1-turbo-en` |
 
 ## Weights are pinned
