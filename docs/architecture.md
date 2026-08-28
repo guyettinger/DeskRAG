@@ -9,7 +9,7 @@ for the measurements behind each one, [docs/internals/](./internals/).
 - **Dual-store, crash-safe** — SQLite (`better-sqlite3`, WAL) is the relational source of truth + event firehose; LanceDB owns all vectors + scoped ANN. A strict write-order + reconciliation protocol survives crashes between the two engines (proven by a real kill-the-process recovery test).
 - **Structural vector discipline** — every embedding is namespaced `view:provider:model:dims`, with one physical LanceDB table per namespace, so incomparable vector spaces *cannot* be mixed in a search.
 - **Monotonic timeline** — all correlation is on a monotonic `t_mono` clock, immune to wall-clock/NTP/DST jumps.
-- **Nine embeddable views** per experience — transcript (local whisper.cpp STT), VLM caption of the frame and of the focused window, structured-event digest, the summary of a composed level, behavioral feature vector, whole-frame image, region image, and late-interaction frame patches.
+- **Six embeddable views** per experience — transcript (local whisper.cpp STT, over microphone *and* computer audio), VLM caption of the keyframe, structured-event digest, the summary of a composed level, behavioral feature vector, and late-interaction frame patches. Three views have been retired and the list has turned over rather than grown: the single-vector `frame_image`/`region_image` lane went when the provider menu standardized on ColModernVBERT, and `app_caption` — a second VLM pass cropped to the focused window — went because the crop made it *worse*, not merely redundant.
 - **Coarse-to-fine, hybrid retrieval** — pHash → segment RRF (dense views *and* a lexical FTS lane) → frame ANN → region ANN + accessibility-label full-text search → optional cross-encoder rerank — returning **highlights**: the matched region bounding boxes + labels to outline *where* on the recalled frame the match is. The lexical lane and the region-label search both work with **no model configured at all**, which is what a default install has.
 - **The PixelRAG edge, grounded** — region proposals fuse the accessibility tree, interaction hotspots (weighted DBSCAN over clicks/dwell — a signal video RAG can't have), and grid tiling.
 - **A composed hierarchy** — actions group into tasks, tasks into phases, phases into a named session, each level asking its own question of a local model and falling back to structure when it declines.
@@ -23,11 +23,11 @@ Each stage narrows scope; retrieval never widens.
  capture/                 segment/            represent/                         retrieve/
  ─────────                ────────            ──────────                         ────────
  uiohook  (input)     ┐   event-driven    ┐   transcript, digest,   ┐   Tier0 pHash prefilter
- active-win (focus)   │   boundaries →    │   caption, app_caption, │   Tier1 segment ANN + FTS,
- ffmpeg  (screen→JPEG)├─▶ ONE granularity ├─▶ summary, behavior,    ├─▶      fused by RRF
- ax-dump (AX tree)    │   (`action`)      │   frame + region image, │   Tier2 frame ANN  (scoped)
- ffmpeg  (microphone) ┘                   ┘   frame patches         │   Tier3 region ANN + AX-FTS
-                                              (each → a namespaced  ┘   Tier4 rerank (optional)
+ active-win (focus)   │   boundaries →    │   caption, summary,     │   Tier1 segment ANN + FTS,
+ ffmpeg  (screen→JPEG)├─▶ ONE granularity ├─▶ behavior,             ├─▶      fused by RRF
+ ax-dump (AX tree)    │   (`action`)      │   frame patches (late   │   Tier2 frame ANN  (scoped)
+ ffmpeg  (microphone) │                   │   interaction)          │   Tier3 region ANN + AX-FTS
+ audio-tap (computer) ┘                   ┘   (each → a namespaced  ┘   Tier4 rerank (optional)
                                                vector space)            → assemble → ranked frames
                                                                            + region highlights
 
@@ -61,10 +61,9 @@ wall-clock. `started_at` exists only for human display.
 
 ## How retrieval actually ranks
 
-**Tier 1 is hybrid.** Each text view (digest, summary, caption, app_caption,
-transcript) and the behavioral vector contribute one ranked list, and so does a
-**lexical lane** — FTS5 over `segment_fts`, which holds every view's text for a
-segment. Reciprocal Rank Fusion combines them by *rank*, never by score, because a
+**Tier 1 is hybrid.** Each text view (digest, summary, caption, transcript) and the
+behavioral vector contribute one ranked list, and so does a **lexical lane** — FTS5
+over `segment_fts`, which holds every view's text for a segment. Reciprocal Rank Fusion combines them by *rank*, never by score, because a
 dense cosine distance and a bm25 score are not commensurable. Dense views are
 weakest on exactly the terms a person is most certain about — a filename, an error
 string, a URL — so the lexical lane is what answers those. It needs no provider,
@@ -143,7 +142,7 @@ See [ROADMAP.md](../ROADMAP.md) for what that subsystem does and where it stops.
 |---|---|
 | `src/` | the DeskRAG library — capture, store, represent, retrieve, trace, replay (published as `deskrag`) |
 | `app/` | **DeskRAGApp**, the Electron desktop UI over the library (`deskrag-app`, its own install — not a workspace member) |
-| `native/` | the macOS Swift sidecars — `ax-dump.swift` (read-only) and `ax-exec.swift` (actuation), both built with `npm run build:ax` |
+| `native/` | the macOS Swift sidecars — `ax-dump.swift` (read-only, the capture clock), `audio-tap.swift` (computer audio, a Core Audio process tap) and `ax-exec.swift` (actuation), all built with `npm run build:ax` |
 | `test/` | the executable documentation — vitest suite, deterministic |
 | `assets/` | the brand mark — generated from `scripts/gen/brand/geometry.ts` via `npm run gen:brand` |
 | `docs/` | this documentation set, plus design specs under `docs/superpowers/` |

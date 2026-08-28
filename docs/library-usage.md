@@ -20,10 +20,15 @@ const blobs = new BlobStore("blobs");
 // Real producers are imported from their own paths (native / subprocess):
 //   ./capture/producers/uiohook-input, /active-window, /ffmpeg-screen
 //   ./capture/ax/swift-ax-source  (+ new StoredAxProvider(store).provide for regions)
+// The two audio producers ARE in the barrel — they spawn a binary, they load no
+// native module: FfmpegAudioProducer (microphone), SystemAudioProducer (computer
+// audio, via the `audio-tap` Core Audio sidecar).
 const session = new CaptureSession(store, { blobStore: blobs, keyframeBudget: new KeyframeBudget() });
 // session.addProducer(new UiohookInputProducer());
 // session.addProducer(new ActiveWindowProducer());
 // session.addProducer(new FfmpegScreenProducer({ fps: 1 })); // input: auto-detected display
+// session.addProducer(new FfmpegAudioProducer());            // microphone -> `mic` blobs
+// session.addProducer(new SystemAudioProducer({ excludePids: [...] })); // -> `desktop_audio`
 const sessionId = await session.start();
 // ... user works ...
 await session.stop();
@@ -132,6 +137,13 @@ const outcome = await executeRun({
   `minIntervalMs: 0` means "keep whatever ffmpeg kept". The whole-frame hash gate it
   replaced could not see a Calculator digit on a 2560×1440 screen — measured at one
   keyframe per sixteen seconds of real use.
+- **Computer audio is a Core Audio tap, not an ffmpeg input**, because macOS does not
+  expose system audio to AVFoundation at all: `SystemAudioProducer` spawns `audio-tap`
+  and reads 16 kHz mono PCM from its stdout, and it needs macOS 14.2+. It writes
+  `desktop_audio` blobs beside the microphone's `mic` ones, and both regenerate the
+  same transcript view downstream. `excludePids` is a **snapshot, not a rule** — the
+  tap resolves pids to audio objects once, at creation — so pass every pid your app
+  might make sound through, not just `process.pid`.
 - **`searchSegments` throws on an unregistered namespace**, so a `Retriever` must only
   be given `TextViewSearcher`s whose namespace appears in `store.listVectorSpaces()`.
   Caption/transcript spaces don't exist until something has been indexed with those

@@ -342,7 +342,7 @@ To exercise the whole surface against your real store, from the repo root:
 npm run probe:mcp
 ```
 
-It drives the built app, calls all eight tools, and runs the three guard checks.
+It drives the built app, calls all eleven tools, and runs the three guard checks.
 It is read-only — every tool it calls is a read.
 
 `npm run probe:habits` does the same for the two habit tools, and additionally

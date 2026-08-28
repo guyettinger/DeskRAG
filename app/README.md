@@ -24,10 +24,22 @@ and jump from any state straight back to the moment you were in it.
 
 ### Record
 
-Signal switchboard (screen · input · active window · microphone · accessibility
-tree) with a status LED each, inline notes for a missing permission (Grant / Open
-Settings) or a missing tool (`ffmpeg`, `ax-dump`), elapsed timecode, and
-stage-by-stage indexing progress after Stop.
+Signal switchboard (screen · input · active window · microphone · computer audio ·
+accessibility tree) with a status LED each, inline notes for a missing permission
+(Grant / Open Settings) or a missing tool (`ffmpeg`, `ax-dump`, `audio-tap`), elapsed
+timecode, and stage-by-stage indexing progress after Stop.
+
+**Computer audio** is everything this Mac plays — the far end of a call, a video, a
+meeting you are in. It ships off, needs macOS 14.2+ and the `audio-tap` sidecar, and
+excludes DeskRAG's own audio: every process the app knows about when the tap opens,
+which is what stops the Library player from feeding a past recording into a new one.
+
+Its card reads like the microphone's — chunks, peak, envelope — with one difference
+worth knowing. A Core Audio tap delivers *nothing* while the output device is idle: not
+zeroed buffers, no callbacks at all. So an all-zero reading means either nothing is
+playing or System Audio Recording is not granted, and the card names both causes rather
+than guessing one — from inside the process they are the same observation, and that
+grant cannot be queried.
 
 ![Record screen](../docs/images/record.png)
 
@@ -39,7 +51,8 @@ indexed — and thumbnail images on scrub.
 
 Below the frame is the **track rail**: a lane per signal actually captured — input
 rates, focus spans, the composed hierarchy (session · process · task · action),
-keyframes, accessibility snapshots, and an audio envelope — gathered into collapsible
+keyframes, accessibility snapshots, and an audio envelope per source (*audio
+(microphone)* and *audio (computer)* are separate lanes) — gathered into collapsible
 bands and sharing **one time axis** with the scrubber above it, so a lane and the
 playhead always mean the same instant. Drag its grip to trade rail height against the
 frame; the rail yields space to the frame before the page does.
@@ -145,8 +158,8 @@ clicking. See [ROADMAP.md](../ROADMAP.md).
 
 **Models** (text embeddings, image model, captions, Tier-4 rerank, model directory),
 **Ollama** (host, embedding model, caption model), **Transcription** (whisper.cpp
-binary + model), **Capture defaults** (frame rate, keyframe max width, audio device,
-chunk seconds), and **Maintenance**.
+binary + model), **Capture defaults** (frame rate, keyframe max width, microphone
+device, chunk seconds for either audio signal), and **Maintenance**.
 
 The image model is **ColModernVBERT**, or **None**. It is late interaction, so one
 model embeds images and text into one space — which is what lets a typed query
@@ -261,13 +274,15 @@ Each is best-effort — a missing one only disables its signal:
 | Signal / feature | Needs |
 | --- | --- |
 | Screen, Microphone | `ffmpeg` on `PATH` |
+| Computer audio | the `audio-tap` sidecar (same `npm run build:ax`) + macOS 14.2+ |
 | Accessibility tree | the `ax-dump` sidecar — build with `npm run build:ax` (repo root) |
 | Transcripts | a `whisper.cpp` binary + model, set in **Settings → Transcription** |
 
-> The app needs **only `ax-dump`**, which is read-only and two of whose modes need no
-> permission at all. `npm run build:ax` also builds `ax-exec`, the binary that can
-> click — that one belongs to the library's executor and the read-only probe script,
-> and nothing in DeskRAGApp spawns it.
+> The app spawns **`ax-dump`** (read-only, and two of whose modes need no permission at
+> all) and, when computer audio is on, **`audio-tap`** (which only reads audio). Both are
+> signed into the packaged bundle. `npm run build:ax` also builds `ax-exec`, the binary
+> that can click — that one belongs to the library's executor and the read-only probe
+> script, and nothing in DeskRAGApp spawns it or ships it.
 
 ## Run
 
@@ -300,11 +315,19 @@ pane. **Screen Recording** and **Accessibility** can't be granted programmatical
 (grant them in System Settings, then relaunch); **Microphone** can be prompted in
 app from the Record screen.
 
+**System Audio Recording** — what computer audio needs — is the one grant that cannot
+be *read* at all: Electron exposes no member for it, so the only way to learn it is to
+try a capture. macOS prompts for it the first time the tap runs (the bundle carries
+`NSAudioCaptureUsageDescription`; without that key it never prompts and the tap simply
+returns silence). Because a tap is also silent whenever nothing is playing, the Record
+card reports the two causes together rather than guessing one.
+
 ## Data
 
 Everything lives under `<userData>/DeskRAG/` — in dev that's
 `~/Library/Application Support/deskrag-app/DeskRAG/`: `app.db` (SQLite),
-`lance/` (vectors), `blobs/` (keyframes + audio), `models/` (downloaded weights),
-and `settings.json`. There are no secrets to store. (`<userData>` follows
+`lance/` (vectors), `blobs/` (keyframes + audio — microphone and computer audio are
+separate blobs), `models/` (downloaded weights), and `settings.json`. There are no
+secrets to store. (`<userData>` follows
 Electron's app name, so a packaged build with a `productName` set will use a
 different parent directory.)
