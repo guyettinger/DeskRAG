@@ -199,9 +199,22 @@ npm run probe:tray            # what the MENU BAR actually shows, and what the t
                               # the behaviour nothing else can observe.
                               # "No two side-by-side symbols" is asserted as a WIDTH: `⏺ REC`
                               # made the item wider while recording, and one mark cannot.
-                              # THE PIXEL CHECK CARRIES ITS OWN CONTROL -- a translucent menu
-                              # bar means two captures of the SAME face already differ, so idle
-                              # is captured TWICE and a face change has to beat that floor.
+                              # THE PIXEL CHECK IS MEASURED AGAINST THE COMMITTED FACE, and
+                              # carries its own control: idle is captured TWICE for a noise
+                              # floor, and each face is then compared against the pixel count
+                              # DIFFING ITS OWN PNG PREDICTS -- so the threshold moves when
+                              # geometry.ts moves. It used to be a picked constant over the
+                              # WRONG STATISTIC and it failed a correct app: a mean over the
+                              # captured rect divides by a crop that is mostly menu bar, and
+                              # three dots are a 3.4x smaller change than an aperture (16 px
+                              # vs 54 at @2x), so one absolute floor tuned on the recording
+                              # face called the indexing face a FAIL. The band is two-sided
+                              # for a second reason -- a lower bound alone cannot tell two
+                              # faces APART, and the recording face clears any floor the
+                              # indexing face could be given. Measured twice at different
+                              # status-item positions: both faces reproduce their prediction
+                              # EXACTLY, so all the slack is for template tinting and for the
+                              # legal recording+indexing face (70 px).
                               # It RECORDS, so it writes to a COPY: <userData> is cloned (APFS
                               # copy-on-write), the app is launched against the clone, and the
                               # clone is deleted. The CAPTURES outlive it on purpose -- a width
