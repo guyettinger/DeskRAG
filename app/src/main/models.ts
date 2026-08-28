@@ -104,7 +104,7 @@ export const MODELS = {
    * useless without `model_quantized.onnx_data` beside it. `ModelStore` flattens
    * both to their basenames and the graph's reference is a bare filename, so
    * they land as siblings and resolve — verified by loading this exact pair
-   * through `scripts/inspect-onnx.mjs`, which also pinned the I/O contract the
+   * through `scripts/dev/inspect-onnx.ts`, which also pinned the I/O contract the
    * profile declares: inputs `input_ids` + `attention_mask` ONLY (no
    * token_type_ids, no position_ids), and outputs BOTH `last_hidden_state` and
    * `sentence_embedding` — which is why the adapter names the output it wants

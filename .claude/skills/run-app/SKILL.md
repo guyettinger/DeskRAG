@@ -14,17 +14,19 @@ minutes of driving a real session. Assume that pattern holds.
 
 ## Launch
 
-`scripts/launch.mjs` in this skill directory wraps the whole dance. From the
-repo root:
+`scripts/lib/launch.ts` in the REPO wraps the whole dance — one copy, shared
+with the six `npm run probe:*` scripts that drive the app and with `gen:shots`,
+so the launch contract cannot drift between this workbench and the checks that
+ship. It is TypeScript, so run anything importing it under `npx tsx`, not `node`:
 
 ```bash
-node .claude/skills/run-app/scripts/rail-report.mjs        # worked example
+npx tsx .claude/skills/run-app/scripts/rail-report.mjs     # worked example
 ```
 
 To write your own check, import the helpers:
 
 ```js
-import { launchApp, gotoScreen } from "./.claude/skills/run-app/scripts/launch.mjs";
+import { launchApp, gotoScreen } from "./scripts/lib/launch.js";
 const { app, page } = await launchApp();
 await gotoScreen(page, "Library");
 // ... assert, screenshot ...
@@ -57,7 +59,7 @@ default — `launchApp()` does this.
 
 ## Navigate
 
-Rail buttons are matched by **label, never index**. `scripts/shots.mjs` learned
+Rail buttons are matched by **label, never index**. `scripts/gen/shots.ts` learned
 this the hard way: inserting a screen shifted every index below it, and a shot
 that meant "Search" silently drove a different screen and waited 8 seconds for a
 selector that was never coming. `gotoScreen()` uses an anchored regex and throws
@@ -86,7 +88,7 @@ await page.waitForFunction(
 );
 ```
 
-`waitForContent()` in `launch.mjs` does exactly this.
+`waitForContent()` in `scripts/lib/launch.ts` does exactly this.
 
 ## Assert in the DOM *and* look at the screenshot
 
@@ -140,10 +142,10 @@ continues.
 
 ## Related
 
-- `scripts/shots.mjs` in the repo root regenerates `docs/images/*.png` with the
+- `scripts/gen/shots.ts` in the repo root regenerates `docs/images/*.png` with the
   same launch pattern. If you change navigation or screen selectors, check
   whether it needs the same edit.
-- `scripts/decimate-probe.mjs` is the read-only harness for keyframe thresholds
+- `scripts/probes/decimate.ts` is the read-only harness for keyframe thresholds
   and needs no app at all.
 - `scripts/indexing-report.mjs` measures the Indexing screen's stage ladder —
   bands, row geometry, truncation, the time rollup (including its COMPUTED block
@@ -155,21 +157,21 @@ continues.
   cannot count says so rather than showing a stalled bar. Everything else on the
   Indexing screen can be checked against a finished job, where no meter exists —
   which is exactly how three ordering bugs survived a green suite here.
-- `scripts/merge-probe.mjs` is the one that WRITES HABITS, and it is the reason
+- `scripts/probes/merge.ts` is the one that WRITES HABITS, and it is the reason
   `launchApp` takes a `userDataDir`. It clones the real `<userData>` (APFS
   copy-on-write), drives the app against the clone, and deletes it — so it can
   stage two duplicate habits and archive one without touching a person's
   authored prose. Pass `userDataDir` only for a check that writes; a read-only
   check wants the REAL store, because a fixture agrees with whatever the code
   assumes.
-- `scripts/reflect-probe.mjs` also writes to a clone, and it is the only check
+- `scripts/probes/reflect.ts` also writes to a clone, and it is the only check
   that a real model writes a real reflection into a real store. It re-indexes
   ONE recording, which is minutes rather than hours only because it turns
   captions off **in the clone** first — 92% of a re-index on a real library, and
   Reflecting reads neither of them. It ends by reading the note out of the
   clone's `app.db` with `better-sqlite3` and checking no rendered `HABIT.md`
   contains it: a reflection is prompt input, never record.
-- `scripts/stability-probe.mjs` is the longest-running one, and also writes to a
+- `scripts/probes/stability.ts` is the longest-running one, and also writes to a
   clone. It runs three FULL re-index + re-mine cycles and asks whether the route
   keys move — they are predicted not to, so a drift is a finding rather than
   noise. It must wait for the queue to be EMPTY, not for the per-session jobs:

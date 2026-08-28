@@ -11,7 +11,7 @@ import {
 
 /**
  * Ground truth measured from the reference Idefics3 processor
- * (scripts/dump-idefics3-processor.py):
+ * (scripts/dev/dump-idefics3-processor.py):
  *
  *   1280x800  -> 13 tiles, 832 image tokens   (4x3 grid + global)
  *   1920x1080 -> 13 tiles, 832

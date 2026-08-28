@@ -13,23 +13,14 @@
  * columns parsed, sources grouped — so everything with a JUDGEMENT in it stays
  * in the single implementation the app actually runs.
  *
- * One copy, imported by both probes, for the reason `flowWalks` is one copy.
+ * One copy, imported by every probe that reads the graph, for the reason
+ * `flowWalks` is one copy. The PATH it is opened at lives in `paths.ts`, and
+ * `openFlows` in `flows.ts` is what callers should reach for — this is the
+ * marshalling layer underneath it.
  */
 
-import { homedir } from "node:os";
-import { join } from "node:path";
 import type Database from "better-sqlite3";
 import type { Graph } from "../../src/trace/types.js";
-
-/** Where DeskRAGApp keeps its library. */
-export const DEFAULT_DB = join(
-  homedir(),
-  "Library",
-  "Application Support",
-  "deskrag-app",
-  "DeskRAG",
-  "app.db",
-);
 
 /** `store.getGraph`, read-only and without the store. See the header. */
 export function readGraph(db: Database.Database, graphId: string): Graph | undefined {

@@ -96,7 +96,7 @@ if (!process.env["ERAG_AUDIO_TAP_BIN"]) {
 // `ax-exec` is DELIBERATELY NOT RESOLVED HERE. It is the binary that can click,
 // and the app no longer has anything that spawns it: the Flows screen reads the
 // stored graph and nothing observes or acts on the live desktop. The executor
-// still exists in the library, exercised by the suite and `scripts/replay-probe`
+// still exists in the library, exercised by the suite and `scripts/probes/replay`
 // — pointing an env var at it from the app would be the first step back toward
 // a click-capable child process being alive while a window is merely open.
 

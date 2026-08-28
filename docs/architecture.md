@@ -145,7 +145,7 @@ See [ROADMAP.md](../ROADMAP.md) for what that subsystem does and where it stops.
 | `app/` | **DeskRAGApp**, the Electron desktop UI over the library (`deskrag-app`, its own install — not a workspace member) |
 | `native/` | the macOS Swift sidecars — `ax-dump.swift` (read-only) and `ax-exec.swift` (actuation), both built with `npm run build:ax` |
 | `test/` | the executable documentation — vitest suite, deterministic |
-| `assets/` | the brand mark — generated from `scripts/brand/geometry.ts` via `npm run gen:brand` |
+| `assets/` | the brand mark — generated from `scripts/gen/brand/geometry.ts` via `npm run gen:brand` |
 | `docs/` | this documentation set, plus design specs under `docs/superpowers/` |
 
 ## Build order when extending

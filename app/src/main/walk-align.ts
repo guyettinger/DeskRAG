@@ -35,7 +35,7 @@ export interface Alignment {
 /**
  * A monotone forward scan, then a post-pass.
  *
- * The scan is the shape `scripts/transfer-probe.ts` already uses to verify a
+ * The scan is the shape `scripts/probes/transfer.ts` already uses to verify a
  * route's states against a held-out recording's own AX moments. It is
  * order-preserving by construction, which is exactly why `reordered` cannot
  * fall out of it: a swapped pair emerges as one `skipped` plus one `inserted`,

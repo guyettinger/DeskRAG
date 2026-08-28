@@ -12,7 +12,7 @@ import {
 
 /**
  * Ground truth measured against the real tokenizer
- * (scripts/dump-colmodernvbert-tokens.mjs, encoding the exact string fastembed's
+ * (scripts/dev/dump-colmodernvbert-tokens.ts, encoding the exact string fastembed's
  * colmodernvbert.py builds): a 1280x800 frame is 884 tokens, 832 of them
  * <image>. Every structural assertion below is read off that encoding, not off
  * ColSmol's — the template between the special tokens is identical, but this

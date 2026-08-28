@@ -11,7 +11,7 @@ import { namespaceFor } from "../src/embed/types.js";
 import type { MissingVector } from "../src/store/types.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const childScript = join(here, "..", "scripts", "crash-child.ts");
+const childScript = join(here, "..", "scripts", "dev", "crash-child.ts");
 
 /**
  * Headline dual-store test: kill the process between the SQLite commit and the

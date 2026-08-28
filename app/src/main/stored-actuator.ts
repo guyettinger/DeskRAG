@@ -19,7 +19,7 @@
  *
  * ## Every mutator THROWS, and that is not the safety story
  *
- * The read-only proxy in `scripts/replay-probe.mjs` is, and callers should still
+ * The read-only proxy in `scripts/probes/replay.ts` is, and callers should still
  * wrap this. Throwing here says something different and narrower: a recorded
  * world CANNOT be changed. Silently accepting a click and returning would let a
  * caller believe it had advanced a state it had not, and report a transfer that

@@ -11,7 +11,7 @@
  * THIS RECORDS THE SCREEN, twice, for a few seconds each. The recordings land in
  * the real library and index normally afterwards.
  */
-import { launchApp, gotoScreen } from "./launch.mjs";
+import { launchApp, gotoScreen } from "../../../../scripts/lib/launch.js";
 
 const out = (label, value) => console.log(`${String(label).padEnd(44)} ${value}`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
