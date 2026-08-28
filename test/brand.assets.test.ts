@@ -1,10 +1,22 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import sharp from "sharp";
 import { assetsDir, renderLogo, renderMark } from "../scripts/brand/emit-static.js";
 import { renderAnimatedSvg } from "../scripts/brand/emit-svg.js";
-import { CANVAS, eyes, FPS, FRAMES, GHOST_FIT, KEYFRAMES, palette } from "../scripts/brand/geometry.js";
+import {
+  aperture,
+  CANVAS,
+  eyes,
+  FPS,
+  FRAMES,
+  GHOST_FIT,
+  KEYFRAMES,
+  palette,
+  workDots,
+} from "../scripts/brand/geometry.js";
+import { TRAY_FACES } from "../scripts/brand/emit-icons.js";
+import { trayFaceAsset } from "../app/src/main/tray-face.js";
 
 const read = (name: string): string => readFileSync(join(assetsDir, name), "utf8");
 
@@ -266,4 +278,122 @@ describe("icon emitter", () => {
     const domeY = (60 * GHOST_FIT.scale + GHOST_FIT.ty) * canvasScale;
     expect(alphaAt(domeX, domeY)).toBeGreaterThan(200);
   });
+});
+
+/**
+ * THE STATE FACES. Nothing here enumerated the tray outputs before there were
+ * four of them — a new variant could have been unwritten, unprobed and
+ * unnoticed, because the guard below it names one file by hand.
+ *
+ * Each face is probed at points DERIVED from the geometry that draws it, never
+ * at pasted pixel coordinates, so moving a feature moves its own assertion.
+ */
+describe("tray faces", () => {
+  const trayDir = join(assetsDir, "..", "app/build/tray");
+
+  /** Ghost-local -> the rasterised image's pixel space. */
+  const toPixels = (x: number, y: number, scale: number): [number, number] => [
+    (x * GHOST_FIT.scale + GHOST_FIT.tx) * scale,
+    (y * GHOST_FIT.scale + GHOST_FIT.ty) * scale,
+  ];
+
+  const alphaReader = async (
+    input: string | Buffer,
+    round: (n: number) => number,
+  ): Promise<{ at: (x: number, y: number) => number; scale: number }> => {
+    const { data, info } = await sharp(input).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const scale = info.width / CANVAS;
+    return {
+      scale,
+      at: (x, y) => data[(round(y) * info.width + round(x)) * info.channels + 3]!,
+    };
+  };
+
+  // Points that tell the faces apart. Directly above the pupil is on the
+  // recording aperture's RING, and is plain body ink on every other face — the
+  // eyes sit outboard of it. The centre dot of the indexing row is well clear
+  // of both the face and the hem's lifted cusps.
+  const RING = [aperture.cx, aperture.cy - (aperture.r + aperture.pupilR) / 2] as const;
+  const PUPIL = [aperture.cx, aperture.cy] as const;
+  const DOT = [workDots.cx, workDots.cy] as const;
+  const DOME = [120, 60] as const;
+
+  it("agrees with the runtime about which file each face is", () => {
+    // Two lists of four names in two packages that cannot import each other:
+    // the emitter writes them, `app/src/main/tray-face.ts` asks for them. This
+    // is the only thing standing between them and a silent divergence.
+    for (const { face, base } of TRAY_FACES) {
+      expect(trayFaceAsset(face.capture === "recording", face.indexing)).toBe(base);
+    }
+    expect(new Set(TRAY_FACES.map((f) => f.base)).size).toBe(TRAY_FACES.length);
+  });
+
+  it("commits both densities of every face", () => {
+    for (const { base } of TRAY_FACES) {
+      expect(existsSync(join(trayDir, `${base}.png`))).toBe(true);
+      expect(existsSync(join(trayDir, `${base}@2x.png`))).toBe(true);
+    }
+  });
+
+  it.each(TRAY_FACES.map((f) => [f.base, f.face] as const))(
+    "renders %s as black+alpha with the right features cut out",
+    async (_base, face) => {
+      const svg = renderTrayMark(face);
+      // Every face, not just the idle one: a state symbol must not be the thing
+      // that smuggles a literal colour into a template image.
+      expect(svg).not.toContain("url(#tray-body)");
+      expect(svg).not.toContain("#8A93A3");
+      expect(svg).not.toContain("#A18AF5");
+      expect(svg).not.toContain(palette.face);
+
+      const size = 256;
+      const { at, scale } = await alphaReader(
+        await sharp(Buffer.from(svg)).resize(size, size).toBuffer(),
+        Math.round,
+      );
+      const alpha = (p: readonly [number, number]): number => at(...toPixels(p[0], p[1], scale));
+
+      expect(alpha(DOME)).toBeGreaterThan(200);
+
+      if (face.capture === "recording") {
+        // A RING, not a disc: the pupil survives because the mask paints white
+        // back over the black circle. Assert both halves, or a solid hole
+        // passes the "aperture is cut out" check just as well.
+        expect(alpha(RING)).toBe(0);
+        expect(alpha(PUPIL)).toBeGreaterThan(200);
+      } else {
+        const eye = eyes[0]!;
+        expect(alpha([eye.cx, eye.cy])).toBe(0);
+        expect(alpha(RING)).toBeGreaterThan(200);
+      }
+
+      if (face.indexing) expect(alpha(DOT)).toBe(0);
+      else expect(alpha(DOT)).toBeGreaterThan(200);
+    },
+  );
+
+  it.each(TRAY_FACES.map((f) => [f.base, f.face] as const))(
+    "committed %s@2x is not stale",
+    async (base, face) => {
+      // Same reason as the idle guard above: `gen:brand` throws on non-macOS
+      // AFTER the SVG and Lottie have been rewritten, so a committed PNG can go
+      // stale with a green suite. At 32x32 a feature is 2-3px wide, so this
+      // asserts "clearly eaten into" rather than "exactly zero" — floor, not
+      // round, for the same sub-pixel reason the idle guard gives.
+      const { at, scale } = await alphaReader(join(trayDir, `${base}@2x.png`), Math.floor);
+      const alpha = (p: readonly [number, number]): number => at(...toPixels(p[0], p[1], scale));
+
+      expect(alpha(DOME)).toBeGreaterThan(200);
+      if (face.capture === "recording") {
+        expect(alpha(RING)).toBeLessThan(128);
+        expect(alpha(PUPIL)).toBeGreaterThan(128);
+      } else {
+        const eye = eyes[0]!;
+        expect(alpha([eye.cx, eye.cy])).toBe(0);
+        expect(alpha(RING)).toBeGreaterThan(200);
+      }
+      if (face.indexing) expect(alpha(DOT)).toBeLessThan(128);
+      else expect(alpha(DOT)).toBeGreaterThan(200);
+    },
+  );
 });
