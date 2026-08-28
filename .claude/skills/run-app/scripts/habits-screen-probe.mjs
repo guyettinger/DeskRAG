@@ -43,7 +43,7 @@
  * Both branches are checked; neither is skipped.
  */
 
-import { launchApp, gotoScreen } from "./launch.mjs";
+import { launchApp, gotoScreen } from "../../../../scripts/lib/launch.js";
 
 const problems = [];
 const check = (ok, message) => {

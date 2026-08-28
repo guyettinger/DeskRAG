@@ -9,12 +9,12 @@
  * geometry needs getBoundingClientRect(), but it was the screenshot that caught
  * a DOM probe reporting an empty keyframes lane that plainly had 21 thumbnails.
  *
- * Usage:  node .claude/skills/run-app/scripts/rail-report.mjs [--out <dir>]
+ * Usage:  npx tsx .claude/skills/run-app/scripts/rail-report.mjs [--out <dir>]
  */
 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { launchApp, gotoScreen, waitForRail } from "./launch.mjs";
+import { launchApp, gotoScreen, waitForRail } from "../../../../scripts/lib/launch.js";
 
 const argv = process.argv.slice(2);
 // Temp dir by default: screenshots are scratch, and dropping PNGs into the repo

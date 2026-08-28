@@ -14,7 +14,7 @@
  * THIS RECORDS THE SCREEN for a few seconds. The recording lands in the real
  * library and indexes normally afterwards.
  */
-import { launchApp, gotoScreen } from "./launch.mjs";
+import { launchApp, gotoScreen } from "../../../../scripts/lib/launch.js";
 
 const out = (label, value) => console.log(`${String(label).padEnd(44)} ${value}`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

@@ -137,7 +137,7 @@ the four natives into an empty directory and loading each one; `esbuild` and
 ## Maintainer tooling
 
 ```bash
-npm run gen:brand            # regenerate assets/ + app/build/ icons from scripts/brand/geometry.ts
+npm run gen:brand            # regenerate assets/ + app/build/ icons from scripts/gen/brand/geometry.ts
 npm run gen:shots            # regenerate docs/images/*.png from the built app
 npm run smoke:onnx-electron  # the ONNX allocator crash vitest structurally cannot reach
 npm run probe:mcp            # exercise the MCP endpoint against the real store
@@ -163,7 +163,7 @@ npm run probe:mcp            # exercise the MCP endpoint against the real store
     the PNGs after a run** — the script cannot tell a thin store from a rich one.
   - The Search shot uses a **fixed demo query**, so it needs recorded content that
     actually matches it; otherwise it captures "No matches".
-  - **Naming ids regenerates only those**: `node scripts/shots.mjs mcp-pane`. Every
+  - **Naming ids regenerates only those**: `node scripts/gen/shots.ts mcp-pane`. Every
     shot comes from the live data dir, so a full run rewrites all of them whenever
     the recordings change, burying a one-image update in a diff nobody asked for.
 - **`probe:mcp`** drives the built app and calls all six MCP tools over a real

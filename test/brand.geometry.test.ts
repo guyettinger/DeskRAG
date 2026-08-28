@@ -10,7 +10,7 @@ import {
   KEYFRAMES,
   mouthBezier,
   shadowAt,
-} from "../scripts/brand/geometry.js";
+} from "../scripts/gen/brand/geometry.js";
 
 describe("ghost geometry", () => {
   it("emits a closed 7-vertex bezier with matching tangent arrays", () => {

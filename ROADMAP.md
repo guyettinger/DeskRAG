@@ -15,7 +15,7 @@ For the invariants that constrain how these get built, see
 |---|---|---|
 | 1 | Replay-fidelity capture (`src/capture/`) | shipped |
 | 2 | Trace IR (`src/trace/`) | shipped, proven on real recordings |
-| 3 | The executor (`src/replay/`) | shipped and green; **reachable only from the suite and `scripts/replay-probe.mjs`** |
+| 3 | The executor (`src/replay/`) | shipped and green; **reachable only from the suite and `scripts/probes/replay.ts`** |
 | 4 | AI-in-the-loop | wire contract shipped; **runtime unbuilt** |
 
 ## Not built

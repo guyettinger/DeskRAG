@@ -31,7 +31,7 @@
  * a habit that claims recordings it does not describe.
  *
  * Pure, DTO-free and dependency-free — it speaks in place sequences and keys, so
- * both `graph-view.ts` and `scripts/routes-probe.ts` can read the ONE
+ * both `graph-view.ts` and `scripts/probes/routes.ts` can read the ONE
  * implementation. Two readers of one tree is the `ax-dump`/`ax-exec` drift
  * hazard by name.
  */

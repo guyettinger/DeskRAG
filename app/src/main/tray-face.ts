@@ -8,7 +8,7 @@
  * The tray used to say its state in menu-bar TEXT beside the mark — `⏺ REC`,
  * `⏳`, `◉` — so the bar carried two symbols where one would do. The ghost now
  * carries it alone, in its face: the eye row is capture, a row of dots low on
- * the body is indexing. The art is in `scripts/brand/emit-icons.ts`.
+ * the body is indexing. The art is in `scripts/gen/brand/emit-icons.ts`.
  *
  * The two axes are INDEPENDENT and there is no precedence rule, which is the
  * point: indexing yields to recording only between stages, so a stage already in
@@ -22,7 +22,7 @@ import type { IndexQueueDTO, RecordingStatus } from "@shared/types";
  * The four faces the emitter writes, keyed the way the runtime asks for them.
  *
  * The idle basename is `trayTemplate` unchanged, so a build that predates the
- * other three still finds its icon. `scripts/brand/emit-icons.ts` owns the same
+ * other three still finds its icon. `scripts/gen/brand/emit-icons.ts` owns the same
  * four names in `TRAY_FACES` and cannot be imported from the app; a test asserts
  * the two sets agree rather than leaving them to drift.
  */

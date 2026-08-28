@@ -9,7 +9,7 @@
  * Read-only with respect to the library: it navigates and measures. It does not
  * record, enqueue, or delete anything.
  */
-import { launchApp, gotoScreen } from "./launch.mjs";
+import { launchApp, gotoScreen } from "../../../../scripts/lib/launch.js";
 
 const out = (label, value) => console.log(`${label.padEnd(38)} ${value}`);
 

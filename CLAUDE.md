@@ -18,7 +18,13 @@ npx vitest run test/dual-store.crash.test.ts  # a single test file
 npx vitest run -t "scoped ANN"              # tests matching a name
 npm run test:watch     # vitest watch
 npm run build:ax       # compile ALL THREE Swift sidecars -> native/ax-dump + native/ax-exec
-                       # + native/audio-tap (all gitignored). audio-tap builds LAST on purpose:
+                       # + native/audio-tap (all gitignored), via scripts/gen/build-native.ts.
+                       # It was three `swiftc` calls chained in package.json with the deployment
+                       # target written out three times, plus a fourth DIVERGENT `build:ax-exec`
+                       # entry that nothing referenced and that omitted the target entirely --
+                       # a binary built through it would refuse to launch where the others run.
+                       # One list, one constant, and `npm run build:ax -- audio-tap` for one.
+                       # audio-tap builds LAST on purpose:
                        # it needs Xcode 15.1+ for CATapDescription, and chaining it last leaves
                        # the two CLOCK-CRITICAL binaries on disk if that compile fails.
                        # MACOSX_DEPLOYMENT_TARGET=13.0 is set so audio-tap LAUNCHES on an older
@@ -37,9 +43,10 @@ npm run build:ax       # compile ALL THREE Swift sidecars -> native/ax-dump + na
                        # the app, or every AX walk silently returns [] — measured: one whole recording
                        # with 14 snapshots and 0 elements. `parseAxResult` tolerates the old bare
                        # array so a stale BINARY degrades; a stale dist/ cannot be made to degrade.
-npm run gen:brand      # regenerate assets/ + app/build/ icons from scripts/brand/geometry.ts
+npm run gen:brand      # regenerate assets/ + app/build/ icons from scripts/gen/brand/geometry.ts
 npm run gen:shots      # regenerate docs/images/*.png by driving the built app (quit any dev instance first)
 npm run smoke:onnx-electron   # ColModernVBERT x3 under the Electron allocator — the ONE crash vitest cannot reach
+npm run smoke:e2e             # the whole local pipeline against REAL weights, on a temp store
 npm run probe:latency         # capture delivery latency: --device for the real screen,
                               # default is a synthetic barcode bench with ground truth.
                               # Read-only; the device mode counts gray bytes, never reads them.
@@ -192,9 +199,22 @@ npm run probe:tray            # what the MENU BAR actually shows, and what the t
                               # the behaviour nothing else can observe.
                               # "No two side-by-side symbols" is asserted as a WIDTH: `⏺ REC`
                               # made the item wider while recording, and one mark cannot.
-                              # THE PIXEL CHECK CARRIES ITS OWN CONTROL -- a translucent menu
-                              # bar means two captures of the SAME face already differ, so idle
-                              # is captured TWICE and a face change has to beat that floor.
+                              # THE PIXEL CHECK IS MEASURED AGAINST THE COMMITTED FACE, and
+                              # carries its own control: idle is captured TWICE for a noise
+                              # floor, and each face is then compared against the pixel count
+                              # DIFFING ITS OWN PNG PREDICTS -- so the threshold moves when
+                              # geometry.ts moves. It used to be a picked constant over the
+                              # WRONG STATISTIC and it failed a correct app: a mean over the
+                              # captured rect divides by a crop that is mostly menu bar, and
+                              # three dots are a 3.4x smaller change than an aperture (16 px
+                              # vs 54 at @2x), so one absolute floor tuned on the recording
+                              # face called the indexing face a FAIL. The band is two-sided
+                              # for a second reason -- a lower bound alone cannot tell two
+                              # faces APART, and the recording face clears any floor the
+                              # indexing face could be given. Measured twice at different
+                              # status-item positions: both faces reproduce their prediction
+                              # EXACTLY, so all the slack is for template tinting and for the
+                              # legal recording+indexing face (70 px).
                               # It RECORDS, so it writes to a COPY: <userData> is cloned (APFS
                               # copy-on-write), the app is launched against the clone, and the
                               # clone is deleted. The CAPTURES outlive it on purpose -- a width
@@ -223,10 +243,29 @@ npm --prefix app run typecheck     # the app's gate (renderer + node tsconfigs)
   (pitch, screenshots, quick start, index); the detail is in `docs/architecture.md`,
   `docs/setup.md`, `docs/providers.md`, `docs/library-usage.md`, and `app/README.md`.
   This file stays the invariants reference. `docs/images/*.png` are generated by
-  `npm run gen:shots` (`scripts/shots.mjs`) — it launches the app *directory* so
+  `npm run gen:shots` (`scripts/gen/shots.ts`) — it launches the app *directory* so
   Electron reads `app/package.json` and opens the real data dir, not an empty
   `~/Library/Application Support/Electron`.
-- **`assets/` and `app/build/` are generated, never hand-edited.** They're derived from `scripts/brand/geometry.ts` by `npm run gen:brand`; a drift guard in `test/brand.assets.test.ts` byte-compares committed output against a fresh render and fails on hand edits.
+- **`scripts/` IS TYPESCRIPT, RUN UNDER `tsx`, AND `scripts/lib/` IS WHERE ANYTHING SHARED GOES.**
+  Layout is by role: `lib/` (shared), `probes/` (the `npm run probe:*` measurements),
+  `gen/` (brand, shots, the Swift build), `smoke/`, `dev/`. Every probe imports
+  `src/`, so `npm run typecheck` covers all of it — that is the point, and it
+  found two live bugs the first time it ran (`dev/inspect-onnx.ts` indexed ORT's
+  metadata ARRAY by name and so printed no types at all; `probes/caption-width.ts`
+  carried three dead `stored` branches for a pseudo-width it refuses at startup).
+  **THE ONE EXCEPTION IS `scripts/smoke/`, which stays `.mjs` on `dist/`**: those
+  two run the BUILT artifact under a foreign runtime — `onnx-electron-smoke.mjs`
+  re-execs itself inside Electron's utility process, which cannot run TypeScript —
+  so the build is the thing under test, and they keep their own path constants
+  because a `.ts` lib is unreachable from there.
+  **Write a helper into `scripts/lib/` before writing it twice.** What was there
+  when this was factored out: the `<userData>` path in 8 places in 3 spellings,
+  FOUR flag-parsing conventions across 7 probes (a probe called in another's
+  convention silently returns the DEFAULT), `ok()` six times in four variants —
+  one of which never counted, so `probe:merge` printed "All checks passed"
+  whether or not they had — and the app-launch dance in two copies, one of whose
+  headers said "both want the edit".
+- **`assets/` and `app/build/` are generated, never hand-edited.** They're derived from `scripts/gen/brand/geometry.ts` by `npm run gen:brand`; a drift guard in `test/brand.assets.test.ts` byte-compares committed output against a fresh render and fails on hand edits.
 
 ## Architecture — the load-bearing seams
 
@@ -314,7 +353,7 @@ before you change anything — most of them were paid for twice, and several wer
 - **`bindHabit`'s LIVE key is the one that claims, and two callers read the stored key by mistake.** A rebuild re-keys every route, so a habit's stored `routeKey` goes stale *by design* and is disclosed rather than repaired. `unclaimedRoutes` was fed the stored key and offered a kept habit's own route straight back as a new proposal; `probe:transfer` matched the raw key and called every kept habit orphaned. Both now resolve through `bindHabit` — grep for `binding.routeKey` before adding a third.
 - **Merging uses exact set equality; verifying and locating use a SUBSET check.** A live screen that gained anything would never match exactly. A zero-predicate node is never a locate candidate.
 - **Dry-run is the default, arming is one gate, and a plan STOPS where resolution stops working** — the remainder is disclosed unresolved, cut at an edge boundary. Planning may call `runningApps()` but never `activate()`.
-- **AS OF 2026-08-06 THE EXECUTOR HAS NO UI.** It is reached only from the suite and `scripts/replay-probe.mjs` (read-only by proxy). **DeskRAGApp never spawns `ax-exec`.** Re-wiring it is a deliberate act, not a refactor.
+- **AS OF 2026-08-06 THE EXECUTOR HAS NO UI.** It is reached only from the suite and `scripts/probes/replay.ts` (read-only by proxy). **DeskRAGApp never spawns `ax-exec`.** Re-wiring it is a deliberate act, not a refactor.
 
 ### Providers, models, and highlights → [models.md](docs/internals/models.md)
 - **Every provider is local. A network call to a third party is a regression, not a feature.** There are no API keys anywhere in this repo.
@@ -375,9 +414,9 @@ before you change anything — most of them were paid for twice, and several wer
 - **Electron's Node ABI ≠ system Node's — solved by two isolated installs, not by switching.** `app/` is deliberately NOT an npm workspace member: it has its own `app/node_modules` with its own `better-sqlite3`, rebuilt for Electron by `app`'s `postinstall` (`electron-rebuild -f -w better-sqlite3`). The library's root copy stays Node-ABI for `npm test`; the two never share a binary, so neither rebuild touches the other. `better-sqlite3` is the only ABI-fragile module (raw Node addon); `sharp`, `@lancedb/lancedb`, `uiohook-napi`, and `active-win` are N-API/prebuilt and are never rebuilt. The runtime resolves the app's copy first because `app/out/main/index.js` externalizes `better-sqlite3` as a bare specifier and `app/` is nested inside the repo, so Node's upward walk hits `app/node_modules` before root. **Consequence:** native version pins now live in both `package.json`s (`better-sqlite3`, `sharp`, `@lancedb/lancedb` + the platform optionals) — keep them in sync.
 - **`searchSegments` throws on an unregistered namespace**, so a `Retriever` must only be given `TextViewSearcher`s whose namespace appears in `store.listVectorSpaces()` — caption/transcript spaces don't exist until something has been indexed with those providers. `BehaviorViewSearcher` is always safe (it returns null without a behavior vector). See `DeskRagService.buildRetriever`.
 - **The app imports `dist/`, not `src/`** — after changing library code, `npm run build` before launching (`npm run app:dev` does both). Library types changing means the app's typecheck can break without any file in `app/` changing.
-- **`scripts/brand/emit-icons.ts` is macOS-only** — it shells out to `iconutil` to build the `.icns`. The rasterised PNG/ICNS/ICO binaries it and `emit-icons` produce are deliberately NOT drift-guarded byte-for-byte (unlike the SVG/Lottie emitters): libvips/librsvg output varies by version, so the test suite only checks the committed tray PNGs aren't stale (alpha at geometry-derived pixels), not that they're byte-identical to a fresh render.
+- **`scripts/gen/brand/emit-icons.ts` is macOS-only** — it shells out to `iconutil` to build the `.icns`. The rasterised PNG/ICNS/ICO binaries it and `emit-icons` produce are deliberately NOT drift-guarded byte-for-byte (unlike the SVG/Lottie emitters): libvips/librsvg output varies by version, so the test suite only checks the committed tray PNGs aren't stale (alpha at geometry-derived pixels), not that they're byte-identical to a fresh render.
 - **THE TRAY MARK HAS FOUR FACES ON TWO INDEPENDENT AXES, and `TRAY_FACES` is the list.** The eye row is capture (two eyes, or one aperture — a knocked-out ring with the pupil left as ink, at `IconRecord`'s own 0.4 pupil/ring ratio); a row of three dots low on the body is indexing. There is deliberately **no precedence rule**: indexing yields to recording only *between* stages, so a stage in flight keeps running for minutes into a capture and both are true at once. The symbols are DERIVED in `geometry.ts` from the features they sit near, and **both of their positions are clearances paid for at 16px** — dots on the mouth row read as a slightly wider smile (the indexing ghost was indistinguishable from the idle one), and the obvious `dx` — the eyes' half-separation — is exactly `CUSP_X`, so each outer dot landed on a hem cusp and notched the silhouette. **Two lists of four names live in packages that cannot import each other** (`TRAY_FACES` writes them, `app/src/main/tray-face.ts` asks for them); `test/brand.assets.test.ts` asserts they agree, and also that every face is committed at both densities — nothing enumerated the tray outputs before there were four of them.
-- **THE TRAY SETS NO TITLE, AND NOTHING IN THE MENU BAR MAY TICK.** State used to be menu-bar TEXT beside the mark (`⏺ REC` / `⏳` / `◉`), so the bar carried two symbols where one would do. It is in the face now. The reason it is also *static* — no pulse, no elapsed counter — is measured: a changing menu-bar pixel is what let DeskRAG's own window defeat `mpdecimate` (docs/internals/capture.md), and the menu bar is on screen during every recording. `trayStatusLine` therefore reports a wall-clock START TIME, which is correct forever, rather than a duration the menu would only redraw on a state transition. Animating the tray is not a judgement call; it needs `scripts/decimate-probe.mjs` against a real recording first.
+- **THE TRAY SETS NO TITLE, AND NOTHING IN THE MENU BAR MAY TICK.** State used to be menu-bar TEXT beside the mark (`⏺ REC` / `⏳` / `◉`), so the bar carried two symbols where one would do. It is in the face now. The reason it is also *static* — no pulse, no elapsed counter — is measured: a changing menu-bar pixel is what let DeskRAG's own window defeat `mpdecimate` (docs/internals/capture.md), and the menu bar is on screen during every recording. `trayStatusLine` therefore reports a wall-clock START TIME, which is correct forever, rather than a duration the menu would only redraw on a state transition. Animating the tray is not a judgement call; it needs `scripts/probes/decimate.ts` against a real recording first.
 - **A TRAY STOP LEAVES THE WINDOW HIDDEN.** The window hides itself for a recording, which makes the tray the whole control surface — so `restoreAfterRecording` yanking it back was defeating the one gesture it exists for. `stopFromTray` clears `hiddenForRecording` before stopping, which no-ops the restore for that path and leaves it intact for the other (the user who reopened the window mid-recording and pressed the button there). What answers *where did my recording go* is the ghost picking up its indexing dots, and `RecordScreen`'s copy teaches that face — it used to promise the window came back. **There is also no `click` handler on macOS**: a tray with a context menu already opens it on left-click, so the old handler showed the window *behind the menu* on exactly that gesture.
 
 ## Validate against a real recording before trusting a measurement

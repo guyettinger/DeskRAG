@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import sharp from "sharp";
-import { assetsDir, renderLogo, renderMark } from "../scripts/brand/emit-static.js";
-import { renderAnimatedSvg } from "../scripts/brand/emit-svg.js";
+import { assetsDir, renderLogo, renderMark } from "../scripts/gen/brand/emit-static.js";
+import { renderAnimatedSvg } from "../scripts/gen/brand/emit-svg.js";
 import {
   aperture,
   CANVAS,
@@ -14,8 +14,8 @@ import {
   KEYFRAMES,
   palette,
   workDots,
-} from "../scripts/brand/geometry.js";
-import { TRAY_FACES } from "../scripts/brand/emit-icons.js";
+} from "../scripts/gen/brand/geometry.js";
+import { TRAY_FACES } from "../scripts/gen/brand/emit-icons.js";
 import { trayFaceAsset } from "../app/src/main/tray-face.js";
 
 const read = (name: string): string => readFileSync(join(assetsDir, name), "utf8");
@@ -75,8 +75,8 @@ describe("animated ghost SVG", () => {
   });
 });
 
-import { renderLottie } from "../scripts/brand/emit-lottie.js";
-import { ghostBodyBezier } from "../scripts/brand/geometry.js";
+import { renderLottie } from "../scripts/gen/brand/emit-lottie.js";
+import { ghostBodyBezier } from "../scripts/gen/brand/geometry.js";
 
 interface LottieShapeKeyframe {
   t: number;
@@ -174,7 +174,7 @@ describe("ghost Lottie", () => {
   });
 });
 
-import { packIco, renderTrayMark } from "../scripts/brand/emit-icons.js";
+import { packIco, renderTrayMark } from "../scripts/gen/brand/emit-icons.js";
 
 describe("icon emitter", () => {
   it("packs an ICO with a correct header and directory", () => {
