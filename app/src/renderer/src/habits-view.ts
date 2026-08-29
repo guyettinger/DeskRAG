@@ -13,7 +13,7 @@ import type {
   WalkFitDTO,
   WalkMarkDTO,
 } from "@shared/types";
-import { hasFaded } from "./habit-rhythm.js";
+import { approxDuration, cadenceOf, hasFaded } from "./habit-rhythm.js";
 
 /**
  * Which band a habit is drawn in.
@@ -97,28 +97,16 @@ export function bindingChip(habit: HabitDTO): string | null {
 }
 
 /**
- * The recording count, said in a way that cannot claim more than it has.
+ * `evidenceLine` IS GONE, and its sentences live in `evidenceGlyphs` titles.
  *
- * The live count and the bind-time count are both printed when they differ,
- * because their disagreement is the fact this screen exists to show — the
- * `observations` vs `sources` rule, one level up.
+ * It composed `6 recordings — 3 recorded since` and the row, the editor's
+ * masthead and its record block each printed it beside a separate `walkSpan`.
+ * The glyph line replaced all three; leaving the old composer exported would
+ * have left two spellings of one fact one function apart, which is the drift
+ * this file argues against everywhere else. The wording it chose survives
+ * verbatim as each glyph's `title` — see `evidenceGlyphs`, which is where the
+ * `lost outranks gained` precedence moved too.
  */
-export function evidenceLine(habit: HabitDTO): string {
-  const b = habit.binding;
-  const bound = b.boundSessionIds.length;
-  const times = (n: number): string => `${n} recording${n === 1 ? "" : "s"}`;
-
-  if (b.state === "orphaned" || b.state === "ambiguous") {
-    return `written from ${times(bound)}, none of which are in a current route`;
-  }
-  if (b.lostSessionIds.length > 0) {
-    return `${times(b.recordings)} — was ${bound} when this was kept`;
-  }
-  if (b.gainedSessionIds.length > 0) {
-    return `${times(b.recordings)} — ${b.gainedSessionIds.length} recorded since`;
-  }
-  return times(b.recordings);
-}
 
 /**
  * The same work begun and abandoned partway, said on the ROW.
@@ -280,16 +268,28 @@ export function ledgerMarks(
  */
 export type MarkState = "lone" | "canonical" | "deviated" | "short" | null;
 
+/**
+ * ONE walk's conformance, with no view of the row.
+ *
+ * Extracted so the hover card can colour a walk block the same three ways the
+ * mark it hangs off is filled. Two copies of "short outranks deviated" is the
+ * `ax-dump`/`ax-exec` drift hazard at its smallest: both would compile, both
+ * would pass a fixture, and they would disagree on exactly the walks that
+ * stopped short AND skipped steps — which is most of them.
+ *
+ * It cannot return `lone`, which is a property of the ROW and not of a walk.
+ */
+export function fitState(fit: WalkFitDTO | null): Exclude<MarkState, "lone"> {
+  if (fit === null) return null;
+  // SHORT OUTRANKS DEVIATED. A walk that stopped will almost always also show
+  // skipped steps, and reporting it as merely deviated buries the reason.
+  if (!fit.reachedEnd) return "short";
+  return fit.inserted + fit.skipped + fit.reordered > 0 ? "deviated" : "canonical";
+}
+
 export function markStates(marks: readonly LedgerMark[]): MarkState[] {
   if (marks.length === 1) return ["lone"];
-  return marks.map((m) => {
-    const fit = m.walk.fit;
-    if (fit === null) return null;
-    // SHORT OUTRANKS DEVIATED. A walk that stopped will almost always also show
-    // skipped steps, and reporting it as merely deviated buries the reason.
-    if (!fit.reachedEnd) return "short";
-    return fit.inserted + fit.skipped + fit.reordered > 0 ? "deviated" : "canonical";
-  });
+  return marks.map((m) => fitState(m.walk.fit));
 }
 
 const DAY_MONTH = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short" });
@@ -308,6 +308,207 @@ export function walkSpan(walks: readonly WalkMarkDTO[]): string | null {
   const first = DAY_MONTH.format(new Date(walks[0]!.at));
   const last = DAY_MONTH.format(new Date(walks[walks.length - 1]!.at));
   return first === last ? first : `${first} – ${last}`;
+}
+
+/**
+ * The ledger's own SCALE, printed at its ends.
+ *
+ * The ledger has always been an absolute timeline with no scale anywhere on it:
+ * a mark's position was the whole reading, and nothing said what the axis ran
+ * from or to. That is the gap the rhythm grid had before it got hour ticks —
+ * it could say a habit repeats somewhere mid-week but never that it happens at
+ * 9am — and it is the same fix.
+ *
+ * It labels the SHARED domain, never this row's own extent. That is what the
+ * marks are placed against, and a per-row scale would redraw every row
+ * identically, which is the thing a count already does.
+ *
+ * NULL AT ZERO WIDTH, where `ledgerMarks` centres every mark: an axis with one
+ * date at both ends would assert a span the library does not have.
+ */
+export function domainAxis(
+  domain: { from: number; to: number } | null,
+): { from: string; to: string } | null {
+  if (domain === null || domain.to - domain.from <= 0) return null;
+  return {
+    from: DAY_MONTH.format(new Date(domain.from)),
+    to: DAY_MONTH.format(new Date(domain.to)),
+  };
+}
+
+/**
+ * ONE evidence figure, drawn as a glyph and a number.
+ *
+ * The line these compose replaced a sentence — `6 recordings — 3 recorded
+ * since · Aug 17 – Aug 24` — that stated four facts as one run-on string, in
+ * the narrowest column on the screen, directly under an instrument already
+ * drawing three of them.
+ *
+ * THE RULE EVERY GLYPH IS DRAWN TO: it may only restate what the marks above it
+ * say. The `+3` wears `--data-ok` because that is the hue the ledger's own
+ * gained mark rings itself in; a lost count wears `--amber` because that is the
+ * tone `.habit__bind` already uses for a thing that can be silently wrong.
+ * Nothing here mints a colour and nothing here introduces a fact.
+ *
+ * `title` IS NOT OPTIONAL and is not a nicety. A glyph is a position and a
+ * number, exactly as a ledger mark is a position — so the same rule applies:
+ * the words are the fact, and they reach a pointer and a screen reader
+ * identically. Compressing a line is only allowed if nothing is lost.
+ */
+export interface EvidenceGlyph {
+  kind: "recordings" | "last" | "dropped" | "cadence";
+  /** The figure as printed beside the glyph. */
+  value: string;
+  /** The signed change on the count, or null. `warn` is the sign's meaning. */
+  delta: { text: string; warn: boolean } | null;
+  /** Amber: this figure is the one that can be silently wrong. */
+  warn: boolean;
+  /** The whole item in words — its `title` and its accessible name. */
+  title: string;
+}
+
+/** The count in words, the wording `evidenceLine` chose, now used by its titles. */
+const times = (n: number): string => `${n} recording${n === 1 ? "" : "s"}`;
+
+/**
+ * A kept habit's evidence, as glyphs.
+ *
+ * Printed on all three surfaces that carried the sentence — the row, the
+ * editor's masthead and its record block — because they state one fact about
+ * one route and drawing them three ways is the drift hazard this repo names
+ * everywhere else.
+ *
+ * NOTHING IS DROPPED, it is folded: a gained or lost count becomes the delta, a
+ * faded habit's cadence becomes its own glyph, dropped-early keeps the separate
+ * item it has always had (those recordings walked a DIFFERENT route and folding
+ * them into the count would overstate it), and an orphaned binding keeps the
+ * count it was WRITTEN from, marked, with the full sentence in its title. The
+ * one thing that does not fold is which orphaned state it is in — `bindingChip`
+ * carries that, and it always has.
+ *
+ * `now` is INJECTED, the module's rule everywhere fade is asked about.
+ */
+export function evidenceGlyphs(habit: HabitDTO, now: number): EvidenceGlyph[] {
+  const b = habit.binding;
+  const out: EvidenceGlyph[] = [];
+
+  if (b.state === "orphaned" || b.state === "ambiguous") {
+    const n = b.boundSessionIds.length;
+    out.push({
+      kind: "recordings",
+      value: String(n),
+      delta: null,
+      warn: true,
+      title: `Written from ${times(n)}, none of which are in a current route`,
+    });
+  } else {
+    const lost = b.lostSessionIds.length;
+    const gained = b.gainedSessionIds.length;
+    out.push({
+      kind: "recordings",
+      value: String(b.recordings),
+      // LOST OUTRANKS GAINED, the `evidenceLine` precedence: a binding that
+      // shed a recording is the more consequential half, and a row reading
+      // "+1" while it also lost two says the smaller thing.
+      delta:
+        lost > 0
+          ? { text: `\u2212${lost}`, warn: true }
+          : gained > 0
+            ? { text: `+${gained}`, warn: false }
+            : null,
+      warn: false,
+      title:
+        lost > 0
+          ? `${times(b.recordings)} — was ${b.boundSessionIds.length} when this was kept`
+          : gained > 0
+            ? `${times(b.recordings)} — ${gained} recorded since you kept this`
+            : times(b.recordings),
+    });
+  }
+
+  const faded = hasFaded(b.walks, now);
+  const last = b.walks.length > 0 ? b.walks[b.walks.length - 1]! : null;
+  if (last !== null) {
+    const when = DAY_MONTH.format(new Date(last.at));
+    out.push({
+      kind: "last",
+      value: when,
+      delta: null,
+      warn: faded,
+      title:
+        b.walks.length === 1
+          ? `Recorded ${when}`
+          : `Last recorded ${when} · recorded ${walkSpan(b.walks)!}`,
+    });
+  }
+
+  const dropped = habit.droppedEarly.reduce((sum, d) => sum + d.count, 0);
+  if (dropped > 0) {
+    out.push({
+      kind: "dropped",
+      value: `\u00d7${dropped}`,
+      delta: null,
+      warn: false,
+      title:
+        `Also started and dropped early ${dropped} further time${dropped === 1 ? "" : "s"} — ` +
+        "those recordings walked a different route, so they are not in the count",
+    });
+  }
+
+  // The cadence is drawn ONLY where it is the point. On a habit still being
+  // walked it is a number nobody asked for; on one that stopped it is the half
+  // the date cannot say — how long the gap has to be before it is a gap.
+  if (faded) {
+    const { medianGapMs, quietMs } = cadenceOf(b.walks, now);
+    if (medianGapMs !== null && quietMs !== null) {
+      out.push({
+        kind: "cadence",
+        value: `every ${approxDuration(medianGapMs)}`,
+        delta: null,
+        warn: true,
+        title: `About every ${approxDuration(medianGapMs)} · last walked ${approxDuration(quietMs)} ago`,
+      });
+    }
+  }
+
+  return out;
+}
+
+/**
+ * A proposal's evidence, as the same glyphs.
+ *
+ * Proposals sit in the SAME list as kept habits, so a glyph line on one band
+ * and a sentence on the next would read as two kinds of row rather than as two
+ * bands of one kind. It carries only the two facts a proposal has — nothing is
+ * invented to fill the shape — and `stepSummary` stays as words beside it,
+ * because the route's SHAPE is not evidence and must not borrow evidence's
+ * vocabulary.
+ */
+export function proposalGlyphs(p: HabitProposalDTO): EvidenceGlyph[] {
+  const out: EvidenceGlyph[] = [
+    {
+      kind: "recordings",
+      value: String(p.count),
+      delta: null,
+      warn: false,
+      title: proposalTitle(p),
+    },
+  ];
+  const last = p.walks.length > 0 ? p.walks[p.walks.length - 1]! : null;
+  if (last !== null) {
+    const when = DAY_MONTH.format(new Date(last.at));
+    out.push({
+      kind: "last",
+      value: when,
+      delta: null,
+      warn: false,
+      title:
+        p.walks.length === 1
+          ? `Recorded ${when}`
+          : `Last recorded ${when} · recorded ${walkSpan(p.walks)!}`,
+    });
+  }
+  return out;
 }
 
 /**
@@ -341,14 +542,31 @@ export interface MarkReadout {
    * carry `Baseline.reason` verbatim.
    */
   fit: string | null;
+  /**
+   * The same fit as its separate clauses, for a card with room to list them.
+   *
+   * Beside `fit` rather than instead of it: a screen reader is given ONE
+   * sentence (`markLabel`), and a card with 460px is given lines. Two shapes of
+   * one fact, from one source, so they cannot come to disagree.
+   */
+  fitParts: readonly string[] | null;
   /** Recorded since the habit was kept, or why there is nothing to open. */
   note: string | null;
   /** The affordance, in words. Null when there is nothing to open. */
   action: string | null;
 }
 
-/** The fit in words, or null. COUNTS, never a grade — a deviation is not a failure. */
-function fitClause(fit: WalkFitDTO | null): string | null {
+/**
+ * The fit as its SEPARATE CLAUSES, or null. COUNTS, never a grade — a deviation
+ * is not a failure.
+ *
+ * The parts are the source and `fitClause` joins them, rather than the reverse.
+ * A card wide enough to give each clause its own line was reading a run-on
+ * sentence wrapped inside a 320px box; re-splitting a joined string on ", "
+ * would be a parser over prose, and the first clause containing a comma would
+ * break it silently.
+ */
+function fitParts(fit: WalkFitDTO | null): string[] | null {
   if (fit === null) return null;
   const bits: string[] = [];
   if (fit.inserted > 0) {
@@ -358,8 +576,21 @@ function fitClause(fit: WalkFitDTO | null): string | null {
   if (fit.reordered > 0) {
     bits.push(`${fit.reordered} step${fit.reordered === 1 ? "" : "s"} taken in a different order`);
   }
-  const head = bits.length === 0 ? "Followed the standard" : bits.join(", ");
-  return fit.reachedEnd ? `${head}.` : `${head}. Stopped before the end.`;
+  if (bits.length === 0) bits.push("Followed the standard");
+  if (!fit.reachedEnd) bits.push("Stopped before the end");
+  return bits;
+}
+
+/** The same clauses as ONE sentence — a mark's accessible name and its tooltip. */
+function fitClause(fit: WalkFitDTO | null): string | null {
+  const parts = fitParts(fit);
+  if (parts === null) return null;
+  // The last clause is the terminal one when the walk stopped short, and it is
+  // a sentence of its own in speech exactly as it is a line of its own on the
+  // card. Everything before it is a comma list.
+  const stopped = fit !== null && !fit.reachedEnd;
+  const head = (stopped ? parts.slice(0, -1) : parts).join(", ");
+  return stopped ? `${head}. ${parts[parts.length - 1]!}.` : `${head}.`;
 }
 
 export function markReadout(
@@ -375,6 +606,7 @@ export function markReadout(
         : `${fmt.timecode(walk.atSec * 1000)} – ${fmt.timecode(walk.throughSec * 1000)}`,
     steps: walk === null ? null : `${walk.steps} step${walk.steps === 1 ? "" : "s"}`,
     fit: fitClause(mark.fit),
+    fitParts: fitParts(mark.fit),
     // A dead link is worse than none, so a mark that cannot be followed SAYS
     // why rather than going quietly grey — the `StageSpec.skipReason` rule one
     // screen over. It happens to an orphaned or ambiguous habit, whose marks

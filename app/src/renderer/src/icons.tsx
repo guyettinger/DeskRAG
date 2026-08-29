@@ -145,3 +145,63 @@ export const IconInspect = (p: P): React.JSX.Element => (
     <path d="M19.2 19.2L21.5 21.5" />
   </svg>
 );
+
+/* ---- the Habits glyph line ------------------------------------------------
+   Four marks that caption an instrument rather than decorate a number. Each
+   one sits directly under the ledger that already draws the same fact, so the
+   rule they are all drawn to is that a glyph may only restate what the marks
+   above it say — never introduce a fact of its own. `--data-ok` on the gained
+   count and `--amber` on a lost one are the hues the ledger's own ring and the
+   binding chip already use; nothing here mints a colour. */
+
+/**
+ * A COUNT of recordings — two offset frames, deliberately not `IconRecord`.
+ *
+ * `IconRecord` is the record BUTTON (a circle in a ring) and reads as an
+ * action. A count needs a countable noun, so this is a stack: the second frame
+ * is what says "more than one of these exists", which is the whole subject of
+ * this screen.
+ */
+export const IconRecording = (p: P): React.JSX.Element => (
+  <svg {...base} {...p}>
+    <rect x="3" y="7" width="14" height="12" rx="2" />
+    <path d="M7 4h12a2 2 0 0 1 2 2v9" />
+  </svg>
+);
+
+/** When it last happened. */
+export const IconCalendar = (p: P): React.JSX.Element => (
+  <svg {...base} {...p}>
+    <rect x="3.5" y="5" width="17" height="15" rx="2" />
+    <path d="M3.5 9.5h17" />
+    <path d="M8 3v4M16 3v4" />
+  </svg>
+);
+
+/**
+ * The same work begun and abandoned partway.
+ *
+ * Literal on purpose: the path runs along the row and turns DOWN before it
+ * reaches the end, which is exactly what the fact says. It is never folded
+ * into the count — those recordings walked a different route.
+ */
+export const IconDroppedEarly = (p: P): React.JSX.Element => (
+  <svg {...base} {...p}>
+    <path d="M4 7h8a2 2 0 0 1 2 2v7" />
+    <path d="M11 13l3 3 3-3" />
+    <path d="M20 7v3" strokeWidth={1.2} opacity={0.5} />
+  </svg>
+);
+
+/**
+ * How often it came round — drawn only on a habit that has stopped.
+ *
+ * An open circuit, never a closed loop: the arc stops short of meeting itself,
+ * because the fact this glyph carries is a rhythm that has a gap in it now.
+ */
+export const IconCadence = (p: P): React.JSX.Element => (
+  <svg {...base} {...p}>
+    <path d="M20 12a8 8 0 1 1-2.7-6" />
+    <path d="M20.4 4.6V10h-5.4" />
+  </svg>
+);
