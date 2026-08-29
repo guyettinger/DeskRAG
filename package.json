@@ -44,6 +44,7 @@
 
     "probe:baseline": "tsx scripts/probes/baseline.ts",
     "probe:caption": "tsx scripts/probes/caption-width.ts",
+    "probe:compose": "tsx scripts/probes/compose.ts",
     "probe:decimate": "tsx scripts/probes/decimate.ts",
     "probe:embed": "tsx scripts/probes/embed.ts",
     "probe:fork": "tsx scripts/probes/fork.ts",
