@@ -121,6 +121,33 @@ npm run probe:caption         # how wide a keyframe has to reach the CAPTIONER. 
                               # did -- SAFE" off 1 == 1. Below SEVEN (6/7 = 0.857 is the
                               # smallest ratio that can land in the MARGINAL band) the content
                               # verdict is WITHHELD and the latency column stands alone.
+npm run probe:compose         # does the configured SUMMARY MODEL return a partition the
+                              # ladder can PARSE. The one pipeline failure that leaves no
+                              # trace: `composeOneLevel` catches everything a provider throws
+                              # and rolls the block up structurally, so a model answering in
+                              # the wrong SHAPE produces no error, no log line and no failed
+                              # stage -- only a rising `template` share in `segment_summary`,
+                              # which nothing watches. MEASURED: the real store held 100 llm /
+                              # 4 template; a clone re-indexed five days later on the SAME
+                              # providers held 23 / 27. Nothing had broken -- the model had
+                              # started answering `{start, summary}`, a correct single run,
+                              # unwrapped, instead of `{groups:[...]}`. Head to head on one
+                              # real block: qwen3.8:27b-mlx 10/10, muse-glimmer:30b-mlx 1/10,
+                              # which also burned a 7.3s mean on replies it then discarded.
+                              # IT CALLS THE REAL PROVIDER and that is the point: a hand-rolled
+                              # /api/chat body with `options: {temperature: 0}` returned ten
+                              # byte-identical wrong answers, so its "0/10" was a property of
+                              # the HARNESS. The shipped provider sends no options. The
+                              # children are real INCLUDING their `app`, because `composePrompt`
+                              # prefixes `[App] ` and a prompt without it is a different prompt.
+                              # Read-only (SQLite readonly, chat requests, stdout) -- it never
+                              # builds a ComposeRepresenter, whose represent() DELETES the
+                              # composed segments first. PRINTS THE CORPUS FIRST and refuses a
+                              # block under 4 children, where the right answer is one run at 0
+                              # and a model can pass while failing every real block. The
+                              # verdict is rendered for the CONFIGURED model only; anything
+                              # else on --model is a comparison and gets a reading, not a
+                              # pass/fail.
 npm run probe:routes          # which mining rule turns many recordings into the right
                               # number of routes. Read-only: launches the real app, reads
                               # flows.graph() over IPC, compares exact / insertions / lcs /
@@ -349,6 +376,7 @@ before you change anything — most of them were paid for twice, and several wer
 - **A composed level is under-ranked by construction and no `k` fixes it** — it participates in one dense lane where a leaf participates in three or four, and RRF is a sum.
 - **A malformed partition is REJECTED WHOLESALE, never repaired**, and the model states **cut points**, not ranges. **Prompt tweaks against composition quality have twice measured as noise — require 3+ runs** before believing an A/B.
 - **`source` (`llm` vs `template`) is disclosure, not bookkeeping**, and composing can never fail the run.
+- **A MODEL THAT ANSWERS IN THE WRONG SHAPE DEGRADES THE LADDER SILENTLY, AND `segment_summary.source` IS THE ONLY PLACE IT SHOWS.** Composing can never fail the run — which means a provider that throws on *every* call costs a whole library's summaries with no error, no log line and no failed stage. Measured: the real store held **100 `llm` / 4 `template`**; a clone re-indexed five days later on the SAME configured providers held **23 / 27**. Nothing had broken. `muse-glimmer:30b-mlx` had started replying `{start, summary}` — a correct single run, *unwrapped* — where the ladder requires `{groups:[{start,summary},…]}`, plus four other shapes including agentic-scaffold leakage (`{"self":…}`, `{"actions":[…]}`). The rejects are also **fast** (0.7–1.2s against ~6s for an accepted reply), so a collapsing `llm` share looks like a *quicker* indexing run. `npm run probe:compose` is what counts it, and the rate is a property of the MODEL, not of the leaf text: an A/B of `caption ?? digest` against `digest` alone moved the template share 100% → 88%, i.e. captions-off was **not** the cause. Head to head on one real block, back to back: **qwen3.8:27b-mlx 10/10, muse-glimmer:30b-mlx 1/10**, the latter additionally burning a 7.3s mean on replies it discarded. Parse rate is not composition QUALITY — that still wants 3+ runs.
 
 ### Trace IR and the executor → [trace-and-replay.md](docs/internals/trace-and-replay.md)
 - **`trace/` and `replay/` are LEAVES.** `test/replay.barrel.test.ts` asserts no file in `replay/` except `sidecar.ts` mentions `spawn` — **that guard is the whole safety story**: the suite is structurally incapable of posting a real event. Never widen it.
