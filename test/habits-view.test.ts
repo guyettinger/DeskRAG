@@ -3,11 +3,14 @@ import {
   bandOf,
   bandHabits,
   bindingChip,
+  domainAxis,
   droppedEarlyLine,
-  evidenceLine,
+  evidenceGlyphs,
+  fitState,
   generateDisabledReason,
   orderHabits,
   proposalEvidence,
+  proposalGlyphs,
   proposalTitle,
   bandProposals,
   ledgerMarks,
@@ -164,34 +167,6 @@ describe("bindingChip", () => {
   });
 });
 
-describe("evidenceLine", () => {
-  it("states the live count when it agrees with the bind-time one", () => {
-    expect(evidenceLine(habit())).toBe("2 recordings");
-  });
-
-  it("prints BOTH counts when they disagree, never just one", () => {
-    // Their disagreement is the fact the screen exists to show — the
-    // `observations` vs `sources` rule, one level up.
-    const s = habit({ binding: binding({ lostSessionIds: ["s2"], recordings: 1 }) });
-    expect(evidenceLine(s)).toBe("1 recording — was 2 when this was kept");
-  });
-
-  it("reports recordings made since", () => {
-    const s = habit({ binding: binding({ gainedSessionIds: ["s3"], recordings: 3 }) });
-    expect(evidenceLine(s)).toBe("3 recordings — 1 recorded since");
-  });
-
-  it("never claims a live count for an orphan", () => {
-    const s = habit({ binding: binding({ state: "orphaned", recordings: 0 }) });
-    expect(evidenceLine(s)).toMatch(/written from 2 recordings, none of which are in a current route/);
-  });
-
-  it("says 'recording' singular", () => {
-    const s = habit({ binding: binding({ boundSessionIds: ["s1"], recordings: 1 }) });
-    expect(evidenceLine(s)).toBe("1 recording");
-  });
-});
-
 describe("generateDisabledReason", () => {
   /**
    * A greyed control with no reason is what `StageSpec.skipReason` exists to
@@ -325,6 +300,10 @@ describe("the recurrence ledger", () => {
       at: "tc(4000) – tc(9000)",
       steps: "3 steps",
       fit: null,
+      // The clauses beside the sentence, so a card with room can list them and
+      // a screen reader still hears one line. Null here, not [] — no standard
+      // existed, and an empty list would claim a check that was never run.
+      fitParts: null,
       note: null,
       action: "Open this recording",
     });
@@ -534,8 +513,11 @@ describe("droppedEarlyLine", () => {
 
   it("never touches the recording count", () => {
     // A DISCLOSURE, never a merge: those recordings walked a different route.
+    // Asserted against the GLYPHS now, which is where the count is stated.
     const h = habit({ droppedEarly: [{ places: ["Calculator"], count: 5 }] });
-    expect(evidenceLine(h)).toBe(evidenceLine(habit()));
+    const count = (x: HabitDTO) =>
+      evidenceGlyphs(x, NOW).find((g) => g.kind === "recordings");
+    expect(count(h)).toEqual(count(habit()));
   });
 });
 
@@ -596,5 +578,271 @@ describe("the Not walked lately band", () => {
       }),
     });
     expect(bandOf(twice, quiet(52))).toBe("mine");
+  });
+});
+
+/**
+ * The evidence line, as glyphs.
+ *
+ * The line these replaced ran five facts together into one string — `6
+ * recordings — 3 recorded since · Aug 17 – Aug 24`, plus a dropped-early clause
+ * and a fade clause — in the narrowest column on the screen, under an
+ * instrument already drawing three of them. These tests exist to hold the one
+ * property that makes compressing it legal: NOTHING IS LOST. Every glyph's
+ * `title` is what a pointer and a screen reader are given, so each case below
+ * asserts the sentence as well as the figure.
+ */
+describe("evidenceGlyphs", () => {
+  const AUG17 = new Date(2026, 7, 17, 10).getTime();
+  const AUG24 = new Date(2026, 7, 24, 10).getTime();
+  const NOW_G = new Date(2026, 7, 25, 12).getTime();
+  const walks = [
+    walk({ sessionId: "w1", at: AUG17 }),
+    walk({ sessionId: "w2", at: AUG24 }),
+  ];
+  const kept = (over: Partial<HabitBindingDTO> = {}): HabitDTO =>
+    habit({ binding: binding({ walks, recordings: 2, ...over }) });
+  const kind = (g: ReturnType<typeof evidenceGlyphs>, k: string) =>
+    g.find((x) => x.kind === k);
+
+  it("says the count and the last date, and nothing else, when nothing moved", () => {
+    const g = evidenceGlyphs(kept(), NOW_G);
+    expect(g.map((x) => x.kind)).toEqual(["recordings", "last"]);
+    expect(kind(g, "recordings")!.value).toBe("2");
+    expect(kind(g, "recordings")!.delta).toBeNull();
+    expect(kind(g, "last")!.value).toMatch(/24/);
+  });
+
+  /**
+   * The delta wears `--data-ok` in the sheet because the ledger already rings a
+   * gained mark in it. `warn: false` is what selects that class, so this is the
+   * assertion that keeps the two instruments telling one story.
+   */
+  it("folds recordings made since the habit was kept into a gained delta", () => {
+    const g = evidenceGlyphs(kept({ gainedSessionIds: ["w2"] }), NOW_G);
+    expect(kind(g, "recordings")!.delta).toEqual({ text: "+1", warn: false });
+    expect(kind(g, "recordings")!.title).toBe("2 recordings — 1 recorded since you kept this");
+  });
+
+  it("folds a LOST recording into an amber delta and keeps the bind-time count in words", () => {
+    const g = evidenceGlyphs(
+      kept({ lostSessionIds: ["gone"], boundSessionIds: ["w1", "w2", "gone"] }),
+      NOW_G,
+    );
+    expect(kind(g, "recordings")!.delta).toEqual({ text: "−1", warn: true });
+    expect(kind(g, "recordings")!.title).toBe("2 recordings — was 3 when this was kept");
+  });
+
+  /**
+   * LOST OUTRANKS GAINED, `evidenceLine`'s own precedence. A row reading `+1`
+   * while it also shed two says the smaller of the two things.
+   */
+  it("shows the lost delta when a binding both gained and lost", () => {
+    const g = evidenceGlyphs(
+      kept({ gainedSessionIds: ["w2"], lostSessionIds: ["gone"], boundSessionIds: ["w1", "gone"] }),
+      NOW_G,
+    );
+    expect(kind(g, "recordings")!.delta!.warn).toBe(true);
+  });
+
+  /**
+   * The count a habit was WRITTEN from, marked, with the whole sentence in its
+   * title — the one fact that does not fold, because which orphaned state it is
+   * in belongs to `bindingChip` and always has.
+   */
+  it("marks an orphaned binding and counts what it was written from", () => {
+    for (const state of ["orphaned", "ambiguous"] as const) {
+      const g = evidenceGlyphs(kept({ state, boundSessionIds: ["a", "b", "c"] }), NOW_G);
+      expect(kind(g, "recordings")!.value).toBe("3");
+      expect(kind(g, "recordings")!.warn).toBe(true);
+      expect(kind(g, "recordings")!.title).toBe(
+        "Written from 3 recordings, none of which are in a current route",
+      );
+    }
+  });
+
+  /** Never folded into the count: those recordings walked a DIFFERENT route. */
+  it("keeps dropped-early as its own glyph, outside the count", () => {
+    const g = evidenceGlyphs(
+      habit({
+        binding: binding({ walks, recordings: 2 }),
+        droppedEarly: [{ places: ["A"], count: 2 }],
+      }),
+      NOW_G,
+    );
+    expect(kind(g, "recordings")!.value).toBe("2");
+    expect(kind(g, "dropped")!.value).toBe("×2");
+    expect(kind(g, "dropped")!.title).toMatch(/walked a different route/);
+  });
+
+  /**
+   * The cadence is drawn ONLY where it is the point. On a habit still being
+   * walked it is a number nobody asked for; on one that stopped it is the half
+   * a date cannot say.
+   */
+  it("draws no cadence on a habit that has not faded", () => {
+    expect(evidenceGlyphs(kept(), NOW_G).some((g) => g.kind === "cadence")).toBe(false);
+  });
+
+  it("adds an amber cadence and an amber date once a habit has faded", () => {
+    const weeklyWalks = [
+      walk({ sessionId: "a", at: new Date(2026, 7, 3, 10).getTime() }),
+      walk({ sessionId: "b", at: new Date(2026, 7, 10, 10).getTime() }),
+      walk({ sessionId: "c", at: new Date(2026, 7, 17, 10).getTime() }),
+    ];
+    const faded = habit({ binding: binding({ walks: weeklyWalks, recordings: 3 }) });
+    const later = new Date(2026, 7, 17, 10).getTime() + 6 * 7 * 24 * 3_600_000;
+    const g = evidenceGlyphs(faded, later);
+    expect(kind(g, "cadence")!.warn).toBe(true);
+    expect(kind(g, "cadence")!.value).toBe("every 7 days");
+    expect(kind(g, "cadence")!.title).toMatch(/last walked 6 weeks ago/);
+    // The date goes amber with it, so the two halves of "it stopped" agree.
+    expect(kind(g, "last")!.warn).toBe(true);
+  });
+
+  it("says nothing about a date when there are no walks at all", () => {
+    const g = evidenceGlyphs(habit({ binding: binding({ walks: [], recordings: 0 }) }), NOW_G);
+    expect(g.map((x) => x.kind)).toEqual(["recordings"]);
+  });
+
+  /** Every glyph is a figure plus a sentence. A figure alone is not a fact. */
+  it("gives every glyph a non-empty title", () => {
+    const g = evidenceGlyphs(
+      habit({
+        binding: binding({ walks, recordings: 2, gainedSessionIds: ["w2"] }),
+        droppedEarly: [{ places: ["A"], count: 1 }],
+      }),
+      NOW_G,
+    );
+    expect(g.length).toBeGreaterThan(2);
+    for (const item of g) expect(item.title.length).toBeGreaterThan(0);
+  });
+});
+
+describe("proposalGlyphs", () => {
+  const p = (over: Partial<HabitProposalDTO> = {}): HabitProposalDTO => ({
+    routeKey: "A \u2192 B",
+    name: null,
+    label: "A \u2192 B",
+    count: 2,
+    steps: 3,
+    stepSummary: "2 steps",
+    variants: 0,
+    nameObservations: 0,
+    walks: [walk({ sessionId: "a", at: 1 })],
+    sessionIds: ["s1", "s2"],
+    apps: [],
+    preview: "",
+    ...over,
+  });
+
+  it("carries only the two facts a proposal has — nothing is invented", () => {
+    expect(proposalGlyphs(p()).map((g) => g.kind)).toEqual(["recordings", "last"]);
+  });
+
+  it("never warns: a proposal has no binding that could have moved", () => {
+    expect(proposalGlyphs(p()).every((g) => !g.warn && g.delta === null)).toBe(true);
+  });
+
+  it("drops the date when a proposal carries no walks", () => {
+    expect(proposalGlyphs(p({ walks: [] })).map((g) => g.kind)).toEqual(["recordings"]);
+  });
+});
+
+/**
+ * The ledger's own scale.
+ *
+ * It labels the SHARED domain, never the row's extent — the thing that makes a
+ * route walked three times last week read differently from one walked three
+ * times in March.
+ */
+describe("domainAxis", () => {
+  it("prints the shared domain's ends", () => {
+    const a = domainAxis({
+      from: new Date(2026, 7, 17, 10).getTime(),
+      to: new Date(2026, 7, 24, 10).getTime(),
+    })!;
+    expect(a.from).toMatch(/17/);
+    expect(a.to).toMatch(/24/);
+  });
+
+  it("draws nothing with no domain", () => {
+    expect(domainAxis(null)).toBeNull();
+  });
+
+  /**
+   * `ledgerMarks` centres every mark at zero width, so an axis would print one
+   * date at both ends and assert a span the library does not have.
+   */
+  it("draws nothing at zero width, where every mark is centred", () => {
+    expect(domainAxis({ from: 5, to: 5 })).toBeNull();
+  });
+});
+
+/**
+ * The fit as clauses AND as a sentence, from one source.
+ *
+ * The card lists the parts and `markLabel` speaks the join. Re-splitting a
+ * joined string on ", " would be a parser over prose, and the first clause to
+ * contain a comma would break it silently.
+ */
+describe("markReadout fitParts", () => {
+  const fmt = { wallClock: () => "when", timecode: () => "at" };
+
+  it("is null where no standard exists — not an empty list", () => {
+    expect(markReadout(walk(), fmt).fitParts).toBeNull();
+  });
+
+  it("says the conforming case in one part", () => {
+    expect(markReadout(walk({ fit: fit() }), fmt).fitParts).toEqual(["Followed the standard"]);
+  });
+
+  it("gives each count its own part", () => {
+    const r = markReadout(walk({ fit: fit({ inserted: 5, skipped: 4 }) }), fmt);
+    expect(r.fitParts).toEqual([
+      "5 steps not in the standard",
+      "4 of the standard's steps not taken",
+    ]);
+  });
+
+  it("adds stopping short as its own part, never appended to another", () => {
+    const r = markReadout(walk({ fit: fit({ skipped: 1, reachedEnd: false }) }), fmt);
+    expect(r.fitParts).toEqual([
+      "1 of the standard's steps not taken",
+      "Stopped before the end",
+    ]);
+  });
+
+  /** The two shapes are one fact. A card and a screen reader must not diverge. */
+  it("joins to exactly the sentence the accessible name carries", () => {
+    const r = markReadout(walk({ fit: fit({ inserted: 5, skipped: 4, reachedEnd: false }) }), fmt);
+    expect(r.fit).toBe(
+      "5 steps not in the standard, 4 of the standard's steps not taken. Stopped before the end.",
+    );
+    expect(markLabel(r)).toContain(r.fit!);
+  });
+});
+
+/** One walk's conformance, shared with `markStates` so the two cannot drift. */
+describe("fitState", () => {
+  it("is null where no standard existed — never canonical", () => {
+    expect(fitState(null)).toBeNull();
+  });
+
+  it("calls a matching walk canonical", () => {
+    expect(fitState(fit())).toBe("canonical");
+  });
+
+  it("puts SHORT above deviated, because a stopped walk also shows skips", () => {
+    expect(fitState(fit({ skipped: 3, reachedEnd: false }))).toBe("short");
+  });
+
+  it("agrees with markStates on every walk of a multi-walk row", () => {
+    const rows = [
+      walk({ sessionId: "a", at: 1, fit: fit() }),
+      walk({ sessionId: "b", at: 2, fit: fit({ inserted: 1 }) }),
+      walk({ sessionId: "c", at: 3, fit: fit({ reachedEnd: false }) }),
+    ];
+    expect(markStates(marksOf(rows))).toEqual(rows.map((r) => fitState(r.fit)));
   });
 });

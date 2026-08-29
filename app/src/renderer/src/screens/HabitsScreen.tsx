@@ -37,26 +37,33 @@ import {
 } from "../way-lattice.js";
 import { GhostLottie } from "../brand/GhostLottie.js";
 import {
+  IconCadence,
+  IconCalendar,
+  IconDroppedEarly,
+  IconRecording,
+} from "../icons.js";
+import {
   bandHabits,
   bandProposals,
   bindingChip,
+  domainAxis,
   droppedEarlyLine,
-  evidenceLine,
+  evidenceGlyphs,
+  fitState,
   generateDisabledReason,
   ledgerMarks,
   markLabel,
   markReadout,
   markStates,
   proposalEvidence,
+  proposalGlyphs,
   proposalTitle,
-  walkSpan,
 } from "../habits-view.js";
-import type { LedgerMark } from "../habits-view.js";
+import type { EvidenceGlyph, LedgerMark } from "../habits-view.js";
 import { clampTip } from "./hover-card.js";
 import {
   cellLabel,
   DAYS,
-  fadeLine,
   HOUR_TICK_SPAN,
   HOUR_TICKS,
   rhythmLabel,
@@ -232,6 +239,7 @@ export function HabitsScreen({
                   key={s.id}
                   habit={s}
                   domain={data.domain}
+                  now={now}
                   active={habit?.id === s.id}
                   onSelect={() => setSelected({ kind: "habit", id: s.id })}
                 />
@@ -246,6 +254,7 @@ export function HabitsScreen({
                   key={s.id}
                   habit={s}
                   domain={data.domain}
+                  now={now}
                   active={habit?.id === s.id}
                   onSelect={() => setSelected({ kind: "habit", id: s.id })}
                 />
@@ -263,6 +272,7 @@ export function HabitsScreen({
                   key={s.id}
                   habit={s}
                   domain={data.domain}
+                  now={now}
                   active={habit?.id === s.id}
                   onSelect={() => setSelected({ kind: "habit", id: s.id })}
                 />
@@ -309,6 +319,7 @@ export function HabitsScreen({
                   key={s.id}
                   habit={s}
                   domain={data.domain}
+                  now={now}
                   active={habit?.id === s.id}
                   onSelect={() => setSelected({ kind: "habit", id: s.id })}
                 />
@@ -323,6 +334,7 @@ export function HabitsScreen({
             <HabitEditor
               habit={habit}
               domain={data.domain}
+              now={now}
               onOpenRecording={onOpenRecording}
               busy={busy}
               copied={copied}
@@ -375,6 +387,75 @@ export function HabitsScreen({
         </section>
       </div>
     </div>
+  );
+}
+
+/**
+ * The evidence line, as glyphs — a caption to the ledger, never a stat row.
+ *
+ * It replaced `6 recordings — 3 recorded since · Aug 17 – Aug 24`: four facts
+ * run together into one string, printed in the narrowest column on the screen,
+ * directly beneath an instrument already drawing three of them.
+ *
+ * THE HUES ARE BORROWED, NEVER MINTED. A gained delta is `--data-ok` because
+ * that is the ring the ledger already draws round a mark recorded since the
+ * habit was kept; a lost one and a faded date are `--amber` because that is the
+ * tone `.habit__bind` already wears for the thing that can be silently wrong.
+ * So the line and the marks above it cannot come to say different things in
+ * different colours.
+ *
+ * `role="img"` WITH THE SENTENCE AS ITS LABEL, which is the whole licence for
+ * compressing the line at all — `markLabel`'s rule, that a position is a
+ * metaphor and the words are the fact. A `title` alone reaches a pointer and
+ * nobody else, and an `aria-label` on a bare span is not reliably announced.
+ * The mono figure stays visible text, so it is still selectable and still
+ * legible without hovering anything.
+ */
+function GlyphMark({ kind }: { kind: EvidenceGlyph["kind"] }): React.JSX.Element {
+  // Size comes from `.eglyph__icon` in em, so the glyph tracks the type scale.
+  const props = { className: "eglyph__icon", "aria-hidden": true } as const;
+  switch (kind) {
+    case "recordings":
+      return <IconRecording {...props} />;
+    case "last":
+      return <IconCalendar {...props} />;
+    case "dropped":
+      return <IconDroppedEarly {...props} />;
+    case "cadence":
+      return <IconCadence {...props} />;
+  }
+}
+
+function EvidenceGlyphs({
+  glyphs,
+  children,
+}: {
+  glyphs: readonly EvidenceGlyph[];
+  /** Facts that are NOT evidence — a route's shape, a tag. Kept in words. */
+  children?: React.ReactNode;
+}): React.JSX.Element | null {
+  if (glyphs.length === 0 && children === undefined) return null;
+  return (
+    <span className="eglyphs mono">
+      {glyphs.map((g) => (
+        <span
+          key={g.kind}
+          className={`eglyph${g.warn ? " is-warn" : ""}`}
+          role="img"
+          aria-label={g.title}
+          title={g.title}
+        >
+          <GlyphMark kind={g.kind} />
+          <span className="eglyph__value">{g.value}</span>
+          {g.delta !== null && (
+            <span className={`eglyph__delta${g.delta.warn ? " is-warn" : " is-gained"}`}>
+              {g.delta.text}
+            </span>
+          )}
+        </span>
+      ))}
+      {children}
+    </span>
   );
 }
 
@@ -439,18 +520,49 @@ function Ledger({
       .join(" ");
   };
 
-  if (onOpen === undefined) {
+  /**
+   * THE SCALE, on the lead ledger only.
+   *
+   * The ledger has always been an absolute timeline with nothing on it saying
+   * what it runs from or to — a mark's position was the whole reading. This is
+   * the same fix the rhythm grid's hour ticks were: without them it could say a
+   * habit repeats somewhere mid-week but never that it happens at 9am.
+   *
+   * NOT on a row ledger: four scales down a list is chrome, and a row's ledger
+   * is `aria-hidden` decoration beside words that already state the fact.
+   *
+   * `aria-hidden`, because every mark's own `aria-label` already carries its
+   * absolute date. The scale is a reading aid for the PICTURE; a screen reader
+   * is given the dates directly and would only hear the endpoints twice.
+   */
+  const scaled = (body: React.JSX.Element): React.JSX.Element => {
+    if (size !== "lead") return body;
+    const axis = domainAxis(domain);
     return (
+      <span className="ledger-scaled">
+        {body}
+        {axis !== null && (
+          <span className="ledger__scale mono" aria-hidden="true">
+            <span>{axis.from}</span>
+            <span>{axis.to}</span>
+          </span>
+        )}
+      </span>
+    );
+  };
+
+  if (onOpen === undefined) {
+    return scaled(
       <span className={`ledger ledger--${size}`} aria-hidden="true">
         <span className="ledger__axis" />
         {marks.map((m, i) => (
           <span key={m.sessionId} className={tone(m, i)} style={{ left: `${m.x * 100}%` }} />
         ))}
-      </span>
+      </span>,
     );
   }
 
-  return (
+  return scaled(
     <span
       className={`ledger ledger--${size} ledger--live`}
       role="group"
@@ -488,8 +600,15 @@ function Ledger({
           </button>
         );
       })}
-      {hover && <MarkCard mark={hover.mark.walk} x={hover.x} y={hover.y} />}
-    </span>
+      {hover && (
+        <MarkCard
+          mark={hover.mark.walk}
+          lone={marks.length === 1}
+          x={hover.x}
+          y={hover.y}
+        />
+      )}
+    </span>,
   );
 }
 
@@ -504,10 +623,13 @@ function Ledger({
  */
 function MarkCard({
   mark,
+  lone,
   x,
   y,
 }: {
   mark: WalkMarkDTO;
+  /** The ROW's property, passed down: one mark on a ledger is a lone walk. */
+  lone: boolean;
   x: number;
   y: number;
 }): React.JSX.Element {
@@ -538,7 +660,7 @@ function MarkCard({
         visibility: pos ? undefined : "hidden",
       }}
     >
-      <MarkReadout mark={mark} />
+      <WalkBlock mark={mark} lone={lone} />
     </div>
   );
 }
@@ -551,7 +673,19 @@ function MarkCard({
  * that reached only one of them would be a difference nothing fails on. There
  * is no second copy to keep in step because there is no second copy.
  */
-function MarkReadout({ mark }: { mark: WalkMarkDTO }): React.JSX.Element {
+function MarkReadout({
+  mark,
+  showAction = true,
+}: {
+  mark: WalkMarkDTO;
+  /**
+   * False where a real Open BUTTON is drawn beside it. `action` is the
+   * affordance in words, for a card whose whole surface is one cell's click
+   * target; printing it above a button that says the same thing is one fact
+   * twice, which is what the `\u00d7N` glyph was deleted for.
+   */
+  showAction?: boolean;
+}): React.JSX.Element {
   const readout = markReadout(mark, { wallClock, timecode });
   return (
     <>
@@ -559,13 +693,70 @@ function MarkReadout({ mark }: { mark: WalkMarkDTO }): React.JSX.Element {
       {readout.at !== null && (
         <div className="ledger__tip-at mono">
           {readout.at}
-          {readout.steps !== null && ` · ${readout.steps}`}
+          {readout.steps !== null && ` \u00b7 ${readout.steps}`}
         </div>
       )}
-      {readout.fit !== null && <div className="ledger__tip-fit">{readout.fit}</div>}
+      {/* THE FIT IS A LIST, NOT A SENTENCE. Three clauses joined by commas
+          inside a 320px box wrapped into a grey paragraph that read as one
+          statement; each clause is a separate count of a separate thing, and
+          separate lines is what says so. `markLabel` still speaks the joined
+          sentence, from the same source. */}
+      {readout.fitParts !== null && (
+        <ul className="ledger__tip-fit">
+          {readout.fitParts.map((part) => (
+            <li key={part}>{part}</li>
+          ))}
+        </ul>
+      )}
       {readout.note !== null && <div className="ledger__tip-note">{readout.note}</div>}
-      {readout.action !== null && <div className="ledger__tip-go">{readout.action}</div>}
+      {showAction && readout.action !== null && (
+        <div className="ledger__tip-go">{readout.action}</div>
+      )}
     </>
+  );
+}
+
+/**
+ * ONE walk inside a card, ruled in its own conformance hue.
+ *
+ * THE RULE IS THE MARK'S FILL, MOVED TO AN EDGE. A card that lists two walks
+ * of one hour was two grey stacks separated by a hairline, and which of them
+ * followed the standard was recoverable only by reading four lines of prose —
+ * while the dot the reader had just pointed at said it in a colour. `fitState`
+ * is shared with `markStates` so the two cannot disagree.
+ *
+ * A LONE walk is ruled like the mark it hangs off: hollow, not a fainter
+ * colour. The ledger's rule — a ring reads as *not filled in yet*, which is the
+ * true statement about a route walked once, where a paler fill would read as
+ * *less important*.
+ */
+function WalkBlock({
+  mark,
+  lone,
+  routeTitle = null,
+  children,
+}: {
+  mark: WalkMarkDTO;
+  lone: boolean;
+  /** Named only where the card can hold walks of SEVERAL routes. */
+  routeTitle?: string | null;
+  children?: React.ReactNode;
+}): React.JSX.Element {
+  const state = lone ? "lone" : fitState(mark.fit);
+  return (
+    <div className={`rhythm__tip-walk${state === null ? "" : ` is-${state}`}`}>
+      {routeTitle !== null && (
+        <div className="rhythm__tip-route">
+          {routeTitle}
+          {/* The fill rule, said beside the thing it describes. The edge rule
+              now draws it too, and both stay: a hue is a reading and the words
+              are the fact — `markLabel`'s rule, one instrument down. */}
+          {lone ? " \u00b7 seen once" : ""}
+        </div>
+      )}
+      <MarkReadout mark={mark} showAction={children === undefined} />
+      {children}
+    </div>
   );
 }
 
@@ -785,7 +976,6 @@ function CellCard({
     );
   }, [x, y, walks]);
 
-  const many = walks.length > 1;
   return (
     <div
       className="ledger__tip"
@@ -800,32 +990,26 @@ function CellCard({
         visibility: pos ? undefined : "hidden",
       }}
     >
-      <div className="ledger__tip-when">{title}</div>
+      <div className="ledger__tip-head">{title}</div>
+      {/* THE BUTTON IS DRAWN FOR EVERY WALK, not only when the hour holds
+          several. It could not be pressed at all until now — the card sets
+          `pointer-events`, and it was `none` — so the one-walk card fell back
+          on the cell underneath and the many-walk card offered dead controls.
+          With the card reachable, one shape serves both. */}
       {walks.map(({ walk: mark, routeTitle, recurring }) => (
-        <div key={mark.sessionId} className={many ? "rhythm__tip-walk" : undefined}>
-          {routeTitle !== null && (
-            <div className="rhythm__tip-route">
-              {routeTitle}
-              {/* The fill rule, said beside the thing it describes. A hollow
-                  mark is the only one on this band whose meaning is not its
-                  position, so the card states it rather than relying on a key. */}
-              {recurring ? "" : " · seen once"}
-            </div>
+        <WalkBlock key={mark.sessionId} mark={mark} lone={!recurring} routeTitle={routeTitle}>
+          {mark.walk === null ? (
+            <span className="habitsteps__noopen">no moment to open</span>
+          ) : (
+            <button
+              type="button"
+              className="btn ghost rhythm__tip-open"
+              onClick={() => onOpen(mark.sessionId, mark.walk!.atSec)}
+            >
+              Open this recording
+            </button>
           )}
-          <MarkReadout mark={mark} />
-          {many &&
-            (mark.walk === null ? (
-              <span className="habitsteps__noopen">no moment to open</span>
-            ) : (
-              <button
-                type="button"
-                className="btn ghost rhythm__tip-open"
-                onClick={() => onOpen(mark.sessionId, mark.walk!.atSec)}
-              >
-                Open
-              </button>
-            ))}
-        </div>
+        </WalkBlock>
       ))}
     </div>
   );
@@ -1045,9 +1229,12 @@ function WayLattice({
  */
 function HabitRecordSection({
   habit,
+  now,
   onOpen,
 }: {
   habit: HabitDTO;
+  /** The screen's one clock, threaded so every fade reading agrees. */
+  now: number;
   onOpen: (sessionId: string, atSec: number) => void;
 }): React.JSX.Element {
   const tones = appTones(habit.apps);
@@ -1106,7 +1293,7 @@ function HabitRecordSection({
           onOpen={onOpen}
         />
       )}
-      <HabitRecord habit={habit} />
+      <HabitRecord habit={habit} now={now} />
     </>
   );
 }
@@ -1463,9 +1650,8 @@ function SpineStep({
  * lists them: the same wall clocks, openable the same way, with the shape of
  * each run attached instead of standing alone as chips.
  */
-function HabitRecord({ habit }: { habit: HabitDTO }): React.JSX.Element {
+function HabitRecord({ habit, now }: { habit: HabitDTO; now: number }): React.JSX.Element {
   const lifting = liftingRollup(habit.ways);
-  const span = walkSpan(habit.binding.walks);
   const dropped = droppedEarlyLine(habit);
 
   return (
@@ -1534,9 +1720,14 @@ function HabitRecord({ habit }: { habit: HabitDTO }): React.JSX.Element {
 
       <section className="hrecord__block">
         <span className="eyebrow">Where this came from</span>
+        {/* The same glyphs as the row and the masthead. One route, one
+            reading — three spellings of one fact is the drift this repo names
+            everywhere else. `on this machine` stays in words: it is a
+            PROVENANCE claim, not a figure, and it has no instrument above it. */}
         <p className="hrecord__note">
-          {evidenceLine(habit)}
-          {span !== null && ` · ${span}`} · on this machine
+          <EvidenceGlyphs glyphs={evidenceGlyphs(habit, now)}>
+            <span className="eglyph__aside">on this machine</span>
+          </EvidenceGlyphs>
         </p>
         <p className="hrecord__note mono">{habit.binding.routeLabel}</p>
       </section>
@@ -1724,22 +1915,22 @@ function Band({ title, children }: { title: string; children: React.ReactNode })
 function HabitRow({
   habit,
   domain,
+  now,
   active,
   onSelect,
 }: {
   habit: HabitDTO;
   domain: Domain;
+  /**
+   * INJECTED, never read here. `bandOf` and the fade glyph must ask the same
+   * clock, or a row could sit under "Not walked lately" while its own line
+   * declined to say so — the module's rule, now reaching the renderer.
+   */
+  now: number;
   active: boolean;
   onSelect: () => void;
 }): React.JSX.Element {
   const chip = bindingChip(habit);
-  const span = walkSpan(habit.binding.walks);
-  // The same work begun and abandoned partway. A DISCLOSURE beside the count,
-  // never folded into it: those recordings walked a different route.
-  const dropped = droppedEarlyLine(habit);
-  // Null unless this row is in the "Not walked lately" band, so the band head
-  // and the line can never disagree — both ask `hasFaded`.
-  const faded = fadeLine(habit.binding.walks, Date.now());
   return (
     <li>
       <button className={`habit${active ? " is-active" : ""}`} onClick={onSelect}>
@@ -1749,13 +1940,18 @@ function HabitRow({
             the slug is in the editor's own subtitle and the tag beside the
             prose that it describes. */}
         <Ledger walks={habit.binding.walks} domain={domain} />
+        {/* FOUR SENTENCES BECAME FOUR GLYPHS. The line was
+            `6 recordings — 3 recorded since · Aug 17 – Aug 24`, plus a
+            dropped-early clause and a fade clause when either applied: five
+            facts run together in the narrowest column on the screen, under an
+            instrument already drawing three of them. Nothing was dropped —
+            `evidenceGlyphs` folds each one into the figure it qualifies and
+            carries the whole sentence as the glyph's accessible name. */}
         <span className="habit__meta">
-          <span className="mono">{evidenceLine(habit)}</span>
-          {dropped !== null && <span className="mono">{dropped}</span>}
-          {faded !== null && <span className="mono">{faded}</span>}
-          {span !== null && <span className="mono">{span}</span>}
-          {habit.edited && <span className="habit__tag mono">edited</span>}
-          {habit.pinned && <span className="habit__tag mono">pinned</span>}
+          <EvidenceGlyphs glyphs={evidenceGlyphs(habit, now)}>
+            {habit.edited && <span className="habit__tag mono">edited</span>}
+            {habit.pinned && <span className="habit__tag mono">pinned</span>}
+          </EvidenceGlyphs>
         </span>
         {chip !== null && <span className="habit__bind mono">{chip}</span>}
       </button>
@@ -1774,7 +1970,6 @@ function ProposalRow({
   active: boolean;
   onSelect: () => void;
 }): React.JSX.Element {
-  const span = walkSpan(proposal.walks);
   return (
     <li>
       <button
@@ -1787,14 +1982,18 @@ function ProposalRow({
             the glyph, the words below, and now the marks — and it was the one
             of the three that could only be read as a number. */}
         <Ledger walks={proposal.walks} domain={domain} />
+        {/* A proposal sits in the SAME list as a kept habit, so it gets the
+            same glyphs — a sentence on one band and a glyph line on the next
+            would read as two kinds of row rather than two bands of one kind.
+            `stepSummary` stays in words beside them: the route's SHAPE is not
+            evidence, and it must not borrow evidence's vocabulary. */}
         <span className="habit__meta">
-          {/* Recurrence in WORDS, at every count. */}
-          <span className="mono">{proposalEvidence(proposal)}</span>
-          {span !== null && <span className="mono">{span}</span>}
-          <span className="mono">
-            {proposal.stepSummary}
-            {proposal.variants > 0 && " · merged"}
-          </span>
+          <EvidenceGlyphs glyphs={proposalGlyphs(proposal)}>
+            <span className="eglyph__aside">
+              {proposal.stepSummary}
+              {proposal.variants > 0 && " \u00b7 merged"}
+            </span>
+          </EvidenceGlyphs>
         </span>
       </button>
     </li>
@@ -1816,7 +2015,6 @@ function ProposalPreview({
   onDismiss: () => void;
   onOpenRecording: (sessionId: string, atSec: number) => void;
 }): React.JSX.Element {
-  const span = walkSpan(proposal.walks);
   return (
     <div className="habitedit__body">
       <header className="habitedit__masthead">
@@ -1831,10 +2029,9 @@ function ProposalPreview({
             size="lead"
             onOpen={onOpenRecording}
           />
-          <p className="mono">
-            {proposalEvidence(proposal)}
-            {span !== null && ` · ${span}`}
-          </p>
+          <EvidenceGlyphs glyphs={proposalGlyphs(proposal)}>
+            <span className="eglyph__aside">{proposalEvidence(proposal)}</span>
+          </EvidenceGlyphs>
         </div>
       </header>
 
@@ -1865,6 +2062,7 @@ function ProposalPreview({
 function HabitEditor({
   habit,
   domain,
+  now,
   onOpenRecording,
   busy,
   copied,
@@ -1882,6 +2080,8 @@ function HabitEditor({
 }: {
   habit: HabitDTO;
   domain: Domain;
+  /** The screen's one clock, threaded so every fade reading agrees. */
+  now: number;
   onOpenRecording: (sessionId: string, atSec: number) => void;
   busy: boolean;
   copied: boolean;
@@ -1902,7 +2102,6 @@ function HabitEditor({
   // Merging archives somebody else's habit, so it is confirmed. The state holds
   // WHICH one, because a habit can duplicate more than one at a time.
   const [confirmMerge, setConfirmMerge] = useState<string | null>(null);
-  const span = walkSpan(b.walks);
 
   return (
     <div className="habitedit__body">
@@ -1915,18 +2114,16 @@ function HabitEditor({
         <p className="habitedit__slugline mono">
           {habit.slug} · v{habit.version}
         </p>
+        {/* THE CAP IS GONE. `.habitedit__evidence` was `max-width: 420px`, so
+            the lead ledger stopped dead halfway across an 835px pane while the
+            phase grid immediately below it ran the full width — two
+            instruments about the same six recordings, drawn at two scales,
+            stacked. They share a left and a right edge now. */}
         <div className="habitedit__evidence">
           <Ledger walks={b.walks} domain={domain} size="lead" onOpen={onOpenRecording} />
-          <p className="mono">
-            {evidenceLine(habit)}
-            {span !== null && ` · ${span}`}
-          </p>
-        {b.walks.some((w) => w.fit !== null) && <LedgerLegend />}
+          <EvidenceGlyphs glyphs={evidenceGlyphs(habit, now)} />
+          {b.walks.some((w) => w.fit !== null) && <LedgerLegend />}
         </div>
-        {/* OUTSIDE `.habitedit__evidence`, which is capped at 420px so the
-            ledger and its meta line do not stretch across the pane. The grid
-            wants the whole width: 24 columns inside 400px gave 15px cells with
-            no room for an hour axis, which is why it shipped without one. */}
         <Rhythm walks={b.walks} onOpen={onOpenRecording} />
       </header>
 
@@ -2115,7 +2312,7 @@ function HabitEditor({
       <p className="muted habitedit__recordnote">
         Generated from the recordings. Not written by a model, and not editable here.
       </p>
-      <HabitRecordSection habit={habit} onOpen={onOpenRecording} />
+      <HabitRecordSection habit={habit} now={now} onOpen={onOpenRecording} />
 
       {/* The reason in WORDS, not a greyed control with no explanation. */}
       {proseNote !== null && <p className="muted">{proseNote}</p>}

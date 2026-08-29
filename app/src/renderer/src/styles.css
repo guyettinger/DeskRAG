@@ -3153,6 +3153,27 @@ select {
   pointer-events: none;
 }
 
+/* THE TWO PLACES THE HABITS CARD DIVERGES FROM THE RAIL'S, and only these two.
+   Everything about the box above is shared on purpose — two copies of one
+   measured, clamped, fixed-position readout is how they drift the first time
+   either is tuned — so the divergence is declared here rather than forked.
+
+   WIDER, because the rail's card lists sixteen one-line lanes and this one
+   lists a recording: a route name, a wall clock, a timecode, up to four
+   conformance clauses and a control. At 320px the clauses wrapped into a grey
+   paragraph inside a box a quarter the width of the grid it hangs off.
+
+   REACHABLE, which is the bug the width was hiding. The card can hold BUTTONS
+   — an hour of the week holding several walks offers one per walk — and
+   `pointer-events: none` made every one of them dead, along with the
+   `TIP_LINGER` hold-open the pointer needs to travel into the card at all. The
+   rail's card holds no controls and keeps `none`, which is why the property
+   was safe to share until this one grew some. */
+.ledger__tip {
+  max-width: 460px;
+  pointer-events: auto;
+}
+
 .tracks__tip-head {
   font-size: var(--t-meta);
   color: var(--muted);
@@ -4142,14 +4163,59 @@ select {
   display: flex; flex-wrap: wrap; gap: var(--s1);
   font-size: var(--t-nano); color: var(--muted);
 }
-.habit__meta > *:not(:first-child)::before {
-  content: "\00b7"; margin-right: var(--s1); color: var(--hairline);
-}
-.habit__meta > .habit__tag:not(:first-child)::before { content: none; }
+/* THE MIDDOTS ARE GONE. They separated four run-together sentences; between
+   glyph pairs they are noise, and deleting them is most of where the width came
+   back. Grouping is carried by spacing instead — `--s1` inside a pair so the
+   glyph and its figure read as one word, `--s3` between pairs. */
 .habit__tag {
   padding: 0 var(--s1); border-radius: 3px; font-size: var(--t-nano);
   background: var(--sunken); color: var(--muted);
 }
+
+/* ---- the evidence glyph line ---------------------------------------------
+   A CAPTION TO THE LEDGER, never a stat row. It replaced
+   `6 recordings — 3 recorded since · Aug 17 – Aug 24` — plus a dropped-early
+   clause and a fade clause when either applied — five facts run together in the
+   narrowest column on the screen, directly under an instrument already drawing
+   three of them.
+
+   EVERY HUE HERE IS BORROWED. `--data-ok` on a gained delta is the ring
+   `.ledger__mark.is-gained` already draws round a recording made since the
+   habit was kept; `--amber` on a lost one and on a faded date is the tone
+   `.habit__bind` already wears for the thing that can be silently wrong.
+   Nothing in this block mints a colour, so the line and the marks above it
+   cannot come to say different things in different colours.
+
+   The figure stays selectable visible text and the sentence rides on
+   `role="img"` + `aria-label` in the markup — `markLabel`'s rule, that a
+   position is a metaphor and the words are the fact. That is the whole licence
+   for compressing the line at all. */
+/* `--t-meta`, one step up from the `--t-nano` line it replaced, and the step is
+   the point: at 9px a 1em glyph is 9px of stroked artwork and reads as grit.
+   The row is SHORTER anyway — five facts on one to three wrapped lines became
+   two to four glyph pairs on one — so the step up costs no height. `--t-nano`
+   is documented as "the VIDEO chip on a 72px thumbnail, and nothing else"; this
+   line is now a caption to the screen's signature instrument, not a footnote. */
+.eglyphs {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--s3);
+  font-size: var(--t-meta); color: var(--muted);
+}
+.eglyph { display: inline-flex; align-items: center; gap: var(--s1); }
+/* Sized in `em` on a 24px viewBox, so a glyph tracks the type scale rather
+   than pinning a pixel the `--t-*` scale would then drift away from. Slightly
+   over 1em because a stroked 24px glyph has more internal air than a digit. */
+.eglyph__icon { flex: none; opacity: 0.75; width: 1.15em; height: 1.15em; }
+.eglyph__value { color: var(--text); }
+.eglyph.is-warn .eglyph__icon { opacity: 1; color: var(--amber); }
+.eglyph.is-warn .eglyph__value { color: var(--amber); }
+/* The delta rides inside the pair's own `--s1` gap, against the `--s3` between
+   pairs, because `6 +3` is one reading and `+3` alone is not a fact at all. */
+.eglyph__delta.is-gained { color: var(--data-ok); }
+.eglyph__delta.is-warn { color: var(--amber); }
+/* A fact that is NOT evidence — a route's shape, a provenance claim. It keeps
+   the muted voice and takes no glyph, because a glyph here is a promise that
+   the instrument above draws the same thing. */
+.eglyph__aside { color: var(--muted); }
 /* Amber, the app's existing "say something is off" tone. A binding that moved is
    the one thing on this screen that can be silently wrong. */
 .habit__bind {
@@ -4241,12 +4307,31 @@ select {
 }
 
 /* The card's contents. The box itself is shared with `.tracks__tip` above. */
+/* The HOUR, above the walks it holds — the card's own head, not a walk's line.
+   It was `.ledger__tip-when`, the same class the wall clock inside each walk
+   uses, so a two-walk card printed three identical lines and only their order
+   said which was the heading. */
+.ledger__tip-head {
+  font-size: var(--t-meta); color: var(--muted);
+  padding-bottom: var(--s1); margin-bottom: var(--s1);
+  border-bottom: 1px solid var(--hairline-soft);
+}
 .ledger__tip-when { font-size: var(--t-body); color: var(--text); }
 .ledger__tip-at { font-size: var(--t-meta); color: var(--muted); }
 .ledger__tip-note { font-size: var(--t-meta); color: var(--muted); margin-top: var(--s1); }
+/* THE FIT IS A LIST. Each clause counts a different thing — steps not in the
+   standard, standard steps not taken, steps reordered — and joining them with
+   commas made one grey sentence that wrapped to three lines and read as a
+   verdict. A line each reads as three measurements, which is what they are.
+   No bullets: the clauses are unordered and a marker column would indent the
+   only text on the card that carries numbers. */
+.ledger__tip-fit {
+  list-style: none; margin: var(--s1) 0 0; padding: 0;
+  font-size: var(--t-meta); color: var(--text);
+  display: flex; flex-direction: column; gap: 2px;
+}
 /* The affordance, said rather than implied — a card that names a recording and
    stops leaves the reader to guess that clicking does anything. */
-.ledger__tip-fit { font-size: var(--t-meta); color: var(--text); margin-top: var(--s1); }
 .ledger__tip-go {
   font-size: var(--t-meta); color: var(--accent); margin-top: var(--s1);
 }
@@ -4311,13 +4396,35 @@ select {
 .rhythm__hit:hover .rhythm__cell,
 .rhythm__hit:focus-visible .rhythm__cell { outline: 1px solid var(--accent); }
 .rhythm__hit:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-/* One walk per row inside the card, when an hour holds several. */
+/* ONE WALK, DOWN THE CARD RATHER THAN ACROSS IT.
+   It was a baseline row with `justify-content: space-between` — the readout on
+   the left, an Open button on the right — so a recording's four or five lines
+   were squeezed into whatever the button left of 320px, and every one of them
+   wrapped. The button belongs under what it opens, not beside it.
+
+   THE LEFT RULE IS THE MARK'S OWN FILL, MOVED TO AN EDGE. A card listing two
+   walks of one hour was two grey stacks separated by a hairline, and which of
+   them followed the standard could only be recovered by reading the clauses —
+   while the dot the reader had just pointed at said it in a colour. The hues
+   are `.ledger__mark`'s, not restated values, so a change there reaches here.
+   A LONE walk is ruled hollow like its mark: `--sunken` reads as *not filled in
+   yet*, which is the true statement about a route walked once, where a paler
+   version of a conformance hue would read as *less important*. */
 .rhythm__tip-walk {
-  display: flex; align-items: baseline; justify-content: space-between; gap: var(--s2);
-  padding-top: var(--s1);
+  display: flex; flex-direction: column; align-items: flex-start; gap: var(--s1);
+  padding: var(--s1) 0 var(--s1) var(--s2);
+  border-left: 2px solid var(--hairline);
 }
-.rhythm__tip-walk + .rhythm__tip-walk { border-top: 1px solid var(--hairline-soft); }
-.rhythm__tip-open { flex: none; }
+.rhythm__tip-walk.is-canonical { border-left-color: var(--data-signal); }
+.rhythm__tip-walk.is-deviated { border-left-color: var(--data-2); }
+.rhythm__tip-walk.is-short { border-left-color: var(--data-3); }
+.rhythm__tip-walk.is-lone { border-left-color: var(--sunken); }
+.rhythm__tip-walk + .rhythm__tip-walk {
+  border-top: 1px solid var(--hairline-soft); margin-top: var(--s1);
+}
+/* Under the readout, never beside it, and never full width: a control the width
+   of the card would read as the card's own action rather than as this walk's. */
+.rhythm__tip-open { flex: none; align-self: flex-start; }
 .rhythm__note { margin: 0; font-size: var(--t-meta); color: var(--muted); }
 
 .habitedit {
@@ -4395,11 +4502,50 @@ select {
    being edited was never named. */
 .habitedit__masthead { display: flex; flex-direction: column; gap: var(--s1); }
 .habitedit__slugline { font-size: var(--t-meta); color: var(--muted); overflow-wrap: anywhere; }
+/* NO CAP. This was `max-width: 420px`, so on an 835px pane the lead ledger
+   stopped dead halfway while the phase grid immediately below it ran the full
+   width — two instruments about the same recordings, at two scales, stacked,
+   and the meta line wrapped inside the narrower of them. The cap's stated
+   reason was that the ledger "should not stretch across the pane"; measured in
+   the running app, stretching is what makes it legible. Six marks over 420px
+   sat in a clot at the left because the domain is the LIBRARY's span, not this
+   habit's — the same reason the axis below it is worth printing. */
 .habitedit__evidence {
-  display: flex; flex-direction: column; gap: var(--s1);
-  margin-top: var(--s1); max-width: 420px;
+  display: flex; flex-direction: column; gap: var(--s2);
+  margin-top: var(--s1);
 }
 .habitedit__evidence p { margin: 0; font-size: var(--t-meta); color: var(--muted); }
+
+/* ---- the ledger's scale --------------------------------------------------
+   The ledger has always been an absolute timeline with nothing on it saying
+   what it runs from or to: a mark's position was the whole reading, and the
+   dates were a separate sentence underneath. This is the fix the rhythm grid's
+   hour ticks were — without them it could say a habit repeats somewhere
+   mid-week but never that it happens at 9am.
+
+   It labels the SHARED domain, which is why it is not a duplicate of the glyph
+   line beside it: the scale says what the axis runs across, the glyph says when
+   THIS habit was last walked. On the lead ledger only — four scales down a list
+   would be chrome. */
+.ledger-scaled { display: block; }
+.ledger__scale {
+  display: flex; justify-content: space-between;
+  font-size: var(--t-nano); color: var(--muted);
+}
+/* TICKED, because two dates in a column read as a date LIST. Measured in the
+   running app: the scale's `Aug 17` sat four pixels above the glyph line's
+   `Aug 24` and the pair scanned as one row of two dates — which is exactly the
+   confusion the scale exists to prevent, since one is the library's span and
+   the other is this habit's last walk. A tick at each end says *axis* before
+   the text is read, and it lands on the axis's own ends because the labels are
+   pushed to the extremes. */
+.ledger__scale > span { position: relative; padding-top: 4px; }
+.ledger__scale > span::before {
+  content: ""; position: absolute; top: 0; width: 1px; height: 3px;
+  background: var(--hairline);
+}
+.ledger__scale > span:first-child::before { left: 0; }
+.ledger__scale > span:last-child::before { right: 0; }
 
 .habitedit__field { display: flex; flex-direction: column; gap: var(--s1); }
 .habitedit__label {
