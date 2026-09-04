@@ -3480,6 +3480,27 @@ select {
 .drawer__chip { font-family: var(--font-mono); font-size: var(--t-meta); color: var(--muted); }
 .drawer__title { font-size: var(--t-body); font-weight: 600; }
 .drawer__warn { font-size: var(--t-meta); color: var(--amber); }
+
+/* HOW SETTLED a state or an action is: a WORD and a sentence, never a bar and
+   never a percentage. It sits above the recordings because it is a claim about
+   exactly that list — how many separate recordings corroborate this — and the
+   list is the evidence for it. `core` borrows the same green `acts__var` uses
+   for a discovered variable, which is the other "recording it twice told us
+   something" fact on this screen. `unknown` is the graph that predates
+   provenance and is deliberately the quietest of the three. */
+.drawer__tier { display: flex; gap: var(--s1); align-items: baseline; flex-wrap: wrap; }
+.drawer__tier .muted { font-size: var(--t-meta); }
+.drawer__tier-word {
+  font-size: var(--t-micro); padding: 1px var(--s1); border-radius: 999px;
+  text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap;
+}
+.drawer__tier--core .drawer__tier-word { background: rgb(88 213 163 / 0.18); color: var(--ok); }
+.drawer__tier--prediction .drawer__tier-word {
+  background: rgb(224 168 83 / 0.16); color: var(--amber);
+}
+.drawer__tier--unknown .drawer__tier-word {
+  background: var(--elevated); color: var(--muted);
+}
 .drawer__warn li { list-style: none; }
 .drawer__close {
   margin-left: auto; color: var(--muted); font-size: var(--t-small);

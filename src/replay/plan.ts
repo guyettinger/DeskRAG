@@ -20,6 +20,7 @@ import {
   BRITTLENESS_FLOOR,
   type Blocker,
   type EdgeBrittleness,
+  type EdgeRecency,
   type Keymap,
   type Locate,
   type Plan,
@@ -35,17 +36,59 @@ import {
 import { blockersOf, verifyNode } from "./verify.js";
 
 /**
+ * How much evidence this edge carries, optionally discounted by age.
+ *
+ * WITHOUT `recency` this is `e.observations` verbatim, and every degrade path
+ * below returns that same number — so the default cost is bit-for-bit what it
+ * was before recency existed.
+ *
+ * With it, each source decays by half per half-life. Two absences are counted
+ * at FULL value rather than at zero, and the direction is deliberate: recency
+ * may discount evidence we can date, and must never penalise evidence we merely
+ * cannot.
+ *
+ * - A source whose session `startedAt` cannot date keeps its whole vote.
+ *   `TraceEdge.sources` is optional at all ("absent on a graph lifted before
+ *   provenance existed"), and an old graph must not be re-ranked by a fact
+ *   nobody recorded.
+ * - The gap between `sources.length` and `observations` — recordings that were
+ *   DELETED, the same gap `InspectDrawer` prints as "n of m observations" —
+ *   is added back whole. Deleting a recording already costs its evidence its
+ *   name; it must not additionally cost the edge its rank.
+ */
+function evidenceOf(e: TraceEdge, recency?: EdgeRecency): number {
+  if (recency === undefined || e.sources === undefined) return e.observations;
+  let weight = Math.max(0, e.observations - e.sources.length);
+  for (const s of e.sources) {
+    const at = recency.startedAt(s.sessionId);
+    weight += at === null ? 1 : 0.5 ** (Math.max(0, recency.now - at) / recency.halfLifeMs);
+  }
+  return Math.min(weight, e.observations);
+}
+
+/**
  * Lower is better. A well-observed edge that usually succeeds is cheap; an edge
  * seen once, or one that keeps failing, is expensive. An edge with no attempts
  * yet is treated as even odds rather than as a failure.
+ *
+ * `outcomes` is `{attempts: 0, successes: 0}` on every graph on disk — passive
+ * recording cannot observe a failure — so `rate` is the constant 0.5 in
+ * practice and what actually orders paths is the evidence term. `recency`
+ * discounts that term by age at QUERY TIME; nothing stored moves. Opt-in, and
+ * off everywhere until `npm run probe:baseline` says it changes something.
  */
-export function edgeCost(e: TraceEdge): number {
+export function edgeCost(e: TraceEdge, recency?: EdgeRecency): number {
   const rate = e.outcomes.attempts > 0 ? e.outcomes.successes / e.outcomes.attempts : 0.5;
-  return 1 / (1 + e.observations * rate);
+  return 1 / (1 + evidenceOf(e, recency) * rate);
 }
 
 /** Cheapest path by `edgeCost` (Dijkstra). `[]` when already at the goal. */
-export function findPath(graph: Graph, from: string, to: string): TraceEdge[] | null {
+export function findPath(
+  graph: Graph,
+  from: string,
+  to: string,
+  recency?: EdgeRecency,
+): TraceEdge[] | null {
   if (from === to) return [];
   const out = new Map<string, TraceEdge[]>();
   for (const e of graph.edges) {
@@ -73,7 +116,7 @@ export function findPath(graph: Graph, from: string, to: string): TraceEdge[] | 
 
     for (const e of out.get(current) ?? []) {
       if (e.to === current) continue; // a self-loop never shortens a path
-      const next = best + edgeCost(e);
+      const next = best + edgeCost(e, recency);
       if (next < (dist.get(e.to) ?? Infinity)) {
         dist.set(e.to, next);
         prev.set(e.to, { node: current, edge: e });
@@ -198,10 +241,15 @@ export interface BuildPlanInput {
    * categorically larger than raising an app that is already there.
    */
   allowLaunch?: boolean;
+  /**
+   * Weight an edge's observations by how recently they were made, when
+   * choosing the path. Absent is the pre-existing ranking exactly.
+   */
+  recency?: EdgeRecency;
 }
 
 export async function buildPlan(input: BuildPlanInput): Promise<Plan> {
-  const path = findPath(input.graph, input.fromNodeId, input.toNodeId);
+  const path = findPath(input.graph, input.fromNodeId, input.toNodeId, input.recency);
   if (path === null) {
     throw new Error(`no path from ${input.fromNodeId} to ${input.toNodeId}`);
   }

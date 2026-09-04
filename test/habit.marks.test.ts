@@ -12,6 +12,7 @@ import {
 import { cautionsFor } from "../app/src/main/habit-doc.js";
 import { flowWalks } from "../app/src/main/flow-steps.js";
 import type { FlowRouteDTO, FlowsDTO, GraphEdgeDTO, GraphNodeDTO } from "@shared/types";
+import { stabilityOf } from "../src/trace/stability.js";
 
 /**
  * The mapping from B's projection to the three DTO fields the screen draws.
@@ -31,6 +32,7 @@ const node = (id: string, label: string, extra: Partial<GraphNodeDTO> = {}): Gra
   intervene: "none",
   rank: 0,
   sources: [],
+  stability: stabilityOf([]),
   ...extra,
 });
 
@@ -59,6 +61,7 @@ function divergent(): FlowsDTO {
     provenance: "recorded",
     observations: Math.max(1, sources.length),
     sources,
+    stability: stabilityOf(sources),
   });
   const at = (sessionId: string, day: number, atSec: number, throughSec: number) => ({
     sessionId,
@@ -135,6 +138,7 @@ function buildTwoWayRoute(): { flows: FlowsDTO; route: FlowRouteDTO } {
     provenance: "recorded",
     observations: Math.max(1, sources.length),
     sources,
+    stability: stabilityOf(sources),
   });
   const at = (sessionId: string, day: number, atSec: number, throughSec: number) => ({
     sessionId,

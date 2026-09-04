@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { habitStepsJson } from "../app/src/main/mcp/habit-steps-json.js";
 import type { FlowsDTO, HabitDTO, HabitWayDTO } from "@shared/types";
+import { stabilityOf } from "../src/trace/stability.js";
 
 const EPOCH = 1_754_000_000_000;
 const SECRET = "hunter2-do-not-leak";
@@ -106,6 +107,7 @@ const flows = (): FlowsDTO => ({
         intervene: "none",
         rank: 0,
         sources: [],
+        stability: stabilityOf([]),
       },
       {
         id: "n1",
@@ -117,6 +119,7 @@ const flows = (): FlowsDTO => ({
         intervene: "none",
         rank: 1,
         sources: [],
+        stability: stabilityOf([]),
       },
     ],
     edges: [
@@ -129,6 +132,7 @@ const flows = (): FlowsDTO => ({
         provenance: "recorded",
         observations: 2,
         sources: [],
+        stability: stabilityOf([]),
       },
     ],
     slots: [],

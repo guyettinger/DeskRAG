@@ -18,7 +18,7 @@ import {
   type RouteVariantDTO,
   type RouteWalkDTO,
 } from "@shared/types";
-import { isLocatable } from "deskrag";
+import { isLocatable, stabilityOf } from "deskrag";
 import type { Action, Anchor, EdgeSource, Graph, NodeSource, Predicate, TraceNode } from "deskrag";
 // One definition of what a moment is, shared with the track rail and the
 // keyframe markers. Both modules are pure and root-tested.
@@ -311,6 +311,10 @@ export function toGraphDTO(graph: Graph, opts: GraphViewOptions = {}): GraphDTO 
       intervene: n.intervene,
       rank: ranks.get(n.id) ?? 0,
       sources: toNodeSources(n.sources, sessionStart, laneOrigin),
+      // From `n.sources`, NOT from the line above: `toNodeSources` drops every
+      // source it cannot date, so counting off its output would report an
+      // undatable recording as a missing one.
+      stability: stabilityOf(n.sources),
     };
   });
 
@@ -323,6 +327,7 @@ export function toGraphDTO(graph: Graph, opts: GraphViewOptions = {}): GraphDTO 
     provenance: e.provenance,
     observations: e.observations,
     sources: toEdgeSources(e.sources, sessionStart, laneOrigin),
+    stability: stabilityOf(e.sources),
     ...(e.liftWarnings !== undefined ? { liftWarnings: [...e.liftWarnings] } : {}),
   }));
 

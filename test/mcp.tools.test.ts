@@ -10,6 +10,7 @@ import type {
   HabitProposalDTO,
   HabitsDTO,
 } from "@shared/types";
+import { stabilityOf } from "../src/trace/stability.js";
 
 const EPOCH = 1_754_000_000_000; // 2025-07-31T22:13:20Z
 
@@ -85,8 +86,8 @@ const flows = (): FlowsDTO => ({
     id: "g",
     entry: "n0",
     nodes: [
-      { id: "n0", label: "Calculator", chip: "n0", observations: 2, predicates: [], locatable: true, intervene: "none", rank: 0, sources: [] },
-      { id: "n1", label: "TextEdit", chip: "n1", observations: 1, predicates: [], locatable: true, intervene: "none", rank: 1, sources: [] },
+      { id: "n0", label: "Calculator", chip: "n0", observations: 2, predicates: [], locatable: true, intervene: "none", rank: 0, sources: [], stability: stabilityOf([]) },
+      { id: "n1", label: "TextEdit", chip: "n1", observations: 1, predicates: [], locatable: true, intervene: "none", rank: 1, sources: [], stability: stabilityOf([]) },
     ],
     edges: [
       {
@@ -98,6 +99,7 @@ const flows = (): FlowsDTO => ({
         provenance: "recorded",
         observations: 2,
         sources: [{ sessionId: "s1", startedAt: EPOCH, atSec: 1, throughSec: 3 }],
+        stability: stabilityOf([{ sessionId: "s1" }]),
       },
     ],
     slots: [],

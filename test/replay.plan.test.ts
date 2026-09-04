@@ -67,6 +67,74 @@ describe("edgeCost", () => {
     const bad = { ...edge("e2", "a", "b", [], 10), outcomes: { attempts: 10, successes: 1 } };
     expect(edgeCost(good)).toBeLessThan(edgeCost(bad));
   });
+
+  describe("recency", () => {
+    const DAY = 86_400_000;
+    const NOW = Date.UTC(2026, 8, 1);
+    /**
+     * The dates live in a MAP beside the graph, never on the edge — which is
+     * the shape of the real thing: `EdgeSource` carries `t_mono` only, and the
+     * wall clock is joined from `session.started_at` at query time.
+     */
+    const days = new Map<string, number>();
+    const dated = (e: TraceEdge, ...ages: number[]): TraceEdge => ({
+      ...e,
+      sources: ages.map((age, i) => {
+        const sessionId = `${e.id}-s${i}`;
+        days.set(sessionId, NOW - age * DAY);
+        return { sessionId, tMonoStart: 0, tMonoEnd: 1000 };
+      }),
+    });
+    const recency = {
+      startedAt: (id: string) => days.get(id) ?? null,
+      now: NOW,
+      halfLifeMs: 14 * DAY,
+    };
+
+    it("is byte-identical to the tally when no options are given", () => {
+      // The default path is the one every caller in the repo takes. Pinned
+      // against the literal formula, not against itself.
+      for (const obs of [0, 1, 5, 20]) {
+        const e = edge("e", "a", "b", [], obs);
+        expect(edgeCost(e)).toBe(1 / (1 + obs * 0.5));
+      }
+    });
+
+    it("makes a stale well-trodden edge cost more than a fresh rarer one", () => {
+      const stale = dated(edge("old", "a", "b", [], 4), 180, 190, 200, 210);
+      const fresh = dated(edge("new", "a", "b", [], 1), 1);
+      expect(edgeCost(stale)).toBeLessThan(edgeCost(fresh)); // without recency
+      expect(edgeCost(stale, recency)).toBeGreaterThan(edgeCost(fresh, recency));
+    });
+
+    it("degrades to the tally on a graph lifted before provenance existed", () => {
+      const e = edge("e", "a", "b", [], 6);
+      expect(e.sources).toBeUndefined();
+      expect(edgeCost(e, recency)).toBe(edgeCost(e));
+    });
+
+    it("keeps a whole vote for a source no date could be found for", () => {
+      const e = { ...edge("e", "a", "b", [], 2), sources: [
+        { sessionId: "ghost", tMonoStart: 0, tMonoEnd: 1 },
+        { sessionId: "ghost2", tMonoStart: 0, tMonoEnd: 1 },
+      ] };
+      expect(edgeCost(e, { startedAt: () => null, now: NOW, halfLifeMs: 14 * DAY })).toBe(
+        edgeCost(e),
+      );
+    });
+
+    it("does not charge an edge for a recording that was deleted", () => {
+      // 3 observations, 1 surviving source, dated today: the two missing
+      // recordings are added back whole, so this is the un-discounted cost.
+      const e = dated(edge("e", "a", "b", [], 3), 0);
+      expect(edgeCost(e, recency)).toBeCloseTo(edgeCost(e), 10);
+    });
+
+    it("never lets a future-dated recording count as more than one walk", () => {
+      const e = dated(edge("e", "a", "b", [], 1), -30);
+      expect(edgeCost(e, recency)).toBe(edgeCost(e));
+    });
+  });
 });
 
 describe("findPath", () => {

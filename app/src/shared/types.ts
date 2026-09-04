@@ -1022,6 +1022,26 @@ export interface EdgeSourceDTO {
   throughSec: number;
 }
 
+/**
+ * How settled a node or an edge is — the library's `Stability`, as a plain
+ * shape.
+ *
+ * DECLARED rather than imported, because this file is deliberately free of
+ * library imports. It is not an unchecked copy: `toGraphDTO` assigns the
+ * library's `stabilityOf(...)` straight into this field, so a drift between the
+ * two shapes is a typecheck failure rather than a runtime surprise.
+ *
+ * `tier` is a WORD and `sessions` is a count of recordings. There is no ratio
+ * here and there must never be one — `walk-analysis.ts` refuses a conformance
+ * ratio on the ground that it would be the number `FrameResult.score`
+ * established this repo does not print.
+ */
+export interface StabilityDTO {
+  tier: "prediction" | "core" | null;
+  sessions: number;
+  reason: string;
+}
+
 export interface GraphNodeDTO {
   id: string;
   /** "TextEdit — Save", or the id when the node describes no state. */
@@ -1068,6 +1088,12 @@ export interface GraphNodeDTO {
    * one from the other — show the difference.
    */
   sources: NodeSourceDTO[];
+  /**
+   * Counted from the node's OWN sources, not from `sources` above: that list
+   * drops every recording the projection could not date, and a tier counted
+   * off it would read a deleted `started_at` as a missing recording.
+   */
+  stability: StabilityDTO;
 }
 
 /** One action on an edge, in a reader's words rather than an enum's. */
@@ -1096,6 +1122,8 @@ export interface GraphEdgeDTO {
   observations: number;
   /** See `GraphNodeDTO.sources` — same caveat about the count. */
   sources: EdgeSourceDTO[];
+  /** See `GraphNodeDTO.stability`, including why it is not counted off `sources`. */
+  stability: StabilityDTO;
   /** What lifting could not do here, e.g. a dropped wait. */
   liftWarnings?: string[];
 }

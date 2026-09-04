@@ -13,6 +13,7 @@ import {
 } from "../app/src/main/habit-doc.js";
 import { flowWalks } from "../app/src/main/flow-steps.js";
 import type { FlowsDTO, GraphEdgeDTO, GraphNodeDTO } from "@shared/types";
+import { stabilityOf } from "../src/trace/stability.js";
 
 /**
  * The file, and the boundary inside it.
@@ -35,6 +36,7 @@ const node = (id: string, label: string, extra: Partial<GraphNodeDTO> = {}): Gra
   intervene: "none",
   rank: 0,
   sources: [],
+  stability: stabilityOf([]),
   ...extra,
 });
 
@@ -58,6 +60,7 @@ const edge = (
     { sessionId: "s1", startedAt: 1_754_000_000_000, atSec: 2, throughSec: 6 },
     { sessionId: "s2", startedAt: 1_754_090_000_000, atSec: 3, throughSec: 7 },
   ],
+  stability: stabilityOf([{ sessionId: "s1" }, { sessionId: "s2" }]),
   ...extra,
 });
 
@@ -133,6 +136,7 @@ function divergent(): FlowsDTO {
     provenance: "recorded",
     observations: Math.max(1, sources.length),
     sources,
+    stability: stabilityOf(sources),
   });
   const at = (sessionId: string, day: number, atSec: number, throughSec: number) => ({
     sessionId,
@@ -230,6 +234,7 @@ function forked(): FlowsDTO {
     provenance: "recorded",
     observations: Math.max(1, sources.length),
     sources,
+    stability: stabilityOf(sources),
   });
   const at = (sessionId: string, day: number, atSec: number, throughSec: number) => ({
     sessionId,

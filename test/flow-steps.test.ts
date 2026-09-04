@@ -7,6 +7,7 @@ import {
   stepsFor,
 } from "../app/src/main/flow-steps.js";
 import type { FlowsDTO, GraphEdgeDTO, GraphNodeDTO } from "@shared/types";
+import { stabilityOf } from "../src/trace/stability.js";
 
 /**
  * The walk both formatters share.
@@ -27,6 +28,7 @@ const node = (id: string, label: string, extra: Partial<GraphNodeDTO> = {}): Gra
   intervene: "none",
   rank: 0,
   sources: [],
+  stability: stabilityOf([]),
   ...extra,
 });
 
@@ -44,6 +46,7 @@ const edge = (
   provenance: "recorded",
   observations: 1,
   sources: [],
+  stability: stabilityOf([]),
   ...extra,
 });
 

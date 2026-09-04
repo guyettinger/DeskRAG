@@ -34,14 +34,49 @@ import { alignWalk, type EdgeDeviation } from "./walk-align.js";
 /**
  * Which Way is the standard.
  *
- * All three ship, and `npm run probe:baseline` picks the default — exactly as
+ * All four ship, and `npm run probe:baseline` picks the default — exactly as
  * `route-cluster.ts` ships four cluster rules so `probe:routes` can measure the
  * choice on a real library instead of asserting it. Each is wrong in a way the
  * others are not: `majority` calls a recently adopted better path the
- * deviation, `recent` lets one fumbled session become the standard, and `none`
- * cannot say when the variation happened.
+ * deviation, `recent` lets one fumbled session become the standard, `none`
+ * cannot say when the variation happened, and `weighted` — the two ends of that
+ * spectrum joined by a half-life — demotes a Way that is still the right one
+ * whenever the gap since the last walk exceeds the half-life.
+ *
+ * `weighted` IS THE QUERY-TIME HALF OF A LITMUS, and the distinction is the
+ * whole reason it is shaped this way (docs/internals/persistence.md). The
+ * intuitive version of this rule decays the stored walk counts; that is a
+ * storage-level operation standing in for a query-time preference, and it is
+ * the documented category error. Nothing here mutates a count. The weight is
+ * computed per call, from a reference time the CALLER supplies, over rows that
+ * keep meaning exactly what they meant before.
  */
-export type BaselineRule = "majority" | "recent" | "none";
+export type BaselineRule = "majority" | "recent" | "none" | "weighted";
+
+/**
+ * The half-life `weighted` scores with, and the moment it counts back from.
+ *
+ * `now` is REQUIRED rather than defaulted, and `chooseBaseline` reads no clock
+ * of its own: a rule that calls `Date.now()` internally cannot be tested
+ * against a fixture, and every other injected seam in this layer
+ * (`WalkAnalysisHooks.antecedentAt`, `LiftInput.visualAt`) is shaped the same
+ * way for the same reason. The single wall-clock read lives at `walkAnalysis`,
+ * which is the consumer boundary.
+ */
+export interface RecencyOptions {
+  /** Reference time to measure staleness against. */
+  now: number;
+  /** Milliseconds after which a walk counts half. */
+  halfLifeMs?: number;
+}
+
+/**
+ * UNSWEPT, and it is `probe:baseline`'s job to sweep it — the same disclosure
+ * `RANKING_MIN_HABITS = 5` carries. Fourteen days is a starting point, not a
+ * finding: it is roughly the span over which a desktop workflow is still the
+ * one you are doing, and nothing has measured that.
+ */
+export const DEFAULT_HALF_LIFE_MS = 14 * 24 * 60 * 60 * 1000;
 
 export interface Baseline {
   rule: BaselineRule;
@@ -146,6 +181,14 @@ export interface WalkAnalysisInput {
    * one bad session become the standard.
    */
   rule?: BaselineRule;
+  /** Read only by `weighted`. Defaults to `DEFAULT_HALF_LIFE_MS`. */
+  halfLifeMs?: number;
+  /**
+   * Reference time for `weighted`. THE ONE WALL-CLOCK READ in this module
+   * defaults it, below; supply it from a test or a probe to keep the answer
+   * reproducible.
+   */
+  now?: number;
 }
 
 const DEFAULT_RULE: BaselineRule = "majority";
@@ -179,10 +222,76 @@ function newestAt(way: FlowWalk, startedAt: ReadonlyMap<string, number>): number
   return best;
 }
 
+/**
+ * A Way's recency-weighted evidence: one walk decays to half its vote per
+ * half-life elapsed.
+ *
+ * An UNDATED session contributes 0 and is still counted by the caller for
+ * disclosure. Dropping it from the denominator instead would report unanimity
+ * nobody observed — `antecedentsOf`'s `of` rule, one rule over. A walk dated
+ * in the FUTURE clamps to weight 1 rather than exceeding it: a clock skew is
+ * not extra evidence.
+ */
+function wayWeight(
+  way: FlowWalk,
+  startedAt: ReadonlyMap<string, number>,
+  now: number,
+  halfLifeMs: number,
+): { weight: number; dated: number } {
+  let weight = 0;
+  let dated = 0;
+  for (const id of way.sessionIds) {
+    const at = startedAt.get(id);
+    if (at === undefined) continue;
+    dated += 1;
+    weight += 0.5 ** (Math.max(0, now - at) / halfLifeMs);
+  }
+  return { weight, dated };
+}
+
+/** The `majority` answer, extracted so the weighted fallback can name it. */
+function chooseMajority(
+  ways: readonly FlowWalk[],
+  startedAt: ReadonlyMap<string, number>,
+): { wayIndex: number; reason: string } {
+  const total = ways.reduce((n, w) => n + w.sessionIds.length, 0);
+  const top = Math.max(...ways.map((w) => w.sessionIds.length));
+  const tied = ways
+    .map((w, i) => ({ way: w, i }))
+    .filter(({ way }) => way.sessionIds.length === top);
+
+  if (tied.length === 1) {
+    const only = tied[0]!;
+    return { wayIndex: only.i, reason: `The Way ${top} of the ${total} recordings took.` };
+  }
+
+  // A TIE means the tiebreak is carrying the whole decision, and a standard
+  // chosen that way is one more recording away from moving. It is said out
+  // loud for the same reason `nameObservations < count` is.
+  let winner = tied[0]!;
+  let winnerAt = newestAt(winner.way, startedAt);
+  for (const cand of tied.slice(1)) {
+    const at = newestAt(cand.way, startedAt);
+    if (at !== null && (winnerAt === null || at > winnerAt)) {
+      winner = cand;
+      winnerAt = at;
+    }
+  }
+  return {
+    wayIndex: winner.i,
+    reason:
+      `${tied.length} Ways tie at ${top} recording${top === 1 ? "" : "s"} each; ` +
+      `the standard is the one holding the newest walk.`,
+  };
+}
+
+const DAYS_MS = 24 * 60 * 60 * 1000;
+
 export function chooseBaseline(
   ways: readonly FlowWalk[],
   rule: BaselineRule,
   startedAt: ReadonlyMap<string, number>,
+  recency?: RecencyOptions,
 ): Baseline {
   if (rule === "none") {
     return { rule, wayIndex: null, reason: "No Way is the standard, so no walk is called deviant." };
@@ -216,40 +325,55 @@ export function chooseBaseline(
     };
   }
 
-  const total = ways.reduce((n, w) => n + w.sessionIds.length, 0);
-  const top = Math.max(...ways.map((w) => w.sessionIds.length));
-  const tied = ways
-    .map((w, i) => ({ way: w, i }))
-    .filter(({ way }) => way.sessionIds.length === top);
+  if (rule === "weighted") {
+    // No reference time, no rule. It DECLINES rather than reaching for the
+    // clock: a silent fallback is the failure `scripts/lib/flows.ts` documents,
+    // where a probe measuring nothing looks exactly like one that found
+    // nothing.
+    if (recency === undefined) {
+      return {
+        rule,
+        wayIndex: null,
+        reason: "The weighted rule needs a reference time and none was supplied.",
+      };
+    }
+    const halfLifeMs = recency.halfLifeMs ?? DEFAULT_HALF_LIFE_MS;
+    const scored = ways.map((way, i) => ({ i, ...wayWeight(way, startedAt, recency.now, halfLifeMs) }));
+    const totalWalks = ways.reduce((n, w) => n + w.sessionIds.length, 0);
+    const totalDated = scored.reduce((n, s) => n + s.dated, 0);
 
-  if (tied.length === 1) {
-    const only = tied[0]!;
+    // NOTHING IS DATED, so every weight is 0 and the rule has no signal at all.
+    // It falls back to `majority` and says which answer the reader is looking
+    // at — the deviation table would otherwise silently be a majority table
+    // wearing a different rule's name.
+    if (totalDated === 0) {
+      const fallback = chooseMajority(ways, startedAt);
+      return {
+        rule,
+        wayIndex: fallback.wayIndex,
+        reason: `No recording carries a date, so recency has no signal here; falling back to majority. ${fallback.reason}`,
+      };
+    }
+
+    let best = scored[0]!;
+    for (const cand of scored.slice(1)) {
+      if (cand.weight > best.weight) best = cand;
+    }
+    const days = Math.round(halfLifeMs / DAYS_MS);
+    const newest = newestAt(ways[best.i]!, startedAt);
+    const undated = totalWalks - totalDated;
     return {
       rule,
-      wayIndex: only.i,
-      reason: `The Way ${top} of the ${total} recordings took.`,
+      wayIndex: best.i,
+      reason:
+        `The Way carrying the most recent-weighted evidence at a ${days}-day half-life: ` +
+        `${ways[best.i]!.sessionIds.length} of ${totalWalks} recordings` +
+        `${newest === null ? "" : `, the newest on ${iso(newest)}`}` +
+        `${undated > 0 ? `; ${undated} undated walk${undated === 1 ? "" : "s"} counted for nothing` : ""}.`,
     };
   }
 
-  // A TIE means the tiebreak is carrying the whole decision, and a standard
-  // chosen that way is one more recording away from moving. It is said out
-  // loud for the same reason `nameObservations < count` is.
-  let winner = tied[0]!;
-  let winnerAt = newestAt(winner.way, startedAt);
-  for (const cand of tied.slice(1)) {
-    const at = newestAt(cand.way, startedAt);
-    if (at !== null && (winnerAt === null || at > winnerAt)) {
-      winner = cand;
-      winnerAt = at;
-    }
-  }
-  return {
-    rule,
-    wayIndex: winner.i,
-    reason:
-      `${tied.length} Ways tie at ${top} recording${top === 1 ? "" : "s"} each; ` +
-      `the standard is the one holding the newest walk.`,
-  };
+  return { rule, ...chooseMajority(ways, startedAt) };
 }
 
 /**
@@ -490,7 +614,13 @@ export function walkAnalysis(
   const rule = input.rule ?? DEFAULT_RULE;
   const ways = flowWalks(flows, route);
   const startedAt = sessionStartedAt(flows);
-  const baseline = chooseBaseline(ways, rule, startedAt);
+  // The single impure edge. `chooseBaseline` reads no clock, so a fixture can
+  // pin the whole rule; a caller that wants "as of now" gets it here and
+  // nowhere else.
+  const baseline = chooseBaseline(ways, rule, startedAt, {
+    now: input.now ?? Date.now(),
+    ...(input.halfLifeMs !== undefined ? { halfLifeMs: input.halfLifeMs } : {}),
+  });
 
   const baseWay = baseline.wayIndex === null ? null : (ways[baseline.wayIndex] ?? null);
   const baseEdges = baseWay === null ? null : baseWay.steps.map((s) => s.edgeId);

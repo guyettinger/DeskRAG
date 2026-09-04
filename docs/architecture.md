@@ -159,6 +159,9 @@ text/raw first then the vector, and slot into reconciliation and a Tier-1
 
 - [Internals](./internals/) — the measured detail behind every invariant, one
   file per subsystem. Written for someone about to change the code.
+  [persistence.md](./internals/persistence.md) is the cross-cutting one: what
+  may fade, where a time preference belongs, and which bucket a new table goes
+  in.
 - [Setup and requirements](./setup.md)
 - [Providers](./providers.md) — what runs where, and why every one is local
 - [Agent access (MCP)](./mcp.md) — the read-only surface an external agent reads

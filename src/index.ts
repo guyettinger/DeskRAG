@@ -474,6 +474,18 @@ export {
  * loads nothing native.
  */
 export { isLocatable } from "./trace/identity-set.js";
+
+/**
+ * How settled a node or an edge is, from the recordings it came from. Derived
+ * on every call and stored NOWHERE — see the header of `trace/stability.ts`
+ * and docs/internals/persistence.md.
+ */
+export {
+  stabilityOf,
+  CORE_SESSIONS,
+  type Stability,
+  type StabilityTier,
+} from "./trace/stability.js";
 /**
  * The site-level prefix rule — id-like path segments dropped, capped at 3.
  * Exported so anything that displays a recorded URL reads it the same way node
@@ -586,6 +598,7 @@ export {
   type AxObservation,
   type Blocker,
   type EdgeBrittleness,
+  type EdgeRecency,
   type ExecOutcome,
   type Locate,
   type LocateHit,
