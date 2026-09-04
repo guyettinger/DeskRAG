@@ -18,6 +18,7 @@ import type {
   GraphNodeDTO,
   RouteWalkDTO,
 } from "@shared/types";
+import { stabilityOf } from "../src/trace/stability.js";
 
 /**
  * The four Ways below are the REAL ones, read off the store on 2026-08-23:
@@ -283,6 +284,7 @@ const gnode = (id: string, label: string): GraphNodeDTO => ({
   intervene: "none",
   rank: 0,
   sources: [],
+  stability: stabilityOf([]),
 });
 const gedge = (id: string, from: string, to: string, sources: EdgeSourceDTO[]): GraphEdgeDTO => ({
   id,
@@ -293,6 +295,7 @@ const gedge = (id: string, from: string, to: string, sources: EdgeSourceDTO[]): 
   provenance: "recorded",
   observations: Math.max(1, sources.length),
   sources,
+  stability: stabilityOf(sources),
 });
 const rwalk = (
   sessionId: string,

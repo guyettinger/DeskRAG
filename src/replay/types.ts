@@ -354,8 +354,36 @@ export interface NodeLocation {
   ambiguous: boolean;
 }
 
+/**
+ * The QUERY-TIME half of the recency litmus, for `edgeCost`.
+ *
+ * `edgeCost` ranks by a raw lifetime tally, so a workflow walked twelve times
+ * last spring and abandoned outranks one walked four times last week, forever.
+ * The correction is a time preference in the cost function — which is evaluated
+ * per query — and NOT a decay applied to `TraceEdge.observations`, which counts
+ * what was seen and must keep meaning that. See docs/internals/persistence.md.
+ *
+ * `startedAt` is injected because the wall clock is not in `trace/` to be read:
+ * `EdgeSource` carries `sessionId` and `t_mono` only, and `session.started_at`
+ * is joined at query time. That is the litmus already holding at the schema,
+ * and it is what keeps `replay/` a leaf.
+ */
+export interface EdgeRecency {
+  /** Wall clock a recording started at, or null when it cannot be dated. */
+  startedAt: (sessionId: string) => number | null;
+  /** Reference time to measure staleness against. */
+  now: number;
+  /** Milliseconds after which a walk counts half. */
+  halfLifeMs: number;
+}
+
 export interface RunInput extends ReplayInput {
   goalNodeId: string;
+  /**
+   * Weight observations by how recently they were made. ABSENT BY DEFAULT, and
+   * absence is the pre-existing behaviour exactly.
+   */
+  recency?: EdgeRecency;
   /**
    * The review gate. `replay/` never decides to act; the caller does. Injected
    * for the same reason `Actuator` is — it keeps the decision outside this

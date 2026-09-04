@@ -7,6 +7,7 @@ import {
   GAP_Y,
   layoutGraph,
 } from "../app/src/renderer/src/screens/graph-layout.js";
+import { stabilityOf } from "../src/trace/stability.js";
 
 const n = (id: string, rank: number): GraphNodeDTO => ({
   id,
@@ -18,6 +19,7 @@ const n = (id: string, rank: number): GraphNodeDTO => ({
   predicates: [],
   locatable: true,
   sources: [],
+  stability: stabilityOf([]),
 });
 
 const e = (id: string, from: string, to: string, back = false): GraphEdgeDTO => ({
@@ -29,6 +31,7 @@ const e = (id: string, from: string, to: string, back = false): GraphEdgeDTO => 
   provenance: "recorded",
   observations: 1,
   sources: [],
+  stability: stabilityOf([]),
 });
 
 const g = (nodes: GraphNodeDTO[], edges: GraphEdgeDTO[]): GraphDTO => ({

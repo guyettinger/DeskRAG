@@ -19,7 +19,13 @@
  */
 
 import React from "react";
-import type { EdgeSourceDTO, GraphEdgeDTO, GraphNodeDTO, NodeSourceDTO } from "@shared/types";
+import type {
+  EdgeSourceDTO,
+  GraphEdgeDTO,
+  GraphNodeDTO,
+  NodeSourceDTO,
+  StabilityDTO,
+} from "@shared/types";
 import { timecode, wallClock } from "../api.js";
 
 interface Props {
@@ -46,16 +52,29 @@ interface Props {
 function Recordings({
   sources,
   observations,
+  stability,
   onOpen,
 }: {
   sources: (NodeSourceDTO | EdgeSourceDTO)[];
   observations: number;
+  stability: StabilityDTO;
   onOpen: (sessionId: string, atSec: number) => void;
 }): React.JSX.Element {
   const missing = observations - sources.length;
   return (
     <section className="drawer__recs">
       <h3 className="eyebrow">Recordings</h3>
+      {/* HOW SETTLED THIS IS, as a word and a count of recordings — never a
+          ratio. `walk-analysis.ts` refuses a conformance ratio on the ground
+          that it would be the number `FrameResult.score` established this repo
+          does not print, and a stability percentage would be the same number
+          under a new name. The tier is WITHHELD rather than guessed on a graph
+          lifted before provenance existed, which is why `tier` can be null and
+          why the reason is always shown. */}
+      <p className={`drawer__tier drawer__tier--${stability.tier ?? "unknown"}`}>
+        <span className="drawer__tier-word">{stability.tier ?? "not known"}</span>
+        <span className="muted">{stability.reason}</span>
+      </p>
       {sources.length === 0 ? (
         <p className="muted">
           {observations > 0
@@ -158,6 +177,7 @@ export function InspectDrawer({
           <Recordings
             sources={node.sources}
             observations={node.observations}
+            stability={node.stability}
             onOpen={onOpenRecording}
           />
         </div>
@@ -228,6 +248,7 @@ export function InspectDrawer({
           <Recordings
             sources={edge.sources}
             observations={edge.observations}
+            stability={edge.stability}
             onOpen={onOpenRecording}
           />
         </div>

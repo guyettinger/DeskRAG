@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderFlow, renderFlowList } from "../app/src/main/mcp/flow-text.js";
 import type { FlowsDTO, GraphEdgeDTO, GraphNodeDTO } from "@shared/types";
+import { stabilityOf } from "../src/trace/stability.js";
 
 const node = (id: string, label: string, extra: Partial<GraphNodeDTO> = {}): GraphNodeDTO => ({
   id,
@@ -12,6 +13,7 @@ const node = (id: string, label: string, extra: Partial<GraphNodeDTO> = {}): Gra
   intervene: "none",
   rank: 0,
   sources: [],
+  stability: stabilityOf([]),
   ...extra,
 });
 
@@ -29,6 +31,7 @@ const edge = (
   provenance: "recorded",
   observations: 1,
   sources: [],
+  stability: stabilityOf([]),
   ...extra,
 });
 

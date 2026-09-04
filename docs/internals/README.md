@@ -17,6 +17,7 @@ before you change anything: most were paid for twice, and several were invisible
 | [models.md](./models.md) | local providers, the barrel rule, ONNX tiling, patch-highlight geometry |
 | [app-main.md](./app-main.md) | the process boundary, the indexing pipeline table, re-indexing, whisper, packaging, MCP |
 | [app-ui.md](./app-ui.md) | the Library player, the track rail, Flows, and the one global stylesheet |
+| [persistence.md](./persistence.md) | what may fade and where a time preference belongs; the `schema.ts` buckets as persistence layers; the stability tier |
 
 ## How to read a claim here
 

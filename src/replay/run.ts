@@ -67,7 +67,7 @@ export async function executeRun(input: RunInput): Promise<RunOutcome> {
         : locateNode(observed, input.graph.nodes).nodeId;
     if (currentId === undefined) return stop("not-located");
 
-    const path = findPath(input.graph, currentId, input.goalNodeId);
+    const path = findPath(input.graph, currentId, input.goalNodeId, input.recency);
     if (path === null) return stop("no-path");
     if (path.length === 0) {
       return { goalNodeId: input.goalNodeId, reached: true, segments };
@@ -84,6 +84,7 @@ export async function executeRun(input: RunInput): Promise<RunOutcome> {
       ...(input.slotBindings !== undefined ? { slotBindings: input.slotBindings } : {}),
       ...(origin !== undefined ? { windowOrigin: origin } : {}),
       ...(input.allowLaunch !== undefined ? { allowLaunch: input.allowLaunch } : {}),
+      ...(input.recency !== undefined ? { recency: input.recency } : {}),
     });
 
     // Drift is not a mechanism: the turn above re-located regardless of where the

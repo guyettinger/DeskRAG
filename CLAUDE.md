@@ -155,19 +155,39 @@ npm run probe:routes          # which mining rule turns many recordings into the
                               # computed. PRINTS THE CORPUS FIRST and says so when it is
                               # too small to be a measurement -- the numbers quoted in
                               # graph-view.ts came from a 9-recording store that is gone.
-npm run probe:baseline        # which rule a habit's walks should be measured against.
-                              # walk-analysis.ts ships three -- majority, recent, none --
-                              # and each is wrong differently: majority calls a recently
-                              # adopted better path the deviation, recent lets one fumbled
-                              # session become the standard, none cannot say WHEN the
-                              # variation happened. Read-only and HEADLESS for probe:routes'
+npm run probe:baseline        # which rule a habit's walks should be measured against,
+                              # and whether weighting evidence by AGE moves anything.
+                              # walk-analysis.ts ships four -- majority, recent, none,
+                              # weighted -- and each is wrong differently: majority calls a
+                              # recently adopted better path the deviation, recent lets one
+                              # fumbled session become the standard, none cannot say WHEN
+                              # the variation happened, and weighted demotes a Way that is
+                              # still right once the gap exceeds the half-life.
+                              # Read-only and HEADLESS for probe:routes'
                               # reason: the app takes no single-instance lock and WRITES on
                               # startup, so launching it would make a second owner of SQLite.
                               # PRINTS THE CORPUS FIRST and exits 1 when no route was walked
-                              # more than once -- there all three rules coincide and the
+                              # more than once -- there all four rules coincide and the
                               # table is not a measurement. Also reports how many baselines
                               # were chosen by TIEBREAK, which is the fragility that matters:
                               # a standard picked that way is one recording from moving.
+                              # IT ALSO SWEEPS THE HALF-LIFE, over BOTH ranking seams
+                              # (`chooseBaseline` and `edgeCost` via findPath), and the
+                              # columns that matter count DISAGREEMENT with what ships:
+                              # a sweep where nothing moves is a result. The verdict is
+                              # WITHHELD when the library's dated span is shorter than the
+                              # shortest half-life -- every weight is then within a factor
+                              # of two of every other. THE PATH COLUMN CARRIES A CONTROL
+                              # AND IT WAS PAID FOR: the first run printed "1 of 1 paths
+                              # changed" at every half-life INCLUDING 90d on an 11.5-day
+                              # library, because both candidate edges had observations: 1,
+                              # cost exactly the same, and Dijkstra was choosing by
+                              # iteration order -- recency broke a TIE, which is a real
+                              # improvement and not the effect under test. Changed paths
+                              # are now split into tiebreaks and real overrides.
+                              # Measured 2026-09-03: 0 baselines moved and 0 real overrides
+                              # at every half-life, so the shipped default did not change.
+                              # See docs/internals/persistence.md.
 npm run probe:fork            # where a habit's ways actually fork, on the library that
                               # exists. Read-only and HEADLESS for probe:baseline's reason:
                               # the app takes no single-instance lock and WRITES on startup.
@@ -263,7 +283,7 @@ npm run app:build                  # build library, then electron-vite build -> 
 npm --prefix app run typecheck     # the app's gate (renderer + node tsconfigs)
 ```
 
-- **Tests are the source of truth for behavior.** Prefer running the relevant test file over reasoning about correctness; it is deterministic, and the FULL suite is **~75s** (170 files, 2328 tests) — measured, not the ~6s this line used to claim.
+- **Tests are the source of truth for behavior.** Prefer running the relevant test file over reasoning about correctness; it is deterministic, and the FULL suite is **~75s** (171 files, 2366 tests) — measured, not the ~6s this line used to claim.
 - **Live/native tests skip cleanly** without their dependency: the Ollama smoke needs `OLLAMA_SMOKE=1`, the real-weights ONNX smoke needs `ONNX_SMOKE=1` + `DESKRAG_MODELS_DIR`; the ffmpeg and Swift-sidecar tests skip when `ffmpeg`/`swiftc` are absent. CI-safe by default — and there is no credential any test could want, since every provider is local.
 - **`npm test` structurally cannot catch the ONNX allocator crashes.** Both need Chromium's allocator (bare node's malloc satisfies the same request) AND a second run (ORT's mem-pattern block is only allocated from run #2). Vitest gives neither, so `SESSION_OPTIONS` has assertions that *pin* the flags but can never fail on the real symptom — `npm run smoke:onnx-electron` is what actually reproduces it. Any future change to ORT session options, tile counts, or model exports wants that smoke, not the suite.
 - **Prose docs live in `docs/`, not the README.** `README.md` is a landing page
@@ -343,6 +363,7 @@ before you change anything — most of them were paid for twice, and several wer
 | [models.md](docs/internals/models.md) | local providers, ONNX/tiling, patch highlights | `src/embed/`, any adapter, any highlight box |
 | [app-main.md](docs/internals/app-main.md) | the process boundary, the indexing pipeline table, whisper, MCP | `app/src/main/` |
 | [app-ui.md](docs/internals/app-ui.md) | the Library player, the track rail, Flows, Habits, `styles.css` | `app/src/renderer/`, any pixel |
+| [persistence.md](docs/internals/persistence.md) | what may fade and where a time preference belongs; the `schema.ts` buckets; the stability tier | adding a TABLE or a BUCKET, any recency/decay/freshness term, anything that ranks by a lifetime count |
 
 ### Capture and segmentation → [capture.md](docs/internals/capture.md)
 - **A SAMPLE IS TIMED BY WHEN IT WAS CAPTURED, NEVER BY WHEN IT ARRIVED.** Arrival stamping measured **3.050s late** on a real device. `ctx.deviceClock` is the only conversion from device pts to `t_mono`; a wall-clock read in either ffmpeg producer needs an inline `arrival-ok:` note or `test/capture.no-arrival-stamp.test.ts` fails.
@@ -380,6 +401,8 @@ before you change anything — most of them were paid for twice, and several wer
 
 ### Trace IR and the executor → [trace-and-replay.md](docs/internals/trace-and-replay.md)
 - **`trace/` and `replay/` are LEAVES.** `test/replay.barrel.test.ts` asserts no file in `replay/` except `sidecar.ts` mentions `spawn` — **that guard is the whole safety story**: the suite is structurally incapable of posting a real event. Never widen it.
+- **RECENCY IS A QUERY-TIME PROPERTY; DECAY IS A STORAGE-LEVEL ONE, AND CONFUSING THEM IS A CATEGORY ERROR.** `edgeCost` and `chooseBaseline`'s majority rule both rank by a RAW LIFETIME TALLY, so a workflow walked twelve times last spring and abandoned outranks one walked four times last week, forever. The correction is a time term in the function evaluated per query — **never a decay applied to `observations`**, which counts what was seen and must keep meaning that. Both seams now take an OPTIONAL, INJECTED recency (`EdgeRecency`, `RecencyOptions`); absent, each returns exactly the number it returned before, and neither reads a clock of its own — the single wall-clock read is at `walkAnalysis`. The wall clock is not in `trace/` to be read anyway: `EdgeSource` carries `t_mono` only and `session.started_at` is joined at query time. **Measured 2026-09-03 on the real library: 0 baselines moved and 0 real path overrides at 7/14/30/90-day half-lives, so the term ships OFF and `DEFAULT_RULE` stays `majority`.** `npm run probe:baseline` is what would change that. See [persistence.md](docs/internals/persistence.md).
+- **A STABILITY TIER IS A WORD AND A COUNT OF RECORDINGS, AND IT IS DERIVED, NOT STORED.** `stabilityOf` (`src/trace/stability.ts`) counts `COUNT(DISTINCT session_id)` over a node's or edge's own sources — never `observations`, which one looping recording inflates by itself, and never the DTO's `sources`, which drops every recording the projection could not date. It mints no `anchor` tier because nothing counts consolidation cycles, and it withholds rather than guesses on a graph lifted before provenance existed. **No table, no bucket**: a persisted Knowledge layer would be the first state that is neither rebuildable nor authored, and that call is left open deliberately rather than settled by the first table. A tier may be printed where `FrameResult.score` may not; a stability PERCENTAGE is that number under a new name.
 - **A node's identity is WHAT THE TASK DOES NEXT, not what is on screen.** `reach` is **denormalized into every stored predicate**, so editing `REACH_BY_KIND` changes nothing about a graph on disk — it needs a rebuild.
 - **THE RECORDER IS NOT PART OF THE WORK IT RECORDS, and it is filtered at LIFT, not in the projection.** A session is started and stopped from the app, so every recording was bracketed by it: measured on the real store, all 4 routes opened `Electron — localhost →` and the one kept habit's step 1 was `n0 — no state → Electron — localhost` with **no actions on the edge**. `excludeFocusedApps` drops every event that occurred while an excluded app was frontmost — one rule covering the leading stretch, the trailing stretch and a mid-recording visit. At lift because `rebuildGraph` re-lifts from events and AX walks already on disk, so it **repairs recordings already taken**; a filter in `graph-view.ts` would relabel the routes and leave the cards and the habit steps behind. 28 nodes/61 edges → 22/49, 4 routes → the same 4 starting at real work.
 - **A ZERO-PREDICATE NODE IS A UNIVERSAL HUB, and one used to sit at the head of every recording.** `computeBoundaries` pins `session_start` at t_mono 0, where there is no focus, no AX and no keyframe — so the node lifted with no predicates, and a node with no predicates is *vacuously true of every desktop*, so `matchNode` merged every session's first node into one. The graph looked like a tree because it had a **fake root**. `liftTrace` takes `startTMono` (the first surviving event) to stop minting it; `rankNodes` then had to walk from **every** in-degree-0 root, because removing the fake one left 15 of 22 real nodes flat at rank 0. Segmentation keeps `startTMono` at 0 — the video starts there.

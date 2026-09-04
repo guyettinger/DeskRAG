@@ -14,6 +14,7 @@ import type {
   GraphNodeDTO,
   RouteWalkDTO,
 } from "@shared/types";
+import { stabilityOf } from "../src/trace/stability.js";
 
 const DAY = 86_400_000;
 /** 2026-03-02T09:00:00Z — a fixed Monday, so day/hour assertions are stable. */
@@ -29,6 +30,7 @@ const node = (id: string, label: string): GraphNodeDTO => ({
   intervene: "none",
   rank: 0,
   sources: [],
+  stability: stabilityOf([]),
 });
 
 const source = (
@@ -52,6 +54,7 @@ const edge = (
   provenance: "recorded",
   observations: Math.max(1, sources.length),
   sources,
+  stability: stabilityOf(sources),
 });
 
 const routeWalk = (sessionId: string, edgeIds: string[]): RouteWalkDTO => ({
@@ -194,6 +197,91 @@ describe("chooseBaseline", () => {
     const out = chooseBaseline([], "majority", startedAt);
     expect(out.wayIndex).toBeNull();
     expect(out.reason).toBe("This route has no recorded walks.");
+  });
+
+  describe("weighted", () => {
+    // s1/s2 walked Way 0 long ago; s3 walked Way 1 last week. `majority` calls
+    // Way 1 the deviation forever; that is the defect this rule exists to
+    // measure against.
+    const stale = new Map([
+      ["s1", T0],
+      ["s2", T0 + DAY],
+      ["s3", T0 + 60 * DAY],
+    ]);
+    const twoWays = () =>
+      flowWalks(
+        fixture(2, [
+          { sessionId: "s1", edgeIds: ["e0", "e1"], startedAt: T0 },
+          { sessionId: "s2", edgeIds: ["e0", "e1"], startedAt: T0 + DAY },
+          { sessionId: "s3", edgeIds: ["e0"], startedAt: T0 + 60 * DAY },
+        ]).flows,
+        fixture(2, [
+          { sessionId: "s1", edgeIds: ["e0", "e1"], startedAt: T0 },
+          { sessionId: "s2", edgeIds: ["e0", "e1"], startedAt: T0 + DAY },
+          { sessionId: "s3", edgeIds: ["e0"], startedAt: T0 + 60 * DAY },
+        ]).route,
+      );
+
+    it("prefers one recent walk over two that are several half-lives old", () => {
+      const now = T0 + 61 * DAY;
+      expect(chooseBaseline(twoWays(), "majority", stale).wayIndex).toBe(0);
+      const out = chooseBaseline(twoWays(), "weighted", stale, { now, halfLifeMs: 14 * DAY });
+      expect(out.wayIndex).toBe(1);
+      expect(out.reason).toBe(
+        "The Way carrying the most recent-weighted evidence at a 14-day half-life: " +
+          "1 of 3 recordings, the newest on 2026-05-01.",
+      );
+    });
+
+    it("agrees with majority once the half-life is long enough to forget nothing", () => {
+      const out = chooseBaseline(twoWays(), "weighted", stale, {
+        now: T0 + 61 * DAY,
+        halfLifeMs: 10_000 * DAY,
+      });
+      expect(out.wayIndex).toBe(0);
+    });
+
+    it("DECLINES rather than reading a clock of its own", () => {
+      const out = chooseBaseline(twoWays(), "weighted", stale);
+      expect(out.wayIndex).toBeNull();
+      expect(out.reason).toBe("The weighted rule needs a reference time and none was supplied.");
+    });
+
+    it("falls back to majority when nothing is dated, and SAYS which answer it is", () => {
+      const out = chooseBaseline(twoWays(), "weighted", new Map(), { now: T0 });
+      expect(out.wayIndex).toBe(0);
+      expect(out.reason).toBe(
+        "No recording carries a date, so recency has no signal here; falling back to majority. " +
+          "The Way 2 of the 3 recordings took.",
+      );
+    });
+
+    it("counts an undated walk for nothing and discloses that it did", () => {
+      const partial = new Map([["s3", T0 + 60 * DAY]]);
+      const out = chooseBaseline(twoWays(), "weighted", partial, {
+        now: T0 + 61 * DAY,
+        halfLifeMs: 14 * DAY,
+      });
+      expect(out.wayIndex).toBe(1);
+      expect(out.reason).toContain("2 undated walks counted for nothing");
+    });
+
+    it("reads `now` from the input rather than the wall clock", () => {
+      const f = fixture(2, [
+        { sessionId: "s1", edgeIds: ["e0", "e1"], startedAt: T0 },
+        { sessionId: "s2", edgeIds: ["e0", "e1"], startedAt: T0 + DAY },
+        { sessionId: "s3", edgeIds: ["e0"], startedAt: T0 + 60 * DAY },
+      ]);
+      const out = walkAnalysis({
+        flows: f.flows,
+        route: f.route,
+        rule: "weighted",
+        now: T0 + 61 * DAY,
+        halfLifeMs: 14 * DAY,
+      });
+      expect(out.baseline.rule).toBe("weighted");
+      expect(out.baseline.reason).toContain("14-day half-life");
+    });
   });
 });
 
