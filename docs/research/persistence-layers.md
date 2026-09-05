@@ -25,7 +25,8 @@
 > rather than a typed store (§6). **The sweep's answer was null** — 0 baselines
 > moved and 0 real path overrides at 7/14/30/90-day half-lives on a
 > 12-recording library — so the term ships OFF and `DEFAULT_RULE` stays
-> `majority`. §6.2 is recorded as still open, deliberately.
+> `majority`. §6.2 was recorded as still open, deliberately, and
+> **settled 2026-09-04 — see §6.2.**
 
 ---
 
@@ -387,7 +388,7 @@ For DeskRAG that trade reads the right way round. Typed **semantics** on the sto
 that exists — a stability tier and a provenance flag — is reachable; typed
 **stores** buys the pilot's oracle problem.
 
-### 6.2 The unresolved tension, left open
+### 6.2 The tension, and how it was settled
 
 The paper's Knowledge is append-only and *not recomputed*. DeskRAG's re-index
 invariant is that everything derived is discardable and rebuilt with the providers
@@ -398,9 +399,17 @@ the store that is neither rebuildable nor authored — a new answer to a questio
 There is a cheaper resolution — Knowledge that is derived and rebuildable, but
 carries supersession chains *within* a rebuild, so you keep the invariant and gain
 the provenance — and it is not obviously the right one, because it gives up the
-property the paper cares most about (facts surviving a rebuild). **This should be
-decided deliberately if Knowledge is ever built, not settled as a side effect of
-the first table.**
+property the paper cares most about (facts surviving a rebuild).
+
+**Decided 2026-09-04, deliberately and against real data rather than against
+the paper.** Knowledge is `DERIVED_LIBRARY_TABLES` when it has a table, and
+supersession is computed rather than stored, with exclusivity declared per fact
+type. The measurement that decided it — `display_change` carrying eight
+distinct payloads for two real configurations, because macOS re-mints the
+display `id` every session — also reordered the candidates: entity identity is
+a **prerequisite** of the other two, not the second of three. See
+[`docs/internals/persistence.md`](../internals/persistence.md) and
+[the spec](../superpowers/specs/2026-09-04-knowledge-layer-seam-design.md).
 
 ### 6.3 If it is built, the tiers have their inputs already
 
