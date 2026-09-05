@@ -143,6 +143,26 @@ export function currentValue<V>(
   const undated = undatedSources(fact, startedAt);
   const total = fact.values.length;
 
+  if (total === 0) {
+    return {
+      value: null,
+      reason: `Nothing has been observed for ${fact.kind}.`,
+      alternatives: 0,
+      undated,
+    };
+  }
+
+  if (exclusivity === "coexisting") {
+    return {
+      value: null,
+      reason:
+        `${fact.kind} holds ${total} value${total === 1 ? "" : "s"} that can all be true at once, ` +
+        `so there is no current one — the answer is the set.`,
+      alternatives: total,
+      undated,
+    };
+  }
+
   let best: { value: V; when: number } | null = null;
   let tied = false;
   for (const v of fact.values) {
@@ -156,9 +176,26 @@ export function currentValue<V>(
     }
   }
 
-  if (best === null || tied) {
-    // Task 2 fills in the refusals. Until then, an unranked fact is not current.
-    return { value: null, reason: `Nothing is current for ${fact.kind}.`, alternatives: total, undated };
+  if (best === null) {
+    return {
+      value: null,
+      reason:
+        `No recording that observed ${fact.kind} can be dated, so its values cannot be ordered ` +
+        `and none of them is later than the others.`,
+      alternatives: total,
+      undated,
+    };
+  }
+
+  if (tied) {
+    return {
+      value: null,
+      reason:
+        `Two values for ${fact.kind} were last observed at the same moment, so neither is later. ` +
+        `Declining rather than picking one.`,
+      alternatives: total,
+      undated,
+    };
   }
 
   return {
