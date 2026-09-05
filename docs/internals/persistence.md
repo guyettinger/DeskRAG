@@ -5,9 +5,17 @@ putting a recency, decay, or freshness term anywhere.
 
 This file is the durable half of `docs/research/persistence-layers.md`, which
 audits DeskRAG against Roynard's four-layer persistence decomposition
-(arXiv:2604.11364, an April 2026 preprint). The research file is the argument
-and the citations; this one is the rules that came out of it, plus the
-measurement that decided the only open question.
+(arXiv:2604.11364, submitted 2026-04-13, **v2 revised 2026-06-12**). The
+research file is the argument and the citations; this one is the rules that
+came out of it, plus the measurement that decided the only open question.
+
+The preprint was read here at v1 and **re-verified against v2 on 2026-09-04**,
+after the code below had shipped on it: every figure this repo built on is
+unchanged, including the two that are load-bearing — the keyword-router
+reversal (Δ = −0.125), which is the whole argument for deriving a tier rather
+than storing one, and the *core* threshold of three independent sessions, which
+is `CORE_SESSIONS`. A preprint can be revised out from under a citation; this
+one was not.
 
 ---
 
@@ -116,6 +124,10 @@ What exists instead is `src/trace/stability.ts`: `stabilityOf(sources)`, a pure
 function over the sources a graph already carries, returning a tier
 (`prediction` | `core`), a count of distinct recordings, and a reason. It is
 surfaced on `GraphNodeDTO` / `GraphEdgeDTO` and drawn in the Inspect drawer.
+Beside it sits `src/knowledge/facts.ts`: `currentValue(fact, exclusivity,
+startedAt)`, which answers *which of these values is true now* from the same
+kind of evidence and likewise stores nothing. See **The decision, made
+2026-09-04** below for why it computes rather than persists.
 
 Three things about it are deliberate:
 
@@ -136,23 +148,63 @@ Three things about it are deliberate:
   graph lifted before provenance existed and the tier is *withheld*; the second
   is a graph whose recordings were all deleted and counts zero.
 
-### The decision left open, on purpose
+### The decision, made 2026-09-04
 
 Persisted Knowledge in the paper's sense — append-only, superseded, **not
 recomputed** — would be the first state in this store that is neither
-rebuildable nor authored: a new answer to the question `schema.ts` forces every
-table to answer. The paper itself concedes the cheaper design (collapse
-Knowledge and Wisdom, carry a stability tier and a provenance flag) and notes
-what it costs: one update mechanism has to handle both supersession and
-evidence-gated revision.
+rebuildable nor authored. **It is not built, and when Knowledge does get a
+table that table is `DERIVED_LIBRARY_TABLES`.**
 
-**`stabilityOf` takes the cheap side and does not settle the expensive one.** It
-derives, so a re-index rebuilds the graph and recomputes the tier, and the
-re-index invariant is untouched. The candidates that would need real
-supersession chains — an application's AX shape per version, cross-recording
-entity identity, environment facts promoted library-wide — are **not built**,
-because that call should be made deliberately rather than as a side effect of
-the first table.
+**The paper's reason for append-only does not transfer.** Roynard's Knowledge
+is append-only because his system does not retain the evidence — an agent
+learns a fact from a conversation and the conversation is gone.
+`CAPTURED_TABLES` is exactly that retained evidence, and its defining property
+is that a re-index must never touch it. So re-derivability is free here, and
+taking the expensive side would have bought a property this store does not
+need at the price of the re-index invariant.
+
+A fact outliving the deletion of its evidence needs no new rule either:
+`removeSession` does not rebuild the trace graph today, `observations` survives
+while `sources` thins, and the discrepancy is disclosed rather than repaired.
+
+**Supersession is COMPUTED, and exclusivity is declared per fact TYPE.** The
+paper updates Knowledge by supersession — newer claim wins, older marked
+superseded — and §7's decline of contradiction *resolution* collides with it.
+On the real library the paper's rule loses. Measured 2026-09-04 over 12
+recordings: `keymap_change` is 12 occurrences and **one** distinct payload, so
+nothing supersedes anything; `display_change` is 12 occurrences and **eight**
+distinct payloads but only **two** configurations. Seven of the eight are the
+same 1920×1080@2 primary with a **different `id` every session** (180, 185,
+206, 219, 247, 296, 297), because macOS re-mints the identifier — `id` is a
+decoy and geometry discriminates. Keying supersession on it would have minted
+eight facts where there are two, and the two real configurations do not
+supersede one another: a laptop is docked some days and not others, so "newer
+wins" would delete a configuration that is still true.
+
+So every distinct value is kept with its sources, each fact TYPE declares
+whether its values can coexist, and "current" is answered per query and stored
+nowhere — the storage/query litmus applied to itself, since a stored
+`superseded_by` edge is a storage-level commitment to a ranking.
+
+`src/knowledge/facts.ts` is that contract: `currentValue()` returns the latest
+value of an `exclusive` fact and **refuses three ways** — a `coexisting` fact
+has no current value, a tie declines on `bindHabit`'s precedent, and a fact no
+recording can date says so. Counts only; a percentage would be
+`FrameResult.score` renamed.
+
+**It does not decide whether two values are the same value.** Fed those eight
+display payloads it reports eight. That is the seam, not a defect:
+cross-recording entity identity is its own cycle, and it is a **prerequisite of
+every Knowledge candidate** rather than one of them — "is this the same
+display", "is this the same document", "is this the same app version" are one
+question. Leaving it out makes the display case legible *as* an identity
+problem instead of silently mis-keying it, which is what a stored edge would
+have done while looking correct.
+
+What would reopen this: a fact type whose evidence is genuinely not retained; a
+rebuild that cannot reproduce a fact in session order; or a measured need for a
+stored edge. See
+`docs/superpowers/specs/2026-09-04-knowledge-layer-seam-design.md` §8.
 
 ## The measurement: does a recency term move anything?
 

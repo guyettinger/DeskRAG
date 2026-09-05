@@ -1,10 +1,21 @@
 # Persistence Semantics as an Architectural Seam
 ### Roynard's four-layer decomposition (arXiv:2604.11364), read against DeskRAG
 
-> Research document. Not a behavior spec. The paper is an **April 2026 preprint**
-> and should be re-verified before anything here is built on. This is the
-> argument and the citations; it is an outside check on a decision this repo
-> already made.
+> Research document. Not a behavior spec. This is the argument and the
+> citations; it is an outside check on a decision this repo already made.
+>
+> **Source re-verified 2026-09-04, and the caveat this line used to carry is
+> discharged.** The preprint was cited here from its v1; arXiv now serves a
+> **v2, revised 2026-06-12**, and code has shipped on its numbers since. Every
+> figure this repo built on is unchanged in v2 — the pilot table (0.500/0.394,
+> 0.425/0.275, 0.463/0.334, Δ +0.128), the CI and McNemar p ([0.04, 0.22],
+> p = 0.035), the keyword-router reversal (Δ = −0.125), the three tier
+> thresholds (three independent sessions, ten consolidation cycles), and the
+> storage/query litmus verbatim. So `CORE_SESSIONS = 3` still cites what it
+> says it cites, and §6.1's argument against a typed store still rests on a
+> number the author still publishes. A revision that had moved the reversal is
+> the one that would have mattered: it is the whole reason `stabilityOf`
+> derives instead of storing.
 >
 > **Acted on 2026-09-03.** The durable half now lives in
 > [`docs/internals/persistence.md`](../internals/persistence.md), which carries
@@ -14,7 +25,8 @@
 > rather than a typed store (§6). **The sweep's answer was null** — 0 baselines
 > moved and 0 real path overrides at 7/14/30/90-day half-lives on a
 > 12-recording library — so the term ships OFF and `DEFAULT_RULE` stays
-> `majority`. §6.2 is recorded as still open, deliberately.
+> `majority`. §6.2 was recorded as still open, deliberately, and
+> **settled 2026-09-04 — see §6.2.**
 
 ---
 
@@ -376,7 +388,7 @@ For DeskRAG that trade reads the right way round. Typed **semantics** on the sto
 that exists — a stability tier and a provenance flag — is reachable; typed
 **stores** buys the pilot's oracle problem.
 
-### 6.2 The unresolved tension, left open
+### 6.2 The tension, and how it was settled
 
 The paper's Knowledge is append-only and *not recomputed*. DeskRAG's re-index
 invariant is that everything derived is discardable and rebuilt with the providers
@@ -387,9 +399,17 @@ the store that is neither rebuildable nor authored — a new answer to a questio
 There is a cheaper resolution — Knowledge that is derived and rebuildable, but
 carries supersession chains *within* a rebuild, so you keep the invariant and gain
 the provenance — and it is not obviously the right one, because it gives up the
-property the paper cares most about (facts surviving a rebuild). **This should be
-decided deliberately if Knowledge is ever built, not settled as a side effect of
-the first table.**
+property the paper cares most about (facts surviving a rebuild).
+
+**Decided 2026-09-04, deliberately and against real data rather than against
+the paper.** Knowledge is `DERIVED_LIBRARY_TABLES` when it has a table, and
+supersession is computed rather than stored, with exclusivity declared per fact
+type. The measurement that decided it — `display_change` carrying eight
+distinct payloads for two real configurations, because macOS re-mints the
+display `id` every session — also reordered the candidates: entity identity is
+a **prerequisite** of the other two, not the second of three. See
+[`docs/internals/persistence.md`](../internals/persistence.md) and
+[the spec](../superpowers/specs/2026-09-04-knowledge-layer-seam-design.md).
 
 ### 6.3 If it is built, the tiers have their inputs already
 
@@ -452,8 +472,11 @@ The one actionable item is #5, and its action is a measurement:
 ## Sources
 
 - **Michaël Roynard, *The Missing Knowledge Layer in Cognitive Architectures for
-  AI Agents*, arXiv:2604.11364.** *2026 preprint — re-verify before building.*
-  All quotations in §1 are from the PDF text. Companion implementations:
+  AI Agents*, arXiv:2604.11364.** Submitted 2026-04-13; **v2 revised
+  2026-06-12**. All quotations in §1 are from the PDF text and were checked
+  against v2 on 2026-09-04 (see the header) — quote v2 for anything added from
+  here on, since the numbers agree but the section numbering may not.
+  Companion implementations:
   `github.com/dutiona/knowledge-base` (Python), `github.com/dutiona/memory-engine`
   (Rust); pilot code at `github.com/dutiona/papers-material`.
 - Cited *within* the paper and not independently checked here: CoALA, JEPA,
