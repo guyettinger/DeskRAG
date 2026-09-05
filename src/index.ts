@@ -486,6 +486,23 @@ export {
   type Stability,
   type StabilityTier,
 } from "./trace/stability.js";
+
+/**
+ * The Knowledge layer's semantics: which of a fact's observed values is
+ * current. Computed on every call and stored NOWHERE — see the header of
+ * `knowledge/facts.ts` and docs/internals/persistence.md. Pure, a leaf, loads
+ * nothing native.
+ */
+export {
+  currentValue,
+  type Current,
+  type Exclusivity,
+  type KnowledgeFact,
+  type KnowledgeSource,
+  type ObservedValue,
+  type SessionStartedAt,
+} from "./knowledge/facts.js";
+
 /**
  * The site-level prefix rule — id-like path segments dropped, capped at 3.
  * Exported so anything that displays a recorded URL reads it the same way node

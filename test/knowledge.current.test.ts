@@ -121,3 +121,10 @@ describe("currentValue — what it refuses", () => {
     }
   });
 });
+
+describe("the barrel", () => {
+  it("exports the Knowledge contract", async () => {
+    const barrel = await import("../src/index.js");
+    expect(typeof barrel.currentValue).toBe("function");
+  });
+});
