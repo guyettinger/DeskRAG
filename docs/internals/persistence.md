@@ -5,9 +5,17 @@ putting a recency, decay, or freshness term anywhere.
 
 This file is the durable half of `docs/research/persistence-layers.md`, which
 audits DeskRAG against Roynard's four-layer persistence decomposition
-(arXiv:2604.11364, an April 2026 preprint). The research file is the argument
-and the citations; this one is the rules that came out of it, plus the
-measurement that decided the only open question.
+(arXiv:2604.11364, submitted 2026-04-13, **v2 revised 2026-06-12**). The
+research file is the argument and the citations; this one is the rules that
+came out of it, plus the measurement that decided the only open question.
+
+The preprint was read here at v1 and **re-verified against v2 on 2026-09-04**,
+after the code below had shipped on it: every figure this repo built on is
+unchanged, including the two that are load-bearing — the keyword-router
+reversal (Δ = −0.125), which is the whole argument for deriving a tier rather
+than storing one, and the *core* threshold of three independent sessions, which
+is `CORE_SESSIONS`. A preprint can be revised out from under a citation; this
+one was not.
 
 ---
 

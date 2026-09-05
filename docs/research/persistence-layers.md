@@ -1,10 +1,21 @@
 # Persistence Semantics as an Architectural Seam
 ### Roynard's four-layer decomposition (arXiv:2604.11364), read against DeskRAG
 
-> Research document. Not a behavior spec. The paper is an **April 2026 preprint**
-> and should be re-verified before anything here is built on. This is the
-> argument and the citations; it is an outside check on a decision this repo
-> already made.
+> Research document. Not a behavior spec. This is the argument and the
+> citations; it is an outside check on a decision this repo already made.
+>
+> **Source re-verified 2026-09-04, and the caveat this line used to carry is
+> discharged.** The preprint was cited here from its v1; arXiv now serves a
+> **v2, revised 2026-06-12**, and code has shipped on its numbers since. Every
+> figure this repo built on is unchanged in v2 — the pilot table (0.500/0.394,
+> 0.425/0.275, 0.463/0.334, Δ +0.128), the CI and McNemar p ([0.04, 0.22],
+> p = 0.035), the keyword-router reversal (Δ = −0.125), the three tier
+> thresholds (three independent sessions, ten consolidation cycles), and the
+> storage/query litmus verbatim. So `CORE_SESSIONS = 3` still cites what it
+> says it cites, and §6.1's argument against a typed store still rests on a
+> number the author still publishes. A revision that had moved the reversal is
+> the one that would have mattered: it is the whole reason `stabilityOf`
+> derives instead of storing.
 >
 > **Acted on 2026-09-03.** The durable half now lives in
 > [`docs/internals/persistence.md`](../internals/persistence.md), which carries
@@ -452,8 +463,11 @@ The one actionable item is #5, and its action is a measurement:
 ## Sources
 
 - **Michaël Roynard, *The Missing Knowledge Layer in Cognitive Architectures for
-  AI Agents*, arXiv:2604.11364.** *2026 preprint — re-verify before building.*
-  All quotations in §1 are from the PDF text. Companion implementations:
+  AI Agents*, arXiv:2604.11364.** Submitted 2026-04-13; **v2 revised
+  2026-06-12**. All quotations in §1 are from the PDF text and were checked
+  against v2 on 2026-09-04 (see the header) — quote v2 for anything added from
+  here on, since the numbers agree but the section numbering may not.
+  Companion implementations:
   `github.com/dutiona/knowledge-base` (Python), `github.com/dutiona/memory-engine`
   (Rust); pilot code at `github.com/dutiona/papers-material`.
 - Cited *within* the paper and not independently checked here: CoALA, JEPA,
