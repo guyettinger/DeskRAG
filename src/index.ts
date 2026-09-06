@@ -504,6 +504,31 @@ export {
 } from "./knowledge/facts.js";
 
 /**
+ * Cross-recording entity identity — when two observed payloads are one value.
+ * A projection declared per fact type, never a similarity measure, and the
+ * companion of `currentValue`: a `FoldedFact` IS a `KnowledgeFact`, so the
+ * resolver above reads one unchanged. Pure, a leaf, loads nothing native. See
+ * `knowledge/identity.ts` and docs/internals/persistence.md.
+ */
+export {
+  foldByIdentity,
+  stableKey,
+  type FoldedFact,
+  type FoldedValue,
+  type Identity,
+  type Observation,
+} from "./knowledge/identity.js";
+export {
+  DISPLAY_TOPOLOGY,
+  FOCUSED_APP,
+  VISITED_PAGE,
+  type DisplayGeometry,
+  type DisplayTopologyPayload,
+  type FocusPayload,
+  type IdentityDeclaration,
+} from "./knowledge/identities.js";
+
+/**
  * The site-level prefix rule — id-like path segments dropped, capped at 3.
  * Exported so anything that displays a recorded URL reads it the same way node
  * identity does, rather than growing a second, quietly different prefix rule.

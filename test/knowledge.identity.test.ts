@@ -128,3 +128,14 @@ describe("foldByIdentity", () => {
     expect(current.alternatives).toBe(0);
   });
 });
+
+describe("the barrel", () => {
+  it("exports the fold and the declarations, and loads nothing native", async () => {
+    const barrel = await import("../src/index.js");
+    expect(typeof barrel.foldByIdentity).toBe("function");
+    expect(typeof barrel.stableKey).toBe("function");
+    expect(barrel.DISPLAY_TOPOLOGY.kind).toBe("display_change");
+    expect(barrel.FOCUSED_APP.kind).toBe("focus_change");
+    expect(barrel.VISITED_PAGE.kind).toBe("url_change");
+  });
+});
