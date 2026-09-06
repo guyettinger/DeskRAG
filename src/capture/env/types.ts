@@ -12,7 +12,14 @@
  */
 
 export interface DisplayInfo {
-  /** Stable for the boot; the NSScreen display id as a string. */
+  /**
+   * The NSScreen display id as a string. STABLE FOR THE BOOT AND NO LONGER:
+   * measured across 12 recordings, the same 1920x1080@2 primary carried seven
+   * different ids (180, 185, 206, 219, 247, 296, 297) because macOS re-mints it.
+   * Safe to correlate WITHIN a session — which is all `displayIdAt` does — and
+   * never across recordings. `DISPLAY_TOPOLOGY` in `src/knowledge/identities.ts`
+   * drops it for exactly this reason.
+   */
   id: string;
   /** Global screen coordinates, TOP-left origin — the same space as AX and mouse. */
   x: number;

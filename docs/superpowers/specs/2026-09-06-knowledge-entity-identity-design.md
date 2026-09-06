@@ -1,6 +1,6 @@
 # Cross-recording entity identity: when two observed values are one value
 
-**Status:** design approved 2026-09-06. Cycle 1 of the Knowledge layer, and the
+**Status:** shipped 2026-09-06. Cycle 1 of the Knowledge layer, and the
 prerequisite `docs/superpowers/specs/2026-09-04-knowledge-layer-seam-design.md`
 §2 identified while settling §6.2.
 

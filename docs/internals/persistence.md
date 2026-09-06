@@ -201,6 +201,33 @@ question. Leaving it out makes the display case legible *as* an identity
 problem instead of silently mis-keying it, which is what a stored edge would
 have done while looking correct.
 
+**Cycle 1 answered it, 2026-09-06, and identity is a DECLARED PROJECTION.**
+`src/knowledge/identity.ts` folds many observations into values that are
+distinct under an identity rather than under equality; a `FoldedFact` **is** a
+`KnowledgeFact`, so `currentValue` reads one with `facts.ts` unmodified. Each
+fact type declares the form that decides sameness — `displayTopology` drops the
+re-minted `id` and sorts the list, `focusedApp` keeps `bundleId`, `visitedPage`
+**calls `urlPrefix`**. Sameness could instead have been *measured*, by embedding
+the payloads and clustering under a threshold, and that was declined on
+evidence: there is no ground truth on a 12-recording library to sweep a
+threshold against, and `probe:embed`'s first version is the standing lesson
+about what a metric scored without ground truth measures.
+
+Three things it does not do, each deliberate. **It enumerates what it keeps**, so
+a new field on `DisplayInfo` does not silently become a discriminator. **It
+writes no URL rule**: a hand-written normalizer was measured against `urlPrefix`
+and merged the same single pair, so the tie went to the rule that ships and the
+two layers cannot drift on what a URL is. And **an observation it cannot place is
+counted, never dropped** — `chrome://new-tab-page/` names no site, and 3 of 44
+`url_change` observations land in `unidentified` rather than inventing a value.
+
+`npm run probe:identity` re-renders every number above from the live library.
+Measured 2026-09-06 over 12 recordings: `display_change` 12 occurrences / 8 raw
+/ **2**, `focus_change` 92 / 63 / **7**, `url_change` 44 / 19 / **17** plus 3
+unidentified. `keymap_change` gets no identity — 12 occurrences and one payload,
+so a projection would buy zero. See
+`docs/superpowers/specs/2026-09-06-knowledge-entity-identity-design.md`.
+
 What would reopen this: a fact type whose evidence is genuinely not retained; a
 rebuild that cannot reproduce a fact in session order; or a measured need for a
 stored edge. See
