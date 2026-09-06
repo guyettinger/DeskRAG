@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { lastSeen } from "../app/src/renderer/src/knowledge-cards.js";
 import { SERVER_INSTRUCTIONS, TOOLS, callTool, toolByName } from "../app/src/main/mcp/tools.js";
 import type { ExperienceReader } from "../app/src/main/mcp/reader.js";
 import { buildOutline } from "../app/src/main/mcp/outline.js";
@@ -142,59 +143,89 @@ const noHabits = (): HabitsDTO => ({
  * answer, and one built only from the exclusive fact would never exercise the
  * refusal that is most of what this layer says.
  */
+/**
+ * A fixed moment, built in LOCAL time so the assertion holds in any zone.
+ *
+ * `Date.UTC` would make the rendered day depend on where the suite runs — and
+ * that is exactly the bug this pins: `get_fact` rendered UTC while the card
+ * rendered local, so the two faces named different days for one value.
+ */
+const SEEN = new Date(2026, 7, 29, 12).getTime();
+
 const knowledge = (): KnowledgeDTO => ({
   facts: [
     {
+      id: "keyboard_layout",
       kind: "keymap_change",
       title: "Keyboard layout",
       attribution: "ambient",
+      projected: true,
       values: [
         {
+          key: '"com.apple.keylayout.US"',
           label: "com.apple.keylayout.US",
+          isCurrent: true,
           stability: { tier: "core", sessions: 12, reason: "Seen in 12 separate recordings." },
           observations: 12,
+          lastObservedAt: SEEN,
           variants: 1,
         },
       ],
+      observations: 12,
+      unlisted: 0,
       unidentified: 0,
       current: "com.apple.keylayout.US",
+      currentSince: SEEN,
       reason: "The only value observed for keymap_change.",
-      undated: 0,
     },
     {
+      id: "display_topology",
       kind: "display_change",
       title: "Display setups",
       attribution: "ambient",
+      projected: false,
       values: [
         {
-          label: "1920×1080 @2× primary",
+          key: '"one-up"',
+          label: "1920×1080 @2× primary (0,0)",
+          isCurrent: false,
           stability: { tier: "core", sessions: 11, reason: "Seen in 11 separate recordings." },
           observations: 11,
+          lastObservedAt: SEEN,
           variants: 7,
         },
         {
-          label: "3840×2160 @1× + 1728×1117 @2× primary",
+          key: '"docked"',
+          label: "3840×2160 @1× (0,0) + 1728×1117 @2× primary (0,2160)",
+          isCurrent: false,
           stability: { tier: "prediction", sessions: 1, reason: "Seen in 1 recording." },
           observations: 1,
+          lastObservedAt: SEEN,
           variants: 1,
         },
       ],
+      observations: 12,
+      unlisted: 0,
       unidentified: 0,
       current: null,
+      currentSince: null,
       reason:
         "display_change holds 2 values that can all be true at once, so there is no current " +
         "one — the answer is the set.",
-      undated: 0,
     },
     {
+      id: "visited_page",
       kind: "url_change",
       title: "Sites",
       attribution: "focused-app",
+      projected: false,
       values: [],
+      observations: 0,
+      unlisted: 0,
       unidentified: 3,
       current: null,
+      currentSince: null,
       reason: "Nothing has been observed for url_change.",
-      undated: 0,
     },
   ],
   recordings: 12,
@@ -205,26 +236,33 @@ const knowledge = (): KnowledgeDTO => ({
 
 /** The same display fact, with the seven re-minted ids the fold ignores. */
 const displayDetail = (): KnowledgeFactDetailDTO => ({
+  id: "display_topology",
   kind: "display_change",
   title: "Display setups",
   attribution: "ambient",
+  projected: false,
   values: [
     {
-      label: "1920×1080 @2× primary",
+      key: '"one-up"',
+      label: "1920×1080 @2× primary (0,0)",
+      isCurrent: false,
       stability: { tier: "core", sessions: 11, reason: "Seen in 11 separate recordings." },
       observations: 11,
+      lastObservedAt: SEEN,
       variants: [
         '{"displays":[{"id":"180","x":0,"y":0,"w":1920,"h":1080,"scale":2,"primary":true}]}',
         '{"displays":[{"id":"185","x":0,"y":0,"w":1920,"h":1080,"scale":2,"primary":true}]}',
       ],
     },
   ],
+  observations: 11,
+  unlisted: 0,
   unidentified: 0,
   current: null,
+  currentSince: null,
   reason:
     "display_change holds 2 values that can all be true at once, so there is no current " +
     "one — the answer is the set.",
-  undated: 0,
 });
 
 function fakeReader(over: Partial<ExperienceReader> = {}): ExperienceReader {
@@ -261,7 +299,10 @@ function fakeReader(over: Partial<ExperienceReader> = {}): ExperienceReader {
       }),
     flows: () => flows(),
     listFacts: () => knowledge(),
-    getFact: (kind) => (kind === "display_change" ? displayDetail() : null),
+    // Resolves by ID, and by KIND while a kind names one fact — the app's own
+    // rule, so the tool is exercised against the resolution it will meet.
+    getFact: (id) =>
+      id === "display_topology" || id === "display_change" ? displayDetail() : null,
     embed: async () => null,
     momentAt: () => null,
     ...over,
@@ -1205,6 +1246,56 @@ describe("list_facts", () => {
     expect(body).toMatch(/3 observations could not be placed/);
   });
 
+  it("marks the current value where it stands, not only in the verdict", async () => {
+    // The rows are ordered by recent evidence, so the current value is usually
+    // the first and is not guaranteed to be — matching a row against the verdict
+    // by its label is what an injective label exists to avoid having to do.
+    const body = textOf(await callTool(fakeReader(), "list_facts", {}));
+    expect(body).toMatch(/^ {2}\* com\.apple\.keylayout\.US/m);
+    // A refusing fact marks nothing: every one of its values keeps the dash.
+    expect(body).toMatch(/^ {2}- 1920×1080/m);
+    expect(body).not.toMatch(/\* 1920×1080/);
+  });
+
+  it("dates every value, so the order can be checked rather than trusted", async () => {
+    const body = textOf(await callTool(fakeReader(), "list_facts", {}));
+    expect(body).toMatch(/last seen 2026-08-29/);
+    expect(body).toMatch(/Current: com\.apple\.keylayout\.US \(as of 2026-08-29\)/);
+  });
+
+  it("names the same DAY the card does, in every timezone", async () => {
+    // The two faces render this moment separately — `knowledge-text.ts` in ISO
+    // shape, `knowledge-cards.ts` in the screen's register — and a UTC date on
+    // one side made them disagree by a day on a value observed after 5pm.
+    const body = textOf(await callTool(fakeReader(), "list_facts", {}));
+    const day = new Date(SEEN);
+    expect(body).toContain(
+      `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-` +
+        `${String(day.getDate()).padStart(2, "0")}`,
+    );
+    expect(lastSeen(SEEN)).toBe(
+      day.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+    );
+  });
+
+  it("states the evidence a fact rests on before its values", async () => {
+    const body = textOf(await callTool(fakeReader(), "list_facts", {}));
+    expect(body).toMatch(/12 observations -> 2 distinct values/);
+  });
+
+  it("says when a fact's payloads were projected rather than kept raw", async () => {
+    // `get_fact` promises the payloads BEHIND a value, and for the keyboard
+    // layout that is false — the reader drops ~70 keycode entries first.
+    const body = textOf(await callTool(fakeReader(), "list_facts", {}));
+    expect(body).toMatch(/payloads behind this fact are PROJECTED/);
+  });
+
+  it("names each fact by its id, and says which event it was read from", async () => {
+    // Two facts read `focus_change`, so the kind cannot address one.
+    const body = textOf(await callTool(fakeReader(), "list_facts", {}));
+    expect(body).toMatch(/Keyboard layout \(keyboard_layout, from keymap_change\)/);
+  });
+
   it("says an empty library is empty rather than answering from nothing", async () => {
     const empty = fakeReader({
       listFacts: () => ({
@@ -1223,19 +1314,22 @@ describe("get_fact", () => {
   it("shows the raw payloads behind a folded value", async () => {
     // The whole reason this tool exists: the fold's claim is that several
     // payloads are one thing, and these are the only evidence for it.
-    const body = textOf(await callTool(fakeReader(), "get_fact", { kind: "display_change" }));
+    const body = textOf(await callTool(fakeReader(), "get_fact", { id: "display_topology" }));
     expect(body).toMatch(/"id":"180"/);
     expect(body).toMatch(/"id":"185"/);
     expect(body).toMatch(/2 distinct payloads folded into this one value/);
   });
 
-  it("names the known kinds when asked for one that does not exist", async () => {
-    const out = await callTool(fakeReader(), "get_fact", { kind: "nope" });
+  it("names the known FACTS when asked for one that does not exist", async () => {
+    // The list is static, so saying it costs nothing — it used to run the whole
+    // Knowledge pipeline a second time just to build this sentence.
+    const out = await callTool(fakeReader(), "get_fact", { id: "nope" });
     expect(out.isError).toBe(true);
-    expect(textOf(out)).toMatch(/keymap_change, display_change, url_change/);
+    expect(textOf(out)).toMatch(/keyboard_layout, display_topology, focused_app/);
+    expect(textOf(out)).toMatch(/focused_window, visited_page/);
   });
 
-  it("requires a kind", async () => {
+  it("requires an id", async () => {
     const out = await callTool(fakeReader(), "get_fact", {});
     expect(out.isError).toBe(true);
   });

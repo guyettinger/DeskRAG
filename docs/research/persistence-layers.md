@@ -318,6 +318,25 @@ open question, and per this repo's standing rule the number comes before the
 adoption. The relevant precedent is `DEFAULT_RRF_K`, which is 5 rather than the
 published 60 because it was swept four times against known answers.
 
+**Ran, twice, with opposite answers — and the difference is instructive.** On the
+trace seams the sweep was null: 0 baselines moved and 0 real path overrides at
+7/14/30/90 days, so the term ships OFF and `DEFAULT_RULE` stays `majority`. Then
+the Knowledge layer was built, and its value list was given the same defect —
+ranked by distinct recordings, then observations, no time term — which this
+document had already named. There the sweep is decisive: **3 of 5 facts lead with
+a different value** than the lifetime tally would have shown, at every half-life,
+and 54 pairs are real overrides at the shipped 14-day constant. Chrome leads
+*Applications* on 5 recordings over TextEdit's 6, because Chrome was used today
+and TextEdit a fortnight ago. So the term ships **ON** there.
+
+The instructive part is why they differ. A trace baseline is chosen among Ways of
+ONE habit, walked within days of each other; a Knowledge fact spans the whole
+library, where a value can genuinely go cold. **The litmus is unchanged in both
+places**: the time preference lives in the function evaluated per query, and
+nothing stored moves. `stabilityOf` in particular is untouched — a tier counts
+distinct recordings and a weighted count would be a fraction wearing the word
+"recordings", which is the NornicDB error at a smaller scale.
+
 ---
 
 ## 5 · The leak: Intelligence → Memory
@@ -411,6 +430,21 @@ a **prerequisite** of the other two, not the second of three. See
 [`docs/internals/persistence.md`](../internals/persistence.md) and
 [the spec](../superpowers/specs/2026-09-04-knowledge-layer-seam-design.md).
 
+**AUDITED 2026-09-06, AFTER SHIPPING.** The layer was read back against this
+document and against the paper. The central seam held: `FoldedFact` **is** a
+`KnowledgeFact`, and the identity cycle shipped without touching `facts.ts`,
+which is the property the design predicted. Five things did not, and the two
+worth recording here are both this document's own arguments turned back on it.
+The value list ranked by a raw lifetime tally — §4's defect, in the layer built
+from §4 — and it contradicted itself on screen, because `currentValue` picks the
+most recently observed value while the list ranked by lifetime count. And the
+label was not injective over the canonical form: `DISPLAY_TOPOLOGY` folds on all
+six fields of a panel while `displayLabel` rendered four, so two docked setups
+differing only in the external's `y` printed one string — on the real library,
+not in a fixture. A fold is only as good as the projection that shows it, which
+is a claim about entity identity this document did not make and should have.
+See [`docs/internals/persistence.md`](../internals/persistence.md).
+
 **CLOSED 2026-09-06 BY THE FIRST CONSUMER, on a measurement rather than a
 preference.** The tail this section left — whether "computed per query" survives
 contact with a caller — has a number now. Running the whole pipeline behind the
@@ -420,7 +454,13 @@ is the fold. The fold alone against a synthetic hundredfold corpus — 9200
 observations, roughly what 1200 recordings would carry — **34.13ms**. The bar was
 set in advance at single-digit milliseconds, the cost is dominated by the read
 and is linear, and a hundredfold library still resolves inside one frame. **There
-is no table, and cycle 2 needed none.** See
+is no table, and cycle 2 needed none.**
+
+*Caveated by the audit rather than corrected:* that synthetic corpus folded 9200
+observations to the same **7** values, so it measured the fold's TIME and not the
+output's SIZE. What grows with a library is values — one further recording took
+`visited_page` from 17 to 21 — and the surface that fails first is the rendering,
+not the fold. A cardinality-scaled re-run is still open. See
 [the spec](../superpowers/specs/2026-09-06-knowledge-first-consumer-design.md).
 
 ### 6.3 If it is built, the tiers have their inputs already
@@ -438,7 +478,7 @@ The MCP surface accommodated it: `list_facts` and `get_fact` shipped 2026-09-06
 and both satisfy the read-only guard's `^(search|get|list)_` rule — the rule that
 already cost `find_habit` its name. **`search_knowledge` was NOT built**: it
 implies a ranking this layer does not do, and would drag `RANKING_MIN_HABITS`-style
-disclosure onto a four-row corpus. The name stays reserved.
+disclosure onto a five-row corpus. The name stays reserved.
 
 ---
 

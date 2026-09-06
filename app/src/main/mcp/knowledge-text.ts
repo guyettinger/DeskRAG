@@ -10,8 +10,10 @@
  * as though it were the first.
  *
  * NO SCORE, NO PERCENTAGE. A value's evidence is a stability tier — a word and a
- * count of recordings — which is exactly the disclosure the Flows graph shows,
- * and a ratio here would be `FrameResult.score` under a new name.
+ * count of recordings — plus the moment it was last seen. A tier is a word, a
+ * count is a count and a date is a date; the recency weight that ORDERS the
+ * values is a fraction and never leaves `knowledge-view.ts`, because a ratio
+ * here would be `FrameResult.score` under a new name.
  */
 
 import type {
@@ -38,6 +40,37 @@ function evidence(s: StabilityDTO): string {
   return `${tier}, seen in ${plural(s.sessions, "recording")}`;
 }
 
+/**
+ * A date, in the one format an agent cannot misread.
+ *
+ * ISO shape, and the DATE only: the values here are observed across whole
+ * recordings and a time of day would claim a precision the fold does not have.
+ * `null` is a value no recording could date, which is a state and not a zero.
+ *
+ * BUILT FROM LOCAL COMPONENTS, NOT `toISOString`, and that is not a nicety. The
+ * screen renders the same moment with `toLocaleDateString`, so a UTC date makes
+ * the two faces disagree by a day on a value observed after 5pm here —
+ * `get_fact` said 2026-08-25 where the card said Aug 24, for one value, measured.
+ * The label itself is rendered once in main precisely so the faces cannot
+ * disagree; furniture that contradicts the screen defeats that for free.
+ */
+function on(at: number | null): string {
+  if (at === null) return "undated";
+  const d = new Date(at);
+  const pad = (n: number): string => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/**
+ * The verdict's date, when there is one.
+ *
+ * The paper's supersession keeps both claims and DATES them, and a "current"
+ * with no *as of* cannot be checked against the list under it.
+ */
+function asOf(fact: KnowledgeFactDTO | KnowledgeFactDetailDTO): string {
+  return fact.currentSince === null ? "" : ` (as of ${on(fact.currentSince)})`;
+}
+
 /** What the recorder exclusion did or did not do to this fact. */
 function attributionNote(fact: KnowledgeFactDTO | KnowledgeFactDetailDTO): string {
   return fact.attribution === "ambient"
@@ -49,10 +82,10 @@ function attributionNote(fact: KnowledgeFactDTO | KnowledgeFactDetailDTO): strin
 function verdict(fact: KnowledgeFactDTO | KnowledgeFactDetailDTO): string {
   return fact.current === null
     ? `No current value. ${fact.reason}`
-    : `Current: ${fact.current}\n  ${fact.reason}`;
+    : `Current: ${fact.current}${asOf(fact)}\n  ${fact.reason}`;
 }
 
-/** The tail every fact carries: what could not be placed, and what could not be dated. */
+/** The tail every fact carries: what could not be placed, and what is not listed. */
 function caveats(fact: KnowledgeFactDTO | KnowledgeFactDetailDTO): string[] {
   const out: string[] = [];
   if (fact.unidentified > 0) {
@@ -61,10 +94,17 @@ function caveats(fact: KnowledgeFactDTO | KnowledgeFactDetailDTO): string[] {
         `identity — counted here rather than dropped, and never folded into a value.`,
     );
   }
-  if (fact.undated > 0) {
+  if (fact.unlisted > 0) {
     out.push(
-      `  ${plural(fact.undated, "observation")} came from a recording that could not be dated, ` +
-        `so it could not be ordered against the others.`,
+      `  ${plural(fact.unlisted, "further value")} not listed — the values above are the ` +
+        `most recently corroborated, and the rest are counted rather than dropped.`,
+    );
+  }
+  if (fact.projected) {
+    out.push(
+      `  The payloads behind this fact are PROJECTED, not raw: the reader keeps the layout ` +
+        `identifier and drops the ~70 keycode mappings beside it, so a variant below is what ` +
+        `was folded and not what was recorded.`,
     );
   }
   return out;
@@ -73,13 +113,30 @@ function caveats(fact: KnowledgeFactDTO | KnowledgeFactDetailDTO): string[] {
 function valueLine(v: KnowledgeValueDTO): string {
   const variants =
     v.variants > 1 ? `, folded from ${plural(v.variants, "distinct payload")}` : "";
-  return `  - ${v.label} — ${evidence(v.stability)}, ${plural(v.observations, "observation")}${variants}`;
+  // The CURRENT row is marked IN THE BULLET rather than left to be matched
+  // against the verdict by its label — labels are a rendering, and the list is
+  // ordered by recent evidence, so the current value is usually but not always
+  // the first row. In the bullet because that column is otherwise constant, so
+  // one glance down it finds the answer.
+  const bullet = v.isCurrent ? "*" : "-";
+  return (
+    `  ${bullet} ${v.label} — ${evidence(v.stability)}, ` +
+    `${plural(v.observations, "observation")}, last seen ${on(v.lastObservedAt)}${variants}`
+  );
 }
 
 /** One fact, as `list_facts` prints it. */
 export function renderFact(fact: KnowledgeFactDTO): string {
   const lines = [
-    `${fact.title} (${fact.kind}) · ${attributionNote(fact)}`,
+    // The ID is what `get_fact` takes; the KIND is where the fact was read from,
+    // and two facts share one. Both are printed because an agent needs the first
+    // to ask again and the second to know what it is looking at.
+    `${fact.title} (${fact.id}, from ${fact.kind}) · ${attributionNote(fact)}`,
+    // THE EVIDENCE BEFORE THE ANSWER, `search_habits`'s rule at the grain of one
+    // fact: "7 applications" folded from 92 observations and the same 7 folded
+    // from 9 are different claims.
+    `  ${plural(fact.observations, "observation")} -> ` +
+      `${plural(fact.values.length + fact.unlisted, "distinct value")}`,
     `  ${verdict(fact)}`,
   ];
   if (fact.values.length === 0) lines.push("  Nothing has been observed for this fact.");
@@ -107,7 +164,8 @@ export function renderFacts(dto: KnowledgeDTO): string {
   const head = [
     `${plural(dto.facts.length, "environment fact")}, derived from ` +
       `${plural(dto.recordings, "recording")}. Nothing here is stored: a fact is recomputed ` +
-      `from the recorded events on every call.`,
+      `from the recorded events on every call. Values are listed most recently ` +
+      `corroborated first, and the current one — where a fact has one — is marked \`*\`.`,
   ];
   if (dto.excludedApps.length > 0) {
     head.push(
@@ -127,11 +185,6 @@ export function renderFacts(dto: KnowledgeDTO): string {
   return [head.join(" "), ...dto.facts.map(renderFact)].join("\n\n");
 }
 
-/** The kinds a caller may ask for, for an error message that can be acted on. */
-export function factKinds(dto: KnowledgeDTO): string {
-  return dto.facts.map((f) => f.kind).join(", ");
-}
-
 /**
  * One fact in full, raw payloads included.
  *
@@ -142,15 +195,16 @@ export function factKinds(dto: KnowledgeDTO): string {
  */
 export function renderFactDetail(fact: KnowledgeFactDetailDTO): string {
   const lines = [
-    `${fact.title} (${fact.kind}) · ${attributionNote(fact)}`,
+    `${fact.title} (${fact.id}, from ${fact.kind}) · ${attributionNote(fact)}`,
     `  ${verdict(fact)}`,
   ];
   if (fact.values.length === 0) lines.push("  Nothing has been observed for this fact.");
   for (const v of fact.values) {
     lines.push(
       "",
-      `  ${v.label}`,
-      `    ${evidence(v.stability)}, ${plural(v.observations, "observation")}`,
+      `  ${v.label}${v.isCurrent ? "  [current]" : ""}`,
+      `    ${evidence(v.stability)}, ${plural(v.observations, "observation")}, ` +
+        `last seen ${on(v.lastObservedAt)}`,
       `    ${plural(v.variants.length, "distinct payload")} folded into this one value:`,
     );
     for (const raw of v.variants) lines.push(`      ${raw}`);

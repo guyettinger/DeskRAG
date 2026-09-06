@@ -125,7 +125,9 @@ describe("foldByIdentity", () => {
     const starts: Record<string, number> = { s1: 1000, s2: 2000 };
     const current = currentValue(f, "exclusive", (id) => starts[id]);
     expect(current.value).toEqual({ w: 1920, h: 1080 });
-    expect(current.alternatives).toBe(0);
+    // Two payloads folded to ONE value, so there is nothing left to supersede.
+    expect(f.values).toHaveLength(1);
+    expect(current.lastObservedAt).toBe(2000);
   });
 });
 
@@ -136,6 +138,10 @@ describe("the barrel", () => {
     expect(typeof barrel.stableKey).toBe("function");
     expect(barrel.DISPLAY_TOPOLOGY.kind).toBe("display_change");
     expect(barrel.FOCUSED_APP.kind).toBe("focus_change");
+    expect(barrel.FOCUSED_WINDOW.kind).toBe("focus_change");
     expect(barrel.VISITED_PAGE.kind).toBe("url_change");
+    // TWO FACTS, ONE EVENT KIND — which is the whole reason a declaration
+    // carries an `id`, and the thing an `id`-less consumer would collide on.
+    expect(barrel.FOCUSED_APP.id).not.toBe(barrel.FOCUSED_WINDOW.id);
   });
 });

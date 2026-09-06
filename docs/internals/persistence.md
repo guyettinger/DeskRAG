@@ -205,8 +205,8 @@ have done while looking correct.
 `src/knowledge/identity.ts` folds many observations into values that are
 distinct under an identity rather than under equality; a `FoldedFact` **is** a
 `KnowledgeFact`, so `currentValue` reads one with `facts.ts` unmodified. Each
-fact type declares the form that decides sameness — `displayTopology` drops the
-re-minted `id` and sorts the list, `focusedApp` keeps `bundleId`, `visitedPage`
+fact type declares the form that decides sameness — `DISPLAY_TOPOLOGY` drops the
+re-minted `id` and sorts the list, `FOCUSED_APP` keeps `bundleId`, `VISITED_PAGE`
 **calls `urlPrefix`**. Sameness could instead have been *measured*, by embedding
 the payloads and clustering under a threshold, and that was declined on
 evidence: there is no ground truth on a 12-recording library to sweep a
@@ -222,9 +222,12 @@ counted, never dropped** — `chrome://new-tab-page/` names no site, and 3 of 44
 `url_change` observations land in `unidentified` rather than inventing a value.
 
 `npm run probe:identity` re-renders every number above from the live library.
-Measured 2026-09-06 over 12 recordings: `display_change` 12 occurrences / 8 raw
-/ **2**, `focus_change` 92 / 63 / **7**, `url_change` 44 / 19 / **17** plus 3
-unidentified. See
+Measured 2026-09-06 over 13 recordings, by fact id because two facts now read
+`focus_change`: `display_topology` 13 occurrences / 9 raw / **3**, `focused_app`
+102 / 71 / **7**, `focused_window` 102 / 71 / **29** plus 19 unidentified,
+`visited_page` 50 / 23 / **21** plus 3, `keyboard_layout` 13 / 1 / **1**. Every
+one of those changed when the library gained a single recording, which is why
+they are re-rendered rather than quoted. See
 `docs/superpowers/specs/2026-09-06-knowledge-entity-identity-design.md`.
 
 ### Cycle 2, 2026-09-06: the first consumer, and no table
@@ -272,16 +275,96 @@ exclusivity, as data rather than a branch. The exclusion drops **253 of 5079**
 events; `focus_change` folds 7 → 6 and `url_change` 17 → 15, `localhost` leaving
 with `com.github.Electron`.
 
-The `(bundleId, title)` question stays closed for this consumer and is not
-deferred again: six of those 28 carry an **empty** title, which
-`identities.ts`'s own rule calls *absent*, and the rest of the list is pages,
-which `url_change` answers better at site grain. A consumer that genuinely wants
-windows wants a second declared identity, not an edit to `FOCUSED_APP`. See
+The `(bundleId, title)` question stayed closed for that consumer — the rule
+being that a consumer wanting windows wants a second declared identity, not an
+edit to `FOCUSED_APP`. See
 `docs/superpowers/specs/2026-09-06-knowledge-first-consumer-design.md`.
 
-What would reopen this: a fact type whose evidence is genuinely not retained; a
-rebuild that cannot reproduce a fact in session order; or a measured need for a
-stored edge. See
+### Cycle 3, 2026-09-06: what an audit against the paper found
+
+The layer was read back against Roynard and against its own research document.
+The seam held — `FoldedFact` **is** a `KnowledgeFact` and cycle 1 shipped without
+touching `facts.ts`, exactly as predicted — and five things did not.
+
+**A LABEL IS HALF OF A VALUE, AND IT MUST BE INJECTIVE OVER THE CANONICAL FORM.**
+`DISPLAY_TOPOLOGY` folds on all six fields of every panel; `displayLabel`
+rendered four. The library holds the pair that breaks it: two docked
+configurations differing ONLY in the external panel's `y` (−797 and −706) printed
+one identical string. Two values, one label — a duplicate React key, two rows
+nobody can tell apart, two identical blocks in `get_fact`, and a `current` field
+which is a LABEL and therefore named neither. The label now carries the origin,
+`KnowledgeValueDTO.key` carries `stableKey` of the canonical form so nothing is
+keyed on prose, and `test/knowledge-view.test.ts` asserts injectivity **per
+fact**, so a sixth declaration is covered the day it is added.
+
+**THE VALUE LIST RANKED BY A RAW LIFETIME TALLY — §4'S DEFECT, IN THE LAYER BUILT
+FROM §4.** It also contradicted itself on screen: `currentValue` picks the most
+recently observed value while the list ranked by lifetime recordings, so a
+superseded keyboard layout would sit above the one that replaced it, directly
+under a verdict naming the replacement. The order is now recency-weighted with
+`0.5 ** (Δ / halfLife)` per distinct recording — the SAME expression as
+`edgeCost`'s `evidenceOf` and `wayWeight`, reusing `DEFAULT_HALF_LIFE_MS` so the
+app has one half-life and not three — and an undatable recording keeps its whole
+vote. **`stabilityOf` is untouched**: a tier is the paper's evidence threshold, a
+`COUNT(DISTINCT session_id)`, and a weighted count would be a fraction wearing
+the word "recordings". The weight never leaves `knowledge-view.ts`; what ships is
+the rank plus `lastObservedAt`, a moment.
+
+Measured 2026-09-06 over 13 recordings, on the streams the app actually renders:
+
+| | 7d | 14d (shipped) | 30d | 90d |
+| --- | --- | --- | --- | --- |
+| real overrides | 106 | **54** | 35 | 35 |
+| tiebreaks | 172 | 172 | 172 | 172 |
+| leading value ≠ lifetime rule's | 3 of 5 | **3 of 5** | 3 of 5 | 3 of 5 |
+
+**Unlike the trace seams, this one ships ON.** A *real override* is a value with
+strictly less lifetime evidence ranked above one with more — §4's claim; a
+*tiebreak* is a pair the lifetime rule could only separate by key, and separating
+those is an improvement but not the effect under test. That split was paid for
+twice now: `probe:baseline` printed "1 of 1 paths changed" at every half-life on
+a tie, and this probe's first version printed "3 of 5 facts reordered" at 90d on
+a 20-day span for the same reason. The readable case is Applications: Chrome
+leads on 5 recordings over TextEdit's 6, because Chrome was seen today and
+TextEdit a fortnight ago.
+
+**A FACT IS ADDRESSED BY ITS `id`, NOT BY THE EVENT IT READS.** Cycle 2's note
+said a consumer wanting the window count wants a second identity; cycle 3
+declared it, and discovered that the promise was unkeepable as written — two
+declarations reading `focus_change` collide on every surface that identified a
+fact by its kind. `IdentityDeclaration.id` is that name. `FOCUSED_WINDOW` folds
+the same 102 events to **29** windows against `FOCUSED_APP`'s 7, with **19
+unidentified**: nearly a fifth of real focus events carry no title, which is why
+a missing one is disclosed rather than dropped.
+
+**TWO RULES FOR ONE QUESTION, TWICE.** `Fact.rawVariants` counted distinct raw
+payloads with `JSON.stringify` while `foldByIdentity` deduped variants with
+`stableKey`, so the probe's `raw` column and the DTO's `variants` answered one
+question two ways. And the display reader re-implemented a weaker
+`coerceDisplays` as a cast — `compareGeometry` subtracts, so one missing field
+makes the comparator return `NaN` and the canonical form implementation-defined,
+which is a non-deterministic identity. The coercion moved INTO the identity,
+where the rule belongs, and the reader passes the payload through whole so
+`variants` stay raw.
+
+**A DISCLOSURE THAT CANNOT FIRE IS THE `skipReason` FAILURE.** `Current.undated`
+is structurally zero on the app's path — `KnowledgeSession.startedAt` is required
+and the map is built from the same sessions — so it left the DTO and both
+renderers while staying in `facts.ts`, which is a real contract for a caller
+whose recordings cannot all be dated. `Current.alternatives` went entirely: it
+meant "other values" on the one path with an answer and "all of them" on the
+three that refuse, and nothing read it.
+
+The benchmark that closed §6.2 also gets a caveat rather than a correction: 9200
+observations folding to the same **7** values measured the fold's TIME, not the
+output's SIZE. What grows with a library is values — one further recording took
+`visited_page` from 17 to 21 — and the surface that fails first is the rendering.
+`MAX_FACT_VALUES` answers that for the counted form; `get_fact` stays uncapped,
+because checking a fold against a truncation is not checking it.
+
+What would reopen the no-table decision: a fact type whose evidence is genuinely
+not retained; a rebuild that cannot reproduce a fact in session order; or a
+measured need for a stored edge. See
 `docs/superpowers/specs/2026-09-04-knowledge-layer-seam-design.md` §8.
 
 ## The measurement: does a recency term move anything?

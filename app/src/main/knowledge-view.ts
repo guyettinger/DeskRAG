@@ -33,11 +33,28 @@
  * query survives a consumer, so the Knowledge layer still has no table and no
  * `schema.ts` bucket. See docs/internals/persistence.md.
  *
+ * THAT BENCHMARK HELD VALUE CARDINALITY CONSTANT — 9200 observations folding to
+ * the same 7 values — so it measured the fold's TIME and not the output's SIZE.
+ * What grows with a library is values: one further recording took `visited_page`
+ * from 17 to 21. The fold stays linear; the surface that fails first is the
+ * rendering, which is what `MAX_FACT_VALUES` answers and why a
+ * cardinality-scaled re-run of that benchmark is still open.
+ *
+ * ## A FACT IS ADDRESSED BY ITS `id`, NOT BY THE EVENT IT READS
+ *
+ * Two declarations now read `focus_change` — `FOCUSED_APP` answers *which
+ * applications* and `FOCUSED_WINDOW` answers *which windows* — so the event kind
+ * cannot identify a fact. `kind` stays on the DTO as disclosure (which recorded
+ * event this was read FROM); `id` is what a card keys on and what `get_fact`
+ * takes.
+ *
  * ## It is not a score
  *
- * Every number that leaves here is a count. A value's evidence is
+ * Every number that leaves here is a count or a moment. A value's evidence is
  * `stabilityOf`'s tier — a WORD and a count of recordings — which may be printed
- * where `FrameResult.score` may not.
+ * where `FrameResult.score` may not. The recency weight that ORDERS the values
+ * is a fraction and therefore never leaves this module; what leaves is the rank
+ * it produced and the `lastObservedAt` that explains it.
  */
 
 import type {
@@ -51,9 +68,12 @@ import {
   currentValue,
   excludeFocusedApps,
   foldByIdentity,
+  lastObservedAt,
   stabilityOf,
+  stableKey,
   DISPLAY_TOPOLOGY,
   FOCUSED_APP,
+  FOCUSED_WINDOW,
   KEYBOARD_LAYOUT,
   VISITED_PAGE,
 } from "deskrag";
@@ -65,10 +85,32 @@ import type {
   FocusPayload,
   IdentityDeclaration,
   KeymapPayload,
+  KnowledgeSource,
   Observation,
   SessionStartedAt,
   TraceEvent,
+  WindowIdentity,
+  WindowPayload,
 } from "deskrag";
+import { DEFAULT_HALF_LIFE_MS, type RecencyOptions } from "./walk-analysis.js";
+
+/**
+ * How many values a fact lists before the rest are folded into a count.
+ *
+ * `MAX_SHARE_SEGMENTS`'s precedent (`index-graph-view.ts`), and pulled in by
+ * `FOCUSED_WINDOW`: the largest fact on the real library held 21 values and the
+ * window fact lands at 29, on a card and in an MCP reply that both render every
+ * value inline. A sliver is FOLDED AND COUNTED, never widened and never
+ * silently dropped — `KnowledgeFactDTO.unlisted` is what the count is for.
+ *
+ * IT APPLIES TO THE COUNTED FORM ONLY, in `summarize`. `get_fact` returns the
+ * detailed form uncapped, because checking a fold against a truncated list is
+ * not checking it.
+ *
+ * UNSWEPT, and the same disclosure `RANKING_MIN_HABITS = 5` carries. Twelve is
+ * enough to show a fact's shape without becoming the screen.
+ */
+export const MAX_FACT_VALUES = 12;
 
 /**
  * One recording's events, in both the forms a fact can read.
@@ -105,6 +147,16 @@ export interface KnowledgeInput {
   isExcluded: (focus: ExcludedFocus) => boolean;
   /** The list as it stands NOW, for the footer's disclosure. */
   excludedApps: readonly string[];
+  /**
+   * The moment to measure staleness against, and the ONE thing here that is not
+   * derivable from the recordings.
+   *
+   * REQUIRED AND INJECTED, exactly as `RecencyOptions.now` is: a rule that calls
+   * `Date.now()` internally cannot be tested against a fixture, and the single
+   * wall-clock read belongs at the consumer boundary — `DeskRagService`, which
+   * is `walkAnalysis`'s own arrangement.
+   */
+  recency: RecencyOptions;
 }
 
 /** One recording's events, split once for every fact that will read them. */
@@ -146,11 +198,31 @@ interface FactSpec<Raw, Canon> {
    * fold checkable — `focus_change`'s 63 distinct payloads collapsing to 7 bundle
    * ids is only visible because the window ids and titles survive to here. The
    * one exception is `keymap_change`, whose payload carries ~70 keycode mappings
-   * that are not a value any consumer should hold; see its declaration.
+   * that are not a value any consumer should hold; see its declaration, and see
+   * `projected` below, which is how a reader is told.
    */
   payload: (data: unknown) => Raw | null;
-  /** The canonical form as text. Rendered ONCE, here — see `KnowledgeValueDTO.label`. */
+  /**
+   * The canonical form as text. Rendered ONCE, here — see `KnowledgeValueDTO.label`.
+   *
+   * IT MUST SEPARATE WHATEVER THE FOLD SEPARATED. A label is not decoration: it
+   * is the only form of a value a person ever sees, so a label that collapses two
+   * distinct canonical forms shows one setup where there are two and cannot
+   * explain itself. `displayLabel` used to drop the origin the identity keeps,
+   * and two configurations differing only in where a panel sat printed the same
+   * string. `test/knowledge-view.test.ts` asserts injectivity per fact.
+   */
   label: (value: Canon) => string;
+  /**
+   * The payload was trimmed BEFORE the fold, so `variants` are not raw.
+   *
+   * `get_fact` exists to make a fold checkable by showing the payloads behind it,
+   * and for `keyboard_layout` that claim would be false — its reader keeps
+   * `layoutId` and drops ~70 keycode entries. A tool that overstates its own
+   * evidence is worse than one that discloses the trim, so the flag rides the DTO
+   * and the renderer says so.
+   */
+  projected?: boolean;
 }
 
 /**
@@ -162,6 +234,9 @@ interface FactSpec<Raw, Canon> {
  * correctness lives.
  */
 export interface Fact {
+  /** What the fact IS. What a card keys on and what `get_fact` takes. */
+  id: string;
+  /** The event kind it is read FROM. Two facts may share one. */
   kind: string;
   title: string;
   attribution: Attribution;
@@ -171,11 +246,20 @@ export interface Fact {
    * the alternative is two paths through the same numbers, which is how they
    * come to disagree.
    */
-  read(streams: readonly SessionStream[], startedAt: SessionStartedAt): KnowledgeFactDetailDTO;
+  read(
+    streams: readonly SessionStream[],
+    startedAt: SessionStartedAt,
+    recency: RecencyOptions,
+  ): KnowledgeFactDetailDTO;
   /**
    * Distinct raw payloads, folded or not — what `npm run probe:identity` prints
    * beside the folded count, and the only number the DTO cannot supply (an
    * unidentified payload has no value to be a variant of).
+   *
+   * COUNTED WITH `stableKey`, the same rule `foldByIdentity` dedups variants
+   * with. It used to use `JSON.stringify`, which is key-order dependent, so two
+   * payloads differing only in key order counted as two here and one there —
+   * two rules for one question, which is the drift this repo names by name.
    */
   rawVariants(streams: readonly SessionStream[]): number;
 }
@@ -186,25 +270,81 @@ const asRecord = (d: unknown): Record<string, unknown> =>
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 
 /**
- * Values, most corroborated first.
+ * A value's evidence, discounted by age — the ordering term, and never printed.
+ *
+ * `docs/research/persistence-layers.md` §4 names the defect this repairs: a
+ * ranking over a RAW LIFETIME TALLY, where a display setup used ten times last
+ * spring and abandoned outranks one used three times last week, forever. The
+ * correction is a time term in the function evaluated per query, never a decay
+ * applied to what was stored — the paper's own litmus, and the reason nothing
+ * below mutates a count.
+ *
+ * THE EXPRESSION IS THE ONE THAT ALREADY SHIPS, `0.5 ** (Δ / halfLife)` per
+ * recording, identical to `edgeCost`'s `evidenceOf` and `walk-analysis`'s
+ * `wayWeight`. One half-life constant serves all three.
+ *
+ * Two rules are inherited whole:
+ *
+ *  - **Per distinct RECORDING, not per observation.** `stabilityOf` counts
+ *    recordings for the same reason: one session that observes a value twelve
+ *    times corroborates it once.
+ *  - **An UNDATABLE recording keeps its whole vote.** Recency may discount
+ *    evidence we can date and must never penalise evidence we merely cannot.
+ */
+function evidenceWeight(
+  sources: readonly KnowledgeSource[],
+  startedAt: SessionStartedAt,
+  recency: RecencyOptions,
+): number {
+  const halfLifeMs = recency.halfLifeMs ?? DEFAULT_HALF_LIFE_MS;
+  const latest = new Map<string, number | null>();
+  for (const s of sources) {
+    const start = startedAt(s.sessionId);
+    const at = start === undefined ? null : start + s.tMono;
+    const prev = latest.get(s.sessionId);
+    if (prev === undefined || (prev !== null && at !== null && at > prev)) {
+      latest.set(s.sessionId, at);
+    }
+  }
+  let weight = 0;
+  for (const at of latest.values()) {
+    weight += at === null ? 1 : 0.5 ** (Math.max(0, recency.now - at) / halfLifeMs);
+  }
+  return weight;
+}
+
+/** One value, ordered — the weight stays here and the DTO leaves without it. */
+interface Ranked {
+  dto: KnowledgeValueDetailDTO;
+  weight: number;
+}
+
+/**
+ * Values, most recently corroborated first.
  *
  * The fold preserves insertion order and says so; ordering for a reader is the
- * CALLER's business, and this is that caller. Distinct recordings lead, because
- * that is the evidence the tier is computed from; observations and then the
- * label itself break ties, so the order is a deterministic function of the
- * library and not of the order rows came back in.
+ * CALLER's business, and this is that caller. The lead term is recency-weighted
+ * evidence rather than a lifetime count, so a value the library has stopped
+ * seeing gives way to one it keeps seeing — which is also what puts an
+ * `exclusive` fact's CURRENT value at the top, where the row list used to
+ * contradict the verdict above it by opening on the superseded one.
+ *
+ * The weight is a float and therefore cannot be the whole order: recordings,
+ * then observations, then the key break ties, so the result is a deterministic
+ * function of the library and not of the order rows came back in.
  */
-function byEvidence(a: KnowledgeValueDetailDTO, b: KnowledgeValueDetailDTO): number {
-  if (b.stability.sessions !== a.stability.sessions) {
-    return b.stability.sessions - a.stability.sessions;
+function byRecentEvidence(a: Ranked, b: Ranked): number {
+  if (b.weight !== a.weight) return b.weight - a.weight;
+  if (b.dto.stability.sessions !== a.dto.stability.sessions) {
+    return b.dto.stability.sessions - a.dto.stability.sessions;
   }
-  if (b.observations !== a.observations) return b.observations - a.observations;
-  return a.label < b.label ? -1 : a.label > b.label ? 1 : 0;
+  if (b.dto.observations !== a.dto.observations) return b.dto.observations - a.dto.observations;
+  return a.dto.key < b.dto.key ? -1 : a.dto.key > b.dto.key ? 1 : 0;
 }
 
 /** Seal one spec's payload type in, and expose only what a consumer reads. */
 function factOf<Raw, Canon>(spec: FactSpec<Raw, Canon>): Fact {
-  const { kind, exclusivity, attribution, identity } = spec.declaration;
+  const { id, kind, exclusivity, attribution, identity } = spec.declaration;
 
   const observations = (streams: readonly SessionStream[]): Observation<Raw>[] => {
     const out: Observation<Raw>[] = [];
@@ -225,64 +365,116 @@ function factOf<Raw, Canon>(spec: FactSpec<Raw, Canon>): Fact {
   };
 
   return {
+    id,
     kind,
     title: spec.title,
     attribution,
-    read(streams, startedAt) {
+    read(streams, startedAt, recency) {
       const folded = foldByIdentity(kind, observations(streams), identity);
       const current = currentValue(folded, exclusivity, startedAt);
-      const values = folded.values
-        .map(
-          (v): KnowledgeValueDetailDTO => ({
-            label: spec.label(v.value),
-            // Assigned straight in, as `toGraphDTO` does: a drift between the
-            // library's `Stability` and `StabilityDTO` is a typecheck failure
-            // rather than a runtime surprise.
-            stability: stabilityOf(v.sources),
-            observations: v.sources.length,
-            variants: v.variants.map((raw) => JSON.stringify(raw)),
-          }),
-        )
-        .sort(byEvidence);
+      // IDENTITY, NOT LABEL. Two values can only be told apart by the form the
+      // fold grouped them under; matching the rendered string would re-introduce
+      // exactly the ambiguity an injective label exists to prevent, and would
+      // depend on a rendering rule to stay correct.
+      const currentKey = current.value === null ? null : stableKey(current.value);
+      const ranked = folded.values
+        .map((v): Ranked => {
+          const key = stableKey(v.value);
+          return {
+            weight: evidenceWeight(v.sources, startedAt, recency),
+            dto: {
+              key,
+              label: spec.label(v.value),
+              isCurrent: currentKey !== null && key === currentKey,
+              // Assigned straight in, as `toGraphDTO` does: a drift between the
+              // library's `Stability` and `StabilityDTO` is a typecheck failure
+              // rather than a runtime surprise.
+              stability: stabilityOf(v.sources),
+              observations: v.sources.length,
+              lastObservedAt: lastObservedAt(v, startedAt),
+              variants: v.variants.map((raw) => JSON.stringify(raw)),
+            },
+          };
+        })
+        .sort(byRecentEvidence);
       return {
+        id,
         kind,
         title: spec.title,
         attribution,
-        values,
+        projected: spec.projected === true,
+        // WHOLE, AND THE CAP IS NOT APPLIED HERE. This is the form `get_fact`
+        // returns, and its entire job is making a fold checkable rather than
+        // asking that it be taken on trust — a checkable fold cannot be a
+        // truncated one. The cap belongs to the COUNTED form (`summarize`),
+        // which is what the card and `list_facts` render.
+        values: ranked.map((r) => r.dto),
+        observations: ranked.reduce((n, r) => n + r.dto.observations, 0),
+        unlisted: 0,
         unidentified: folded.unidentified,
         current: current.value === null ? null : spec.label(current.value),
+        currentSince: current.lastObservedAt,
         reason: current.reason,
-        undated: current.undated,
       };
     },
     rawVariants(streams) {
       const seen = new Set<string>();
-      for (const o of observations(streams)) seen.add(JSON.stringify(o.value));
+      for (const o of observations(streams)) seen.add(stableKey(o.value));
       return seen.size;
     },
   };
 }
 
 /**
- * A display, as a person reads it: `1920×1080 @2× primary`.
+ * A display, as a person reads it: `1920×1080 @2× primary (0,0)`.
  *
- * The only canonical form that needs rendering at all — `layoutId`, `bundleId`
- * and `urlPrefix` are already strings and pass through verbatim. Joined in the
- * tuple's OWN sorted order, so the string is as deterministic as the key it was
- * folded under and the OS's report order cannot mint a second label.
+ * THE ORIGIN IS IN THE STRING BECAUSE THE IDENTITY KEEPS IT. `DISPLAY_TOPOLOGY`
+ * folds on all six fields of every panel, so a label rendering four of them is
+ * not a shorter way of saying the same thing — it is a different projection.
+ *
+ * AND THE COLLISION IS ON THE REAL LIBRARY, not a constructed case. Two of its
+ * three display configurations are the same docked pair with the external nudged
+ * 91px vertically (y = -797 and y = -706); the old label rendered both as
+ * `3840×2160 @1× + 1728×1117 @2× primary`. Two values, one string: a duplicate
+ * React key, two rows a person cannot tell apart, two identical blocks in
+ * `get_fact`, and a `current` field — which is a LABEL — that no longer names
+ * one value.
+ *
+ * Joined in the tuple's OWN sorted order, so the string is as deterministic as
+ * the key it was folded under and the OS's report order cannot mint a second
+ * label.
  */
 export function displayLabel(geometry: readonly DisplayGeometry[]): string {
   return geometry
-    .map(([, , w, h, scale, primary]) => `${w}×${h} @${scale}×${primary ? " primary" : ""}`)
+    .map(([x, y, w, h, scale, primary]) =>
+      `${w}×${h} @${scale}×${primary ? " primary" : ""} (${x},${y})`,
+    )
     .join(" + ");
 }
 
 /**
- * The four facts, in the order the screen draws them.
+ * A focused window: `com.apple.TextEdit · Untitled — Edited`.
  *
- * Keyboard layout leads because it is the one that ANSWERS: three of the four
- * are `coexisting`, so `currentValue` refuses them, and a screen that opened on
- * three refusals would teach that declining is all this layer does.
+ * THE APPLICATION LEADS, and that is what makes the label injective: an
+ * application name or bundle id carries no ` · `, so the first separator always
+ * splits the pair the fold grouped under. Written the other way round, a window
+ * titled `a · b` under app `c` and one titled `a` under app `b · c` would render
+ * the same string.
+ */
+export function windowLabel([app, title]: WindowIdentity): string {
+  return `${app} · ${title}`;
+}
+
+/**
+ * The five facts, in the order the screen draws them.
+ *
+ * Keyboard layout leads because it is the one that ANSWERS: four of the five are
+ * `coexisting`, so `currentValue` refuses them, and a screen that opened on four
+ * refusals would teach that declining is all this layer does.
+ *
+ * Applications and Windows sit together because they are the same event read at
+ * two grains — 7 values and 29 on the real library — and reading them apart is
+ * what `IdentityDeclaration.id` exists for.
  */
 export const FACTS: readonly Fact[] = [
   factOf<KeymapPayload, string>({
@@ -295,16 +487,18 @@ export const FACTS: readonly Fact[] = [
       return layoutId === undefined ? null : { layoutId };
     },
     label: (v) => v,
+    projected: true,
   }),
   factOf<DisplayTopologyPayload, readonly DisplayGeometry[]>({
     declaration: DISPLAY_TOPOLOGY,
     title: "Display setups",
-    payload: (data) => {
-      const displays = asRecord(data).displays;
-      return Array.isArray(displays)
-        ? ({ displays } as DisplayTopologyPayload)
-        : null;
-    },
+    // WHOLE, AND UNCHECKED ON PURPOSE. The shape check belongs to the identity,
+    // which coerces with `coerceDisplays` — the function that wrote the row — so
+    // a malformed topology is DISCLOSED as unidentified rather than silently
+    // becoming a `NaN`-ordered canonical form. Passing the payload through
+    // untouched is also what keeps `variants` raw, which is `get_fact`'s whole
+    // reason to exist: the seven re-minted ids are visible nowhere else.
+    payload: (data) => asRecord(data) as unknown as DisplayTopologyPayload,
     label: displayLabel,
   }),
   factOf<FocusPayload, string>({
@@ -320,6 +514,21 @@ export const FACTS: readonly Fact[] = [
     },
     label: (v) => v,
   }),
+  factOf<WindowPayload, WindowIdentity>({
+    declaration: FOCUSED_WINDOW,
+    title: "Windows",
+    // The SAME admission rule as Applications — it names an application — so a
+    // focus event with no title is an observation of this fact that the identity
+    // cannot place, and lands in `unidentified` rather than vanishing. A payload
+    // this reader rejects is counted nowhere at all, which would be the wrong
+    // claim: the window was focused, we just cannot name it.
+    payload: (data) => {
+      const d = asRecord(data);
+      if (str(d.app) === undefined && str(d.bundleId) === undefined) return null;
+      return d as WindowPayload;
+    },
+    label: windowLabel,
+  }),
   factOf<string, string>({
     declaration: VISITED_PAGE,
     // `url_change` stores `{url}`; the identity takes the string itself, which
@@ -330,15 +539,37 @@ export const FACTS: readonly Fact[] = [
   }),
 ];
 
-/** The detailed form counted: what a card shows, from what a tool discloses. */
+/**
+ * The facts a caller may ask for, static and free.
+ *
+ * `get_fact`'s not-found message names them, and naming them used to cost a
+ * second full run of the pipeline — `factKinds(reader.listFacts())` — on an
+ * error path. What a fact is CALLED does not depend on the library.
+ */
+export const KNOWLEDGE_FACT_IDS: readonly string[] = FACTS.map((f) => f.id);
+
+/**
+ * The detailed form counted: what a card shows, from what a tool discloses.
+ *
+ * AND WHERE THE CAP LIVES. A card and an MCP listing render every value inline,
+ * and `focused_window` lands at 29 on the real library where the largest fact
+ * before it held 21 — so past `MAX_FACT_VALUES` the remainder is FOLDED AND
+ * COUNTED, on `IndexShare`'s rule: never widened, never silently cut, and the
+ * count says how many. `get_fact` is deliberately not capped; checking a fold
+ * against a truncated list is not checking it.
+ */
 export function summarize(fact: KnowledgeFactDetailDTO): KnowledgeFactDTO {
   return {
     ...fact,
-    values: fact.values.map(
+    unlisted: Math.max(0, fact.values.length - MAX_FACT_VALUES),
+    values: fact.values.slice(0, MAX_FACT_VALUES).map(
       (v): KnowledgeValueDTO => ({
+        key: v.key,
         label: v.label,
+        isCurrent: v.isCurrent,
         stability: v.stability,
         observations: v.observations,
+        lastObservedAt: v.lastObservedAt,
         variants: v.variants.length,
       }),
     ),
@@ -352,29 +583,58 @@ export function summarize(fact: KnowledgeFactDetailDTO): KnowledgeFactDTO {
  * declarations rather than recomputed per fact — `flows()` carries the same note
  * about not scanning the session list once per source.
  */
-function readAll(input: KnowledgeInput): {
+function prepare(input: KnowledgeInput): {
   streams: SessionStream[];
-  facts: KnowledgeFactDetailDTO[];
+  startedAt: SessionStartedAt;
 } {
   const streams = input.sessions.map((s) => sessionStream(s, input.isExcluded));
   // One pass for the whole screen, not a lookup per source: a value observed in
   // eleven recordings would otherwise scan the list eleven times.
+  //
+  // EVERY OBSERVATION'S RECORDING IS IN THIS MAP BY CONSTRUCTION — the streams
+  // are built from these same sessions and `KnowledgeSession.startedAt` is
+  // required — so `Current.undated` is structurally zero on this path and the
+  // DTO carries no field for it. The library keeps the contract for a caller
+  // whose sessions cannot all be dated; this one has none.
   const starts = new Map<string, number>();
   for (const s of input.sessions) starts.set(s.sessionId, s.startedAt);
-  const startedAt: SessionStartedAt = (sessionId) => starts.get(sessionId);
-  return { streams, facts: FACTS.map((f) => f.read(streams, startedAt)) };
+  return { streams, startedAt: (sessionId) => starts.get(sessionId) };
 }
 
-/** Every fact, in full. `knowledgeView` is this counted; `get_fact` reads it whole. */
+/** Every fact, in full. `knowledgeView` is this counted. */
 export function knowledgeFacts(input: KnowledgeInput): KnowledgeFactDetailDTO[] {
-  return readAll(input).facts;
+  const { streams, startedAt } = prepare(input);
+  return FACTS.map((f) => f.read(streams, startedAt, input.recency));
+}
+
+/**
+ * ONE fact in full, or null when nothing declares it. What `get_fact` reads.
+ *
+ * Reads the fact asked for and no other — it used to build all of them and throw
+ * four fifths away, which is a whole pipeline per tool call.
+ *
+ * ACCEPTS AN EVENT KIND TOO, but only while it is unambiguous. `display_change`
+ * was the address before facts had ids and an agent mid-conversation should not
+ * be broken by a rename; `focus_change` now names two facts and resolving it to
+ * either would be a guess, so it resolves to neither.
+ */
+export function knowledgeFactDetail(
+  input: KnowledgeInput,
+  id: string,
+): KnowledgeFactDetailDTO | null {
+  const byId = FACTS.find((f) => f.id === id);
+  const byKind = FACTS.filter((f) => f.kind === id);
+  const fact = byId ?? (byKind.length === 1 ? byKind[0] : undefined);
+  if (fact === undefined) return null;
+  const { streams, startedAt } = prepare(input);
+  return fact.read(streams, startedAt, input.recency);
 }
 
 /** Every environment fact the library holds, with the corpus it was read from. */
 export function knowledgeView(input: KnowledgeInput): KnowledgeDTO {
-  const { streams, facts } = readAll(input);
+  const { streams, startedAt } = prepare(input);
   return {
-    facts: facts.map(summarize),
+    facts: FACTS.map((f) => summarize(f.read(streams, startedAt, input.recency))),
     recordings: input.sessions.length,
     excludedApps: [...input.excludedApps],
     excludedEvents: streams.reduce((n, s) => n + s.dropped, 0),

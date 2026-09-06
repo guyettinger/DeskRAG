@@ -5003,7 +5003,7 @@ select {
 /* ONE SLOT FOR THE ANSWER OR THE REFUSAL. The answer is a value and reads as
    one — mono, full contrast; the refusal is a sentence and reads as one. What
    they must not do is sit in different places, or declining would look like an
-   error state on a screen where three of four facts decline. */
+   error state on a screen where four of five facts decline. */
 .kcard__verdict {
   font-family: var(--font-mono);
   font-size: var(--t-lead);
@@ -5053,6 +5053,23 @@ select {
   font-size: var(--t-meta);
   color: var(--muted);
   white-space: nowrap;
+}
+/* THE CURRENT VALUE, MARKED WHERE IT STANDS. The rows are ordered by recent
+   evidence, not by a lifetime count, so the current value is usually the first
+   row and is not guaranteed to be — a reader must be able to find it without
+   comparing its label against the verdict character by character.
+
+   A RULE AND A WEIGHT, not a fill: a filled row in a list of four would read as
+   selected, and nothing on this screen is selectable. The rule sits on the
+   leading edge where the eye enters the row, and the label alone takes the
+   weight so the evidence column stays the quiet one it is on every other row. */
+.kcard__value.is-current {
+  border-left: 2px solid var(--accent);
+  padding-left: var(--s2);
+}
+.kcard__value.is-current .kcard__label {
+  color: var(--text);
+  font-weight: 550;
 }
 .kcard__caveat {
   margin-top: var(--s2);

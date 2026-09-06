@@ -495,6 +495,7 @@ export {
  */
 export {
   currentValue,
+  lastObservedAt,
   type Current,
   type Exclusivity,
   type KnowledgeFact,
@@ -521,6 +522,7 @@ export {
 export {
   DISPLAY_TOPOLOGY,
   FOCUSED_APP,
+  FOCUSED_WINDOW,
   KEYBOARD_LAYOUT,
   VISITED_PAGE,
   type Attribution,
@@ -529,6 +531,8 @@ export {
   type FocusPayload,
   type IdentityDeclaration,
   type KeymapPayload,
+  type WindowIdentity,
+  type WindowPayload,
 } from "./knowledge/identities.js";
 
 /**

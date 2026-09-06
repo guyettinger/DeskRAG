@@ -52,9 +52,15 @@
  *
  * ## It is not a score
  *
- * `alternatives` and `undated` are COUNTS. Nothing here returns a fraction, and
- * a consumer that renders one has reintroduced the number `FrameResult.score`
- * established this repo does not print.
+ * `undated` is a COUNT and `lastObservedAt` is a MOMENT. Nothing here returns a
+ * fraction, and a consumer that renders one has reintroduced the number
+ * `FrameResult.score` established this repo does not print.
+ *
+ * There used to be an `alternatives` count beside them, and it was removed
+ * rather than repaired: it meant "values other than the answer" on the one path
+ * that has an answer and "all of them" on the three that refuse, nothing ever
+ * read it, and `fact.values.length` is in every caller's hand already. A
+ * disclosure with two meanings and no reader is not disclosure.
  */
 
 /**
@@ -101,20 +107,40 @@ export type Exclusivity = "exclusive" | "coexisting";
  */
 export type SessionStartedAt = (sessionId: string) => number | undefined;
 
-/** What a fact resolves to right now. Counts only — never a ratio. */
+/** What a fact resolves to right now. Counts and moments — never a ratio. */
 export interface Current<V> {
   /** The current value, or null on every refusal. */
   value: V | null;
   /** Why this answer. Required — a thing that does not appear must say why. */
   reason: string;
-  /** Distinct OTHER values still standing. A count of values. */
-  alternatives: number;
+  /**
+   * When the current value was last observed, or null on every refusal.
+   *
+   * THE ORDERING, DISCLOSED RATHER THAN DISCARDED. The paper's Knowledge
+   * supersedes with provenance — both claims kept, the older one marked and
+   * DATED — and this function already computes the moment that decides which is
+   * which. Returning it is what lets a consumer say *as of when*, and what stops
+   * a screen from having to infer supersession from a label.
+   */
+  lastObservedAt: number | null;
   /** Sources that could not be dated, so could not be ordered. */
   undated: number;
 }
 
-/** The latest moment this value was observed, or null when nothing datable saw it. */
-function observedAt(v: ObservedValue<unknown>, startedAt: SessionStartedAt): number | null {
+/**
+ * The latest moment this value was observed, or null when nothing datable saw it.
+ *
+ * EXPORTED, because it is the only thing in this module that can order two
+ * values and a consumer needs it for the same reason `currentValue` does: a
+ * value list that ranks by a raw lifetime tally is the defect
+ * `docs/research/persistence-layers.md` §4 names in `edgeCost`, and the
+ * correction is a time term evaluated per query. Nothing here reads a clock —
+ * `startedAt` is injected, exactly as `EdgeRecency` and `RecencyOptions` are.
+ */
+export function lastObservedAt(
+  v: ObservedValue<unknown>,
+  startedAt: SessionStartedAt,
+): number | null {
   let latest: number | null = null;
   for (const s of v.sources) {
     const start = startedAt(s.sessionId);
@@ -153,7 +179,7 @@ export function currentValue<V>(
     return {
       value: null,
       reason: `Nothing has been observed for ${fact.kind}.`,
-      alternatives: 0,
+      lastObservedAt: null,
       undated,
     };
   }
@@ -164,7 +190,7 @@ export function currentValue<V>(
       reason:
         `${fact.kind} holds ${total} value${total === 1 ? "" : "s"} that can all be true at once, ` +
         `so there is no current one — the answer is the set.`,
-      alternatives: total,
+      lastObservedAt: null,
       undated,
     };
   }
@@ -172,7 +198,7 @@ export function currentValue<V>(
   let best: { value: V; when: number } | null = null;
   let tied = false;
   for (const v of fact.values) {
-    const when = observedAt(v, startedAt);
+    const when = lastObservedAt(v, startedAt);
     if (when === null) continue;
     if (best === null || when > best.when) {
       best = { value: v.value, when };
@@ -188,7 +214,7 @@ export function currentValue<V>(
       reason:
         `No recording that observed ${fact.kind} can be dated, so its values cannot be ordered ` +
         `and none of them is later than the others.`,
-      alternatives: total,
+      lastObservedAt: null,
       undated,
     };
   }
@@ -199,7 +225,7 @@ export function currentValue<V>(
       reason:
         `Two values for ${fact.kind} were last observed at the same moment, so neither is later. ` +
         `Declining rather than picking one.`,
-      alternatives: total,
+      lastObservedAt: null,
       undated,
     };
   }
@@ -210,7 +236,7 @@ export function currentValue<V>(
       total === 1
         ? `The only value observed for ${fact.kind}.`
         : `Most recently observed of ${total} values for ${fact.kind}; ${total - 1} other${total === 2 ? "" : "s"} still stand.`,
-    alternatives: total - 1,
+    lastObservedAt: best.when,
     undated,
   };
 }

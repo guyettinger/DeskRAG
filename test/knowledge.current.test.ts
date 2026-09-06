@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   currentValue,
+  lastObservedAt,
   type KnowledgeFact,
   type KnowledgeSource,
   type ObservedValue,
@@ -40,17 +41,36 @@ describe("currentValue — the exclusive path", () => {
     expect(out.value).toBe("ansi");
   });
 
-  it("discloses the alternatives rather than dropping them", () => {
+  it("keeps every other value standing, and says how many", () => {
     const f = fact("keymap", val("ansi", at("s1")), val("iso", at("s2")), val("dvorak", at("s3")));
     const out = currentValue(f, "exclusive", clock({ s1: 1_000, s2: 2_000, s3: 3_000 }));
     expect(out.value).toBe("dvorak");
-    expect(out.alternatives).toBe(2);
+    // Supersession keeps both claims; nothing was deleted to name a current one.
+    expect(f.values).toHaveLength(3);
+    expect(out.reason).toMatch(/2 others still stand/);
   });
 
-  it("counts no alternatives for the only value observed", () => {
-    const out = currentValue(fact("keymap", val("ansi", at("s1"))), "exclusive", clock({ s1: 1 }));
-    expect(out.value).toBe("ansi");
-    expect(out.alternatives).toBe(0);
+  it("dates the answer, so a verdict can be checked against the values", () => {
+    const f = fact("keymap", val("ansi", at("s1")), val("dvorak", at("s3", 250)));
+    const out = currentValue(f, "exclusive", clock({ s1: 1_000, s3: 3_000 }));
+    expect(out.value).toBe("dvorak");
+    expect(out.lastObservedAt).toBe(3_250);
+  });
+});
+
+describe("lastObservedAt", () => {
+  it("is the LATEST source, which is what orders two values", () => {
+    const v = val("ansi", at("s1", 10), at("s3", 5), at("s2", 0));
+    expect(lastObservedAt(v, clock({ s1: 1_000, s2: 2_000, s3: 3_000 }))).toBe(3_005);
+  });
+
+  it("skips a recording it cannot date rather than guessing one", () => {
+    const v = val("ansi", at("s1", 10), at("gone", 999_999));
+    expect(lastObservedAt(v, clock({ s1: 1_000 }))).toBe(1_010);
+  });
+
+  it("is null when nothing that saw the value can be dated", () => {
+    expect(lastObservedAt(val("ansi", at("gone")), clock({}))).toBeNull();
   });
 });
 
@@ -60,7 +80,7 @@ describe("currentValue — what it refuses", () => {
     const f = fact("display", val("one-up", at("s1")), val("docked", at("s2")));
     const out = currentValue(f, "coexisting", clock({ s1: 1_000, s2: 2_000 }));
     expect(out.value).toBeNull();
-    expect(out.alternatives).toBe(2);
+    expect(out.lastObservedAt).toBeNull();
     expect(out.reason).toMatch(/at once|set/i);
   });
 
@@ -96,9 +116,26 @@ describe("currentValue — what it refuses", () => {
   it("answers for a fact with no values at all", () => {
     const out = currentValue(fact<string>("keymap"), "exclusive", clock({}));
     expect(out.value).toBeNull();
-    expect(out.alternatives).toBe(0);
+    expect(out.lastObservedAt).toBeNull();
     expect(out.undated).toBe(0);
     expect(out.reason.length).toBeGreaterThan(0);
+  });
+
+  it("dates NOTHING on a refusal — a date beside no answer is a claim", () => {
+    const values = [val("a", at("s1")), val("b", at("s2"))];
+    const outs = [
+      currentValue(fact("k", ...values), "coexisting", clock({ s1: 1_000, s2: 2_000 })),
+      currentValue(
+        fact("k", val("a", at("s1", 500)), val("b", at("s2", 0))),
+        "exclusive",
+        clock({ s1: 1_000, s2: 1_500 }),
+      ),
+      currentValue(fact("k", val("a", at("gone"))), "exclusive", clock({})),
+    ];
+    for (const out of outs) {
+      expect(out.value).toBeNull();
+      expect(out.lastObservedAt).toBeNull();
+    }
   });
 
   it("always states a reason, on every path", () => {
@@ -111,12 +148,12 @@ describe("currentValue — what it refuses", () => {
     for (const out of outs) expect(out.reason.length).toBeGreaterThan(0);
   });
 
-  it("returns no fraction anywhere — counts, never a ratio", () => {
+  it("returns no fraction anywhere — counts and moments, never a ratio", () => {
     const f = fact("k", val("a", at("s1")), val("b", at("s2")), val("c", at("gone")));
     for (const ex of ["exclusive", "coexisting"] as const) {
       const out = currentValue(f, ex, clock({ s1: 1_000, s2: 2_000 }));
-      expect(Number.isInteger(out.alternatives)).toBe(true);
       expect(Number.isInteger(out.undated)).toBe(true);
+      if (out.lastObservedAt !== null) expect(Number.isInteger(out.lastObservedAt)).toBe(true);
       expect(out.reason).not.toMatch(/\d+(\.\d+)?%|0\.\d+/);
     }
   });
@@ -126,5 +163,6 @@ describe("the barrel", () => {
   it("exports the Knowledge contract", async () => {
     const barrel = await import("../src/index.js");
     expect(typeof barrel.currentValue).toBe("function");
+    expect(typeof barrel.lastObservedAt).toBe("function");
   });
 });

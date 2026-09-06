@@ -3,9 +3,12 @@ import { foldByIdentity, type Observation } from "../src/knowledge/identity.js";
 import {
   DISPLAY_TOPOLOGY,
   FOCUSED_APP,
+  FOCUSED_WINDOW,
+  KEYBOARD_LAYOUT,
   VISITED_PAGE,
   type DisplayTopologyPayload,
   type FocusPayload,
+  type WindowPayload,
 } from "../src/knowledge/identities.js";
 
 const obs = <R>(value: R, sessionId: string): Observation<R> => ({
@@ -49,7 +52,9 @@ describe("DISPLAY_TOPOLOGY", () => {
   });
 
   it("is insensitive to the order the OS reports displays in", () => {
-    const reversed: DisplayTopologyPayload = { displays: [...docked.displays].reverse() };
+    const reversed: DisplayTopologyPayload = {
+      displays: [...(docked.displays as unknown[])].reverse(),
+    };
     const f = foldByIdentity(
       "display_change",
       [obs(docked, "s1"), obs(reversed, "s2")],
@@ -72,6 +77,26 @@ describe("DISPLAY_TOPOLOGY", () => {
 
   it("refuses an empty topology, which is a failed display source and not a configuration", () => {
     expect(DISPLAY_TOPOLOGY.identity({ displays: [] })).toBeNull();
+  });
+
+  it("coerces with the function that wrote the row, so a malformed panel cannot fold", () => {
+    // `compareGeometry` subtracts: one missing field makes the comparator return
+    // NaN and the sorted canonical form implementation-defined, which is a
+    // NON-DETERMINISTIC identity — the one failure this module exists to prevent.
+    // `coerceDisplays` is the writer's own check, run again on the way back in.
+    const malformed: DisplayTopologyPayload = {
+      displays: [
+        { id: "1", x: 0, y: 0, w: 1920, h: 1080, scale: 2, primary: true },
+        { id: "2", x: 0, w: 2560, h: 1440, scale: 1 },
+      ],
+    };
+    expect(DISPLAY_TOPOLOGY.identity(malformed)).toEqual([[0, 0, 1920, 1080, 2, true]]);
+  });
+
+  it("refuses a payload that is not a display list at all, rather than reading zero screens", () => {
+    expect(DISPLAY_TOPOLOGY.identity({ displays: undefined })).toBeNull();
+    expect(DISPLAY_TOPOLOGY.identity({ displays: "left" })).toBeNull();
+    expect(DISPLAY_TOPOLOGY.identity({ displays: [{ id: "1" }] })).toBeNull();
   });
 
   it("is coexisting: a laptop is docked some days and not others", () => {
@@ -125,6 +150,87 @@ describe("FOCUSED_APP", () => {
   it("refuses a payload that names no application at all", () => {
     expect(FOCUSED_APP.identity({})).toBeNull();
     expect(FOCUSED_APP.identity({ app: "", bundleId: "" })).toBeNull();
+  });
+});
+
+describe("FOCUSED_WINDOW", () => {
+  const win = (over: Partial<WindowPayload>): WindowPayload => ({
+    app: "TextEdit",
+    bundleId: "com.apple.TextEdit",
+    title: "Untitled — Edited",
+    ...over,
+  });
+
+  it("separates two windows of one application, which FOCUSED_APP folds together", () => {
+    // THE MEASUREMENT THIS DECLARATION EXISTS FOR: 63 distinct payloads fold to
+    // 7 by bundle id and 28 by (bundleId, title). Two answers to two questions.
+    const observations = [
+      obs(win({ title: "report.md — Edited" }), "s1"),
+      obs(win({ title: "notes.md" }), "s2"),
+    ];
+    expect(
+      foldByIdentity("focus_change", observations, FOCUSED_APP.identity).values,
+    ).toHaveLength(1);
+    expect(
+      foldByIdentity("focus_change", observations, FOCUSED_WINDOW.identity).values,
+    ).toHaveLength(2);
+  });
+
+  it("still drops windowId, pid and the bounds that DRIFT", () => {
+    // The Calculator's main window was observed at (150,231), (133,242) and
+    // (118,253) across three recordings of the same work.
+    const a = { ...win({}), windowId: 41, pid: 900, bounds: { x: 150, y: 231 } };
+    const b = { ...win({}), windowId: 77, pid: 901, bounds: { x: 118, y: 253 } };
+    const f = foldByIdentity("focus_change", [obs(a, "s1"), obs(b, "s2")], FOCUSED_WINDOW.identity);
+    expect(f.values).toHaveLength(1);
+    expect(f.values[0]!.variants).toHaveLength(2);
+  });
+
+  it("refuses a window with no title, rather than folding it onto a titled one", () => {
+    expect(FOCUSED_WINDOW.identity({ app: "TextEdit", bundleId: "com.apple.TextEdit" })).toBeNull();
+    expect(FOCUSED_WINDOW.identity(win({ title: "" }))).toBeNull();
+    // BOTH or nothing: a title under no application names nothing either.
+    expect(FOCUSED_WINDOW.identity({ title: "Untitled" })).toBeNull();
+  });
+
+  it("falls back to the app name when bundleId is absent, as FOCUSED_APP does", () => {
+    expect(FOCUSED_WINDOW.identity({ app: "TextEdit", title: "Untitled — Edited" })).toEqual([
+      "TextEdit",
+      "Untitled — Edited",
+    ]);
+  });
+
+  it("is a SECOND fact over one event kind, which is what `id` is for", () => {
+    expect(FOCUSED_WINDOW.kind).toBe(FOCUSED_APP.kind);
+    expect(FOCUSED_WINDOW.id).not.toBe(FOCUSED_APP.id);
+  });
+
+  it("is coexisting and focused-app, on FOCUSED_APP's reasoning exactly", () => {
+    expect(FOCUSED_WINDOW.exclusivity).toBe("coexisting");
+    expect(FOCUSED_WINDOW.attribution).toBe("focused-app");
+  });
+});
+
+/**
+ * The two axes are not independent on the declarations that exist, and the file
+ * header says so rather than leaving it to be rediscovered.
+ */
+describe("environment or activity", () => {
+  const ALL = [DISPLAY_TOPOLOGY, FOCUSED_APP, FOCUSED_WINDOW, VISITED_PAGE, KEYBOARD_LAYOUT];
+
+  it("gives every declaration a distinct id", () => {
+    expect(new Set(ALL.map((d) => d.id)).size).toBe(ALL.length);
+  });
+
+  it("makes no focused-app fact exclusive — an activity fact cannot supersede", () => {
+    // Using Calculator today does not stop TextEdit having been used. The
+    // consequence is that only an AMBIENT fact can ever return a current value.
+    for (const d of ALL) {
+      if (d.attribution === "focused-app") expect(d.exclusivity, d.id).toBe("coexisting");
+    }
+    expect(ALL.filter((d) => d.exclusivity === "exclusive").map((d) => d.id)).toEqual([
+      "keyboard_layout",
+    ]);
   });
 });
 

@@ -283,43 +283,82 @@ true"** — the environment every recording observed, derived from all of them a
 once rather than from any one.
 
 ```
-4 environment facts, derived from 12 recordings. Nothing here is stored: a fact
-is recomputed from the recorded events on every call. 253 events excluded as the
-recorder's own (DeskRAG, Electron, com.deskrag.app, com.github.Electron). That
-exclusion applies to the facts ABOUT the focused application and deliberately
-not to the ambient ones — the display topology while the recorder is frontmost
-is the same display topology.
+5 environment facts, derived from 13 recordings. Nothing here is stored: a fact
+is recomputed from the recorded events on every call. Values are listed most
+recently corroborated first, and the current one — where a fact has one — is
+marked `*`. 263 events excluded as the recorder's own (DeskRAG, Electron,
+com.deskrag.app, com.github.Electron). That exclusion applies to the facts ABOUT
+the focused application and deliberately not to the ambient ones — the display
+topology while the recorder is frontmost is the same display topology.
 
-Keyboard layout (keymap_change) · ambient — sampled whatever was frontmost, so
-the recorder exclusion does NOT apply
-  Current: com.apple.keylayout.US
+Keyboard layout (keyboard_layout, from keymap_change) · ambient — sampled
+whatever was frontmost, so the recorder exclusion does NOT apply
+  13 observations -> 1 distinct value
+  Current: com.apple.keylayout.US (as of 2026-09-06)
   The only value observed for keymap_change.
-  - com.apple.keylayout.US — core, seen in 12 recordings, 12 observations
+  * com.apple.keylayout.US — core, seen in 13 recordings, 13 observations, last
+    seen 2026-09-06
+  The payloads behind this fact are PROJECTED, not raw: the reader keeps the
+  layout identifier and drops the ~70 keycode mappings beside it…
 
-Display setups (display_change) · ambient — sampled whatever was frontmost, so
-the recorder exclusion does NOT apply
-  No current value. display_change holds 2 values that can all be true at once,
+Display setups (display_topology, from display_change) · ambient — …
+  13 observations -> 3 distinct values
+  No current value. display_change holds 3 values that can all be true at once,
   so there is no current one — the answer is the set.
-  - 1920×1080 @2× primary — core, seen in 11 recordings, 11 observations, folded
-    from 7 distinct payloads
-  - 3840×2160 @1× + 1728×1117 @2× primary — prediction, seen in 1 recording, 1
-    observation
+  - 1920×1080 @2× primary (0,0) — core, seen in 11 recordings, 11 observations,
+    last seen 2026-08-28, folded from 7 distinct payloads
+  - 3840×2160 @1× (-3840,-706) + 1728×1117 @2× primary (0,0) — prediction, seen
+    in 1 recording, 1 observation, last seen 2026-09-06
+  - 3840×2160 @1× (-3840,-797) + 1728×1117 @2× primary (0,0) — prediction, seen
+    in 1 recording, 1 observation, last seen 2026-08-22
+
+Applications (focused_app, from focus_change) · about the focused application,
+so the recorder's own stretches are excluded
+  82 observations -> 6 distinct values
+  No current value. …
+  - com.google.Chrome — core, seen in 5 recordings, 42 observations, last seen
+    2026-09-06, folded from 31 distinct payloads
+  - com.apple.TextEdit — core, seen in 6 recordings, 13 observations, last seen
+    2026-08-24, folded from 10 distinct payloads
+  …
 ```
+
+**A fact is addressed by its `id`, not by the event it reads.** Two of the five
+read `focus_change`: *Applications* folds it to 7 bundle ids and *Windows* folds
+the same events to 29 by `(application, title)`. Both are correct answers to
+different questions, so they are two declarations rather than one widened
+projection — and the event kind therefore cannot name either.
 
 **Most facts have no current value, and that refusal is the answer.** A laptop
-docked some days and not others has two display setups and both are true;
+docked some days and not others has three display setups and all are true;
 "newer wins" would delete one that is still correct. Only a fact whose values
-genuinely exclude one another — a keyboard layout — resolves to one.
+genuinely exclude one another — a keyboard layout — resolves to one, and its row
+is the one marked `*`.
 
-A value's evidence is a **tier and a count of recordings**, the same words the
-Flows graph uses. There is no score and no percentage anywhere in either reply.
+**The order is recency-weighted, not a lifetime tally, and every row is dated so
+you can check it.** Chrome leads Applications on 5 recordings over TextEdit's 6,
+because Chrome was seen today and TextEdit a fortnight ago. Ranking by the raw
+count is the defect `docs/research/persistence-layers.md` §4 names in `edgeCost`,
+and it had a visible cost here: a superseded keyboard layout would sit above the
+one that replaced it, directly under a verdict naming the replacement.
 
-`get_fact` takes one `kind` and adds the **raw payloads** behind each folded
-value:
+A value's evidence is a **tier, a count of recordings and a date** — the same
+words the Flows graph uses, plus the one thing that makes the order legible.
+There is no score and no percentage anywhere in either reply; the weight the
+rows were sorted by is a fraction and never leaves the app.
+
+A long fact **folds rather than truncating**: past twelve values the remainder is
+counted (*16 further values not listed*), on the same rule the indexing rollup
+uses for a sliver.
+
+`get_fact` takes a fact `id` — an event kind also works while it names exactly
+one fact — and adds the **raw payloads** behind each folded value. It is
+deliberately **not** capped, because checking a fold against a truncated list is
+not checking it:
 
 ```
-1920×1080 @2× primary
-  core, seen in 11 recordings, 11 observations
+1920×1080 @2× primary (0,0)
+  core, seen in 11 recordings, 11 observations, last seen 2026-08-28
   7 distinct payloads folded into this one value:
     {"displays":[{"id":"180","x":0,"y":0,"w":1920,"h":1080,"scale":2,…}]}
     {"displays":[{"id":"185","x":0,"y":0,"w":1920,"h":1080,"scale":2,…}]}
@@ -329,8 +368,10 @@ value:
 That is what makes the fold checkable rather than asserted: macOS re-mints
 `DisplayInfo.id` every session, so the same physical display arrives with a
 different identifier in each recording, and the payloads are the only place that
-is visible. Observations the identity cannot place — `chrome://new-tab-page/`
-names no site — are **counted and never dropped**.
+is visible. Where a reader trimmed the payload before folding — the keyboard
+layout's ~70 keycode entries — the fact says so, rather than letting the promise
+of raw evidence stand. Observations the identity cannot place — a URL naming no
+site, a focus event with no window title — are **counted and never dropped**.
 
 ## Read-only, by construction
 
