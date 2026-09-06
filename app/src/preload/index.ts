@@ -68,6 +68,9 @@ const api: DeskRagApi = {
   flows: {
     graph: () => ipcRenderer.invoke(IPC.flowsGraph),
   },
+  knowledge: {
+    facts: () => ipcRenderer.invoke(IPC.knowledgeFacts),
+  },
   habits: {
     list: () => ipcRenderer.invoke(IPC.habitsList),
     accept: (routeKey) => ipcRenderer.invoke(IPC.habitsAccept, routeKey),

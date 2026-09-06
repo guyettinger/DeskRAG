@@ -21,7 +21,7 @@ Any MCP client that speaks Streamable HTTP works; the transport is stateless, so
 there is nothing to reconnect after DeskRAG restarts. DeskRAGApp must be running
 — it owns the store and the models — but it can be closed to the tray.
 
-## The eleven tools
+## The thirteen tools
 
 ### `search_experience`
 
@@ -276,6 +276,62 @@ name and nothing else, and the per-habit "show recorded values" toggle is not
 consulted — a file you deliberately turned values on for is not the same as a
 payload handed to a background process over a socket.
 
+### `list_facts` and `get_fact`
+
+Everything else here answers "what happened". These two answer **"what is
+true"** — the environment every recording observed, derived from all of them at
+once rather than from any one.
+
+```
+4 environment facts, derived from 12 recordings. Nothing here is stored: a fact
+is recomputed from the recorded events on every call. 253 events excluded as the
+recorder's own (DeskRAG, Electron, com.deskrag.app, com.github.Electron). That
+exclusion applies to the facts ABOUT the focused application and deliberately
+not to the ambient ones — the display topology while the recorder is frontmost
+is the same display topology.
+
+Keyboard layout (keymap_change) · ambient — sampled whatever was frontmost, so
+the recorder exclusion does NOT apply
+  Current: com.apple.keylayout.US
+  The only value observed for keymap_change.
+  - com.apple.keylayout.US — core, seen in 12 recordings, 12 observations
+
+Display setups (display_change) · ambient — sampled whatever was frontmost, so
+the recorder exclusion does NOT apply
+  No current value. display_change holds 2 values that can all be true at once,
+  so there is no current one — the answer is the set.
+  - 1920×1080 @2× primary — core, seen in 11 recordings, 11 observations, folded
+    from 7 distinct payloads
+  - 3840×2160 @1× + 1728×1117 @2× primary — prediction, seen in 1 recording, 1
+    observation
+```
+
+**Most facts have no current value, and that refusal is the answer.** A laptop
+docked some days and not others has two display setups and both are true;
+"newer wins" would delete one that is still correct. Only a fact whose values
+genuinely exclude one another — a keyboard layout — resolves to one.
+
+A value's evidence is a **tier and a count of recordings**, the same words the
+Flows graph uses. There is no score and no percentage anywhere in either reply.
+
+`get_fact` takes one `kind` and adds the **raw payloads** behind each folded
+value:
+
+```
+1920×1080 @2× primary
+  core, seen in 11 recordings, 11 observations
+  7 distinct payloads folded into this one value:
+    {"displays":[{"id":"180","x":0,"y":0,"w":1920,"h":1080,"scale":2,…}]}
+    {"displays":[{"id":"185","x":0,"y":0,"w":1920,"h":1080,"scale":2,…}]}
+    …
+```
+
+That is what makes the fold checkable rather than asserted: macOS re-mints
+`DisplayInfo.id` every session, so the same physical display arrives with a
+different identifier in each recording, and the payloads are the only place that
+is visible. Observations the identity cannot place — `chrome://new-tab-page/`
+names no site — are **counted and never dropped**.
+
 ## Read-only, by construction
 
 The server cannot record, delete, re-index, or control your desktop. That is not
@@ -342,7 +398,7 @@ To exercise the whole surface against your real store, from the repo root:
 npm run probe:mcp
 ```
 
-It drives the built app, calls all eleven tools, and runs the three guard checks.
+It drives the built app, calls all thirteen tools, and runs the three guard checks.
 It is read-only — every tool it calls is a read.
 
 `npm run probe:habits` does the same for the two habit tools, and additionally

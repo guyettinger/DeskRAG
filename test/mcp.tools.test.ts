@@ -4,6 +4,8 @@ import type { ExperienceReader } from "../app/src/main/mcp/reader.js";
 import { buildOutline } from "../app/src/main/mcp/outline.js";
 import type {
   FlowsDTO,
+  KnowledgeDTO,
+  KnowledgeFactDetailDTO,
   ResultDetailDTO,
   SearchResultDTO,
   HabitDTO,
@@ -132,6 +134,99 @@ const noHabits = (): HabitsDTO => ({
   prose: { available: false, model: null },
 });
 
+/**
+ * The library's environment facts: one that ANSWERS and one that refuses.
+ *
+ * Both, deliberately. Three of the four real declarations are `coexisting`, so a
+ * fixture built only from those would assert nothing about the shape of an
+ * answer, and one built only from the exclusive fact would never exercise the
+ * refusal that is most of what this layer says.
+ */
+const knowledge = (): KnowledgeDTO => ({
+  facts: [
+    {
+      kind: "keymap_change",
+      title: "Keyboard layout",
+      attribution: "ambient",
+      values: [
+        {
+          label: "com.apple.keylayout.US",
+          stability: { tier: "core", sessions: 12, reason: "Seen in 12 separate recordings." },
+          observations: 12,
+          variants: 1,
+        },
+      ],
+      unidentified: 0,
+      current: "com.apple.keylayout.US",
+      reason: "The only value observed for keymap_change.",
+      undated: 0,
+    },
+    {
+      kind: "display_change",
+      title: "Display setups",
+      attribution: "ambient",
+      values: [
+        {
+          label: "1920×1080 @2× primary",
+          stability: { tier: "core", sessions: 11, reason: "Seen in 11 separate recordings." },
+          observations: 11,
+          variants: 7,
+        },
+        {
+          label: "3840×2160 @1× + 1728×1117 @2× primary",
+          stability: { tier: "prediction", sessions: 1, reason: "Seen in 1 recording." },
+          observations: 1,
+          variants: 1,
+        },
+      ],
+      unidentified: 0,
+      current: null,
+      reason:
+        "display_change holds 2 values that can all be true at once, so there is no current " +
+        "one — the answer is the set.",
+      undated: 0,
+    },
+    {
+      kind: "url_change",
+      title: "Sites",
+      attribution: "focused-app",
+      values: [],
+      unidentified: 3,
+      current: null,
+      reason: "Nothing has been observed for url_change.",
+      undated: 0,
+    },
+  ],
+  recordings: 12,
+  excludedApps: ["DeskRAG", "Electron"],
+  excludedEvents: 253,
+  unattributable: 0,
+});
+
+/** The same display fact, with the seven re-minted ids the fold ignores. */
+const displayDetail = (): KnowledgeFactDetailDTO => ({
+  kind: "display_change",
+  title: "Display setups",
+  attribution: "ambient",
+  values: [
+    {
+      label: "1920×1080 @2× primary",
+      stability: { tier: "core", sessions: 11, reason: "Seen in 11 separate recordings." },
+      observations: 11,
+      variants: [
+        '{"displays":[{"id":"180","x":0,"y":0,"w":1920,"h":1080,"scale":2,"primary":true}]}',
+        '{"displays":[{"id":"185","x":0,"y":0,"w":1920,"h":1080,"scale":2,"primary":true}]}',
+      ],
+    },
+  ],
+  unidentified: 0,
+  current: null,
+  reason:
+    "display_change holds 2 values that can all be true at once, so there is no current " +
+    "one — the answer is the set.",
+  undated: 0,
+});
+
 function fakeReader(over: Partial<ExperienceReader> = {}): ExperienceReader {
   return {
     habits: () => noHabits(),
@@ -165,6 +260,8 @@ function fakeReader(over: Partial<ExperienceReader> = {}): ExperienceReader {
         laneOrigin: 0,
       }),
     flows: () => flows(),
+    listFacts: () => knowledge(),
+    getFact: (kind) => (kind === "display_change" ? displayDetail() : null),
     embed: async () => null,
     momentAt: () => null,
     ...over,
@@ -178,14 +275,16 @@ const textOf = (r: { content: { type: string; text?: string }[] }): string =>
     .join("\n");
 
 describe("the tool surface", () => {
-  it("exposes exactly the eleven read-only tools", () => {
+  it("exposes exactly the thirteen read-only tools", () => {
     expect(TOOLS.map((t) => t.name).sort()).toEqual([
+      "get_fact",
       "get_flow",
       "get_habit",
       "get_habit_step",
       "get_habit_steps",
       "get_moment",
       "get_recording_outline",
+      "list_facts",
       "list_flows",
       "list_habits",
       "list_recordings",
@@ -1064,5 +1163,80 @@ describe("get_habit_steps", () => {
     });
     expect(out.isError).toBe(true);
     expect(textOf(out)).toMatch(/no longer in the trace graph/);
+  });
+});
+
+describe("list_facts", () => {
+  it("discloses the corpus BEFORE any answer", async () => {
+    // A fact folded from twelve recordings and one folded from a single
+    // recording are different claims, and an agent not told which it has will
+    // report the second as though it were the first. `search_habits` states the
+    // same rule for the same reason.
+    const out = await callTool(fakeReader(), "list_facts", {});
+    const body = textOf(out);
+    expect(body.indexOf("12 recordings")).toBeLessThan(body.indexOf("Keyboard layout"));
+  });
+
+  it("says which values are current and which are a refusal, in the same slot", async () => {
+    const body = textOf(await callTool(fakeReader(), "list_facts", {}));
+    expect(body).toMatch(/Current: com\.apple\.keylayout\.US/);
+    expect(body).toMatch(/No current value\. display_change holds 2 values/);
+  });
+
+  it("prints a tier and a count of recordings, and never a score", async () => {
+    const body = textOf(await callTool(fakeReader(), "list_facts", {}));
+    expect(body).toMatch(/core, seen in 11 recordings/);
+    expect(body).toMatch(/prediction, seen in 1 recording/);
+    // `FrameResult.score`'s rule: a percentage here is that number renamed.
+    expect(body).not.toMatch(/\d+(\.\d+)?%/);
+  });
+
+  it("says the recorder exclusion does NOT apply to an ambient fact", async () => {
+    // Measured: applying it to the ambient facts costs 6 of 12 recordings their
+    // display and keymap observations. A card that cannot say so states one
+    // display setup where there are two and cannot explain itself.
+    const body = textOf(await callTool(fakeReader(), "list_facts", {}));
+    expect(body).toMatch(/ambient — sampled whatever was frontmost/);
+    expect(body).toMatch(/253 events excluded as the recorder's own \(DeskRAG, Electron\)/);
+  });
+
+  it("counts what the identity could not place rather than dropping it", async () => {
+    const body = textOf(await callTool(fakeReader(), "list_facts", {}));
+    expect(body).toMatch(/3 observations could not be placed/);
+  });
+
+  it("says an empty library is empty rather than answering from nothing", async () => {
+    const empty = fakeReader({
+      listFacts: () => ({
+        facts: [],
+        recordings: 0,
+        excludedApps: [],
+        excludedEvents: 0,
+        unattributable: 0,
+      }),
+    });
+    expect(textOf(await callTool(empty, "list_facts", {}))).toMatch(/Nothing has been recorded/);
+  });
+});
+
+describe("get_fact", () => {
+  it("shows the raw payloads behind a folded value", async () => {
+    // The whole reason this tool exists: the fold's claim is that several
+    // payloads are one thing, and these are the only evidence for it.
+    const body = textOf(await callTool(fakeReader(), "get_fact", { kind: "display_change" }));
+    expect(body).toMatch(/"id":"180"/);
+    expect(body).toMatch(/"id":"185"/);
+    expect(body).toMatch(/2 distinct payloads folded into this one value/);
+  });
+
+  it("names the known kinds when asked for one that does not exist", async () => {
+    const out = await callTool(fakeReader(), "get_fact", { kind: "nope" });
+    expect(out.isError).toBe(true);
+    expect(textOf(out)).toMatch(/keymap_change, display_change, url_change/);
+  });
+
+  it("requires a kind", async () => {
+    const out = await callTool(fakeReader(), "get_fact", {});
+    expect(out.isError).toBe(true);
   });
 });

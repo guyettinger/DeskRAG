@@ -40,6 +40,7 @@ import {
   nestAxElements,
   textProfile,
   wavPeaks,
+  excludedByName,
   type Producer,
   type EmbeddingProvider,
   type MultiVectorProvider,
@@ -50,6 +51,7 @@ import {
   type Reranker,
   type ViewSearcher,
   type Graph,
+  type TraceEvent,
 } from "deskrag";
 import type { SettingsStore } from "./settings.js";
 import { MODELS, TEXT_MODEL_SPECS } from "./models.js";
@@ -72,6 +74,7 @@ import { buildStageGraph } from "./index-graph.js";
 import { SignalTally } from "./recording-activity.js";
 import { IndexWorker } from "./index-worker.js";
 import { frequentRoutes, toGraphDTO } from "./graph-view.js";
+import { knowledgeFacts, knowledgeView, type KnowledgeInput } from "./knowledge-view.js";
 import { flowApps } from "./flow-steps.js";
 import {
   droppedEarlyOf,
@@ -118,6 +121,8 @@ import type {
   IndexQueueDTO,
   IndexTickDTO,
   KeyframeMarkerDTO,
+  KnowledgeDTO,
+  KnowledgeFactDetailDTO,
   ProviderSettingsView,
   RecordingStatus,
   RecordingTickDTO,
@@ -1806,6 +1811,52 @@ export class DeskRagService {
       // which applications are meant to be missing; a reader who finds their own
       // app gone is entitled to that answer without opening Settings.
       excludedApps: [...this.settings.view().flows.excludeApps],
+    };
+  }
+
+  // --- knowledge ------------------------------------------------------------
+
+  /**
+   * What the library's recordings say the desktop consists of, and which of
+   * those values DeskRAG is willing to call current.
+   *
+   * THE I/O AND NOTHING ELSE, mirroring `flows()`: every decision — the fold,
+   * the fact-scoped recorder exclusion, all three refusals, the label rendering
+   * — is in `knowledge-view.ts`, which is pure and therefore in the root suite.
+   * Inlining any of it here would make it testable only by launching the app,
+   * the exact bind `probe:merge` and `probe:reflect` exist to work around.
+   *
+   * NOTHING IS CACHED. The whole pipeline measured 4.63ms on the real library
+   * and the fold is linear; a cached answer would go stale the moment a
+   * recording is deleted and nothing here would notice, which is the same
+   * reasoning `habits()` gives for building its own session map.
+   */
+  knowledge(): KnowledgeDTO {
+    return knowledgeView(this.knowledgeInput());
+  }
+
+  /**
+   * One fact with the RAW PAYLOADS behind each of its values, or null when
+   * nothing declares that kind.
+   *
+   * The counted form is what a card shows; this is what makes the fold
+   * checkable — the seven re-minted `DisplayInfo.id`s appear nowhere else.
+   */
+  knowledgeFact(kind: string): KnowledgeFactDetailDTO | null {
+    return knowledgeFacts(this.knowledgeInput()).find((f) => f.kind === kind) ?? null;
+  }
+
+  /** The reads both faces share, in one place so they cannot diverge. */
+  private knowledgeInput(): KnowledgeInput {
+    const excludeApps = this.settings.view().flows.excludeApps;
+    return {
+      sessions: this.store.listSessions().map((s) => ({
+        sessionId: s.id,
+        startedAt: s.startedAt,
+        events: this.store.getEventsBySession(s.id) as unknown as TraceEvent[],
+      })),
+      isExcluded: excludedByName(excludeApps),
+      excludedApps: excludeApps,
     };
   }
 

@@ -6,7 +6,7 @@
  * only issues JSON-RPC and screenshots. It exists because the suite cannot see
  * any of this — there is no renderer in vitest, and the app-side integration
  * test runs against a FAKE reader. What is checked here is the one thing
- * neither can reach: the eleven tools answering from a real store, in whatever
+ * neither can reach: the thirteen tools answering from a real store, in whatever
  * provider configuration this machine is actually set to.
  */
 
@@ -305,6 +305,39 @@ try {
   } else {
     console.log("(no habit kept)");
   }
+
+  // The two Knowledge tools. Only a real store can reach what makes them worth
+  // checking: the fold's claim is that several observed payloads are one value,
+  // and on a real library the same display carries a different OS-minted id in
+  // every recording. A fixture cannot produce that — it would only reproduce
+  // whatever the fixture author believed.
+  console.log("\n=== list_facts ===");
+  const facts = textOf(await call(url, "list_facts"));
+  console.log(head(facts, 24));
+  // The corpus, before any answer. Same rule as search_habits above.
+  const factsFirstAnswer = Math.min(
+    ...[/Current:/, /No current value/]
+      .map((re) => facts.search(re))
+      .filter((i) => i >= 0),
+  );
+  console.log(
+    `corpus disclosed before the answers: ${facts.search(/derived from \d+ recording/i) >= 0 && facts.search(/derived from \d+ recording/i) < factsFirstAnswer}`,
+  );
+  // A tier is a word and a count of recordings, and it may be printed. A
+  // percentage is `FrameResult.score` under a new name and may not.
+  console.log(`no percentage printed: ${!/\d+(\.\d+)?%/.test(facts)}`);
+  // The measurement this cycle rests on, read off the wire rather than asserted:
+  // on the author's library `display_change` refuses with two coexisting values.
+  console.log(`refusal reached: ${/No current value/.test(facts)}`);
+  console.log(`an exclusive fact answered: ${/Current: /.test(facts)}`);
+
+  console.log("\n=== get_fact ===");
+  const detail = textOf(await call(url, "get_fact", { kind: "display_change" }));
+  console.log(head(detail, 24));
+  // THE VARIANTS ARE THE POINT: without them the fold is an assertion.
+  console.log(`raw payloads disclosed: ${/"id":/.test(detail)}`);
+  const unknown = textOf(await call(url, "get_fact", { kind: "no_such_fact" }));
+  console.log(`unknown kind names the known ones: ${/Known kinds:/.test(unknown)}`);
 
   // The log had better show every one of those calls.
   await page.waitForTimeout(300);
