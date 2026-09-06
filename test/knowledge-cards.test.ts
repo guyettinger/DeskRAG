@@ -5,6 +5,7 @@ import {
   caveatLines,
   corpusLines,
   evidenceLine,
+  lastSeen,
 } from "../app/src/renderer/src/knowledge-cards.js";
 import type { KnowledgeDTO, KnowledgeFactDTO } from "../app/src/shared/types.js";
 
@@ -18,14 +19,18 @@ import type { KnowledgeDTO, KnowledgeFactDTO } from "../app/src/shared/types.js"
  */
 
 const fact = (over: Partial<KnowledgeFactDTO> = {}): KnowledgeFactDTO => ({
+  id: "display_topology",
   kind: "display_change",
   title: "Display setups",
   attribution: "ambient",
+  projected: false,
   values: [],
+  observations: 0,
+  unlisted: 0,
   unidentified: 0,
   current: null,
+  currentSince: null,
   reason: "…",
-  undated: 0,
   ...over,
 });
 
@@ -46,22 +51,30 @@ describe("the attribution chip", () => {
 });
 
 describe("a value's evidence", () => {
+  // Local noon, so the rendered day is the same wherever the suite runs — and so
+  // it matches what `knowledge-text.ts` prints for the same moment.
+  const SEEN = new Date(2026, 7, 29, 12).getTime();
   const value = {
-    label: "1920×1080 @2× primary",
+    key: '{"w":1920}',
+    label: "1920×1080 @2× primary (0,0)",
+    isCurrent: false,
     stability: { tier: "core" as const, sessions: 11, reason: "…" },
     observations: 11,
+    lastObservedAt: SEEN,
     variants: 7,
   };
 
-  it("is a word and a count of recordings, never a ratio", () => {
-    expect(evidenceLine(value)).toBe("core · 11 recordings · 7 payloads");
-    expect(evidenceLine(value)).not.toMatch(/%/);
+  it("is a word, a count of recordings and a date — never a ratio", () => {
+    const line = evidenceLine(value);
+    expect(line).toBe(`core · 11 recordings · ${lastSeen(SEEN)} · 7 payloads`);
+    expect(line).not.toMatch(/%/);
   });
 
   it("says nothing about payloads when the fold merged nothing", () => {
-    // "1 payload" on every row of three facts out of four is noise, not
-    // disclosure.
-    expect(evidenceLine({ ...value, variants: 1 })).toBe("core · 11 recordings");
+    // "1 payload" on every row of most of the facts is noise, not disclosure.
+    expect(evidenceLine({ ...value, variants: 1 })).toBe(
+      `core · 11 recordings · ${lastSeen(SEEN)}`,
+    );
   });
 
   it("calls a withheld tier withheld rather than showing it as zero", () => {
@@ -69,16 +82,26 @@ describe("a value's evidence", () => {
     // whose recordings were all deleted, and `stabilityOf` keeps them apart.
     expect(
       evidenceLine({ ...value, stability: { tier: null, sessions: 0, reason: "…" }, variants: 1 }),
-    ).toBe("withheld · 0 recordings");
+    ).toBe(`withheld · 0 recordings · ${lastSeen(SEEN)}`);
+  });
+
+  it("calls an undatable value undated rather than dating it", () => {
+    // THE DATE IS WHAT MAKES THE ORDER READABLE, so a missing one has to say so
+    // — a blank would read as "seen just now", which is the opposite claim.
+    expect(evidenceLine({ ...value, lastObservedAt: null, variants: 1 })).toBe(
+      "core · 11 recordings · undated",
+    );
   });
 });
 
 describe("the disclosures", () => {
-  it("counts what could not be placed and what could not be dated", () => {
-    const lines = caveatLines(fact({ unidentified: 3, undated: 2 }));
+  it("counts what could not be placed and what is not shown", () => {
+    const lines = caveatLines(fact({ unidentified: 3, unlisted: 16 }));
     expect(lines).toHaveLength(2);
     expect(lines[0]).toMatch(/3 observations could not be placed/);
-    expect(lines[1]).toMatch(/2 observations came from a recording that could not be dated/);
+    // FOLDED AND COUNTED, never silently cut — `IndexShare`'s rule, and the
+    // reason a card can carry a 28-value fact at all.
+    expect(lines[1]).toMatch(/16 further values not shown/);
   });
 
   it("says nothing when there is nothing to disclose", () => {

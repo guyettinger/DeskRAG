@@ -86,10 +86,11 @@ export interface ExperienceReader {
    */
   listFacts(): KnowledgeDTO;
   /**
-   * One fact by `kind`, with the raw payloads behind each folded value, or null
-   * when nothing declares that kind.
+   * One fact by `id`, with the raw payloads behind each folded value, or null
+   * when nothing declares it. An event kind resolves too while it names exactly
+   * one fact — `focus_change` names two and therefore does not.
    */
-  getFact(kind: string): KnowledgeFactDetailDTO | null;
+  getFact(id: string): KnowledgeFactDetailDTO | null;
   /**
    * The HABIT.md files the user chose to keep, plus what could be proposed.
    *
@@ -213,8 +214,8 @@ export class ServiceExperienceReader implements ExperienceReader {
     return this.service.knowledge();
   }
 
-  getFact(kind: string): KnowledgeFactDetailDTO | null {
-    return this.service.knowledgeFact(kind);
+  getFact(id: string): KnowledgeFactDetailDTO | null {
+    return this.service.knowledgeFact(id);
   }
 
   habits(): HabitsDTO {

@@ -20,7 +20,8 @@ import { findHabit, renderHabitList } from "./habit-text.js";
 import { denseRanking, habitDocs, renderHabitSearch, type DenseLane } from "./habit-search.js";
 import { renderStep, resolveStep } from "./habit-step.js";
 import { habitStepsJson } from "./habit-steps-json.js";
-import { factKinds, renderFactDetail, renderFacts } from "./knowledge-text.js";
+import { renderFactDetail, renderFacts } from "./knowledge-text.js";
+import { KNOWLEDGE_FACT_IDS } from "../knowledge-view.js";
 
 export interface ToolContent {
   type: "text" | "image";
@@ -657,22 +658,27 @@ const getFactTool: ToolDef = {
   inputSchema: {
     type: "object",
     properties: {
-      kind: {
+      id: {
         type: "string",
-        description: "The fact's kind, from list_facts — e.g. display_change.",
+        description:
+          "The fact's id, from list_facts — e.g. display_topology, focused_window. An event " +
+          "kind also works while it names exactly one fact (display_change does; focus_change " +
+          "names two).",
       },
     },
-    required: ["kind"],
+    required: ["id"],
     additionalProperties: false,
   },
   async run(reader, args) {
-    const kind = str(args, "kind");
-    if (kind === null) return fail("`kind` is required and must be a non-empty string.");
-    const fact = reader.getFact(kind);
+    const id = str(args, "id");
+    if (id === null) return fail("`id` is required and must be a non-empty string.");
+    const fact = reader.getFact(id);
     if (fact === null) {
-      // The kinds are NAMED rather than the caller being told to go back to
+      // The facts are NAMED rather than the caller being told to go back to
       // list_facts: an error an agent can act on without a second round trip.
-      return fail(`No fact ${kind}. Known kinds: ${factKinds(reader.listFacts())}.`);
+      // The list is STATIC, so saying so costs nothing — it used to run the whole
+      // pipeline a second time just to build this sentence.
+      return fail(`No fact ${id}. Known facts: ${KNOWLEDGE_FACT_IDS.join(", ")}.`);
     }
     return text(renderFactDetail(fact));
   },

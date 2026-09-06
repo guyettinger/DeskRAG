@@ -14,9 +14,18 @@
  * also not stored — the whole projection measured 4.63ms on the real library, so
  * it is recomputed on every visit rather than kept in a table.
  *
+ * VALUES ARE ORDERED BY RECENT EVIDENCE AND THE CURRENT ONE IS MARKED. Ranking
+ * by a raw lifetime count is the defect `docs/research/persistence-layers.md` §4
+ * names in `edgeCost`, and it had the same consequence here: a keyboard layout
+ * seen in three recordings sat above the one that had replaced it, while the
+ * verdict directly above the list said the opposite. Each row carries the date
+ * it was last seen, so the order can be checked rather than trusted.
+ *
  * NOTHING TRUNCATES. The longest string on this screen is a docked display's
  * geometry, and it wraps rather than gaining an ellipsis — an ellipsis hides a
- * broken layout, which is the rail's rule applied to a column of prose.
+ * broken layout, which is the rail's rule applied to a column of prose. What a
+ * long LIST does instead is fold: past `MAX_FACT_VALUES` the remainder is
+ * counted in a caveat, never widened and never silently cut.
  */
 
 import React, { useEffect, useState } from "react";
@@ -45,8 +54,9 @@ function KnowledgeHead(): React.JSX.Element {
       <h1>What your recordings say is true</h1>
       <p>
         The environment every recording observed — the keyboard layout, the display setups, the
-        applications and the sites. Values that are really the same thing are folded together,
-        and a fact only names a current value when its values cannot all be true at once.
+        applications, the windows worked in and the sites. Values that are really the same
+        thing are folded together, and a fact only names a current value when its values
+        cannot all be true at once.
       </p>
     </div>
   );
@@ -68,7 +78,7 @@ function FactCard({ fact }: { fact: KnowledgeFactDTO }): React.JSX.Element {
 
       {/* ONE SLOT, whether the fact answers or declines. Putting the refusal
           somewhere else would make declining look like an error state, and on
-          this library three of the four facts decline. */}
+          this library four of the five facts decline. */}
       <p className={`kcard__verdict${fact.current === null ? " is-refused" : ""}`}>
         {fact.current === null ? fact.reason : fact.current}
       </p>
@@ -78,8 +88,14 @@ function FactCard({ fact }: { fact: KnowledgeFactDTO }): React.JSX.Element {
         <p className="kcard__why">Nothing has been observed for this fact yet.</p>
       ) : (
         <ul className="kcard__values">
+          {/* KEYED ON THE VALUE'S IDENTITY, never on its label. A label is a
+              rendering, and one that collapsed two distinct configurations
+              shipped — two rows, one key, and React reconciling them as one. */}
           {fact.values.map((v) => (
-            <li key={v.label} className="kcard__value">
+            <li
+              key={v.key}
+              className={`kcard__value${v.isCurrent ? " is-current" : ""}`}
+            >
               <span className="kcard__label">{v.label}</span>
               <span className="kcard__evidence mono">{evidenceLine(v)}</span>
             </li>
@@ -131,8 +147,10 @@ export function KnowledgeScreen(): React.JSX.Element {
     <div className="page knowledge">
       <KnowledgeHead />
       <div className="knowledge__cards">
+        {/* KEYED ON THE FACT'S ID: Applications and Windows are both read from
+            `focus_change`, so the event kind no longer identifies a card. */}
         {dto.facts.map((fact) => (
-          <FactCard key={fact.kind} fact={fact} />
+          <FactCard key={fact.id} fact={fact} />
         ))}
       </div>
       {/* THE CORPUS, at the foot of the screen rather than in the head: it is

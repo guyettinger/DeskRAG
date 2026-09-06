@@ -74,7 +74,7 @@ import { buildStageGraph } from "./index-graph.js";
 import { SignalTally } from "./recording-activity.js";
 import { IndexWorker } from "./index-worker.js";
 import { frequentRoutes, toGraphDTO } from "./graph-view.js";
-import { knowledgeFacts, knowledgeView, type KnowledgeInput } from "./knowledge-view.js";
+import { knowledgeFactDetail, knowledgeView, type KnowledgeInput } from "./knowledge-view.js";
 import { flowApps } from "./flow-steps.js";
 import {
   droppedEarlyOf,
@@ -1837,13 +1837,19 @@ export class DeskRagService {
 
   /**
    * One fact with the RAW PAYLOADS behind each of its values, or null when
-   * nothing declares that kind.
+   * nothing declares it.
    *
    * The counted form is what a card shows; this is what makes the fold
    * checkable — the seven re-minted `DisplayInfo.id`s appear nowhere else.
+   *
+   * Addressed by fact `id`, and it reads THAT FACT ALONE: it used to build all of
+   * them and discard the rest, which is a whole pipeline per tool call. An event
+   * kind still resolves while it names exactly one fact, so a caller that learned
+   * `display_change` keeps working and `focus_change` — which now names two —
+   * correctly does not.
    */
-  knowledgeFact(kind: string): KnowledgeFactDetailDTO | null {
-    return knowledgeFacts(this.knowledgeInput()).find((f) => f.kind === kind) ?? null;
+  knowledgeFact(id: string): KnowledgeFactDetailDTO | null {
+    return knowledgeFactDetail(this.knowledgeInput(), id);
   }
 
   /** The reads both faces share, in one place so they cannot diverge. */
@@ -1857,6 +1863,10 @@ export class DeskRagService {
       })),
       isExcluded: excludedByName(excludeApps),
       excludedApps: excludeApps,
+      // THE ONE WALL-CLOCK READ, here at the consumer boundary and nowhere
+      // inside the projection — `walkAnalysis`'s arrangement, for its reason: a
+      // rule that reads its own clock cannot be tested against a fixture.
+      recency: { now: Date.now() },
     };
   }
 

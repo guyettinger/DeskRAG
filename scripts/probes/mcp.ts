@@ -327,17 +327,37 @@ try {
   // percentage is `FrameResult.score` under a new name and may not.
   console.log(`no percentage printed: ${!/\d+(\.\d+)?%/.test(facts)}`);
   // The measurement this cycle rests on, read off the wire rather than asserted:
-  // on the author's library `display_change` refuses with two coexisting values.
+  // on the author's library `display_topology` refuses with coexisting values.
   console.log(`refusal reached: ${/No current value/.test(facts)}`);
   console.log(`an exclusive fact answered: ${/Current: /.test(facts)}`);
+  // TWO FACTS READ ONE EVENT KIND, which is why a fact is addressed by its id.
+  // Only real data shows both grains of `focus_change` side by side.
+  console.log(
+    `both grains of focus_change present: ${/\(focused_app, from focus_change\)/.test(facts) && /\(focused_window, from focus_change\)/.test(facts)}`,
+  );
+  // Ordered by recent evidence, and EVERY row dated so the order can be checked
+  // rather than trusted — a `core · 8 recordings` row may legitimately sit below
+  // a `prediction · 1 recording` one, and only the date says why.
+  const valueLines = facts.split("\n").filter((l) => /^ {2}[-*] /.test(l));
+  console.log(
+    `every value dated: ${valueLines.length > 0 && valueLines.every((l) => / last seen \d{4}-\d{2}-\d{2}/.test(l))} (${valueLines.length} rows)`,
+  );
+  console.log(`current row marked in the bullet: ${/^ {2}\* /m.test(facts)}`);
 
   console.log("\n=== get_fact ===");
-  const detail = textOf(await call(url, "get_fact", { kind: "display_change" }));
+  const detail = textOf(await call(url, "get_fact", { id: "display_topology" }));
   console.log(head(detail, 24));
   // THE VARIANTS ARE THE POINT: without them the fold is an assertion.
   console.log(`raw payloads disclosed: ${/"id":/.test(detail)}`);
-  const unknown = textOf(await call(url, "get_fact", { kind: "no_such_fact" }));
-  console.log(`unknown kind names the known ones: ${/Known kinds:/.test(unknown)}`);
+  // An event kind still resolves while it names exactly one fact, so a caller
+  // that learned `display_change` before facts had ids is not broken.
+  const byKind = textOf(await call(url, "get_fact", { id: "display_change" }));
+  console.log(`an unambiguous event kind still resolves: ${/"id":/.test(byKind)}`);
+  // `focus_change` names TWO facts, so resolving it either way would be a guess.
+  const ambiguous = textOf(await call(url, "get_fact", { id: "focus_change" }));
+  console.log(`an ambiguous event kind refuses: ${/Known facts:/.test(ambiguous)}`);
+  const unknown = textOf(await call(url, "get_fact", { id: "no_such_fact" }));
+  console.log(`unknown id names the known ones: ${/Known facts:/.test(unknown)}`);
 
   // The log had better show every one of those calls.
   await page.waitForTimeout(300);

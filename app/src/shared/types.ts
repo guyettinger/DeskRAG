@@ -1300,25 +1300,68 @@ export interface FlowsDTO {
 /** One value of a fact, folded under its declared identity. */
 export interface KnowledgeValueDTO {
   /**
+   * `stableKey` of the canonical form — the value's IDENTITY, not its wording.
+   *
+   * What a list keys on and what marks the current row. The label cannot do
+   * either job: it is a rendering, and a rendering that collapsed two distinct
+   * canonical forms once already did (`displayLabel` dropped the origin the fold
+   * keeps). Opaque on purpose — never parse it, never show it.
+   */
+  key: string;
+  /**
    * The value, as text.
    *
    * RENDERED ONCE, in `knowledge-view.ts`, so the screen and the MCP tool are
    * byte-identical — two renderers is how a habit's clipboard string and
    * `get_habit`'s would come to disagree, which is why `probe:habits` checks
-   * exactly that.
+   * exactly that. It MUST separate whatever the fold separated; `FactSpec.label`
+   * carries the rule and a test asserts it.
    */
   label: string;
+  /**
+   * This is the value `KnowledgeFactDTO.current` names.
+   *
+   * On the value rather than left to the reader to infer, because a list ordered
+   * by evidence can open on a SUPERSEDED value — measured: a layout seen in three
+   * recordings sat above the one that replaced it, while the verdict above the
+   * list said the opposite. False on every row of a fact that refuses.
+   */
+  isCurrent: boolean;
   /** `stabilityOf(value.sources)` assigned straight in, as `GraphNodeDTO` does. */
   stability: StabilityDTO;
   /** How many times this value was observed. Not a rate. */
   observations: number;
+  /**
+   * Wall-clock ms of the last observation, or null when no recording that saw it
+   * could be dated.
+   *
+   * A MOMENT, NOT A SCORE, and it is what makes the ordering legible: values are
+   * listed by recency-weighted evidence, so a `core` row can sit below a
+   * `prediction` one and the screen has to be able to say why.
+   */
+  lastObservedAt: number | null;
   /** Distinct raw payloads folded into this value. A count. */
   variants: number;
 }
 
 /** One environment fact: its values, and what DeskRAG will call current. */
 export interface KnowledgeFactDTO {
-  /** The `event.kind` this fact reads — `display_change`, `focus_change`, … */
+  /**
+   * What the fact IS — `keyboard_layout`, `display_topology`, `focused_app`,
+   * `focused_window`, `visited_page`. The key a card uses and the address
+   * `get_fact` takes.
+   *
+   * NOT THE EVENT KIND, because two facts now read `focus_change`: applications
+   * at one grain and windows at another. `IdentityDeclaration.id` carries the
+   * reasoning.
+   */
+  id: string;
+  /**
+   * The `event.kind` this fact is read FROM — `display_change`, `focus_change`, …
+   *
+   * Disclosure rather than identity: it says where a fact comes from, and two
+   * facts may say the same thing here.
+   */
   kind: string;
   /** The screen's word for it. UI copy, minted in the app, never in the library. */
   title: string;
@@ -1331,15 +1374,45 @@ export interface KnowledgeFactDTO {
    * display setup where there are two.
    */
   attribution: "focused-app" | "ambient";
+  /**
+   * The payload was trimmed before the fold, so `variants` are not raw.
+   *
+   * True for `keyboard_layout` alone: its reader keeps `layoutId` and drops ~70
+   * keycode mappings. `get_fact` promises the payloads BEHIND a value, and a
+   * tool that overstates its own evidence is worse than one that discloses the
+   * trim.
+   */
+  projected: boolean;
+  /** Most recently corroborated first. At most `MAX_FACT_VALUES` of them. */
   values: KnowledgeValueDTO[];
+  /**
+   * Observations behind every value, listed or not. Excludes `unidentified`,
+   * which is counted separately because it folded into no value.
+   *
+   * A FACT-LEVEL COUNT, because `values` is capped and summing what is shown
+   * would understate the evidence exactly where a fact is large enough for that
+   * to matter. `values.length + unlisted` is the number of distinct values.
+   */
+  observations: number;
+  /**
+   * Values beyond the cap. Folded and COUNTED, never silently dropped —
+   * `IndexShare`'s rule for the same reason, and 0 on every fact small enough to
+   * list whole.
+   */
+  unlisted: number;
   /** Observations the identity could not place. A count, never a ratio. */
   unidentified: number;
   /** The current value's label, or null on every refusal. */
   current: string | null;
+  /**
+   * When the current value was last observed, or null on every refusal.
+   *
+   * The paper's supersession keeps both claims and DATES them; this is that
+   * date. A verdict with no "as of" cannot be checked against the list below it.
+   */
+  currentSince: number | null;
   /** Why this answer. Required — a thing that does not appear must say why. */
   reason: string;
-  /** Sources no clock could place, so they could not be ordered. */
-  undated: number;
 }
 
 /**
@@ -1352,26 +1425,37 @@ export interface KnowledgeFactDTO {
  * not something to put on a card.
  */
 export interface KnowledgeValueDetailDTO {
+  key: string;
   label: string;
+  isCurrent: boolean;
   stability: StabilityDTO;
   observations: number;
+  lastObservedAt: number | null;
   /**
    * The distinct raw payloads this value folded, as JSON text, in arrival
    * order. `KnowledgeValueDTO.variants` is the count of exactly this list.
+   *
+   * Raw unless `KnowledgeFactDTO.projected` says otherwise.
    */
   variants: string[];
 }
 
 /** One fact, with every value's raw payloads. The shape `get_fact` returns. */
 export interface KnowledgeFactDetailDTO {
+  id: string;
   kind: string;
   title: string;
   attribution: "focused-app" | "ambient";
+  projected: boolean;
+  /** EVERY value, uncapped — a fold cannot be checked against a truncated list. */
   values: KnowledgeValueDetailDTO[];
+  observations: number;
+  /** Always 0: this form is never capped. Present so both faces share a renderer. */
+  unlisted: number;
   unidentified: number;
   current: string | null;
+  currentSince: number | null;
   reason: string;
-  undated: number;
 }
 
 /** Every environment fact the library holds, with the corpus it was read from. */

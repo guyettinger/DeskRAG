@@ -8,8 +8,10 @@
  * furniture — the evidence line, the disclosures, the corpus footer — which is
  * this face's wording and nobody else's.
  *
- * NOTHING HERE IS A RATIO. A value's evidence is a tier and a count of
- * recordings, which is what may be printed where `FrameResult.score` may not.
+ * NOTHING HERE IS A RATIO. A value's evidence is a tier, a count of recordings
+ * and the date it was last seen — a word, a count and a date, which is what may
+ * be printed where `FrameResult.score` may not. The recency weight the rows are
+ * ORDERED by is a fraction and stays in `knowledge-view.ts`.
  */
 
 import type { KnowledgeDTO, KnowledgeFactDTO, KnowledgeValueDTO } from "@shared/types";
@@ -39,24 +41,43 @@ export function attributionNote(fact: KnowledgeFactDTO): string {
 }
 
 /**
- * A value's evidence: a tier, the recordings behind it, and what it folded.
+ * A value's evidence: a tier, the recordings behind it, when it was last seen,
+ * and what it folded.
  *
  * `withheld` is a tier that could not be computed — a graph lifted before
  * provenance existed — and is deliberately not shown as zero recordings, which
  * is a different state entirely.
+ *
+ * THE DATE IS WHAT MAKES THE ORDER READABLE. Rows are listed by recency-weighted
+ * evidence, so a `core · 8 recordings` value can sit below a `prediction · 1
+ * recording` one; without the date on both, that reads as a broken sort rather
+ * than as the newer thing being newer.
  */
 export function evidenceLine(value: KnowledgeValueDTO): string {
   const parts = [
     value.stability.tier ?? "withheld",
     plural(value.stability.sessions, "recording"),
+    lastSeen(value.lastObservedAt),
   ];
   // Only when the fold actually did something: "1 payload" on every row would be
-  // noise on three facts out of four.
+  // noise on most of the facts.
   if (value.variants > 1) parts.push(plural(value.variants, "payload"));
   return parts.join(" · ");
 }
 
-/** What could not be placed and what could not be dated. Counts, never dropped. */
+/**
+ * When a value was last observed, in the screen's register rather than the MCP
+ * reply's ISO date.
+ *
+ * `null` is a value no recording could date — a state, not a zero, and the same
+ * distinction `withheld` draws one line up.
+ */
+export function lastSeen(at: number | null): string {
+  if (at === null) return "undated";
+  return new Date(at).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+/** What could not be placed and what is not listed. Counts, never dropped. */
 export function caveatLines(fact: KnowledgeFactDTO): string[] {
   const out: string[] = [];
   if (fact.unidentified > 0) {
@@ -65,10 +86,10 @@ export function caveatLines(fact: KnowledgeFactDTO): string[] {
         `identity — counted, never folded in.`,
     );
   }
-  if (fact.undated > 0) {
+  if (fact.unlisted > 0) {
     out.push(
-      `${plural(fact.undated, "observation")} came from a recording that could not be dated, ` +
-        `so it could not be ordered against the others.`,
+      `${plural(fact.unlisted, "further value")} not shown — these are the most recently ` +
+        `corroborated, and the rest are counted rather than dropped.`,
     );
   }
   return out;
