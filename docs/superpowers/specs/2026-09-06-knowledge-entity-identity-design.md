@@ -38,7 +38,7 @@ store, counted three ways.
 | --- | --- | --- | --- |
 | `display_change` | 12 | 8 | **2** |
 | `focus_change` | 92 | 63 | **7** |
-| `url_change` | 44 | 19 | **18** |
+| `url_change` | 44 | 19 | **17**, plus 3 unidentified |
 | `keymap_change` | 12 | 1 | 1 |
 
 Three separate findings, and they do not agree with each other. That
@@ -65,8 +65,9 @@ appears at (150, 231), (133, 242) and (118, 253) across three recordings. By
 the identity encodes has to be declared, not inferred.** `bundleId` is present
 in all 92 payloads; `app` is too.
 
-**`url_change` — 19 → 18. This is a null result.** A tracking-parameter strip
-plus trailing-slash normalization merges exactly one pair on this library:
+**`url_change` — 19 → 17 identified plus 3 unidentified, and the rule already
+exists.** A hand-written tracking-parameter strip plus trailing-slash
+normalization merges exactly one pair on this library:
 
 ```
 https://www.linkedin.com/notifications
@@ -74,9 +75,21 @@ https://www.linkedin.com/notifications
   <- https://www.linkedin.com/notifications/?skipRedirect=true&lipi=urn%3Ali%3A…
 ```
 
-The case that *looks* most obviously like an identity problem is the one this
-library does not justify. It ships anyway — see §5 — and it ships with that
-number written next to it.
+`src/trace/url.ts`'s `urlPrefix` — shipped, documented and already the rule node
+identity uses — was then measured over the same 19 URLs and produced **the same
+single merge**, on the same pair. A second normalizer would buy nothing and
+would be exactly the *"second, quietly different prefix rule"* that
+`src/index.ts` exports `urlPrefix` to prevent. So the URL identity is
+`urlPrefix`, and no new rule is written. See §5.
+
+The merge itself is still a null result — one pair in nineteen. What changed is
+its price, which is now zero.
+
+`urlPrefix` also returns `undefined` for three of the 44 observations —
+`chrome://new-tab-page/`, which names no site — and that is a **finding, not a
+gap**: it gives §4's `unidentified` disclosure a real case in the live data
+rather than a hypothetical one. Three observations that cannot be placed are
+counted and shown, not silently folded into a nineteenth value.
 
 **`keymap_change` needs no identity, and that is a finding.** 12 occurrences,
 one distinct payload. Its identity is the identity function, and registering one
@@ -210,22 +223,33 @@ this library needs the fallback); drops `windowId`, `pid`, `bounds`, `title` and
 Measured 92 → 63 → **7**. §2's three candidate answers are recorded in the
 declaration so the choice of question is visible where the choice is made.
 
-**`visitedPage`** — lowercases scheme and host, drops the fragment, drops a
-single trailing slash, removes parameters in a declared `TRACKING_PARAMS` set,
-and sorts the survivors. `coexisting`. Measured 44 → 19 → **18**.
+**`visitedPage`** — **`urlPrefix` from `src/trace/url.ts`, called, not
+reimplemented.** `coexisting`. Measured 44 → 19 raw → **17** identified, with
+**3** unidentified.
 
-> **`visitedPage` ships ahead of its evidence, deliberately and on the author's
-> call.** One merge in nineteen is not a measurement that justifies a rule; it
-> was adopted because the rule is expected to earn its place on a larger or more
-> tracking-heavy library, and the number is written beside the declaration so
-> that expectation stays falsifiable. `npm run probe:identity` is what would
-> confirm or retire it.
+> **This identity writes no rule of its own, and that is the decision.** A
+> hand-written normalizer was measured first and achieved exactly one merge in
+> nineteen; `urlPrefix` achieves the same merge on the same pair. Given equal
+> results, the tie is broken by the note `src/index.ts` already carries — that
+> `urlPrefix` is exported so anything reading a recorded URL reads it the way
+> node identity does, *"rather than growing a second, quietly different prefix
+> rule."* Writing one here would have been that rule, and it would have looked
+> correct.
 
-`TRACKING_PARAMS` is deliberately small and every entry is sourced. Google
-News's `hl`, `gl` and `ceid` are **excluded**: they merge nothing on this
-library and they are content parameters, so including them would be both
-unmeasured and arguably wrong. Growing this set without a probe run that shows
-the merge is the regression this note exists to prevent.
+Two consequences follow and both are deliberate. **The grain is the site, not
+the page**: `urlPrefix` caps at three path segments and drops query and
+fragment, so `inman-perk-coffee.vercel.app/menu` and `/about` remain distinct
+while a scroll anchor or a tab parameter does not mint a value. That is the
+grain `urlPrefix`'s own doc comment argues for, and adopting it means the
+Knowledge layer and the trace graph cannot drift apart on what a URL *is*.
+
+**And a URL that names no site is `null`, not a value.** `urlPrefix` already
+returns `undefined` for `file:`, `chrome:` and `about:`; passing that straight
+through to `Identity`'s `null` is what puts `chrome://new-tab-page/` in
+`unidentified` instead of inventing an eighteenth site. One merge in nineteen
+remains a thin result — `npm run probe:identity` is what would show it earning
+its place on a larger or more tracking-heavy library — but it now costs nothing
+to keep.
 
 No identity is registered for `keymap_change` — see §2.
 
@@ -279,9 +303,13 @@ would retire `visitedPage` if the rule never earns its merge.
   layer actually asks. The number is question-dependent by construction and the
   declaration says so; a consumer wanting 28 wants a second identity, not an
   edit to this one.
-- **`visitedPage` still merging one in nineteen on a much larger library.** That
-  is the retirement condition, and it is written down here so retiring it is a
-  measurement rather than an argument.
+- **`urlPrefix`'s site grain turning out to be the wrong grain for Knowledge.**
+  It is adopted here because it costs nothing and because two rules would drift,
+  not because a measurement showed the site is the right unit for a *fact*. A
+  probe run where sites collapse work that a reader needs kept apart is the
+  argument for a page-grain identity — which would then be a change to
+  `urlPrefix`'s callers as much as to this module, and must not be a private
+  second rule inside `identities.ts`.
 
 ## 9 · Sources
 
@@ -293,6 +321,8 @@ would retire `visitedPage` if the rule never earns its merge.
 - `docs/internals/persistence.md` — the durable rules.
 - In-repo precedents relied on: `src/knowledge/facts.ts` (`Current.undated`, the
   counts-not-ratios rule), `src/embed/text-profiles.ts` (quirks as data),
+  `src/trace/url.ts` (`urlPrefix`, and the barrel note that exists to stop a
+  second URL rule being written),
   `src/trace/predicates.ts` (`canonicalRole` — normalization as a tiny pure
   function, after matching prefixed literals produced zero predicates from every
   real recording), `scripts/probes/baseline.ts` (headless and read-only, prints
