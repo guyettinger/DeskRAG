@@ -11,6 +11,8 @@
 
 import type {
   FlowsDTO,
+  KnowledgeDTO,
+  KnowledgeFactDetailDTO,
   HighlightDTO,
   ResultDetailDTO,
   SearchResultDTO,
@@ -75,6 +77,20 @@ export interface ExperienceReader {
   /** Null when no trace graph has been built at all. */
   flows(): FlowsDTO | null;
   /**
+   * The environment facts every recording observed, folded and resolved.
+   *
+   * Named `listFacts`, not `facts`, so the tool names and the reader agree — and
+   * because both halves of the read-only guard's vocabulary have to hold: the
+   * guard matches this interface's BODY with NO word boundaries, which is what
+   * cost `inputs` and `startedAt` their names one file over.
+   */
+  listFacts(): KnowledgeDTO;
+  /**
+   * One fact by `kind`, with the raw payloads behind each folded value, or null
+   * when nothing declares that kind.
+   */
+  getFact(kind: string): KnowledgeFactDetailDTO | null;
+  /**
    * The HABIT.md files the user chose to keep, plus what could be proposed.
    *
    * READ ONLY, like everything else here. Keeping, editing and forgetting a
@@ -131,6 +147,8 @@ export interface ServiceReads {
     laneOrigin: number;
   } | null;
   flows(): FlowsDTO | null;
+  knowledge(): KnowledgeDTO;
+  knowledgeFact(kind: string): KnowledgeFactDetailDTO | null;
   habits(): HabitsDTO;
   embedTexts(texts: string[], role: "document" | "query"): Promise<Float32Array[]>;
   sessionDetail(sessionId: string): SessionDetailDTO | null;
@@ -189,6 +207,14 @@ export class ServiceExperienceReader implements ExperienceReader {
 
   flows(): FlowsDTO | null {
     return this.service.flows();
+  }
+
+  listFacts(): KnowledgeDTO {
+    return this.service.knowledge();
+  }
+
+  getFact(kind: string): KnowledgeFactDetailDTO | null {
+    return this.service.knowledgeFact(kind);
   }
 
   habits(): HabitsDTO {

@@ -1,6 +1,6 @@
 /**
- * The six tools, and the formatting that turns DTOs into something an agent can
- * read.
+ * The thirteen tools, and the formatting that turns DTOs into something an agent
+ * can read.
  *
  * Pure: no MCP SDK, no Electron, no store. The transport in `server.ts` walks
  * `TOOLS` to advertise them and calls `callTool` to run one, so everything
@@ -20,6 +20,7 @@ import { findHabit, renderHabitList } from "./habit-text.js";
 import { denseRanking, habitDocs, renderHabitSearch, type DenseLane } from "./habit-search.js";
 import { renderStep, resolveStep } from "./habit-step.js";
 import { habitStepsJson } from "./habit-steps-json.js";
+import { factKinds, renderFactDetail, renderFacts } from "./knowledge-text.js";
 
 export interface ToolContent {
   type: "text" | "image";
@@ -72,7 +73,9 @@ list_habits/get_habit return HABIT.md files the user has kept from their own rec
 flows — use one when you are about to repeat something they have done before, and \
 search_habits finds the right one from a description of your situation. get_habit_step shows \
 what one step of a habit actually looked like on screen, and get_habit_steps returns its \
-steps as JSON.
+steps as JSON. list_facts is different in kind from all of these: it returns what is TRUE of \
+this desktop — keyboard layout, display setups, applications, sites — derived from every \
+recording rather than from one, and get_fact shows the raw observations behind one of them.
 
 This server is read-only: it cannot record, delete, re-index, or control the desktop.`;
 
@@ -620,6 +623,61 @@ const getHabitStepsTool: ToolDef = {
   },
 };
 
+// --- knowledge -------------------------------------------------------------
+//
+// "What is true", as distinct from what happened. Everything else on this server
+// returns moments and paths; these two return the values the recordings agree
+// on, and — where the fact type allows it — which one is current.
+
+const listFactsTool: ToolDef = {
+  name: "list_facts",
+  title: "List environment facts",
+  description:
+    "What the user's desktop consists of, derived from every recording: which keyboard " +
+    "layout, which display setups, which applications, which sites. Each fact lists the " +
+    "distinct values observed with how many recordings saw each, and says whether one of " +
+    "them is CURRENT — most are not, because a laptop docked some days and not others has " +
+    "two display setups that are both true. Use this for stable context about the machine " +
+    "and the tools in use, rather than searching for a moment.",
+  inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  async run(reader) {
+    return text(renderFacts(reader.listFacts()));
+  },
+};
+
+const getFactTool: ToolDef = {
+  name: "get_fact",
+  title: "Get one environment fact in full",
+  description:
+    "One fact from list_facts, with the RAW PAYLOADS behind each value. Use it to check a " +
+    "fold rather than take it on trust: several observed payloads are reported as one value " +
+    "when a declared identity says they are the same thing, and this is where the payloads " +
+    "themselves are visible — the same display carries a different OS-minted id in every " +
+    "recording, which is exactly what the fold exists to ignore.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      kind: {
+        type: "string",
+        description: "The fact's kind, from list_facts — e.g. display_change.",
+      },
+    },
+    required: ["kind"],
+    additionalProperties: false,
+  },
+  async run(reader, args) {
+    const kind = str(args, "kind");
+    if (kind === null) return fail("`kind` is required and must be a non-empty string.");
+    const fact = reader.getFact(kind);
+    if (fact === null) {
+      // The kinds are NAMED rather than the caller being told to go back to
+      // list_facts: an error an agent can act on without a second round trip.
+      return fail(`No fact ${kind}. Known kinds: ${factKinds(reader.listFacts())}.`);
+    }
+    return text(renderFactDetail(fact));
+  },
+};
+
 export const TOOLS: readonly ToolDef[] = [
   searchTool,
   momentTool,
@@ -632,6 +690,8 @@ export const TOOLS: readonly ToolDef[] = [
   getHabitTool,
   getHabitStepTool,
   getHabitStepsTool,
+  listFactsTool,
+  getFactTool,
 ];
 
 export function toolByName(name: string): ToolDef | undefined {

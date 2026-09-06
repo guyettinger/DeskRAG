@@ -411,6 +411,18 @@ a **prerequisite** of the other two, not the second of three. See
 [`docs/internals/persistence.md`](../internals/persistence.md) and
 [the spec](../superpowers/specs/2026-09-04-knowledge-layer-seam-design.md).
 
+**CLOSED 2026-09-06 BY THE FIRST CONSUMER, on a measurement rather than a
+preference.** The tail this section left — whether "computed per query" survives
+contact with a caller — has a number now. Running the whole pipeline behind the
+Knowledge screen and the `list_facts` tool over the real library (12 recordings,
+5079 events): **4.63ms**, of which 3.77ms is reading and parsing rows and ~0.86ms
+is the fold. The fold alone against a synthetic hundredfold corpus — 9200
+observations, roughly what 1200 recordings would carry — **34.13ms**. The bar was
+set in advance at single-digit milliseconds, the cost is dominated by the read
+and is linear, and a hundredfold library still resolves inside one frame. **There
+is no table, and cycle 2 needed none.** See
+[the spec](../superpowers/specs/2026-09-06-knowledge-first-consumer-design.md).
+
 ### 6.3 If it is built, the tiers have their inputs already
 
 Should §1.3's stability tiers be wanted, DeskRAG has better inputs than the paper
@@ -422,9 +434,11 @@ an observation, not a habit." And `npm run probe:stability` already runs three f
 re-index-and-re-mine cycles, which is the paper's "consolidation cycle" counter
 under another name.
 
-The MCP surface would accommodate it: `search_knowledge` and `get_fact` both
-satisfy the read-only guard's `^(search|get|list)_` rule — the rule that already
-cost `find_habit` its name.
+The MCP surface accommodated it: `list_facts` and `get_fact` shipped 2026-09-06
+and both satisfy the read-only guard's `^(search|get|list)_` rule — the rule that
+already cost `find_habit` its name. **`search_knowledge` was NOT built**: it
+implies a ranking this layer does not do, and would drag `RANKING_MIN_HABITS`-style
+disclosure onto a four-row corpus. The name stays reserved.
 
 ---
 

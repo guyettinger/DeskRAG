@@ -65,7 +65,7 @@ permissions, and how it's wired.
 </tr>
 <tr>
 <td width="50%"><img src="docs/images/habits.png" alt="Habits screen"><br><strong>Habits</strong> — a repeated flow as a HABIT.md, with the record beneath the prose.</td>
-<td width="50%"></td>
+<td width="50%"><img src="docs/images/knowledge.png" alt="Knowledge screen"><br><strong>Knowledge</strong> — what your recordings say is true, and where there is no single current answer.</td>
 </tr>
 </table>
 
@@ -117,7 +117,7 @@ npm install && npm run typecheck && npm test
 | [Architecture](./docs/architecture.md) | the pipeline, the dual-store seam, vector namespacing, repo layout |
 | [Setup](./docs/setup.md) | requirements, install, optional tools, macOS permissions, maintainer scripts |
 | [Providers](./docs/providers.md) | what runs where, weight pinning, why every provider is local |
-| [Agent access (MCP)](./docs/mcp.md) | the eleven read-only tools, how to connect, and the security posture |
+| [Agent access (MCP)](./docs/mcp.md) | the thirteen read-only tools, how to connect, and the security posture |
 | [Library usage](./docs/library-usage.md) | the API shape, end to end |
 | [DeskRAGApp](./app/README.md) | the Electron desktop client |
 | [Roadmap](./ROADMAP.md) | what isn't built yet, and where a shipped part stops short |

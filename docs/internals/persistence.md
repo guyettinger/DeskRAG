@@ -224,9 +224,60 @@ counted, never dropped** — `chrome://new-tab-page/` names no site, and 3 of 44
 `npm run probe:identity` re-renders every number above from the live library.
 Measured 2026-09-06 over 12 recordings: `display_change` 12 occurrences / 8 raw
 / **2**, `focus_change` 92 / 63 / **7**, `url_change` 44 / 19 / **17** plus 3
-unidentified. `keymap_change` gets no identity — 12 occurrences and one payload,
-so a projection would buy zero. See
+unidentified. See
 `docs/superpowers/specs/2026-09-06-knowledge-entity-identity-design.md`.
+
+### Cycle 2, 2026-09-06: the first consumer, and no table
+
+Cycles 0 and 1 shipped a contract ahead of its first caller, deliberately — the
+measurement that decided the contract would have been baked into a wrong table
+had the caller come first. The consumer is the **Knowledge screen** and the
+`list_facts` / `get_fact` tools, projected by `app/src/main/knowledge-view.ts`.
+Three things it settled:
+
+**"Computed per query" survives a consumer, so there is still no table.** The
+bar was set in advance: single-digit milliseconds settles it, hundreds make the
+table a real question at 100 recordings. Measured over the real library, running
+the whole pipeline — every event of every recording read, parsed, excluded,
+folded, and `currentValue` resolved on each — **4.63ms**, of which **3.77ms** was
+reading and parsing rows rather than folding them. The fold alone against a
+synthetic hundredfold corpus: **9200 observations → 7 values in 34.13ms**. The
+cost is dominated by the read and is linear, so a hundredfold library still
+resolves inside one frame. §6.2 of `docs/research/persistence-layers.md` closes,
+and the rule above stands unamended: **no table, no bucket.**
+
+**`keymap_change` got an identity after all, and only a consumer could have
+asked for it.** The fold count is unchanged and the old note was right about it —
+12 occurrences, one payload, a projection buys zero *values*. What the count
+cannot see is that a projection also decides what a consumer SEES, and the raw
+payload is `{ layoutId, entries: { …70 keycode mappings… } }`. Seventy entries is
+not a value that goes on a screen or into a tool response. `KEYBOARD_LAYOUT` is
+also `exclusive` — a layout supersedes where a docked display does not — which
+makes it **the one fact that returns a value**: all three earlier declarations
+are `coexisting`, so a screen built on them alone could only ever show DeskRAG
+declining, three times, teaching that refusing is all the layer does.
+
+**THE RECORDER EXCLUSION IS SCOPED BY FACT TYPE, AND THIS WAS MEASURED.**
+Applying `excludeFocusedApps` to every event before folding is the obvious
+implementation and it is wrong: display and keymap are sampled at session start,
+while the recorder is still frontmost. Measured with the app's real
+`flows.excludeApps` — **6 of 12 recordings lose their `display_change`
+entirely, and 6 of 12 their `keymap_change`**. The two display configurations
+survived that only by luck: the docked one is a *single* observation and was one
+coin flip from vanishing, which would have shown one setup where there are two,
+confidently and with no disclosure. An environment fact is not about the
+application that happened to be frontmost when it was sampled, so
+`IdentityDeclaration.attribution` (`focused-app` | `ambient`) declares it beside
+exclusivity, as data rather than a branch. The exclusion drops **253 of 5079**
+events; `focus_change` folds 7 → 6 and `url_change` 17 → 15, `localhost` leaving
+with `com.github.Electron`.
+
+The `(bundleId, title)` question stays closed for this consumer and is not
+deferred again: six of those 28 carry an **empty** title, which
+`identities.ts`'s own rule calls *absent*, and the rest of the list is pages,
+which `url_change` answers better at site grain. A consumer that genuinely wants
+windows wants a second declared identity, not an edit to `FOCUSED_APP`. See
+`docs/superpowers/specs/2026-09-06-knowledge-first-consumer-design.md`.
 
 What would reopen this: a fact type whose evidence is genuinely not retained; a
 rebuild that cannot reproduce a fact in session order; or a measured need for a

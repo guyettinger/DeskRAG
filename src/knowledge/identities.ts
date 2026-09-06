@@ -21,11 +21,37 @@ import { urlPrefix } from "../trace/url.js";
 import type { Exclusivity } from "./facts.js";
 import type { Identity } from "./identity.js";
 
+/**
+ * Whether a fact is ABOUT the application that was frontmost when it was
+ * sampled, and so inherits the recorder exclusion.
+ *
+ * A property of the fact TYPE, exactly like exclusivity, and declared here for
+ * the same reason: it fails silently when guessed, and the failure is a screen
+ * confidently stating something false.
+ */
+export type Attribution = "focused-app" | "ambient";
+
 /** One declared identity: the fact it is for, whether its values coexist, and the projection. */
 export interface IdentityDeclaration<Raw, Canon> {
   /** The `event.kind` this identity reads. */
   kind: string;
   exclusivity: Exclusivity;
+  /**
+   * Whether this fact is ABOUT the focused application, and so inherits the
+   * recorder exclusion.
+   *
+   * MEASURED 2026-09-06: applying the exclusion to the AMBIENT facts costs 6 of
+   * 12 recordings their display and keymap observations outright, because both
+   * are sampled at session start while the recorder is still frontmost. The two
+   * display configurations survived that by luck — the docked one has a single
+   * observation and was one coin flip from vanishing, which would have shown one
+   * setup where there are two.
+   *
+   * `excludeFocusedApps` exists to drop WORK attributable to the recorder, and a
+   * display configuration is not work: the display topology while the recorder
+   * is frontmost is the same display topology.
+   */
+  attribution: Attribution;
   identity: Identity<Raw, Canon>;
 }
 
@@ -75,6 +101,7 @@ export const DISPLAY_TOPOLOGY: IdentityDeclaration<
 > = {
   kind: "display_change",
   exclusivity: "coexisting",
+  attribution: "ambient",
   identity: (payload) => {
     if (payload.displays.length === 0) return null;
     const geometry = payload.displays.map(
@@ -116,6 +143,7 @@ const nonEmpty = (s: string | undefined): string | null =>
 export const FOCUSED_APP: IdentityDeclaration<FocusPayload, string> = {
   kind: "focus_change",
   exclusivity: "coexisting",
+  attribution: "focused-app",
   identity: (payload) => nonEmpty(payload.bundleId) ?? nonEmpty(payload.app),
 };
 
@@ -144,11 +172,48 @@ export const FOCUSED_APP: IdentityDeclaration<FocusPayload, string> = {
 export const VISITED_PAGE: IdentityDeclaration<string, string> = {
   kind: "url_change",
   exclusivity: "coexisting",
+  attribution: "focused-app",
   identity: (url) => urlPrefix(url) ?? null,
 };
 
+/** The fields of a `keymap_change` payload this identity reads. */
+export interface KeymapPayload {
+  layoutId?: string;
+}
+
 /**
- * `keymap_change` has NO identity, and that is a finding rather than an omission:
- * 12 occurrences and ONE distinct payload on the real library, so a projection
- * would buy zero. Recorded here so it is not added for symmetry.
+ * `keymap_change` -> the keyboard layout's identifier.
+ *
+ * DECLARED BY THE CONSUMER, AND ONLY A CONSUMER COULD HAVE DECLARED IT. This
+ * file used to record `keymap_change` as having no identity, on a measurement
+ * that is still exactly right: 12 occurrences, ONE distinct payload, so a
+ * projection buys zero VALUES. The note said so and said not to add one for
+ * symmetry.
+ *
+ * What the fold count cannot see is that a projection also decides what a
+ * consumer SEES, and the raw payload is `{ layoutId, entries: { …70 keycode
+ * mappings… } }`. Seventy entries is not a value that goes on a screen or into
+ * a tool response; `layoutId` is. That is `DISPLAY_TOPOLOGY`'s own argument —
+ * a projection makes the decoy structurally unable to reach a consumer —
+ * applied to bulk rather than to a decoy.
+ *
+ * EXCLUSIVE, and that half is load-bearing. It makes this the one declared fact
+ * that RETURNS a value: `currentValue` refuses every `coexisting` fact, so a
+ * screen built on the other three could only ever show DeskRAG declining, three
+ * times, which teaches that refusing is the only thing the layer does. It
+ * resolves to `"com.apple.keylayout.US"` with the reason "The only value
+ * observed for keymap_change."
+ *
+ * A keyboard layout supersedes: switching to Dvorak means US is no longer the
+ * layout, where docking a laptop does not stop the undocked geometry being real.
+ *
+ * AMBIENT: sampled at session start, while the recorder is still frontmost. See
+ * `IdentityDeclaration.attribution` — measured, excluding it costs 6 of 12
+ * recordings their keymap observation entirely.
  */
+export const KEYBOARD_LAYOUT: IdentityDeclaration<KeymapPayload, string> = {
+  kind: "keymap_change",
+  exclusivity: "exclusive",
+  attribution: "ambient",
+  identity: (payload) => nonEmpty(payload.layoutId),
+};

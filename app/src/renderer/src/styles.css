@@ -4952,3 +4952,128 @@ select {
   font-size: var(--t-meta); color: var(--muted); line-height: 1.45;
 }
 .habitedit__toggle input { margin-top: 2px; flex: 0 0 auto; }
+
+/* ---- knowledge ---------------------------------------------------------- */
+
+/* THE PAGE OWNS THE CONTENT AREA — no measured column, on the rule stated at
+   `.page`: every screen that carried `max-width: 1000px; margin: 0 auto` was
+   inverted away from it, and a single 78ch column left ~400px of the DEFAULT
+   1180 window empty before anyone maximised it.
+
+   So the cards flow into whatever width there is. The track floor is the widest
+   evidence string this screen actually produces (`prediction · 1 recording · 3
+   payloads`, measured at 241px) plus room for a label beside it — and it is
+   30rem rather than 34 because of what that buys at the DEFAULT window: the app
+   opens at 1180, which leaves ~1030 here, and 34rem took one column there and
+   set a value's label and its evidence a thousand pixels apart. At 30rem the
+   default window gets two tracks and a maximised one gets three.
+   `min(100%, …)` is what keeps a narrow pane from overflowing rather than
+   fragmenting, and `align-items: start` stops the one-value keyboard card being
+   stretched to the height of a fifteen-site one. */
+.knowledge__cards {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 30rem), 1fr));
+  align-items: start;
+  gap: var(--s3);
+  padding-right: var(--s2);
+}
+
+.kcard {
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: var(--s4);
+}
+.kcard__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s3);
+  margin-bottom: var(--s2);
+}
+.kcard__title {
+  font-size: var(--t-title);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+/* ONE SLOT FOR THE ANSWER OR THE REFUSAL. The answer is a value and reads as
+   one — mono, full contrast; the refusal is a sentence and reads as one. What
+   they must not do is sit in different places, or declining would look like an
+   error state on a screen where three of four facts decline. */
+.kcard__verdict {
+  font-family: var(--font-mono);
+  font-size: var(--t-lead);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.kcard__verdict.is-refused {
+  font-family: var(--font-ui);
+  font-size: var(--t-body);
+  color: var(--muted);
+}
+.kcard__why {
+  margin-top: var(--s1);
+  font-size: var(--t-meta);
+  color: var(--muted);
+}
+
+.kcard__values {
+  list-style: none;
+  margin-top: var(--s3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+/* The label takes the slack and the evidence keeps its own width, right-aligned
+   to one edge — so a row is read left-to-right as "this value, this much
+   evidence" without a table's rules and headers for four columns of counts. */
+.kcard__value {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding: var(--s1) 0;
+  border-top: 1px solid var(--hairline-soft);
+}
+/* NOTHING TRUNCATES — the rail's rule, and this screen is where it bites: a
+   docked display's geometry is the longest string in the app's chrome. It wraps
+   onto a second line rather than gaining an ellipsis, which would hide the fact
+   that the layout broke. */
+.kcard__label {
+  font-size: var(--t-body);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.kcard__evidence {
+  flex: 0 0 auto;
+  font-size: var(--t-meta);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.kcard__caveat {
+  margin-top: var(--s2);
+  font-size: var(--t-meta);
+  color: var(--muted-dim);
+  line-height: 1.45;
+}
+
+/* The corpus the answers were read from. At the FOOT because it is provenance,
+   not a preamble — but on the screen, because a reader who finds their own
+   application missing is entitled to that answer without opening Settings. */
+.knowledge__corpus {
+  flex: none;
+  margin-top: var(--s3);
+  padding-top: var(--s3);
+  border-top: 1px solid var(--hairline-soft);
+  font-size: var(--t-meta);
+  color: var(--muted-dim);
+  line-height: 1.5;
+  /* Capped on the ELEMENT rather than on the page, the `.result__headline`
+     precedent: three lines of provenance set across a maximised window is not a
+     line anyone reads, and the cards above want the width. */
+  max-width: 92ch;
+}

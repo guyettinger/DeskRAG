@@ -87,6 +87,7 @@ export function registerIpc(
    * the app can reach it, which is what keeps `ax-exec` unspawned.
    */
   ipcMain.handle(IPC.flowsGraph, () => service.flows());
+  ipcMain.handle(IPC.knowledgeFacts, () => service.knowledge());
 
   // The first screen whose IPC WRITES. That is not a widening of the MCP
   // promise: these handlers are reachable only from the renderer, and the MCP

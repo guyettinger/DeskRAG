@@ -6,6 +6,7 @@ import {
   IconFlows,
   IconHabits,
   IconIndexing,
+  IconKnowledge,
   IconLibrary,
   IconRecord,
   IconSearch,
@@ -18,8 +19,17 @@ import { FlowsScreen } from "./screens/FlowsScreen.js";
 import { SearchScreen } from "./screens/SearchScreen.js";
 import { SettingsScreen } from "./screens/SettingsScreen.js";
 import { HabitsScreen } from "./screens/HabitsScreen.js";
+import { KnowledgeScreen } from "./screens/KnowledgeScreen.js";
 
-type Route = "record" | "indexing" | "library" | "flows" | "habits" | "search" | "settings";
+type Route =
+  | "record"
+  | "indexing"
+  | "library"
+  | "flows"
+  | "habits"
+  | "knowledge"
+  | "search"
+  | "settings";
 
 // Between Record and Library, which is the order the work actually happens in:
 // a recording is captured, then indexed, then watched.
@@ -30,6 +40,10 @@ const NAV: { id: Route; label: string; Icon: typeof IconRecord }[] = [
   { id: "flows", label: "Flows", Icon: IconFlows },
   // After Flows: a habit is made FROM a flow, which is the order the work happens in.
   { id: "habits", label: "Habits", Icon: IconHabits },
+  // AFTER HABITS, not between Flows and Habits: that adjacency is a stated
+  // relationship and a new screen should not sever it. Knowledge is derived from
+  // the whole library the way both of those are, without standing between them.
+  { id: "knowledge", label: "Knowledge", Icon: IconKnowledge },
   { id: "search", label: "Search", Icon: IconSearch },
   { id: "settings", label: "Settings", Icon: IconSettings },
 ];
@@ -40,6 +54,7 @@ const TITLES: Record<Route, string> = {
   library: "Library",
   flows: "Flows",
   habits: "Habits",
+  knowledge: "Knowledge",
   search: "Experience Search",
   settings: "Settings",
 };
@@ -188,6 +203,9 @@ export function App(): React.JSX.Element {
           {/* The ledger's marks ARE the recordings, so they open like a Flows
               source or a Search hit does — through the one minter above. */}
           {route === "habits" && <HabitsScreen onOpenRecording={openRecording} />}
+          {/* No props: it reads one IPC call and there is nowhere to jump to —
+              a fact belongs to the library, not to any one recording. */}
+          {route === "knowledge" && <KnowledgeScreen />}
           {route === "search" && <SearchScreen onOpenRecording={openRecording} />}
           {route === "settings" && <SettingsScreen onEnv={setEnv} />}
         </main>

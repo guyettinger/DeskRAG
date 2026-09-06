@@ -521,11 +521,14 @@ export {
 export {
   DISPLAY_TOPOLOGY,
   FOCUSED_APP,
+  KEYBOARD_LAYOUT,
   VISITED_PAGE,
+  type Attribution,
   type DisplayGeometry,
   type DisplayTopologyPayload,
   type FocusPayload,
   type IdentityDeclaration,
+  type KeymapPayload,
 } from "./knowledge/identities.js";
 
 /**

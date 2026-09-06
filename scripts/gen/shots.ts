@@ -127,6 +127,15 @@ const SHOTS: Shot[] = [
     pick: ".gnode:not(.is-unlocatable):has(.gnode__shot:not(.gnode__shot--none))",
   },
   {
+    id: "knowledge",
+    nav: "Knowledge",
+    // `.knowledge` is the screen either way; with no recordings it renders the
+    // empty state, which is legitimate rather than a failure — the facts are
+    // derived from recordings, so there is genuinely nothing until one exists.
+    settle: ".knowledge",
+    ready: ".kcard, .knowledge .empty",
+  },
+  {
     id: "habits",
     nav: "Habits",
     // `.habits` is the screen either way; with no routes it renders the empty

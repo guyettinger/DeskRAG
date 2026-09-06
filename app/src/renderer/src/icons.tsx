@@ -137,6 +137,25 @@ export const IconFlows = (p: P): React.JSX.Element => (
   </svg>
 );
 
+/**
+ * Knowledge: a SET, with one member filled in.
+ *
+ * NOT a lightbulb or a brain — nothing here is an insight. The screen's own copy
+ * is "there is no current one — the answer is the set", so the icon is that
+ * sentence: braces around several values, at most one of which is settled. It is
+ * deliberately not a graph of nodes and edges, which is what Flows already
+ * claims one screen up the rail.
+ */
+export const IconKnowledge = (p: P): React.JSX.Element => (
+  <svg {...base} {...p}>
+    <path d="M9.2 4C7.4 4 7.9 10 5.8 12c2.1 2 1.6 8 3.4 8" />
+    <path d="M14.8 4c1.8 0 1.3 6 3.4 8-2.1 2-1.6 8-3.4 8" />
+    <circle cx="12" cy="7.8" r="1.15" />
+    <circle cx="12" cy="12" r="1.15" fill="currentColor" stroke="none" />
+    <circle cx="12" cy="16.2" r="1.15" />
+  </svg>
+);
+
 /* A frame under a loupe — "open this keyframe with its regions". */
 export const IconInspect = (p: P): React.JSX.Element => (
   <svg {...base} {...p}>

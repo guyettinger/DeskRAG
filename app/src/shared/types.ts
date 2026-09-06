@@ -1282,6 +1282,114 @@ export interface FlowsDTO {
   excludedApps: string[];
 }
 
+// --- knowledge ---------------------------------------------------------------
+//
+// "What is true" — the environment facts every recording observed, folded to
+// the values that are actually distinct and asked which of them is current.
+//
+// COMPUTED PER QUERY AND STORED NOWHERE, which is a measurement rather than a
+// preference: the whole pipeline behind this DTO — every event of every
+// recording read, parsed, excluded, folded and resolved — measured 4.63ms on
+// the real library, and the fold alone 34ms against a hundredfold synthetic
+// corpus. See `src/knowledge/facts.ts` and docs/internals/persistence.md.
+//
+// NOTHING HERE IS A RATIO. Every number below is a count, on the rule
+// `StabilityDTO` states: a tier is a word and a count of recordings, and a
+// percentage would be `FrameResult.score` under a new name.
+
+/** One value of a fact, folded under its declared identity. */
+export interface KnowledgeValueDTO {
+  /**
+   * The value, as text.
+   *
+   * RENDERED ONCE, in `knowledge-view.ts`, so the screen and the MCP tool are
+   * byte-identical — two renderers is how a habit's clipboard string and
+   * `get_habit`'s would come to disagree, which is why `probe:habits` checks
+   * exactly that.
+   */
+  label: string;
+  /** `stabilityOf(value.sources)` assigned straight in, as `GraphNodeDTO` does. */
+  stability: StabilityDTO;
+  /** How many times this value was observed. Not a rate. */
+  observations: number;
+  /** Distinct raw payloads folded into this value. A count. */
+  variants: number;
+}
+
+/** One environment fact: its values, and what DeskRAG will call current. */
+export interface KnowledgeFactDTO {
+  /** The `event.kind` this fact reads — `display_change`, `focus_change`, … */
+  kind: string;
+  /** The screen's word for it. UI copy, minted in the app, never in the library. */
+  title: string;
+  /**
+   * Whether the recorder exclusion applies to this fact.
+   *
+   * On the DTO because a card has to be able to say the exclusion does NOT
+   * apply to it: applying it to the ambient facts costs 6 of 12 recordings
+   * their only observation, and a screen that quietly did so would state one
+   * display setup where there are two.
+   */
+  attribution: "focused-app" | "ambient";
+  values: KnowledgeValueDTO[];
+  /** Observations the identity could not place. A count, never a ratio. */
+  unidentified: number;
+  /** The current value's label, or null on every refusal. */
+  current: string | null;
+  /** Why this answer. Required — a thing that does not appear must say why. */
+  reason: string;
+  /** Sources no clock could place, so they could not be ordered. */
+  undated: number;
+}
+
+/**
+ * One folded value with the RAW PAYLOADS behind it, rather than a count of them.
+ *
+ * `get_fact`'s whole reason to exist: the seven re-minted `DisplayInfo.id`s are
+ * visible nowhere else, and they are what makes "8 payloads, 2 configurations"
+ * believable to an agent rather than merely asserted. The screen takes the
+ * counted form above — a raw payload is evidence for a reader who asked for it,
+ * not something to put on a card.
+ */
+export interface KnowledgeValueDetailDTO {
+  label: string;
+  stability: StabilityDTO;
+  observations: number;
+  /**
+   * The distinct raw payloads this value folded, as JSON text, in arrival
+   * order. `KnowledgeValueDTO.variants` is the count of exactly this list.
+   */
+  variants: string[];
+}
+
+/** One fact, with every value's raw payloads. The shape `get_fact` returns. */
+export interface KnowledgeFactDetailDTO {
+  kind: string;
+  title: string;
+  attribution: "focused-app" | "ambient";
+  values: KnowledgeValueDetailDTO[];
+  unidentified: number;
+  current: string | null;
+  reason: string;
+  undated: number;
+}
+
+/** Every environment fact the library holds, with the corpus it was read from. */
+export interface KnowledgeDTO {
+  facts: KnowledgeFactDTO[];
+  /** Recordings read. The corpus, disclosed before the answers. */
+  recordings: number;
+  /**
+   * Applications the focused-app facts leave out, so the screen can SAY SO —
+   * `FlowsDTO.excludedApps`'s reasoning, for the same list.
+   */
+  excludedApps: string[];
+  /** Events dropped as the recorder's own. A count. */
+  excludedEvents: number;
+  /** Recordings with no `focus_change` at all, where the exclusion is a no-op. */
+  unattributable: number;
+}
+
 /**
  * A HABIT.md the user chose to keep, written from a route they actually walked.
  *
@@ -1881,6 +1989,14 @@ export interface DeskRagApi {
     graph(): Promise<FlowsDTO | null>;
   };
   /**
+   * READ ONLY, and computed on every call. There is nothing to subscribe to and
+   * nothing to write: a fact is derived from the events already on disk, so the
+   * only way to change one is to record.
+   */
+  knowledge: {
+    facts(): Promise<KnowledgeDTO>;
+  };
+  /**
    * The HABIT.md library.
    *
    * Unlike `flows`, this one WRITES — a habit is authored, and the writes are
@@ -2037,6 +2153,7 @@ export const IPC = {
   sessionsRemove: "sessions:remove",
   sessionsTracks: "sessions:tracks",
   flowsGraph: "flows:graph",
+  knowledgeFacts: "knowledge:facts",
   habitsList: "habits:list",
   habitsAccept: "habits:accept",
   habitsDismiss: "habits:dismiss",

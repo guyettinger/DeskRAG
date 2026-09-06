@@ -44,6 +44,13 @@ export const SETTINGS_PATH = join(DATA_DIR, "settings.json");
  * touches is optional and every read has to cope with its absence.
  */
 export interface ProbeSettings {
+  /**
+   * What the app calls the recorder. Read by `probe:identity`, which measures
+   * what excluding it costs — and the answer depends on THIS list rather than on
+   * a hard-coded one, because a probe that invented its own would be measuring a
+   * configuration nobody runs.
+   */
+  flows?: { excludeApps?: string[] };
   providers?: {
     imageProvider?: string;
     captionProvider?: string;
