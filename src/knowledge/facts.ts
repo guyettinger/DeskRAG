@@ -41,8 +41,14 @@
  * It does not decide whether two values are the SAME value. Fed those 8 display
  * payloads it reports 8, not 2 — seven of them are the same physical display
  * with an `id` macOS re-mints every session. Collapsing them is cross-recording
- * entity identity, a later cycle, and leaving it out here makes that case
- * legible AS an identity problem rather than silently mis-keying it.
+ * entity identity, and leaving it out here makes that case legible AS an
+ * identity problem rather than silently mis-keying it.
+ *
+ * That cycle shipped 2026-09-06 AND THIS FILE DID NOT CHANGE, which is the seam
+ * holding rather than a coincidence: `foldByIdentity` (`./identity.ts`) returns
+ * a `FoldedFact`, a `FoldedFact` IS a `KnowledgeFact`, and `currentValue` reads
+ * one unmodified — fed the folded display fact it reports 2. If identity ever
+ * needs an edit HERE, the seam is wrong.
  *
  * ## It is not a score
  *
