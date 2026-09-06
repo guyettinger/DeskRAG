@@ -50,6 +50,7 @@
     "probe:fork": "tsx scripts/probes/fork.ts",
     "probe:habits": "npm run app:build && tsx scripts/probes/habits.ts",
     "probe:highlight": "tsx scripts/probes/highlight.ts",
+    "probe:identity": "tsx scripts/probes/identity.ts",
     "probe:latency": "tsx scripts/probes/capture-latency.ts",
     "probe:mcp": "npm run app:build && tsx scripts/probes/mcp.ts",
     "probe:merge": "npm run app:build && tsx scripts/probes/merge.ts",
